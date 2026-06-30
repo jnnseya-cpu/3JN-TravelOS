@@ -1,0 +1,176 @@
+// Package optimiser — turns a raw supplier scan into transparent, comparable
+// package options and recommends the best value.
+//
+// The brief requires: filter to reliable + verified suppliers, find the
+// cheapest reliable combination, build a complete package, and present
+// transparent options. The session added: produce multiple tiers
+// (Standard / Premium / Luxury) and recommend the best.
+
+import { RELIABILITY_FLOOR } from './suppliers.js';
+import { priceBreakdown } from './pricing.js';
+
+// Keep only verified suppliers at or above the reliability floor.
+function reliableVerified(offers) {
+  return offers.filter((o) => o.verified && o.reliabilityScore >= RELIABILITY_FLOOR);
+}
+
+// Selection strategy per tier.
+const TIERS = {
+  Standard: {
+    label: 'Standard — Cheapest Reliable',
+    blurb: 'The lowest total price across verified, reliable suppliers.',
+    pickFlight: (list) => cheapest(list),
+    pickHotel: (list) => cheapest(list),
+    pickPerSupplier: (list) => cheapest(list),
+    marketMultiplier: 1.18, // public price we beat
+  },
+  Premium: {
+    label: 'Premium — Best Balance',
+    blurb: 'Higher-rated suppliers and better comfort for a modest uplift.',
+    pickFlight: (list) => bestValue(list),
+    pickHotel: (list) => byStars(list, 4),
+    pickPerSupplier: (list) => bestValue(list),
+    marketMultiplier: 1.22,
+  },
+  Luxury: {
+    label: 'Luxury — Top Rated',
+    blurb: 'The highest-rated, most premium verified options available.',
+    pickFlight: (list) => topRated(list),
+    pickHotel: (list) => byStars(list, 5),
+    pickPerSupplier: (list) => topRated(list),
+    marketMultiplier: 1.30,
+  },
+};
+
+function cheapest(list) {
+  return [...list].sort((a, b) => a.priceUSD - b.priceUSD)[0];
+}
+function topRated(list) {
+  return [...list].sort((a, b) => b.reliabilityScore - a.reliabilityScore || a.priceUSD - b.priceUSD)[0];
+}
+// Value = reliability per unit cost — rewards reliable suppliers that aren't the
+// most expensive.
+function bestValue(list) {
+  return [...list].sort((a, b) => (b.reliabilityScore / b.priceUSD) - (a.reliabilityScore / a.priceUSD))[0];
+}
+function byStars(list, stars) {
+  const exact = list.filter((h) => h.stars === stars);
+  const pool = exact.length ? exact : list.filter((h) => (h.stars || 0) >= stars - 1);
+  return cheapest(pool.length ? pool : list);
+}
+
+// Build a single package option for a given tier.
+function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
+  const tier = TIERS[tierName];
+  const selections = [];
+  let componentsUSD = 0;
+  const componentOrder = ['flights', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
+
+  for (const key of componentOrder) {
+    const offers = scan[key];
+    if (!offers || !offers.length) continue;
+
+    if (key === 'activities') {
+      // Activities: take all reliable+verified (they're a bundle).
+      const chosen = reliableVerified(offers);
+      chosen.forEach((c) => {
+        componentsUSD += c.priceUSD;
+        selections.push(c);
+      });
+      continue;
+    }
+
+    const pool = reliableVerified(offers);
+    if (!pool.length) continue;
+
+    let pick;
+    if (key === 'flights') pick = tier.pickFlight(pool);
+    else if (key === 'hotel') pick = tier.pickHotel(pool);
+    else pick = tier.pickPerSupplier(pool);
+
+    if (pick) {
+      componentsUSD += pick.priceUSD;
+      selections.push(pick);
+    }
+  }
+
+  const marketRefUSD = componentsUSD * tier.marketMultiplier;
+  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints });
+
+  // Average reliability across selected suppliers — used for the "reliable"
+  // promise and ranking.
+  const avgReliability = selections.length
+    ? Math.round(selections.reduce((s, x) => s + x.reliabilityScore, 0) / selections.length)
+    : 0;
+
+  return {
+    tier: tierName,
+    label: tier.label,
+    blurb: tier.blurb,
+    verified: selections.every((s) => s.verified),
+    avgReliability,
+    components: selections.map((s) => ({
+      type: s.type,
+      supplier: s.supplier,
+      reliabilityScore: s.reliabilityScore,
+      verified: s.verified,
+      priceUSD: s.priceUSD,
+      publicPriceUSD: s.publicPriceUSD,
+      stars: s.stars,
+      details: s.details,
+      sourcedVia: s.sourcedVia,
+      sourcedType: s.sourcedType,
+      bookingUrl: s.bookingUrl,
+      agent: s.agent,
+    })),
+    pricing: breakdown,
+    totalUSD: breakdown.lines.totalUSD,
+  };
+}
+
+export function buildPackages(scan, intent, currency, loyaltyPoints = 0) {
+  const options = Object.keys(TIERS)
+    .map((name) => buildOption(name, scan, intent, currency, loyaltyPoints))
+    .filter((o) => o.components.length > 0);
+
+  // Recommend best value: most reliability per pound. Standard usually wins on
+  // pure price, but if a higher tier is only marginally more for a big
+  // reliability gain, recommend it.
+  let recommended = null;
+  let bestScore = -Infinity;
+  for (const o of options) {
+    const score = o.avgReliability / Math.max(1, o.totalUSD) * 1000;
+    if (score > bestScore) {
+      bestScore = score;
+      recommended = o.tier;
+    }
+  }
+  options.forEach((o) => { o.recommended = o.tier === recommended; });
+
+  return {
+    options,
+    recommendedTier: recommended,
+    cheapestTier: [...options].sort((a, b) => a.totalUSD - b.totalUSD)[0]?.tier || null,
+  };
+}
+
+// Clarifying questions when the intent is ambiguous (the session asked for
+// this). Returns an array of question objects the UI can render.
+export function clarifyingQuestions(intent) {
+  const qs = [];
+  if (!intent.destination) {
+    qs.push({
+      id: 'destination',
+      question: 'Where would you like to travel?',
+      options: ['Dubai', 'Istanbul', 'Barcelona', 'New York', 'Bali'],
+    });
+  }
+  if (!intent.month) {
+    qs.push({
+      id: 'month',
+      question: 'Which month are you planning to travel?',
+      options: ['August', 'September', 'October', 'December'],
+    });
+  }
+  return qs;
+}

@@ -1,0 +1,26 @@
+{
+  "name": "3jn-travel-os",
+  "version": "0.1.0",
+  "description": "3JN Global Travel Operating System — say what you want, get a complete, transparently-priced travel package.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "travel",
+    "flights",
+    "hotels",
+    "esim",
+    "visa",
+    "instalments",
+    "3jn"
+  ],
+  "author": "3JN Travel",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

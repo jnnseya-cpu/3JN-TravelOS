@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3JN Travel OS — Stop Searching. Start Saving.</title>
+  <meta name="description" content="3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="bg-mesh"></div>
+  <div class="bg-grid"></div>
+
+  <!-- ===================== NAV ===================== -->
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <div class="brand" data-nav="home">
+        <span class="logo">3JN</span> Travel<span style="color:var(--gold)">OS</span>
+      </div>
+      <nav class="nav-links">
+        <a data-nav="home">Home</a>
+        <a data-nav="planner">Plan a Trip</a>
+        <a data-nav="how">How it Works</a>
+        <a data-nav="membership">Membership</a>
+        <a data-nav="api">API</a>
+        <a data-nav="console">Console</a>
+      </nav>
+      <div class="nav-cta">
+        <span id="userChip" class="pill hidden" style="margin:0"></span>
+        <button class="btn btn-ghost btn-sm" id="testAccountBtn">Test Account</button>
+        <button class="btn btn-gold btn-sm" data-nav="planner">Get My Best Trip</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- ===================== HOME ===================== -->
+    <section class="view active" id="view-home" style="padding-top:0">
+
+      <!-- HERO -->
+      <div class="hero">
+        <div class="hero-grid">
+          <div>
+            <span class="pill"><span class="dot"></span> Express Scan Engine · 195+ countries</span>
+            <h1>Stop Searching.<br/><span class="grad">Start Saving.</span></h1>
+            <p class="lede">3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.</p>
+            <div class="hero-cta">
+              <button class="btn btn-gold" data-nav="planner">Get My Best Trip</button>
+              <button class="btn btn-ghost" data-nav="how">See How It Works</button>
+              <button class="btn btn-whatsapp" id="waHero">💬 Book on WhatsApp</button>
+            </div>
+            <p class="muted" style="font-size:13px;margin-top:16px">AI-led managed execution · pay monthly · multilingual · built for the African diaspora & community travel.</p>
+            <div class="trust-row">
+              <div><div class="t-stat">£1,200,000+</div><div class="t-label">Saved for travellers</div></div>
+              <div><div class="t-stat">195+</div><div class="t-label">Countries</div></div>
+              <div><div class="t-stat">24/7</div><div class="t-label">AI travel agents</div></div>
+            </div>
+            <p class="muted" style="font-size:12.5px;margin-top:14px">Flights • Hotels • Visa • Insurance • Transfers • eSIM</p>
+          </div>
+
+          <!-- Holographic dashboard -->
+          <div class="holo glass">
+            <div class="holo-head">
+              <strong>Journey Dashboard</strong>
+              <span class="scan">● ACTIVE SCAN</span>
+            </div>
+            <div class="holo-row"><span><span class="ico">✈</span>Cheapest Flight Found</span><span class="v good">£842 saved</span></div>
+            <div class="holo-row"><span><span class="ico">🏨</span>AI Negotiating Hotel Upgrade</span><span class="v blue">in progress</span></div>
+            <div class="holo-row"><span><span class="ico">🛂</span>Visa</span><span class="v good">Approved</span></div>
+            <div class="holo-row"><span><span class="ico">🚘</span>Airport Transfer</span><span class="v good">Confirmed</span></div>
+            <div class="holo-row"><span><span class="ico">📶</span>eSIM / Roaming</span><span class="v blue">Activated</span></div>
+            <div class="holo-save">
+              <div class="t-label" style="letter-spacing:0.2em">OPTIMAL BOOKING FOUND</div>
+              <div class="big">You Saved £427</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROBLEM / SOLUTION -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">The Status Quo</span>
+          <h2>Travel Search Is Broken.</h2>
+          <p>Dozens of browser tabs. Multiple booking websites. Confusing pricing. Hidden fees. Most platforms just show you options — 3JN Travel OS delivers the best decision.</p>
+        </div>
+        <div class="split">
+          <div class="card pad panel-bad">
+            <span class="eyebrow" style="color:#ff8a8a">Legacy Methods</span>
+            <div class="x-line">✕ Manual price comparison across 40+ tabs.</div>
+            <div class="x-line">✕ Hidden retail markups and booking fees.</div>
+            <div class="x-line">✕ Disjointed management of visas and transfers.</div>
+            <div class="tabs">
+              <span class="tab">booking.com</span><span class="tab">skyscanner</span><span class="tab">airline #1</span>
+              <span class="tab">airline #2</span><span class="tab">visa portal</span><span class="tab">+37 more</span>
+            </div>
+            <p class="muted" style="font-size:12.5px;margin-top:14px">Traditional Booking: 42 tabs, 4 hours wasted</p>
+          </div>
+          <div class="card pad">
+            <span class="eyebrow">The Solution · 3JN Travel OS</span>
+            <div class="ok-line"><span class="ck">✓</span> One clean interface. Total organisation.</div>
+            <div class="ok-line"><span class="ck">✓</span> Direct-to-wholesaler minimum pricing.</div>
+            <div class="ok-line"><span class="ck">✓</span> Continuous price monitoring that never stops working for you.</div>
+            <div class="holo-save" style="margin-top:18px">
+              <div class="t-label" style="letter-spacing:0.2em">VERIFIED OPTIMAL BOOKING</div>
+              <div class="big">You Saved £427</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FEATURED HOLIDAYS -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">Featured Holidays</span>
+          <h2>Dreaming of Dubai? Stop searching.</h2>
+          <p>Share your travel needs and unlock up to a 30% cheaper quotation, with easy instalment payments across flights, hotels, activities and visas. Just tell us your travel dates, group size and duration — and let the OS handle the rest.</p>
+        </div>
+        <div class="split">
+          <div class="card pad" style="display:flex;flex-direction:column;justify-content:center">
+            <span class="verified-tag" style="align-self:flex-start">✓ 30% cheaper · instalments available</span>
+            <h3 style="font-size:26px;margin:14px 0 6px">Dubai & Abu Dhabi</h3>
+            <p class="muted" style="font-size:14px">Flights, 5★ hotels, desert safaris, Burj Khalifa, eVisa, private transfers and eSIM — bundled into one transparent package. Your perfect getaway is just a message away.</p>
+            <div class="hero-cta" style="margin-top:18px">
+              <button class="btn btn-gold" data-nav="planner">Get my Dubai quote</button>
+              <button class="btn btn-ghost" data-nav="planner">Pay in instalments</button>
+            </div>
+          </div>
+          <div class="holo glass">
+            <div class="holo-head"><strong>Dubai · family · 7 nights</strong><span class="scan">● BEST VALUE</span></div>
+            <div class="holo-row"><span><span class="ico">✈</span>Return flights ×4</span><span class="v">included</span></div>
+            <div class="holo-row"><span><span class="ico">🏨</span>5★ hotel · breakfast</span><span class="v">included</span></div>
+            <div class="holo-row"><span><span class="ico">🎟</span>Desert safari + Burj Khalifa</span><span class="v">included</span></div>
+            <div class="holo-row"><span><span class="ico">🛂</span>eVisa ×4 · 🚘 transfers · 📶 eSIM</span><span class="v good">included</span></div>
+            <div class="holo-save">
+              <div class="t-label" style="letter-spacing:0.2em">FROM, PER FAMILY · INSTALMENTS</div>
+              <div class="big">20% deposit today</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI CORE -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">AI Travel Deal Execution Engine</span>
+          <h2>An Entire Team Of AI Travel Experts Working For You.</h2>
+          <p>Not search and compare — <strong>search, negotiate, package, optimise, monitor and support</strong>. Our travel intelligence mesh connects 10 specialised agents into one unified brain that owns your trip end to end.</p>
+          <div class="exec-loop">
+            <span>🔍 Search</span><span>🤝 Negotiate</span><span>📦 Package</span><span>⚙ Optimise</span><span>🛡 Monitor</span><span>🛟 Support</span>
+          </div>
+        </div>
+        <div class="center" style="margin-bottom:26px">
+          <div class="core-orb">3JN<br/>CORE</div>
+        </div>
+        <div class="core-wrap" id="agentGrid"></div>
+      </section>
+
+      <!-- SAVINGS ENGINE -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">Travel Savings Engine</span>
+          <h2>The AI Finds Savings Humans Miss.</h2>
+          <p>Every booking is decomposed and re-optimised across four dimensions — the gains compound into one number.</p>
+        </div>
+        <div class="card pad" style="max-width:760px;margin:0 auto">
+          <div class="kv"><span>✈ Flight Optimisation</span><span style="color:var(--green)">Saved £186</span></div>
+          <div class="kv"><span>🏨 Hotel Negotiation</span><span style="color:var(--green)">Saved £324</span></div>
+          <div class="kv"><span>📅 Date Optimisation</span><span style="color:var(--green)">Saved £208</span></div>
+          <div class="kv"><span>🛫 Airport Selection</span><span style="color:var(--green)">Saved £91</span></div>
+          <div class="kv" style="border:none;padding-top:16px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--gold)">£809</span></div>
+        </div>
+      </section>
+
+      <!-- NEGOTIATION ENGINE -->
+      <section>
+        <div class="split">
+          <div class="card pad" style="display:flex;flex-direction:column;justify-content:center">
+            <span class="eyebrow">AI Negotiation Engine</span>
+            <h2 style="font-size:34px;margin:10px 0 14px;line-height:1.05">More Than Search.<br/>AI That Negotiates.</h2>
+            <p class="muted" style="font-size:15px">Once it finds your package, the OS pushes suppliers for upgrades and inclusions — the things a great human travel agent would ask for, automatically.</p>
+          </div>
+          <div class="holo glass">
+            <div class="holo-head"><strong>Negotiation · live</strong><span class="scan">● SUPPLIER DESK</span></div>
+            <div class="holo-row"><span>Room Upgrade</span><span class="v good">Secured</span></div>
+            <div class="holo-row"><span>Late Checkout</span><span class="v good">Confirmed</span></div>
+            <div class="holo-row"><span>Airport Transfer</span><span class="v good">Included</span></div>
+            <div class="holo-row"><span>Breakfast</span><span class="v good">Included</span></div>
+            <div class="holo-row"><span>Special Discount</span><span class="v blue">Applied</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- GLOBAL INTELLIGENCE -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">Global Intelligence</span>
+          <h2>Travel Smarter With Global Intelligence.</h2>
+          <p>Seven live intelligence layers wrap every destination, so your trip is timed and priced with full context.</p>
+        </div>
+        <div class="center" style="margin-bottom:26px"><div class="core-orb" style="background:radial-gradient(circle at 35% 30%, #6fb6ff, #1a4fa0 60%, #0a2452)">🌍</div></div>
+        <div class="core-wrap" style="max-width:980px">
+          <div class="card agent-card"><div class="ag-ico">🌦</div><h4>Weather Intelligence</h4><p>Best-weather windows per destination.</p></div>
+          <div class="card agent-card"><div class="ag-ico">🛡</div><h4>Safety Intelligence</h4><p>Live safety & advisory signals.</p></div>
+          <div class="card agent-card"><div class="ag-ico">🛂</div><h4>Visa Intelligence</h4><p>Requirements by nationality.</p></div>
+          <div class="card agent-card"><div class="ag-ico">💱</div><h4>Currency Intelligence</h4><p>Rate-aware pricing & timing.</p></div>
+          <div class="card agent-card"><div class="ag-ico">📈</div><h4>Demand Intelligence</h4><p>Price-pressure forecasting.</p></div>
+          <div class="card agent-card"><div class="ag-ico">👥</div><h4>Crowd Intelligence</h4><p>Avoid the crush, find the calm.</p></div>
+        </div>
+      </section>
+
+      <!-- END-TO-END TRIP MANAGEMENT -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">End-to-End Trip Management</span>
+          <h2>From Idea To Arrival.</h2>
+          <p>One platform. One journey. Complete control.</p>
+        </div>
+        <div class="timeline">
+          <div class="tl-step"><span class="tl-dot"></span>Dream Destination</div>
+          <div class="tl-step"><span class="tl-dot"></span>Planning</div>
+          <div class="tl-step"><span class="tl-dot"></span>Optimisation</div>
+          <div class="tl-step"><span class="tl-dot"></span>Booking</div>
+          <div class="tl-step"><span class="tl-dot"></span>Travel</div>
+          <div class="tl-step"><span class="tl-dot"></span>Support</div>
+          <div class="tl-step"><span class="tl-dot"></span>Return Home</div>
+        </div>
+      </section>
+
+      <!-- WHO IT'S FOR -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">Who It's For</span>
+          <h2>Built for every kind of traveller.</h2>
+        </div>
+        <div class="persona-grid">
+          <div class="card persona"><span>💼</span>Business Travellers</div>
+          <div class="card persona"><span>👨‍👩‍👧‍👦</span>Families</div>
+          <div class="card persona"><span>🥂</span>Luxury Travellers</div>
+          <div class="card persona"><span>💻</span>Digital Nomads</div>
+          <div class="card persona"><span>🎓</span>Students</div>
+          <div class="card persona"><span>🌍</span>Diaspora Travellers</div>
+          <div class="card persona"><span>🚌</span>Group Organisers</div>
+          <div class="card persona"><span>🏢</span>Corporate Teams</div>
+        </div>
+      </section>
+
+      <!-- MEMBERSHIP -->
+      <section id="membership-anchor">
+        <div class="section-head center">
+          <span class="eyebrow">Membership Programme</span>
+          <h2>Choose Your Level Of Intelligence.</h2>
+          <p>From solo nomads to enterprise teams, our memberships are engineered to pay for themselves through automated negotiation and elite benefits.</p>
+        </div>
+        <div class="tier-grid" id="tierGrid"></div>
+        <p class="center muted" style="font-size:12.5px;margin-top:22px">Secure checkout. Cancel anytime. 30-day money-back savings guarantee.</p>
+      </section>
+
+      <!-- TESTIMONIALS -->
+      <section>
+        <div class="section-head center">
+          <span class="eyebrow">Testimonials</span>
+          <h2>Travellers who stopped searching.</h2>
+        </div>
+        <div class="steps">
+          <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"I saved £1,142 on my family trip."</p><div class="muted" style="font-size:13px">★★★★★ · Aisha · Family of four to Dubai</div></div>
+          <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"Better hotel. Lower price."</p><div class="muted" style="font-size:13px">★★★★★ · Daniel · Weekend in Istanbul</div></div>
+          <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"It felt like having a private travel advisor."</p><div class="muted" style="font-size:13px">★★★★★ · Priya · Two weeks in Bali</div></div>
+        </div>
+      </section>
+
+      <!-- FINAL CTA -->
+      <section class="center final-cta">
+        <span class="eyebrow">The Future Of Travel Is Not Search.</span>
+        <h2 style="font-size:clamp(38px,6vw,66px);margin:10px 0 26px;line-height:1">It's <span class="grad">Intelligent Travel.</span></h2>
+        <div class="hero-cta" style="justify-content:center">
+          <button class="btn btn-gold" data-nav="planner">Start Saving Now</button>
+          <button class="btn btn-ghost" data-nav="planner">Plan My Next Trip</button>
+        </div>
+        <div class="trust-row" style="justify-content:center;border:none;margin-top:34px">
+          <div class="center"><div class="t-stat">£1,200,000+</div><div class="t-label">Saved</div></div>
+          <div class="center"><div class="t-stat">195+</div><div class="t-label">Countries</div></div>
+          <div class="center"><div class="t-stat">24/7</div><div class="t-label">AI Travel Agents</div></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ===================== PLANNER ===================== -->
+    <section class="view" id="view-planner">
+      <div class="planner-shell">
+        <div class="section-head left" style="margin-bottom:24px">
+          <span class="eyebrow">Universal Planner</span>
+          <h2>Tell us your trip in one sentence.</h2>
+          <p>The OS understands intent, detects your currency, scans verified global suppliers and builds transparent packages — with 3JN's 10% fee shown openly.</p>
+        </div>
+
+        <div class="card composer">
+          <textarea id="intentInput" placeholder="e.g. I want to travel to Dubai with my family in August for 7 nights. I want flights, hotel, visa, activities, internet abroad, airport transfer, instalments and the cheapest reliable price.">I want to travel to Dubai with my family in August for 7 nights. I want flights, hotel, visa, activities, internet abroad, airport transfer, instalments and the cheapest reliable price.</textarea>
+          <div class="composer-row">
+            <div class="field">
+              <label>Your country / currency</label>
+              <select id="countrySelect"></select>
+            </div>
+            <div class="field">
+              <label>Search depth</label>
+              <select id="tierSelect">
+                <option value="free">Cached / Free</option>
+                <option value="smart" selected>Smart Search</option>
+                <option value="deep">Deep Savings Search</option>
+                <option value="concierge">Concierge Search</option>
+              </select>
+            </div>
+            <div style="flex:1"></div>
+            <button class="btn btn-gold" id="planBtn">⚡ Scan & Build Package</button>
+          </div>
+          <div class="chips">
+            <span class="chip" data-example="I want to travel to Istanbul with my partner in September for 5 nights with flights, hotel and activities, cheapest reliable price.">Istanbul · couple · 5 nights</span>
+            <span class="chip" data-example="Solo trip to Bali in October for 10 nights, flights hotel esim and airport transfer, pay monthly.">Bali · solo · instalments</span>
+            <span class="chip" data-example="Family holiday to Barcelona in August for 7 nights, flights hotel visa activities insurance and transfer.">Barcelona · family · full</span>
+          </div>
+        </div>
+
+        <div id="plannerOut" style="margin-top:24px"></div>
+      </div>
+    </section>
+
+    <!-- ===================== HOW IT WORKS ===================== -->
+    <section class="view" id="view-how">
+      <div class="section-head center">
+        <span class="eyebrow">How it Works</span>
+        <h2>An Intelligent Way To Traverse The Globe.</h2>
+        <p>3JN Travel OS is not a booking site. It is an AI-powered operating system engineered to eliminate travel complexity and minimise costs through advanced neural logic.</p>
+      </div>
+      <div class="steps" id="stepsGrid"></div>
+
+      <div class="section-head center" style="margin:64px auto 24px">
+        <h2>3JN OS vs. Legacy Booking</h2>
+        <p>Why 100,000+ modern nomads switched to the operating system.</p>
+      </div>
+      <div class="cmp">
+        <div class="card pad panel-bad">
+          <span class="eyebrow" style="color:#ff8a8a">Legacy Methods</span>
+          <div class="x-line">✕ Manual price comparison across 40+ tabs.</div>
+          <div class="x-line">✕ Hidden retail markups and booking fees.</div>
+          <div class="x-line">✕ Disjointed management of visas and transfers.</div>
+        </div>
+        <div class="card pad">
+          <span class="eyebrow">3JN Travel OS</span>
+          <div class="ok-line"><span class="ck">✓</span> One-sentence AI intent extraction.</div>
+          <div class="ok-line"><span class="ck">✓</span> Direct-to-wholesaler minimum pricing.</div>
+          <div class="ok-line"><span class="ck">✓</span> Unified Universal Console management.</div>
+        </div>
+      </div>
+      <div class="center" style="margin-top:40px">
+        <span class="eyebrow">Ready to Experience Intelligence?</span>
+        <div class="hero-cta" style="justify-content:center;margin-top:12px">
+          <button class="btn btn-gold" data-nav="planner">Get Started</button>
+          <button class="btn btn-ghost" data-nav="home">Back to Dashboard</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin-top:16px">Secure, end-to-end encrypted travel management.</p>
+      </div>
+    </section>
+
+    <!-- ===================== MEMBERSHIP (full view) ===================== -->
+    <section class="view" id="view-membership">
+      <div class="section-head center">
+        <span class="eyebrow">Membership Programme</span>
+        <h2>Choose Your Level Of Intelligence.</h2>
+        <p>From solo nomads to enterprise teams, our memberships are engineered to pay for themselves through automated negotiation and elite benefits.</p>
+      </div>
+      <div class="tier-grid" id="tierGridFull"></div>
+      <p class="center muted" style="font-size:12.5px;margin-top:22px">Secure checkout. Cancel anytime. 30-day money-back savings guarantee.</p>
+
+      <div class="section-head center" style="margin:64px auto 24px">
+        <span class="eyebrow">Loyalty & Rewards</span>
+        <h2>Earn points. Climb tiers. Pay less.</h2>
+        <p>Earn 1 point for every £2 spent (plus a 250-point launch bonus). Every tier unlocks a bigger automatic discount on your packages.</p>
+      </div>
+      <div class="core-wrap" id="loyaltyGrid" style="max-width:980px"></div>
+    </section>
+
+    <!-- ===================== API PORTAL ===================== -->
+    <section class="view" id="view-api">
+      <div class="section-head center">
+        <span class="eyebrow">White-Label API</span>
+        <h2>The World's Travel Inventory, In One API.</h2>
+        <p>Integrate the 3JN Travel Operating System into your own brand. Access unbeatable global minimum prices, verified suppliers, and automated booking logic.</p>
+        <div class="hero-cta" style="justify-content:center;margin-top:18px">
+          <button class="btn btn-gold" id="apiKeyBtn">Request API Keys</button>
+          <button class="btn btn-ghost" data-nav="how">View Docs</button>
+        </div>
+      </div>
+
+      <div class="card pad" style="max-width:920px;margin:0 auto">
+        <span class="eyebrow">10% Platform Revenue Share · Live Calculator</span>
+        <div class="calc" style="margin-top:14px">
+          <div>
+            <p class="muted" style="font-size:13.5px">Partners keep <strong style="color:var(--text)">90%</strong> of all generated commission revenue. 3JN takes a flat <strong style="color:var(--text)">10%</strong> platform fee for infrastructure and maintenance. Zero upfront costs for verified enterprise partners.</p>
+            <label class="t-label" style="display:block;margin:18px 0 6px">Total Booking Volume: <span id="volLabel" style="color:var(--gold)">$100,000</span></label>
+            <input type="range" id="volRange" min="10000" max="1000000" step="10000" value="100000" />
+          </div>
+          <div>
+            <div class="row"><span>Total Booking Volume</span><span class="v" id="cVol">$100,000</span></div>
+            <div class="row"><span>Avg. Supplier Commission (10%)</span><span class="v" id="cComm">$10,000</span></div>
+            <div class="row hi"><span>Partner Net Revenue (90%)</span><span class="v" id="cPartner">$9,000</span></div>
+            <div class="row"><span>3JN Platform Share (10%)</span><span class="v" id="cShare">$1,000</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="steps" style="margin-top:30px">
+        <div class="card step"><h3>Instant Scan Engine</h3><p>Access our AI-powered travel intent extraction and package generation endpoints with &lt;1s latency.</p></div>
+        <div class="card step"><h3>Market-Beating Rates</h3><p>Direct access to the 'Global Minimum Price' database, pre-negotiated for 3JN partners.</p></div>
+        <div class="card step"><h3>100% Verified Only</h3><p>Only suppliers that pass our rigorous 50-point integrity check are exposed via the API.</p></div>
+      </div>
+
+      <div class="card pad" style="margin-top:24px">
+        <span class="eyebrow">Try the partner endpoint</span>
+        <p class="muted" style="font-size:13px">POST <code>/api/v1/search</code> — returns a full verified package other businesses can resell under their brand.</p>
+        <button class="btn btn-ghost btn-sm" id="apiTryBtn">Run sample request</button>
+        <pre id="apiResult" class="card pad" style="margin-top:14px;display:none;font-size:12px;overflow:auto;max-height:300px;font-family:monospace"></pre>
+      </div>
+    </section>
+
+    <!-- ===================== CONSOLE ===================== -->
+    <section class="view" id="view-console">
+      <div class="section-head left">
+        <span class="eyebrow">Universal Trip Console</span>
+        <h2>Your journeys, documents & price guard.</h2>
+        <p>Everything 3JN secures for you — bookings, instalment schedules, the Neural Price Guard, and post-trip reviews — in one place.</p>
+      </div>
+      <div id="consoleOut"></div>
+    </section>
+
+  </main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="ft">
+    <div class="wrap">
+      <div class="ft-grid">
+        <div>
+          <div class="brand" style="margin-bottom:12px"><span class="logo">3JN</span> Travel<span style="color:var(--gold)">OS</span></div>
+          <p class="muted" style="font-size:13px;max-width:280px">Powered by Artificial Intelligence. Built for better travel. The world's most sophisticated travel operating system.</p>
+        </div>
+        <div>
+          <h5>Services</h5>
+          <span class="lnk" data-content="flights">Flights</span>
+          <span class="lnk" data-content="hotels">Hotels</span>
+          <span class="lnk" data-content="visa">Visa Automation</span>
+          <span class="lnk" data-content="transfers">Transfers</span>
+          <span class="lnk" id="hostLink">Become a Host</span>
+        </div>
+        <div>
+          <h5>Platform</h5>
+          <span class="lnk" data-nav="how">How it Works</span>
+          <span class="lnk" data-nav="api">API access</span>
+          <span class="lnk" data-content="marketplace">Marketplace</span>
+          <span class="lnk" data-nav="membership">Membership</span>
+        </div>
+        <div>
+          <h5>Company</h5>
+          <span class="lnk" data-content="careers">Careers</span>
+          <span class="lnk" data-content="privacy">Privacy Policy</span>
+          <span class="lnk" data-content="terms">Terms of Use</span>
+          <span class="lnk" data-content="support">Support</span>
+        </div>
+      </div>
+      <div class="ft-bottom">
+        <span>© 2026 3JN Travel OS. All Rights Reserved.</span>
+        <span>Powered By Artificial Intelligence. Built For Better Travel.</span>
+      </div>
+    </div>
+  </footer>
+
+  <div id="toast"></div>
+  <div class="modal-bg" id="modalBg"><div class="card pad modal" id="modalBody"></div></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
