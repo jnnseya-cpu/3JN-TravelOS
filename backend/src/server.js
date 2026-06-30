@@ -423,12 +423,12 @@ app.get('/api/booking/schema', safe((req, res) => {
   res.json(bookingSchema());
 }));
 app.post('/api/booking/requirements', safe((req, res) => {
-  const { components, destination, nationality, passengers, holidayType } = req.body || {};
-  res.json(bookingRequirements({ components, destination, nationality, passengers, holidayType }));
+  const { components, destination, nationality, passengers, holidayType, international } = req.body || {};
+  res.json(bookingRequirements({ components, destination, nationality, passengers, holidayType, international: international !== false }));
 }));
 app.post('/api/booking/validate', safe((req, res) => {
-  const { travellers, travelDate, nationality, destination, fraudSignals } = req.body || {};
-  const validation = validateBooking({ travellers, travelDate, nationality, destination });
+  const { travellers, travelDate, nationality, destination, fraudSignals, international } = req.body || {};
+  const validation = validateBooking({ travellers, travelDate, nationality, destination, international: international !== false });
   res.json({ ...validation, risk: bookingRiskScore(fraudSignals || {}) });
 }));
 

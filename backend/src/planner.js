@@ -77,6 +77,11 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const scan = scanAll(intent, intent.destination, origin, live);
   const expectedBookingUSD = roughTotal(scan);
 
+  // International = the journey crosses a border. Domestic only when we KNOW both
+  // ends' countries and they match (otherwise assume international — safer). This
+  // decides whether a passport/visa is needed at booking (a local train is not).
+  const international = !(origin.country && intent.destination.country && origin.country === intent.destination.country);
+
   // Provenance, read from the actual offers used. Price-live = a real fare
   // (Duffel/Amadeus); schedule-live = a real operated schedule (OAG) priced by
   // the estimator. Flights can be schedule-live but price-estimated.
@@ -117,6 +122,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     flightPrefs: { ...intent.flightPrefs, directUnavailable: intent.flightPrefs.directOnly && !chosenDirect },
     priceSource,
     scheduleSource,
+    international,
     context,
     gate: {
       requestedTier: searchTier,
@@ -128,8 +134,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       requirement: gate.requirement || null,
     },
     scanSummary: summariseScan(scan),
-    // 3JN VisaOS: pre-booking visa approval probability for this traveller.
-    visa: approvalProbability(intent.nationality, intent.destination.city),
+    // 3JN VisaOS: pre-booking visa approval probability — only for international
+    // trips. A local/domestic journey needs no visa, so we don't surface one.
+    visa: international ? approvalProbability(intent.nationality, intent.destination.city) : { ok: false, domestic: true },
     // Which AI provider the gateway routes intent extraction to (Claude by
     // default; OpenAI/Gemini for other tasks). Runs locally when no key is set.
     aiRouting: route('intentExtraction'),
@@ -166,7 +173,7 @@ function summariseScan(scan) {
 
 function publicIntent(intent) {
   return {
-    destination: { code: intent.destination.code, city: intent.destination.city, countryName: intent.destination.countryName },
+    destination: { code: intent.destination.code, city: intent.destination.city, country: intent.destination.country, countryName: intent.destination.countryName },
     travellers: intent.travellers,
     nights: intent.nights,
     month: intent.month,

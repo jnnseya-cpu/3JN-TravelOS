@@ -62,13 +62,18 @@ export const HOTEL_GUARANTEE = ['Prepaid', 'Pay at hotel', 'Deposit only', 'Part
 // ---- 13. Compliance --------------------------------------------------------
 export const COMPLIANCE = ['PCI DSS', 'GDPR', 'KYC', 'AML', 'PSD2', 'IATA standards', 'Hotel tax compliance', 'Tourism levies', 'Package travel regulations'];
 
-// Documents required per component.
+// Documents required per component. Passport/visa are NOT listed here — they are
+// added centrally only for international trips (see bookingRequirements), so a
+// local train/coach journey never asks for a passport.
 const DOC_BY_COMPONENT = {
-  flight: ['Passport', 'Visa (if required)', 'National ID (domestic)', 'Residence permit (if applicable)'],
-  hotel: ['Passport / National ID', 'Booking voucher', 'Card for incidentals / deposit'],
-  transfer: ['Booking voucher', 'Arrival flight details'],
+  flight: ['Photo ID (national ID for domestic, passport for international)', 'Residence permit (if applicable)'],
+  train: ['Photo ID', 'Booking reference / e-ticket', 'Railcard (if held)'],
+  coach: ['Photo ID', 'Booking reference / e-ticket'],
+  ferry: ['Photo ID', 'Booking reference', 'Vehicle details (if taking a car)'],
+  cruise: ['Port documents', 'Vaccination certificate (some itineraries)'],
+  hotel: ['Photo ID', 'Booking voucher', 'Card for incidentals / deposit'],
+  transfer: ['Booking voucher', 'Arrival travel details'],
   activity: ['Liability waiver', 'Health declaration (some activities)'],
-  cruise: ['Passport', 'Visa', 'Port documents', 'Vaccination certificate'],
   safari: ['Yellow-fever certificate', 'Medical clearance', 'Rescue insurance'],
   insurance: ['Pre-existing condition declaration'],
   visa: ['See VisaOS dynamic checklist'],
@@ -78,7 +83,7 @@ const DOC_BY_COMPONENT = {
 // ---- Engine: dynamic requirements for a chosen option ----------------------
 // Given the package the AI found + the traveller's context, return exactly what
 // the OS must collect to take this booking forward.
-export function bookingRequirements({ components = [], destination, nationality = 'GB', passengers = 1, holidayType } = {}) {
+export function bookingRequirements({ components = [], destination, nationality = 'GB', passengers = 1, holidayType, international = true } = {}) {
   const kinds = new Set((components || []).map((c) => (typeof c === 'string' ? c : c.type || c.category || '')).filter(Boolean));
   if (kinds.size === 0) kinds.add('flight').add('hotel');
   // Safari/cruise add components by holiday type.
@@ -88,14 +93,24 @@ export function bookingRequirements({ components = [], destination, nationality 
   const documents = [];
   for (const k of kinds) (DOC_BY_COMPONENT[k] || []).forEach((d) => documents.push(d));
 
-  const visa = visaCheck(nationality, destination);
-  const entryRules = entryRequirements(nationality, destination, visa);
+  // Passport, visa and entry rules apply ONLY when the trip crosses a border.
+  // A local/domestic journey (e.g. a UK train) needs photo ID, not a passport.
+  let visa; let entryRules;
+  if (international) {
+    documents.unshift('Passport — valid 6+ months beyond travel');
+    visa = visaCheck(nationality, destination);
+    entryRules = entryRequirements(nationality, destination, visa);
+  } else {
+    visa = { ok: true, required: false, domestic: true, message: 'Domestic trip — no passport or visa required.' };
+    entryRules = [];
+  }
 
   return {
     travellerProfile: MASTER_TRAVEL_ID,
     perPassenger: { core: FLIGHT.passenger, advanced: FLIGHT.apis, count: passengers },
     specialRequests: { flight: SSR_OPTIONS, hotel: HOTEL_SSR },
     documents: dedupe(documents),
+    international,
     visa,
     entryRules,
     payment: { methods: PAYMENT_METHODS, hotelGuarantee: HOTEL_GUARANTEE },
@@ -116,21 +131,26 @@ function entryRequirements(nationality, destination, visa) {
 }
 
 // ---- Engine: validate the captured data before booking --------------------
-export function validateBooking({ travellers = [], travelDate, nationality = 'GB', destination } = {}) {
+export function validateBooking({ travellers = [], travelDate, nationality = 'GB', destination, international = true } = {}) {
   const checks = [];
   const blocking = [];
   const today = Date.now();
   const travelMs = travelDate ? Date.parse(travelDate) : null;
   const SIX_MONTHS = 182 * 24 * 3600 * 1000;
 
+  // Local/domestic trips need name + DOB + photo ID; international trips also
+  // need a passport with 6+ months validity.
+  const requiredFields = international
+    ? ['fullName', 'dob', 'nationality', 'passportNumber', 'passportExpiry']
+    : ['fullName', 'dob'];
+
   travellers.forEach((t, i) => {
     const who = t.fullName || t.firstName || `Passenger ${i + 1}`;
-    // Required identity fields.
-    const missing = ['fullName', 'dob', 'nationality', 'passportNumber', 'passportExpiry'].filter((f) => !t[f]);
+    const missing = requiredFields.filter((f) => !t[f]);
     if (missing.length) { const m = `${who}: missing ${missing.join(', ')}`; checks.push({ check: m, pass: false }); blocking.push(m); }
 
-    // Passport 6-month validity rule vs travel date.
-    if (t.passportExpiry) {
+    // Passport 6-month validity rule vs travel date — international only.
+    if (international && t.passportExpiry) {
       const exp = Date.parse(t.passportExpiry);
       const ref = travelMs || today;
       const ok = !Number.isNaN(exp) && exp - ref >= SIX_MONTHS;
@@ -139,12 +159,18 @@ export function validateBooking({ travellers = [], travelDate, nationality = 'GB
     }
   });
 
-  // Visa / entry rule for the trip.
-  const visa = visaCheck(nationality, destination);
-  if (visa.ok && visa.required) {
-    checks.push({ check: `Visa required for ${visa.destination.city} (${visa.visaType})`, pass: true, advisory: true });
-  } else if (visa.ok) {
-    checks.push({ check: `No visa required for ${visa.destination.city}`, pass: true });
+  // Visa / entry rule — only relevant when crossing a border.
+  let visa;
+  if (international) {
+    visa = visaCheck(nationality, destination);
+    if (visa.ok && visa.required) {
+      checks.push({ check: `Visa required for ${visa.destination.city} (${visa.visaType})`, pass: true, advisory: true });
+    } else if (visa.ok) {
+      checks.push({ check: `No visa required for ${visa.destination.city}`, pass: true });
+    }
+  } else {
+    visa = { ok: true, required: false, domestic: true };
+    checks.push({ check: 'Local trip — no passport or visa required', pass: true });
   }
 
   return {
@@ -152,6 +178,7 @@ export function validateBooking({ travellers = [], travelDate, nationality = 'GB
     ready: blocking.length === 0,
     checks,
     blocking,
+    international,
     visa,
   };
 }
