@@ -529,21 +529,47 @@ function renderOptions(data) {
 // customer can check the SAME dates and passengers on neutral sites. We never
 // fabricate a competitor's number; we let them confirm it live.
 function yymmdd(d) { return (d || '').slice(2, 4) + (d || '').slice(5, 7) + (d || '').slice(8, 10); }
+function slug(s) { return (s || '').toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, ''); }
 function verifyLinks(data) {
   const o = data.origin?.airport || '';
+  const oCity = data.origin?.city || '';
   const dcode = data.intent?.destination?.code || '';
   const city = data.intent?.destination?.city || '';
   const ci = data.intent?.dates?.checkIn || '';
   const co = data.intent?.dates?.checkOut || '';
   const t = data.intent?.travellers || {};
   const A = t.adults || 1; const C = t.children || 0; const ages = t.childAges || [];
+  // Only show verify links for the modes the traveller actually searched.
+  const comps = new Set(data.intent?.components || []);
+  const recCruise = (data.packages?.options?.[0]?.components || []).find((c) => c.type === 'cruise');
+  const isMini = !!recCruise?.details?.miniCruise;
   const links = [];
-  if (o && dcode && ci && co) {
+
+  if (comps.has('flights') && o && dcode && ci && co) {
     links.push({ name: 'Skyscanner', what: 'flights', url: `https://www.skyscanner.net/transport/flights/${o.toLowerCase()}/${dcode.toLowerCase()}/${yymmdd(ci)}/${yymmdd(co)}/?adults=${A}&children=${C}&cabinclass=economy&preferdirects=${data.flightPrefs?.directOnly ? 'true' : 'false'}` });
     links.push({ name: 'Google Flights', what: 'flights', url: `https://www.google.com/travel/flights?q=${encodeURIComponent(`flights from ${o} to ${dcode} on ${ci} returning ${co} ${A} adults ${C} children economy`)}` });
     links.push({ name: 'Kayak', what: 'flights', url: `https://www.kayak.co.uk/flights/${o}-${dcode}/${ci}/${co}/${A}adults${C ? '/' + C + 'children' : ''}?sort=price_a` });
   }
-  if (city && ci && co) {
+  if (comps.has('train')) {
+    links.push({ name: 'Trainline', what: 'train', url: `https://www.thetrainline.com/train-times/${slug(oCity)}-to-${slug(city)}` });
+    links.push({ name: 'Google', what: 'train', url: `https://www.google.com/search?q=${encodeURIComponent(`train ${oCity} to ${city} ${ci}`)}` });
+  }
+  if (comps.has('coach')) {
+    links.push({ name: 'National Express', what: 'coach', url: 'https://www.nationalexpress.com/en' });
+    links.push({ name: 'FlixBus', what: 'coach', url: `https://www.flixbus.co.uk/coach/${slug(oCity)}` });
+  }
+  if (comps.has('ferry')) {
+    links.push({ name: 'Direct Ferries', what: 'ferry', url: `https://www.directferries.co.uk/${slug(oCity)}_${slug(city)}_ferry.htm` });
+  }
+  if (comps.has('cruise')) {
+    if (isMini) {
+      links.push({ name: 'DFDS Mini Cruises', what: 'mini cruise', url: 'https://www.dfds.com/en-gb/passenger-ferries/mini-cruises' });
+      links.push({ name: 'Direct Ferries', what: 'mini cruise', url: 'https://www.directferries.co.uk/mini_cruises.htm' });
+    } else {
+      links.push({ name: 'Cruise.co.uk', what: 'cruise', url: `https://www.cruise.co.uk/cruise-search/?destination=${encodeURIComponent(city)}` });
+    }
+  }
+  if (comps.has('hotel') && city && ci && co) {
     const ageParams = ages.map((a) => `&age=${a}`).join('');
     links.push({ name: 'Booking.com', what: 'hotel', url: `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${ci}&checkout=${co}&group_adults=${A}&group_children=${C}${ageParams}` });
   }
@@ -578,7 +604,7 @@ function optionCard(o, sym, intent) {
   const p = o.pricing;
   const comps = o.components.map((c, i) => {
     const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}" title="${c.agent && c.agentId ? '3JN agent account ' + c.agentId : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}${c.agent && c.agentId ? ' · ' + c.agentId : ''}</span>` : '';
-    const more = ['flight', 'hotel', 'host'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more</span>` : '';
+    const more = ['flight', 'hotel', 'host', 'cruise', 'train', 'coach', 'ferry'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more</span>` : '';
     const flightTag = c.type === 'flight' && c.details?.outbound
       ? ((c.details.outbound.stops || 0) === 0 && (c.details.inbound?.stops || 0) === 0
         ? ' <span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">⭐ Direct</span>'
@@ -588,8 +614,12 @@ function optionCard(o, sym, intent) {
     const ratingTag = (c.type === 'hotel' || c.type === 'host')
       ? `${c.stars ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">${'★'.repeat(c.stars)}</span>` : ''}${c.details?.guestRating ? ` <span class="ch-chip" title="${(c.details.reviews || 0).toLocaleString()} verified reviews">${c.details.guestRating}/10</span>` : ''}`
       : '';
+    // Transport-mode chip: nights + cabin (cruise) or class/duration (rail/coach/ferry).
+    const modeTag = ['cruise', 'train', 'coach', 'ferry'].includes(c.type)
+      ? `${c.details?.nights ? ` <span class="ch-chip">${c.details.nights} night${c.details.nights > 1 ? 's' : ''}</span>` : ''}${c.details?.cabin ? ` <span class="ch-chip">${esc(c.details.cabin.split('·')[0].trim())}</span>` : ''}${c.details?.travelClass ? ` <span class="ch-chip">${esc(c.details.travelClass)}</span>` : ''}`
+      : '';
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${flightTag}${ratingTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${flightTag}${ratingTag}${modeTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">
@@ -613,7 +643,10 @@ function optionCard(o, sym, intent) {
 
 function labelFor(c) {
   const s = esc(c.supplier);
-  const map = { flight: '✈ Flights', train: '🚆 ' + s, coach: '🚌 ' + s, ferry: '⛴ ' + s, cruise: '🛳 ' + s, hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
+  const cruiseLabel = c.details?.miniCruise ? '🛳 Mini cruise' : '🛳 Cruise';
+  // Generic mode names — the supplier is shown separately on the line, so don't
+  // repeat it here (avoids "Fjord Line Mini Cruise · Fjord Line Mini Cruise").
+  const map = { flight: '✈ Flights', train: '🚆 Train', coach: '🚌 Coach', ferry: '⛴ Ferry', cruise: cruiseLabel, hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
   return map[c.type] || esc(c.type);
 }
 
@@ -660,6 +693,36 @@ window.showComponentInfo = (tier, idx) => {
       ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
       ${fareSplitHTML(d, toLocal)}
       <div class="kv" style="margin-top:10px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
+    return;
+  }
+  if (['cruise', 'train', 'coach', 'ferry'].includes(c.type)) {
+    const icon = { cruise: '🛳', train: '🚆', coach: '🚌', ferry: '⛴' }[c.type];
+    const title = c.type === 'cruise' ? (d.miniCruise ? 'Mini cruise' : 'Cruise') : c.type[0].toUpperCase() + c.type.slice(1);
+    const kv = (k, v) => v ? `<div class="kv"><span>${k}</span><span>${esc(String(v))}</span></div>` : '';
+    const included = c.type === 'cruise'
+      ? (d.miniCruise
+        ? 'Return sailing + en-suite cabin + onboard meals. Add an outside cabin, car or excursions at checkout.'
+        : 'Cabin + full-board dining + onboard entertainment. Shore excursions and drinks packages optional.')
+      : (c.type === 'ferry' ? 'Foot-passenger crossing. Add a vehicle, cabin or priority boarding at checkout.'
+        : 'Seat reservation included where available. Seat upgrades and flexible tickets optional at checkout.');
+    modal(`<span class="eyebrow">${title} details · ${esc(c.supplier)}</span>
+      <div class="property-banner"><span class="property-icon">${icon}</span>
+        <div><div style="font-family:'Space Grotesk';font-weight:700;font-size:17px">${esc(c.supplier)}</div>
+          <div class="muted" style="font-size:13px">${esc(d.route || d.region || '')}</div></div></div>
+      <div style="margin-top:12px">
+        ${kv('Route', d.route)}
+        ${kv(c.type === 'cruise' ? 'Nights aboard' : 'Duration', c.type === 'cruise' ? (d.nights ? `${d.nights} night${d.nights > 1 ? 's' : ''}` : '') : d.approxDurationLabel)}
+        ${kv('Cabin', d.cabin)}
+        ${kv('Travel class', d.travelClass)}
+        ${kv('Basis', d.basis)}
+        ${kv('Travellers', d.people ? `${d.people} ${d.people > 1 ? 'people' : 'person'}` : '')}
+        ${d.nightlyUSD ? kv('Per person / night', toLocal(d.nightlyUSD)) : ''}
+        ${kv('Vehicle option', d.vehicleOption)}
+      </div>
+      <p class="muted" style="font-size:12.5px;margin:10px 0">${included}</p>
+      <div class="muted" style="font-size:11.5px">Indicative price — connect a live ${c.type} provider for a bookable quote.</div>
+      <div class="kv" style="margin-top:10px;font-weight:700"><span>Total${d.people ? ` (${d.people} ${d.people > 1 ? 'people' : 'person'})` : ''}</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
     return;
   }
