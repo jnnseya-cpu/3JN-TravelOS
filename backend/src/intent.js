@@ -104,10 +104,28 @@ function buildDates(monthInfo, nights, today = new Date()) {
   };
 }
 
+// Departure city — "from London", "departing Paris", "leaving from Lagos".
+const ORIGIN_STOP = /^(to|in|for|with|on|during|next|this|and|by|the|my|our|a|an|cheapest|cheap|reliable|best|affordable|nights?|days?|weeks?|months?|please|return|one|way|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
+function parseOrigin(text) {
+  const m = (text || '').match(/\b(?:from|departing(?:\s+from)?|leaving(?:\s+from)?|fly(?:ing)?\s+(?:from|out\s+of)|out\s+of)\s+(.+)/i);
+  if (!m) return null;
+  const words = m[1].replace(/[.,!?].*$/, '').split(/\s+/);
+  const out = [];
+  for (const w of words) {
+    const clean = w.replace(/[^A-Za-zÀ-ÿ'’\-]/g, '');
+    if (!clean || ORIGIN_STOP.test(clean) || /^\d/.test(w)) break;
+    out.push(clean);
+    if (out.length >= 3) break;
+  }
+  const name = out.join(' ').trim();
+  return name && name.length > 1 ? name : null;
+}
+
 export function parseIntent(text, ctx = {}, today = new Date()) {
   const raw = (text || '').trim();
   // Worldwide: resolve a catalogue city OR synthesise any destination on Earth.
   const destination = resolveDestinationFromText(raw);
+  const originCity = parseOrigin(raw);
   const travellers = parseTravellers(raw);
   const nights = parseNights(raw);
   const monthInfo = parseMonth(raw);
@@ -135,6 +153,8 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     wantsCheapestReliable,
     priority: wantsCheapestReliable ? 'cheapest-reliable' : 'balanced',
     nationality: ctx.country || 'GB',
+    originCity, // the user's stated departure city (null if not given)
+    recommendedDestination: destination?.recommendedFromCountry || null,
     unresolved: destination ? [] : ['destination'],
   };
 }

@@ -7,7 +7,7 @@
 // "Console Error: {}" class of failures from the previous build).
 
 import { parseIntent } from './intent.js';
-import { findDestination, originForCountry } from './destinations.js';
+import { findDestination, originForCountry, resolveOrigin } from './destinations.js';
 import { scanAll } from './suppliers.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
@@ -32,7 +32,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
 
   // Estimate expected booking value (for the cost-protection gate) from a rough
   // pre-scan of the cheapest combination.
-  const origin = originForCountry(intent.nationality);
+  // Departure: the user's stated city if given, else inferred from nationality.
+  const origin = (intent.originCity && resolveOrigin(intent.originCity)) || originForCountry(intent.nationality);
+  origin.inferred = !intent.originCity;
   const scan = scanAll(intent, intent.destination, origin);
   const expectedBookingUSD = roughTotal(scan);
 
@@ -54,6 +56,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   return {
     stage: 'options',
     intent: publicIntent(intent),
+    origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred },
+    recommendedDestination: intent.recommendedDestination || null,
     context,
     gate: {
       requestedTier: searchTier,

@@ -91,6 +91,13 @@ export function scanFlights(intent, dest, origin) {
     const outboundPerSeat = round(perSeat);
     const inboundPerSeat = round(perSeat * (0.95 + rnd() * 0.2));
     const totalPerSeat = outboundPerSeat + inboundPerSeat;
+    // Deterministic but varied schedule: a flight duration derived from the
+    // route distance, with each leg getting its own departure time.
+    const durationMins = Math.round((120 + distanceFactor * 360) * (1 + (a.premium ? 0 : rnd() * 0.25)));
+    const outStops = a.premium ? 0 : (rnd() > 0.55 ? 1 : 0);
+    const inStops = a.premium ? 0 : (rnd() > 0.55 ? 1 : 0);
+    const outDepartMin = (5 + Math.floor(rnd() * 16)) * 60 + Math.floor(rnd() * 12) * 5; // 05:00–21:55
+    const inDepartMin = (6 + Math.floor(rnd() * 15)) * 60 + Math.floor(rnd() * 12) * 5;
     return {
       type: 'flight',
       supplier: a.name,
@@ -98,30 +105,31 @@ export function scanFlights(intent, dest, origin) {
       reliabilityScore: a.rating,
       premium: a.premium,
       details: {
-        outbound: {
-          from: origin.airport,
-          to: dest.airport,
-          date: intent.dates.checkIn,
-          depart: '08:25',
-          arrive: '17:40',
-          stops: a.premium ? 0 : (rnd() > 0.5 ? 1 : 0),
-          perSeatUSD: outboundPerSeat,
-        },
-        inbound: {
-          from: dest.airport,
-          to: origin.airport,
-          date: intent.dates.checkOut,
-          depart: '21:10',
-          arrive: '06:30',
-          stops: a.premium ? 0 : (rnd() > 0.5 ? 1 : 0),
-          perSeatUSD: inboundPerSeat,
-        },
+        outbound: leg(origin.airport, origin.city, dest.airport, dest.city, intent.dates.checkIn, outDepartMin, durationMins + outStops * 80, outStops, outboundPerSeat),
+        inbound: leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + inStops * 80, inStops, inboundPerSeat),
         passengers: pax,
-        baggage: a.premium ? '2 x 30kg' : '1 x 23kg',
+        cabin: a.premium ? 'Economy (upgradable)' : 'Economy',
+        baggage: a.premium ? '2 x 30kg checked + cabin' : '1 x 23kg checked + cabin',
       },
       priceUSD: round(totalPerSeat * pax),
     };
   });
+}
+
+// Build one flight leg with real-looking departure/arrival clock times.
+function fmtMin(total) {
+  const m = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+function leg(fromAirport, fromCity, toAirport, toCity, date, departMin, durationMin, stops, perSeatUSD) {
+  const arriveMin = departMin + durationMin;
+  const nextDay = arriveMin >= 1440;
+  return {
+    from: fromAirport, fromCity, to: toAirport, toCity, date,
+    depart: fmtMin(departMin), arrive: fmtMin(arriveMin), arriveNextDay: nextDay,
+    durationMins: durationMin, durationLabel: `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`,
+    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop`, perSeatUSD,
+  };
 }
 
 // --- Hotels & private hosts ------------------------------------------------
@@ -144,6 +152,14 @@ export function scanHotels(intent, dest) {
         nightlyUSD: round(nightly),
         board: h.stars >= 4 ? 'Breakfast included' : 'Room only',
         freeCancellation: h.stars >= 3,
+        roomType: h.stars >= 5 ? 'Deluxe Room, City View' : h.stars >= 4 ? 'Superior Double Room' : 'Standard Double Room',
+        area: pick(AREAS, rnd, dest.city),
+        distanceToCentreKm: Math.round((0.4 + rnd() * 5) * 10) / 10,
+        guestRating: Math.round((78 + rnd() * 20)) / 10, // /10 scale e.g. 8.6
+        reviews: 200 + Math.floor(rnd() * 4800),
+        amenities: amenitiesFor(rnd, h.stars),
+        images: hotelImages(dest.city, `${h.name}-${dest.code}`),
+        description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${pick(AREAS, rnd, dest.city)}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
       },
       priceUSD: round(nightly * nights * rooms),
     };
@@ -164,11 +180,41 @@ export function scanHotels(intent, dest) {
       board: 'Self-catering, full kitchen',
       freeCancellation: true,
       sleeps: intent.travellers.total + 1,
+      roomType: `Entire apartment · sleeps ${intent.travellers.total + 1}`,
+      area: pick(AREAS, rnd, dest.city),
+      distanceToCentreKm: Math.round((0.3 + rnd() * 3) * 10) / 10,
+      guestRating: Math.round((86 + rnd() * 12)) / 10,
+      reviews: 60 + Math.floor(rnd() * 900),
+      amenities: ['Full kitchen', 'Free WiFi', 'Washing machine', 'Self check-in', 'Workspace', 'Family friendly'],
+      images: hotelImages(dest.city, `host-${dest.code}`),
+      description: `A verified entire apartment in ${dest.city} with a full kitchen — great value and space for your group.`,
     },
     priceUSD: round(hostNightly * nights),
   });
 
   return hotels;
+}
+
+// Hotel enrichment helpers.
+const AREAS = ['City Centre', 'Downtown', 'Old Town', 'Business District', 'Riverside', 'Marina', 'Near the airport', 'Cultural Quarter'];
+const AMENITY_POOL = ['Free WiFi', 'Swimming pool', 'Spa & wellness', 'Fitness centre', 'Restaurant', 'Bar / lounge', 'Airport shuttle', 'Breakfast available', 'Family rooms', 'Air conditioning', '24/7 reception', 'Free parking', 'Room service', 'Concierge'];
+function pick(arr, rnd, salt) {
+  let s = 0; for (let i = 0; i < (salt || '').length; i++) s += salt.charCodeAt(i);
+  return arr[(s + Math.floor(rnd() * arr.length)) % arr.length];
+}
+function amenitiesFor(rnd, stars) {
+  const n = Math.min(AMENITY_POOL.length, 4 + stars);
+  const pool = [...AMENITY_POOL];
+  const out = [];
+  while (out.length < n && pool.length) out.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
+  return out;
+}
+// City-relevant, deterministic image URLs (load in a deployment with outbound
+// network; the frontend shows a gradient fallback if a provider is unreachable).
+function hotelImages(city, lockSeed) {
+  let base = 0; for (let i = 0; i < lockSeed.length; i++) base = (base * 31 + lockSeed.charCodeAt(i)) % 100000;
+  const q = encodeURIComponent(city + ',hotel');
+  return [0, 1, 2, 3].map((i) => `https://loremflickr.com/640/420/${q}/all?lock=${base + i}`);
 }
 
 // Build destination-appropriate activity names — curated experiences for a
