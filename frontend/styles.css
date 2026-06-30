@@ -74,10 +74,10 @@ header.nav {
 .nav-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 66px; }
 .brand { display: flex; align-items: center; gap: 10px; font-family: 'Space Grotesk'; font-weight: 700; font-size: 18px; cursor: pointer; flex-shrink: 0; }
 .brand .logo {
-  width: 30px; height: 30px; border-radius: 9px;
-  background: linear-gradient(135deg, var(--gold), #9a7b35);
-  display: grid; place-items: center; color: #1a1304; font-weight: 800; font-size: 14px;
-  box-shadow: 0 0 22px rgba(216,180,106,0.4);
+  width: 34px; height: 34px; border-radius: 9px;
+  object-fit: cover; display: block;
+  border: 1px solid rgba(216,180,106,0.30);
+  box-shadow: 0 0 22px rgba(216,180,106,0.35);
 }
 .nav-menu { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex: 1; min-width: 0; }
 .nav-links { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: center; }

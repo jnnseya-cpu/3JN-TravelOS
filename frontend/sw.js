@@ -11,7 +11,7 @@
  *
  * Bump CACHE_VERSION to force every client to drop old caches on next load.
  */
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const STATIC_CACHE = `3jn-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `3jn-runtime-${CACHE_VERSION}`;
 
@@ -24,6 +24,7 @@ const PRECACHE_URLS = [
   '/config.js',
   '/firebase-config.js',
   '/manifest.webmanifest',
+  '/logo.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/favicon.png',
