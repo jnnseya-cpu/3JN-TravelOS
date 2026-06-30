@@ -22,6 +22,8 @@ import { listNotifications, pushNotification, recordVisaApplication, govAnalytic
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
+import http from 'node:http';
+import { app } from '../src/server.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
 
@@ -351,6 +353,41 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('RBAC: admin & business areas reject the public and consumers, allow admins', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const get = (p, h = {}) => fetch(base + p, { headers: h }).then((r) => r.status);
+  try {
+    // Public (no identity) is forbidden from privileged endpoints.
+    assert.equal(await get('/api/admin/overview'), 403);
+    assert.equal(await get('/api/admin/users'), 403);
+    assert.equal(await get('/api/business/approvals'), 403);
+    assert.equal(await get('/api/white-label/payout'), 403);
+
+    // A consumer is also forbidden.
+    const consumer = createUser({ name: 'RbacJoe' });
+    assert.equal(await get('/api/admin/overview', { 'x-user-id': consumer.id }), 403);
+    assert.equal(await get('/api/business/approvals', { 'x-user-id': consumer.id }), 403);
+
+    // An admin (and the full-access demo profile) may proceed.
+    const admin = createUser({ name: 'RbacAdmin', role: 'admin', allAccess: true });
+    assert.equal(await get('/api/admin/overview', { 'x-user-id': admin.id }), 200);
+    assert.equal(await get('/api/admin/users', { 'x-user-id': admin.id }), 200);
+    assert.equal(await get('/api/business/approvals', { 'x-user-id': admin.id }), 200);
+
+    // A business user reaches business but NOT admin.
+    const biz = createUser({ name: 'RbacBiz', role: 'business' });
+    assert.equal(await get('/api/business/contracts', { 'x-user-id': biz.id }), 200);
+    assert.equal(await get('/api/admin/overview', { 'x-user-id': biz.id }), 403);
+
+    // Public endpoints remain open.
+    assert.equal(await get('/api/context'), 200);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('behavioural learning: different regions get different default destinations', () => {

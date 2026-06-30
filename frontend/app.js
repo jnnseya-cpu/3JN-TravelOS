@@ -75,7 +75,24 @@ window.closeModal = () => $('#modalBg').classList.remove('show');
 $('#modalBg').addEventListener('click', (e) => { if (e.target.id === 'modalBg') closeModal(); });
 
 // ---- View routing ---------------------------------------------------------
+// Which roles may open each restricted view (mirrors the backend role guard).
+const VIEW_ROLES = { admin: ['admin'], business: ['business', 'admin'] };
+function canAccessView(view) {
+  const roles = VIEW_ROLES[view];
+  if (!roles) return true;
+  const u = state.user;
+  return !!u && (u.allAccess || roles.includes(u.role));
+}
+
 function nav(view) {
+  // Block privileged views for the public — redirect home with a prompt.
+  if (!canAccessView(view)) {
+    const roles = VIEW_ROLES[view].join(' or ');
+    toast(`The ${view} area requires a ${roles} account. Please sign in.`);
+    if (!state.user) openAuth();
+    view = 'home';
+  }
+  state.lastView = view;
   $$('.view').forEach((v) => v.classList.remove('active'));
   const el = $(`#view-${view}`);
   if (el) el.classList.add('active');
@@ -230,7 +247,8 @@ async function boot() {
     }
   } catch { /* toast already shown */ }
   refreshNotifications();
-  restoreSession();
+  await restoreSession();
+  applyRoleVisibility();
   applyDeepLink();
   refreshJourney();
 }
@@ -871,15 +889,27 @@ window.submitReview = async (bookingId) => {
   toast(`✓ Review saved for ${supplier}.`);
 };
 
+// Access-denied panel for restricted views.
+function accessGate(out, area, roles) {
+  out.innerHTML = `<div class="card pad center" style="max-width:520px;margin:0 auto">
+    <div style="font-size:34px">🔒</div>
+    <h3 style="margin:10px 0 6px">${area} access required</h3>
+    <p class="muted" style="font-size:14px">This area is restricted to <strong>${roles}</strong> accounts and isn't part of the public site.</p>
+    <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth()">Sign in</button>
+    <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
+  </div>`;
+}
+
 // ---- Admin Super Control Centre -------------------------------------------
 async function renderAdmin() {
   const out = $('#adminOut');
+  if (!canAccessView('admin')) { accessGate(out, 'Admin', 'admin'); return; }
   let data, auditData, sec, ops, seo, mkt;
   try {
     data = await api('/api/admin/overview'); auditData = await api('/api/admin/audit?limit=20');
     sec = (await api('/api/agents/security')).report; ops = (await api('/api/agents/ops')).report;
     seo = (await api('/api/agents/seo')).report; mkt = (await api('/api/agents/marketing')).report;
-  } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  } catch { accessGate(out, 'Admin', 'admin'); return; }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -1159,8 +1189,9 @@ async function renderVisaGov() {
 // ---- Business / Enterprise Command Centre ---------------------------------
 async function renderBusiness() {
   const out = $('#businessOut');
+  if (!canAccessView('business')) { accessGate(out, 'Business', 'business or admin'); return; }
   let data, contractData;
-  try { data = await api('/api/business/approvals'); contractData = await api('/api/business/contracts'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  try { data = await api('/api/business/approvals'); contractData = await api('/api/business/contracts'); } catch { accessGate(out, 'Business', 'business or admin'); return; }
   const bookings = data.bookings || [];
   const approvals = data.approvals || [];
   const contracts = contractData.contracts || [];
@@ -1248,6 +1279,18 @@ window.buyAcu = async (pack) => {
   if ($('#view-console').classList.contains('active')) renderConsole();
 };
 
+// Show/hide role-restricted nav links (Admin, Business) based on the signed-in
+// user's role. Privileged areas are NOT shown to the public — the backend also
+// enforces this, so hiding the link is purely UX.
+function applyRoleVisibility() {
+  const u = state.user;
+  $$('.role-link').forEach((el) => {
+    const roles = (el.dataset.roles || '').split(',').map((r) => r.trim()).filter(Boolean);
+    const allowed = !!u && (u.allAccess || roles.includes(u.role));
+    el.classList.toggle('hidden', !allowed);
+  });
+}
+
 function setUser(u) {
   state.user = u;
   const chip = $('#userChip');
@@ -1255,6 +1298,7 @@ function setUser(u) {
   chip.innerHTML = `${avatarHTML(u, 22)} ${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
   try { localStorage.setItem('3jn_uid', u.id); } catch {}
   const signBtn = $('#signBtn'); if (signBtn) signBtn.textContent = 'Sign out';
+  applyRoleVisibility();
   refreshNotifications();
 }
 async function restoreSession() {
@@ -1265,7 +1309,10 @@ async function restoreSession() {
 window.signOut = () => {
   try { localStorage.removeItem('3jn_uid'); } catch {}
   if (window.firebaseAuth?.available) { try { window.firebaseAuth.signOut(); } catch {} }
-  state.user = null; $('#userChip').classList.add('hidden'); $('#signBtn').textContent = 'Sign in'; toast('Signed out.');
+  state.user = null; $('#userChip').classList.add('hidden'); $('#signBtn').textContent = 'Sign in';
+  applyRoleVisibility();
+  if (state.lastView === 'admin' || state.lastView === 'business') nav('home');
+  toast('Signed out.');
 };
 
 // ---- Login / Signup -------------------------------------------------------
