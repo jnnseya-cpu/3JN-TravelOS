@@ -426,7 +426,7 @@ function renderOptions(data) {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;align-items:center">
         <div>
           <span class="eyebrow">Trip understood</span>
-          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${intent.destination.city}, ${intent.destination.countryName}</div>
+          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${intent.destination.city}${intent.destination.countryName ? ', ' + intent.destination.countryName : ''}</div>
           <div class="muted" style="font-size:13.5px">${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} children` : ''} · ${intent.nights} nights · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
         </div>
         <div style="text-align:right">
@@ -1208,32 +1208,75 @@ window.planDest = (city) => {
 $('#visaTabApply')?.addEventListener('click', renderVisaApply);
 $('#visaTabGov')?.addEventListener('click', renderVisaGov);
 
-function renderVisaApply() {
+// Fields the applicant must complete. `req: true` means it gates the AI run.
+const VISA_FORM_FIELDS = [
+  { key: 'fullName', label: 'Full legal name', req: true },
+  { key: 'dob', label: 'Date of birth', type: 'date', req: true },
+  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Other'] },
+  { key: 'nationality', label: 'Nationality', type: 'country', req: true },
+  { key: 'passportNumber', label: 'Passport number', req: true },
+  { key: 'passportExpiry', label: 'Passport expiry', type: 'date', req: true },
+  { key: 'passportCountry', label: 'Passport issuing country', type: 'country' },
+  { key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'] },
+  { key: 'address', label: 'Current address', req: true },
+  { key: 'email', label: 'Email', req: true },
+  { key: 'phone', label: 'Phone number' },
+  { key: 'occupation', label: 'Occupation', req: true },
+  { key: 'employer', label: 'Employer / school' },
+  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number' },
+  { key: 'travelHistory', label: 'Travel history (10y)' },
+  { key: 'previousRefusals', label: 'Previous visa refusals', type: 'select', options: ['None', 'Yes — declared'] },
+  { key: 'criminalHistory', label: 'Criminal history', type: 'select', options: ['None', 'Yes — declared'] },
+  { key: 'overstayHistory', label: 'Overstay history', type: 'select', options: ['None', 'Yes — declared'] },
+  { key: 'arrival', label: 'Planned arrival', type: 'date' },
+  { key: 'departure', label: 'Planned departure', type: 'date' },
+  { key: 'accommodation', label: 'Accommodation' },
+  { key: 'fundingSource', label: 'Funding source', type: 'select', options: ['Self', 'Employer', 'Sponsor', 'Scholarship', 'Family'] },
+];
+
+function visaFieldHTML(f) {
+  const id = `vf_${f.key}`;
+  const star = f.req ? ' <span style="color:var(--gold)">*</span>' : '';
+  let input;
+  if (f.type === 'country') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${countryOptions(f.key === 'nationality' ? 'NG' : '')}</select>`;
+  else if (f.type === 'select') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${f.options.map((o) => `<option>${o}</option>`).join('')}</select>`;
+  else input = `<input class="in vf" id="${id}" data-req="${!!f.req}" type="${f.type || 'text'}">`;
+  return `<div class="field"><label>${esc(f.label)}${star}</label>${input}</div>`;
+}
+
+async function renderVisaApply() {
   const out = $('#visaosOut');
   if (!out) return;
+  // Visa application is a signed-in dashboard feature — not a public page.
+  if (!state.user) {
+    out.innerHTML = `<div class="card pad center" style="max-width:540px;margin:0 auto">
+      <div style="font-size:34px">🔒</div>
+      <h3 style="margin:10px 0 6px">Sign in to start a visa application</h3>
+      <p class="muted" style="font-size:14px">The Visa Application is part of your private dashboard. Your documents and identity data stay in your account.</p>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth()">Sign in</button>
+      <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
+    </div>`;
+    return;
+  }
   out.innerHTML = `
     <div class="planner-shell">
       <div class="card pad">
-        <span class="eyebrow">Digital Visa Application</span>
-        <p class="muted" style="font-size:12.5px">Submit once — the agent swarm verifies and decides. Toggle the verification signals to see how the engine reacts (these simulate the agents' upstream findings).</p>
-        <div class="composer-row" style="margin-top:8px">
-          <div class="field"><label>Full name</label><input class="in" id="vName" value="Daniel Okoro"></div>
-          <div class="field"><label>Nationality</label>
-            <select class="in" id="vNat"><option>GB</option><option>US</option><option selected>NG</option><option>IN</option><option>FR</option></select></div>
-          <div class="field"><label>Destination</label>
-            <select class="in" id="vDest"><option selected>Dubai</option><option>Istanbul</option><option>Barcelona</option><option>New York</option><option>Bali</option></select></div>
-          <div class="field"><label>Visa country</label>
-            <select class="in" id="vCountry">${VISA_COUNTRIES.map((c) => `<option value="${c.code}"${c.code === 'AE' ? ' selected' : ''}>${c.flag} ${c.name}</option>`).join('')}</select></div>
-          <div class="field"><label>Visa type</label>
-            <select class="in" id="vType">${VISA_TYPES_FE.map((t) => `<option value="${t.key}">${t.icon} ${t.name}</option>`).join('')}</select></div>
-          <div class="field"><label>Purpose</label>
-            <select class="in" id="vPurpose"><option>tourism</option><option>business</option><option>study</option><option>family visit</option><option>medical</option><option>conference</option></select></div>
-          <div class="field"><label>Age</label><input class="in" id="vAge" value="34" style="width:70px"></div>
-          <div class="field"><label>Employer</label><input class="in" id="vEmployer" value="GE Aerospace"></div>
-          <div class="field"><label>Monthly income (USD)</label><input class="in" id="vIncome" value="4200" style="width:120px"></div>
-          <div class="field"><label>Home ties</label><select class="in" id="vTies"><option value="strong">strong</option><option value="moderate">moderate</option><option value="weak">weak</option></select></div>
+        <span class="eyebrow">Digital Visa Application · private dashboard</span>
+        <p class="muted" style="font-size:12.5px">Complete every required field <strong>and attach every document</strong>. The AI decision swarm only runs once your file is 100% complete. <span class="muted">* = required</span></p>
+
+        <div style="margin-top:12px"><span class="eyebrow">Trip & visa</span></div>
+        <div class="composer-row" style="margin-top:6px">
+          <div class="field"><label>Destination country <span style="color:var(--gold)">*</span></label><select class="in vf" id="vf_destination" data-req="true"><option value="">— select —</option>${countryOptions('AE')}</select></div>
+          <div class="field"><label>Visa country</label><select class="in" id="vCountry">${VISA_COUNTRIES.map((c) => `<option value="${c.code}"${c.code === 'AE' ? ' selected' : ''}>${c.flag} ${esc(c.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Visa type</label><select class="in" id="vType">${VISA_TYPES_FE.map((t) => `<option value="${t.key}">${t.icon} ${esc(t.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Purpose <span style="color:var(--gold)">*</span></label><select class="in vf" id="vf_purpose" data-req="true"><option value="">— select —</option>${['tourism', 'business', 'study', 'work', 'family', 'medical', 'transit'].map((p) => `<option>${p}</option>`).join('')}</select></div>
         </div>
-        <div class="chips" style="margin-top:12px" id="vSignals">
+
+        <div style="margin-top:14px"><span class="eyebrow">Applicant information</span></div>
+        <div class="composer-row" style="margin-top:6px">${VISA_FORM_FIELDS.map(visaFieldHTML).join('')}</div>
+
+        <div style="margin-top:14px"><span class="eyebrow">Verification signals (simulate upstream agent findings)</span></div>
+        <div class="chips" style="margin-top:8px" id="vSignals">
           ${signalToggle('documentsAuthentic', 'Documents authentic', true)}
           ${signalToggle('fundsConsistent', 'Funds consistent', true)}
           ${signalToggle('footprintMatches', 'Footprint matches', true)}
@@ -1245,17 +1288,69 @@ function renderVisaApply() {
         </div>
         <div class="field" style="margin-top:12px"><label>Behaviour: hesitation around employment (0=calm, 100=evasive) — <span id="vBehLbl">10</span></label>
           <input type="range" id="vBeh" min="0" max="100" value="10" oninput="document.getElementById('vBehLbl').textContent=this.value"></div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
-          <button class="btn btn-ghost" id="vChecklist">📋 Required documents</button>
-          <button class="btn btn-gold" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+
+        <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span class="eyebrow" style="margin:0">Required documents — attach each one</span>
+          <span class="muted" style="font-size:12px" id="vDocsHint">Select destination & visa type to load the checklist</span>
         </div>
+        <div id="vDocs" style="margin-top:8px"><div class="muted" style="font-size:13px"><span class="loader"></span> Loading checklist…</div></div>
+
+        <div class="rel-bar" style="margin:14px 0 6px"><i id="vProgressBar" style="width:0%"></i></div>
+        <div class="muted" style="font-size:12.5px" id="vProgress">—</div>
+        <button class="btn btn-gold" id="vSubmit" style="margin-top:12px" disabled>▶ Run Visa Decision Agent Swarm</button>
+        <div class="muted" style="font-size:11.5px;margin-top:6px" id="vGateNote">Complete all required fields and attach all documents to enable the AI run.</div>
       </div>
-      <div id="visaChecklistOut" style="margin-top:16px"></div>
       <div id="visaDecision" style="margin-top:20px"></div>
     </div>`;
+
   $('#vSubmit').addEventListener('click', submitVisa);
-  $('#vChecklist').addEventListener('click', showVisaChecklist);
+  // Re-evaluate the gate on every change; reload documents when trip/type changes.
+  out.querySelectorAll('.vf').forEach((el) => el.addEventListener('input', updateVisaGate));
+  $('#vf_destination').addEventListener('change', loadVisaDocs);
+  $('#vCountry').addEventListener('change', loadVisaDocs);
+  $('#vType').addEventListener('change', loadVisaDocs);
+  loadVisaDocs();
 }
+
+// Load the country/type-specific checklist and render each document as an
+// attach-toggle. The AI run stays locked until every document is attached.
+async function loadVisaDocs() {
+  const box = $('#vDocs');
+  if (!box) return;
+  box.innerHTML = '<div class="muted" style="font-size:13px"><span class="loader"></span> Building checklist…</div>';
+  let d;
+  try {
+    d = await api('/api/visa/checklist', { method: 'POST', body: JSON.stringify({ country: $('#vCountry').value, visaType: $('#vType').value, applicant: applicantFromForm() }) });
+  } catch { return; }
+  const hint = $('#vDocsHint'); if (hint) hint.textContent = `${d.totalDocuments} documents${d.country ? ' · ' + d.country.name : ''}`;
+  let idx = 0;
+  box.innerHTML = d.sections.map((s) => `
+    <div style="margin-top:10px"><div class="muted" style="font-size:12px;font-weight:600">${esc(s.title)} · ${s.items.length}</div>
+      ${s.items.map((it) => {
+        const id = `vdoc_${idx++}`;
+        return `<label for="${id}" class="vdoc-row"><input type="checkbox" class="vdoc-check" id="${id}" onchange="updateVisaGate()"> <span>${esc(it)}</span> <span class="vdoc-tag">attach</span></label>`;
+      }).join('')}</div>`).join('');
+  updateVisaGate();
+}
+
+// Gate: enable the AI run ONLY when all required fields are filled AND every
+// document is attached.
+function updateVisaGate() {
+  const reqEls = [...document.querySelectorAll('.vf[data-req="true"]')];
+  const filled = reqEls.filter((el) => el.value && el.value.trim());
+  const docs = [...document.querySelectorAll('.vdoc-check')];
+  const attached = docs.filter((c) => c.checked);
+  const ready = reqEls.length > 0 && filled.length === reqEls.length && docs.length > 0 && attached.length === docs.length;
+  const btn = $('#vSubmit'); if (btn) btn.disabled = !ready;
+  const bar = $('#vProgressBar');
+  const totalItems = reqEls.length + docs.length;
+  const done = filled.length + attached.length;
+  if (bar) bar.style.width = totalItems ? Math.round((done / totalItems) * 100) + '%' : '0%';
+  const prog = $('#vProgress');
+  if (prog) prog.innerHTML = `Fields ${filled.length}/${reqEls.length} · Documents ${attached.length}/${docs.length}` + (ready ? ' · <span style="color:var(--green)">✓ file complete — AI ready</span>' : '');
+  const note = $('#vGateNote'); if (note) note.style.display = ready ? 'none' : 'block';
+}
+window.updateVisaGate = updateVisaGate;
 
 // Visa framework metadata (mirrors backend visa-framework.js).
 const VISA_COUNTRIES = [
@@ -1275,17 +1370,46 @@ const VISA_TYPES_FE = [
   { key: 'transit', name: 'Transit', icon: '🛫' },
 ];
 
+// Full ISO 3166-1 alpha-2 code list. Names + flags are derived at runtime from
+// the browser (Intl.DisplayNames + regional-indicator emoji) so we don't ship a
+// long hard-coded name table.
+const COUNTRY_CODES = ('AF AL DZ AD AO AG AR AM AU AT AZ BS BH BD BB BY BE BZ BJ BT BO BA BW BR BN BG BF BI CV KH CM CA CF TD CL CN CO KM CG CD CR CI HR CU CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FJ FI FR GA GM GE DE GH GR GD GT GN GW GY HT HN HU IS IN ID IR IQ IE IL IT JM JP JO KZ KE KI KW KG LA LV LB LS LR LY LI LT LU MG MW MY MV ML MT MH MR MU MX FM MD MC MN ME MA MZ MM NA NR NP NL NZ NI NE NG MK NO OM PK PW PA PG PY PE PH PL PT QA RO RU RW KN LC VC WS SM ST SA SN RS SC SL SG SK SI SB SO ZA KR SS ES LK SD SR SE CH SY TW TJ TZ TH TL TG TO TT TN TR TM TV UG UA AE GB US UY UZ VU VE VN YE ZM ZW').split(' ');
+let __regionNames; try { __regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); } catch { __regionNames = null; }
+function countryName(code) { try { return __regionNames ? __regionNames.of(code) : code; } catch { return code; } }
+function flagEmoji(code) { return /^[A-Z]{2}$/.test(code) ? code.replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0))) : '🏳️'; }
+function countryOptions(selected) {
+  return COUNTRY_CODES
+    .map((c) => ({ code: c, name: countryName(c) }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => `<option value="${c.code}"${c.code === selected ? ' selected' : ''}>${flagEmoji(c.code)} ${esc(c.name)}</option>`)
+    .join('');
+}
+
+function ageOf(dob) {
+  if (!dob) return undefined;
+  const t = Date.parse(dob);
+  if (Number.isNaN(t)) return undefined;
+  return Math.floor((Date.now() - t) / (365.25 * 24 * 3600 * 1000));
+}
 function applicantFromForm() {
   const sig = {};
   $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
+  const v = (k) => { const el = $(`#vf_${k}`); return el ? el.value.trim() : ''; };
   return {
-    fullName: $('#vName').value, name: $('#vName').value,
-    nationality: $('#vNat').value, destination: $('#vDest').value,
-    purpose: $('#vPurpose').value, age: Number($('#vAge').value),
-    occupation: $('#vEmployer').value, employer: $('#vEmployer').value,
-    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
-    maritalStatus: 'Single',
-    behaviourHesitation: Number($('#vBeh').value), ...sig,
+    fullName: v('fullName'), name: v('fullName') || 'Applicant',
+    nationality: v('nationality') || 'GB',
+    destination: v('destination') ? countryName(v('destination')) : '',
+    purpose: v('purpose') || 'tourism',
+    age: ageOf(v('dob')),
+    dob: v('dob'),
+    occupation: v('occupation'), employer: v('employer'),
+    monthlyIncome: Number(v('monthlyIncome')) || 0,
+    maritalStatus: v('maritalStatus') || 'Single',
+    passportNumber: v('passportNumber'), passportExpiry: v('passportExpiry'),
+    previousRefusals: v('previousRefusals'),
+    overstayHistory: v('overstayHistory'),
+    homeTies: 'strong',
+    behaviourHesitation: Number($('#vBeh')?.value) || 10, ...sig,
   };
 }
 

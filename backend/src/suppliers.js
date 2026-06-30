@@ -9,7 +9,7 @@
 // Every supplier carries a reliabilityScore (0-100) and a verified flag — the
 // brief requires "cheapest *reliable*" and "only verified packages".
 
-import { visaRule } from './destinations.js';
+import { visaRule, destExperiences } from './destinations.js';
 import { applySourcing } from './partners.js';
 import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
 
@@ -149,11 +149,11 @@ export function scanHotels(intent, dest) {
     };
   });
 
-  // Private host (Airbnb-style) — one strong option.
+  // Private host (Airbnb-style) — one strong option, named for the destination.
   const hostNightly = dest.hotelNightBaseUSD * 0.8 * (0.8 + rnd() * 0.3);
   hotels.push({
     type: 'host',
-    supplier: 'Verified Private Host — Marina Apartment',
+    supplier: `Verified Private Host — ${dest.city} Apartment`,
     verified: true,
     reliabilityScore: 86,
     stars: 4,
@@ -171,17 +171,33 @@ export function scanHotels(intent, dest) {
   return hotels;
 }
 
+// Build destination-appropriate activity names — curated experiences for a
+// catalogue city, generic city-based ones for anywhere else on Earth.
+function activityNames(dest) {
+  const city = dest.city;
+  const generic = [`${city} City Highlights Tour`, `${city} Food & Culture Walk`, `Day Trip from ${city}`, `${city} Landmarks & Museums`, `${city} Evening Experience`];
+  const exp = destExperiences(dest.code);
+  if (exp.length) {
+    const out = exp.slice();
+    let i = 0;
+    while (out.length < 5) out.push(generic[i++ % generic.length]);
+    return out;
+  }
+  return generic;
+}
+
 // --- Activities ------------------------------------------------------------
 export function scanActivities(intent, dest) {
   const rnd = seeded(`act-${dest.code}-${intent.dates.checkIn}`);
   const people = intent.travellers.total;
+  const names = activityNames(dest);
   // Pick a handful of activities scaled to the trip length.
   const count = Math.min(ACTIVITY_CATALOG.length, Math.max(2, Math.round(intent.nights / 2)));
-  return ACTIVITY_CATALOG.slice(0, count).map((act) => {
+  return ACTIVITY_CATALOG.slice(0, count).map((act, i) => {
     const perPerson = dest.activityBaseUSD * act.mult * (0.9 + rnd() * 0.2);
     return {
       type: 'activity',
-      supplier: act.name,
+      supplier: names[i] || `${dest.city} Experience ${i + 1}`,
       verified: act.verified,
       reliabilityScore: act.rating,
       details: { perPersonUSD: round(perPerson), people },

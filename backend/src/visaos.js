@@ -8,7 +8,7 @@
 // same decision — auditable and testable. In production each agent would call
 // document-forensics, biometric, OSINT, watchlist and behavioural services.
 
-import { findDestination, visaRule, DESTINATIONS } from './destinations.js';
+import { findDestination, visaRule, DESTINATIONS, resolveDestination } from './destinations.js';
 
 function seed(str) {
   let s = 0;
@@ -126,7 +126,7 @@ function normalise(app) {
 // Pre-booking integration: approval probability for a nationality+destination,
 // so the travel planner can show "Visa approval probability: X%" before booking.
 export function approvalProbability(nationality, destinationText) {
-  const dest = findDestination(destinationText) || (DESTINATIONS[destinationText] && { code: destinationText, ...DESTINATIONS[destinationText] });
+  const dest = resolveDestination(destinationText);
   if (!dest) return { ok: false, error: 'unknown-destination' };
   const rule = visaRule(dest, (nationality || 'GB').toUpperCase());
   const rnd = seed(`prob-${nationality}-${dest.code}`);
