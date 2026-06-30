@@ -141,8 +141,23 @@ async function boot() {
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
     sel.value = state.context.context.country;
     state.country = sel.value;
-    sel.addEventListener('change', () => { state.country = sel.value; });
+    sel.addEventListener('change', () => { state.country = sel.value; syncCurrency(sel.value); });
+
+    // Footer currency selector mirrors the planner country/currency.
+    const fc = $('#footerCurrency');
+    if (fc) {
+      fc.innerHTML = state.context.currencies
+        .map((c) => `<option value="${c.country}">${c.code} ${c.symbol}</option>`).join('');
+      fc.value = state.context.context.country;
+      fc.addEventListener('change', () => { state.country = fc.value; sel.value = fc.value; toast(`Currency set to ${fc.options[fc.selectedIndex].text.trim()}.`); });
+    }
+    const lang = $('#langSelect');
+    if (lang) lang.addEventListener('change', () => toast(`Language: ${lang.options[lang.selectedIndex].text}. (Full i18n in roadmap — EN/FR/SW/LN/AR.)`));
   } catch { /* toast already shown */ }
+}
+function syncCurrency(country) {
+  const fc = $('#footerCurrency');
+  if (fc) fc.value = country;
 }
 
 // ---- Planner --------------------------------------------------------------
@@ -246,7 +261,7 @@ function renderOptions(data) {
 function optionCard(o, sym, intent) {
   const p = o.pricing;
   const comps = o.components.map((c) => {
-    const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}</span>` : '';
+    const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}" title="${c.agent && c.agentId ? '3JN agent account ' + c.agentId : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}${c.agent && c.agentId ? ' · ' + c.agentId : ''}</span>` : '';
     return `
     <li><span class="cs">${labelFor(c)} <span class="muted">· ${c.supplier}</span> ${src}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');

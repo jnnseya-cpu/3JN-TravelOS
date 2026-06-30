@@ -15,6 +15,7 @@ import {
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
+import { gatewayStatus } from './ai-gateway.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -154,6 +155,11 @@ app.get('/api/white-label/payout', safe((req, res) => {
 // ---- Admin / profitability snapshot --------------------------------------
 app.get('/api/admin/revenue', safe((req, res) => {
   res.json({ snapshot: revenueSnapshot(), revenueStreams: REVENUE_STREAMS });
+}));
+
+// ---- AI Gateway status (which provider handles which task) ----------------
+app.get('/api/ai/status', safe((req, res) => {
+  res.json({ gateway: gatewayStatus() });
 }));
 
 // ---- Public "white-label" partner endpoint (returns a package) -----------

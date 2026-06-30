@@ -1,0 +1,22 @@
+# One-click backend deploy on Render (https://render.com).
+# Render reads this blueprint and provisions the service.
+services:
+  - type: web
+    name: 3jn-travel-os-api
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --omit=dev
+    startCommand: node backend/src/server.js
+    healthCheckPath: /api/context
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Secrets — set these in the Render dashboard, never in the repo.
+      - key: RAYNA_AGENT_PASSWORD
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

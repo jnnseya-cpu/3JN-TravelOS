@@ -11,6 +11,7 @@ import { findDestination, originForCountry } from './destinations.js';
 import { scanAll } from './suppliers.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
+import { route } from './ai-gateway.js';
 
 export function plan({ text, context, user, searchTier = 'smart', overrides = {} }) {
   const intent = parseIntent(text, context, new Date(Date.UTC(2026, 5, 30)));
@@ -63,6 +64,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       requirement: gate.requirement || null,
     },
     scanSummary: summariseScan(scan),
+    // Which AI provider the gateway routes intent extraction to (Claude by
+    // default; OpenAI/Gemini for other tasks). Runs locally when no key is set.
+    aiRouting: route('intentExtraction'),
     packages,
     questions: [], // none outstanding
   };

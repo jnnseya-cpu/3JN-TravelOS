@@ -122,6 +122,7 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
       sourcedType: s.sourcedType,
       bookingUrl: s.bookingUrl,
       agent: s.agent,
+      agentId: s.agentId,
     })),
     pricing: breakdown,
     totalUSD: breakdown.lines.totalUSD,

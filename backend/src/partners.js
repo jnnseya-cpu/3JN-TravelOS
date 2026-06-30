@@ -9,13 +9,29 @@
 // Rayna Tours is configured as the primary AGENT ACCOUNT for Dubai/UAE land
 // products (activities, attraction tickets, transfers, visa, boat charters):
 // the user asked to "book from here on the account of agent".
+//
+// The 3JN Rayna B2B agent account is configured below. The agent id, email and
+// portal are non-secret identifiers and may carry defaults; the API
+// key/password is a SECRET and is read from the environment ONLY — it is never
+// committed. Provide RAYNA_AGENT_PASSWORD / RAYNA_API_KEY via env (see
+// .env.example) for a live integration.
+const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
+export const RAYNA_AGENT = {
+  portal: env.RAYNA_PORTAL_URL || 'https://raynab2b.com/',
+  agentId: env.RAYNA_AGENT_ID || 'AGT-48973',
+  email: env.RAYNA_AGENT_EMAIL || 'info@3jntravel.com',
+  // Secrets — env only, no default, never logged or sent to the client.
+  hasCredentials: Boolean(env.RAYNA_AGENT_PASSWORD || env.RAYNA_API_KEY),
+};
 
 export const PARTNERS = {
   rayna: {
     id: 'rayna',
     name: 'Rayna Tours',
     type: 'agent',                 // 3JN books on its agent account at net rates
-    url: 'https://www.raynatours.com/',
+    url: RAYNA_AGENT.portal,       // B2B agent portal (raynab2b.com)
+    retailUrl: 'https://www.raynatours.com/',
+    agentId: RAYNA_AGENT.agentId,  // 3JN agent account — used to book at net rates
     agentNetDiscount: 0.18,        // ~18% below public — the agent net rate
     fulfils: ['activities', 'tickets', 'transfer', 'visa', 'boat'],
     regions: ['AE'],               // Dubai / Abu Dhabi specialism
@@ -116,6 +132,7 @@ export function applySourcing(offer, destCountry) {
     sourcedVia: partner.name,
     sourcedType: partner.type,
     bookingUrl: partner.url,
+    agentId: agent ? (partner.agentId || null) : null, // 3JN agent account id
     agent,
   };
 }
