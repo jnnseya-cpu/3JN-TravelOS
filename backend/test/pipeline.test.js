@@ -24,6 +24,7 @@ import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
 import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
+import { visaFramework, buildChecklist, assessApplication } from '../src/visa-framework.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
@@ -356,6 +357,44 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('visa framework: dynamic checklist adapts to country, type and applicant', () => {
+  const fw = visaFramework();
+  assert.equal(fw.countries.length, 16);
+  assert.equal(fw.visaTypes.length, 7);
+  assert.ok(fw.fraudChecks.length >= 30);
+
+  // A student minor gets student docs + the minor conditionals + UK specifics.
+  const cl = buildChecklist({ country: 'GB', visaType: 'student', applicant: { dob: '2012-01-01', maritalStatus: 'Single' } });
+  assert.equal(cl.country.code, 'GB');
+  const all = cl.sections.flatMap((s) => s.items).join(' | ');
+  assert.match(all, /Birth certificate \(minor\)/);
+  assert.match(all, /Parental consent letter \(minor\)/);
+  assert.match(all, /Admission|acceptance letter/i);
+  assert.ok(cl.totalDocuments > 17);
+
+  // Tourist checklist differs from student.
+  const tourist = buildChecklist({ country: 'AE', visaType: 'tourist', applicant: {} });
+  assert.notEqual(tourist.totalDocuments, cl.totalDocuments);
+});
+
+test('visa framework: clean applicant approved, fraudulent applicant refused', () => {
+  const clean = assessApplication({
+    country: 'AE', visaType: 'tourist',
+    applicant: { fullName: 'Jane Doe', nationality: 'GB', age: 34, monthlyIncome: 4000, purpose: 'tourism', homeTies: 'strong' },
+  });
+  assert.equal(clean.recommendation, 'Approve');
+  assert.equal(clean.fraud.flagCount, 0);
+  assert.equal(clean.documentVerification.allClear, true);
+
+  const bad = assessApplication({
+    country: 'US', visaType: 'work',
+    applicant: { fullName: 'Bad Actor', nationality: 'NG', age: 22, monthlyIncome: 300, documentsAuthentic: false, onWatchlist: true, suddenDeposit: true, priorOverstays: true, homeTies: 'weak' },
+  });
+  assert.equal(bad.recommendation, 'Refuse');
+  assert.ok(bad.fraud.flagCount > 5);
+  assert.equal(bad.risk.decision, 'Auto Rejection');
 });
 
 test('intelligence: visa + risk work for ANY city worldwide, not just the catalogue', () => {

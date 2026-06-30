@@ -28,6 +28,7 @@ import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../s
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
+import { visaFramework, buildChecklist, assessApplication } from './visa-framework.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -406,6 +407,24 @@ app.post('/api/visaos/assess', safe((req, res) => {
   recordVisaApplication(assessment);
   res.json({ assessment });
 }));
+
+// ---- Global Visa Intelligence Framework -----------------------------------
+// Applicant schema, document checklists, country modules and the full
+// decision-ready assessment (checklist → verification → fraud → risk → decision).
+app.get('/api/visa/framework', safe((req, res) => {
+  res.json(visaFramework());
+}));
+app.post('/api/visa/checklist', safe((req, res) => {
+  const { country, visaType, applicant } = req.body || {};
+  res.json(buildChecklist({ country, visaType, applicant: applicant || {} }));
+}));
+app.post('/api/visa/assess-application', safe((req, res) => {
+  const { applicant, country, visaType, providedDocuments } = req.body || {};
+  const file = assessApplication({ applicant: applicant || {}, country, visaType, providedDocuments });
+  recordVisaApplication(file.risk);
+  res.json({ file });
+}));
+
 app.get('/api/visaos/probability', safe((req, res) => {
   res.json(approvalProbability(req.query.nationality, req.query.destination));
 }));

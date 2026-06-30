@@ -1166,6 +1166,10 @@ function renderVisaApply() {
             <select class="in" id="vNat"><option>GB</option><option>US</option><option selected>NG</option><option>IN</option><option>FR</option></select></div>
           <div class="field"><label>Destination</label>
             <select class="in" id="vDest"><option selected>Dubai</option><option>Istanbul</option><option>Barcelona</option><option>New York</option><option>Bali</option></select></div>
+          <div class="field"><label>Visa country</label>
+            <select class="in" id="vCountry">${VISA_COUNTRIES.map((c) => `<option value="${c.code}"${c.code === 'AE' ? ' selected' : ''}>${c.flag} ${c.name}</option>`).join('')}</select></div>
+          <div class="field"><label>Visa type</label>
+            <select class="in" id="vType">${VISA_TYPES_FE.map((t) => `<option value="${t.key}">${t.icon} ${t.name}</option>`).join('')}</select></div>
           <div class="field"><label>Purpose</label>
             <select class="in" id="vPurpose"><option>tourism</option><option>business</option><option>study</option><option>family visit</option><option>medical</option><option>conference</option></select></div>
           <div class="field"><label>Age</label><input class="in" id="vAge" value="34" style="width:70px"></div>
@@ -1185,11 +1189,67 @@ function renderVisaApply() {
         </div>
         <div class="field" style="margin-top:12px"><label>Behaviour: hesitation around employment (0=calm, 100=evasive) — <span id="vBehLbl">10</span></label>
           <input type="range" id="vBeh" min="0" max="100" value="10" oninput="document.getElementById('vBehLbl').textContent=this.value"></div>
-        <button class="btn btn-gold" style="margin-top:14px" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+          <button class="btn btn-ghost" id="vChecklist">📋 Required documents</button>
+          <button class="btn btn-gold" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+        </div>
       </div>
+      <div id="visaChecklistOut" style="margin-top:16px"></div>
       <div id="visaDecision" style="margin-top:20px"></div>
     </div>`;
   $('#vSubmit').addEventListener('click', submitVisa);
+  $('#vChecklist').addEventListener('click', showVisaChecklist);
+}
+
+// Visa framework metadata (mirrors backend visa-framework.js).
+const VISA_COUNTRIES = [
+  { code: 'SCHENGEN', name: 'Schengen / EU', flag: '🇪🇺' }, { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'US', name: 'United States', flag: '🇺🇸' }, { code: 'CA', name: 'Canada', flag: '🇨🇦' },
+  { code: 'AU', name: 'Australia', flag: '🇦🇺' }, { code: 'NZ', name: 'New Zealand', flag: '🇳🇿' },
+  { code: 'AE', name: 'UAE / Dubai', flag: '🇦🇪' }, { code: 'SA', name: 'Saudi Arabia', flag: '🇸🇦' },
+  { code: 'QA', name: 'Qatar', flag: '🇶🇦' }, { code: 'TR', name: 'Turkey', flag: '🇹🇷' },
+  { code: 'CN', name: 'China', flag: '🇨🇳' }, { code: 'JP', name: 'Japan', flag: '🇯🇵' },
+  { code: 'KR', name: 'South Korea', flag: '🇰🇷' }, { code: 'ZA', name: 'South Africa', flag: '🇿🇦' },
+  { code: 'IN', name: 'India', flag: '🇮🇳' }, { code: 'BR', name: 'Brazil', flag: '🇧🇷' },
+];
+const VISA_TYPES_FE = [
+  { key: 'tourist', name: 'Tourist / Visitor', icon: '🏖️' }, { key: 'business', name: 'Business', icon: '💼' },
+  { key: 'student', name: 'Student', icon: '🎓' }, { key: 'work', name: 'Work', icon: '🛠️' },
+  { key: 'family', name: 'Family / Dependant', icon: '👨‍👩‍👧' }, { key: 'medical', name: 'Medical', icon: '🏥' },
+  { key: 'transit', name: 'Transit', icon: '🛫' },
+];
+
+function applicantFromForm() {
+  const sig = {};
+  $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
+  return {
+    fullName: $('#vName').value, name: $('#vName').value,
+    nationality: $('#vNat').value, destination: $('#vDest').value,
+    purpose: $('#vPurpose').value, age: Number($('#vAge').value),
+    occupation: $('#vEmployer').value, employer: $('#vEmployer').value,
+    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
+    maritalStatus: 'Single',
+    behaviourHesitation: Number($('#vBeh').value), ...sig,
+  };
+}
+
+async function showVisaChecklist() {
+  const out = $('#visaChecklistOut');
+  out.innerHTML = '<div class="card pad muted" style="font-size:13px"><span class="loader"></span> Building country-specific checklist…</div>';
+  let d;
+  try {
+    d = await api('/api/visa/checklist', { method: 'POST', body: JSON.stringify({ country: $('#vCountry').value, visaType: $('#vType').value, applicant: applicantFromForm() }) });
+  } catch { return; }
+  const sections = d.sections.map((s) => `
+    <div style="margin-top:12px"><span class="eyebrow">${esc(s.title)} · ${s.items.length}</span>
+      <ul class="comp-list">${s.items.map((i) => `<li><span class="cs">${esc(i)}</span></li>`).join('')}</ul></div>`).join('');
+  out.innerHTML = `<div class="card pad">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+      <strong style="font-family:'Space Grotesk'">${d.country ? d.country.flag + ' ' + esc(d.country.name) : esc($('#vCountry').value)} · ${esc(d.visaType.name)}</strong>
+      <span class="muted" style="font-size:12.5px">${d.totalDocuments} documents required</span>
+    </div>
+    ${d.country?.notes ? `<p class="muted" style="font-size:12px;margin:6px 0 0">${esc(d.country.notes)}</p>` : ''}
+    ${sections}</div>`;
 }
 function signalToggle(key, label, on) {
   return `<span class="chip vsig ${on ? 'on' : ''}" data-key="${key}" data-on="${on}" onclick="toggleSignal(this)">${on ? '✓' : '○'} ${label}</span>`;
@@ -1197,29 +1257,58 @@ function signalToggle(key, label, on) {
 window.toggleSignal = (el) => { const on = el.dataset.on !== 'true'; el.dataset.on = on; el.classList.toggle('on', on); el.textContent = `${on ? '✓' : '○'} ${el.textContent.slice(2)}`; };
 
 async function submitVisa() {
-  const sig = {};
-  $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
-  const body = {
-    name: $('#vName').value, nationality: $('#vNat').value, destination: $('#vDest').value,
-    purpose: $('#vPurpose').value, age: Number($('#vAge').value), employer: $('#vEmployer').value,
-    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
-    behaviourHesitation: Number($('#vBeh').value), ...sig,
-  };
+  const applicant = applicantFromForm();
   const out = $('#visaDecision');
   const agents = ['Document Forensics', 'Financial Authenticity', 'Identity Verification', 'Online Footprint', 'Behavioural Intelligence', 'Overstay Risk', 'Fraud Detection', 'Intent Assessment', 'Border Risk', 'Decision Agent'];
   out.innerHTML = `<div class="card pad scanlog">${agents.map((a, i) => `<div class="ln" style="animation-delay:${i * 60}ms"><span class="ok">●</span> ${a} Agent verifying…</div>`).join('')}</div>`;
   await tick(700);
   let data;
-  try { data = await api('/api/visaos/assess', { method: 'POST', body: JSON.stringify(body) }); } catch { return; }
-  renderVisaDecision(data.assessment);
+  try {
+    data = await api('/api/visa/assess-application', {
+      method: 'POST',
+      body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value }),
+    });
+  } catch { return; }
+  renderVisaFile(data.file);
 }
 
-function renderVisaDecision(a) {
+// Render the full decision-ready file: recommendation + checklist completeness +
+// document verification + fraud battery + the risk decision.
+function renderVisaFile(file) {
+  const recColor = { 'Approve': 'var(--green)', 'Approve with conditions': 'var(--gold)', 'Request more info': 'var(--blue-bright)', 'Escalate to human': 'var(--blue-bright)', 'Refuse': '#ff6b6b' }[file.recommendation] || 'var(--gold)';
+  const dv = file.documentVerification;
+  const fraud = file.fraud;
+  const dvRows = dv.checks.map((c) => `<div class="kv"><span><span class="vstatus ${c.pass ? 'pass' : 'fail'}"></span>${esc(c.check)}</span><span class="muted" style="font-size:12px">${c.pass ? 'clear' : 'FLAG'}</span></div>`).join('');
+  const flagChips = fraud.flags.length
+    ? fraud.flags.map((f) => `<span class="chip" style="color:#ff9b9b;border-color:rgba(255,90,90,0.3)">${esc(f.name)}</span>`).join('')
+    : '<span class="muted" style="font-size:13px">No fraud signals triggered across all 34 checks.</span>';
+
+  $('#visaDecision').innerHTML = `
+    <div class="card pad" style="border-color:${recColor};margin-bottom:16px">
+      <span class="eyebrow">AI Officer Recommendation · decision-ready in ${file.decisionReadyMinutes === 'escalated' ? 'escalation' : file.decisionReadyMinutes + ' min'}</span>
+      <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:${recColor}">${esc(file.recommendation)}</div>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">${file.country ? file.country.flag + ' ' + esc(file.country.name) : ''} · ${esc(file.visaType.name)} · ${esc(file.applicant.name)} (${esc(file.applicant.nationality)})</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px">
+        <div class="verified-tag">📋 Checklist ${file.completeness.supplied}/${file.completeness.required}</div>
+        <div class="verified-tag">🔬 Docs ${dv.verified}/${dv.total} verified</div>
+        <div class="verified-tag" style="${fraud.flagCount ? 'color:#ff9b9b;background:rgba(255,90,90,0.1);border-color:rgba(255,90,90,0.25)' : ''}">🛡 Fraud ${fraud.flagCount}/${fraud.results.length} flags</div>
+        <div class="verified-tag">📊 Risk ${file.risk.totalScore}/1000</div>
+      </div>
+    </div>
+    <div class="console-grid">
+      <div class="card pad"><span class="eyebrow">Document verification</span>${dvRows}</div>
+      <div class="card pad"><span class="eyebrow">Fraud & risk checks (34)</span><div class="chips" style="margin-top:10px">${flagChips}</div></div>
+    </div>
+    <div id="visaRiskOut" style="margin-top:16px"></div>`;
+  renderVisaDecision(file.risk, '#visaRiskOut');
+}
+
+function renderVisaDecision(a, target = '#visaDecision') {
   const decColor = { 'Auto Approval': 'var(--green)', 'Conditional Approval': 'var(--gold)', 'Human Review': 'var(--blue-bright)', 'Auto Rejection': '#ff6b6b' }[a.decision];
   const agentRows = a.agents.map((ag) => `<div class="kv"><span><span class="vstatus ${ag.status}"></span>${ag.agent}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${ag.finding}</span></div>`).join('');
   const dims = Object.entries(a.risk).map(([k, v]) => `<div class="kv"><span style="text-transform:capitalize">${k} risk</span><span><span class="rel-bar" style="display:inline-block;width:90px;vertical-align:middle"><i style="width:${v}%;background:${v >= 60 ? '#ff6b6b' : v >= 35 ? 'var(--gold)' : 'var(--green)'}"></i></span> ${v}</span></div>`).join('');
   const cond = a.conditions.length ? `<div style="margin-top:8px"><span class="eyebrow">Conditions</span>${a.conditions.map((c) => `<div class="ok-line"><span class="ck">✓</span>${c}</div>`).join('')}</div>` : '';
-  $('#visaDecision').innerHTML = `
+  $(target).innerHTML = `
     <div class="card pad" style="border-color:${decColor}">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div><span class="eyebrow">Decision · ${a.slaMinutes === 'escalated' ? 'escalated' : 'in ' + a.slaMinutes + ' min'}</span>
