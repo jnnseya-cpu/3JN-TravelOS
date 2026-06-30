@@ -353,6 +353,8 @@ function publicUser(u) {
     tierDiscount: tier.discount,
     acuBalance: u.acuBalance,
     membership: u.membership || null,
+    coverImage: u.coverImage || null,
+    travelProfile: u.travelProfile || {},
     referralCode: u.referralCode,
     referrals: u.referrals,
   };
@@ -370,6 +372,16 @@ export function updateUser(userId, patch = {}) {
   if (typeof patch.role === 'string' && ROLES.includes(patch.role)) u.role = patch.role;
   if (typeof patch.allAccess === 'boolean') u.allAccess = patch.allAccess;
   if (typeof patch.avatar === 'string' && patch.avatar.length <= 600000) u.avatar = patch.avatar; // ~600KB cap
+  if (typeof patch.coverImage === 'string' && patch.coverImage.length <= 900000) u.coverImage = patch.coverImage;
+  // Master Travel Profile — filled once, retrieved automatically by every module
+  // (visa, flight, hotel, holiday). Stored as capped strings.
+  if (patch.travelProfile && typeof patch.travelProfile === 'object') {
+    u.travelProfile = u.travelProfile || {};
+    for (const [k, v] of Object.entries(patch.travelProfile)) {
+      if (typeof v === 'string') u.travelProfile[String(k).slice(0, 40)] = v.slice(0, 200);
+      else if (typeof v === 'number') u.travelProfile[String(k).slice(0, 40)] = v;
+    }
+  }
   recordAudit({ actor: userId, role: u.role, action: 'profile.updated', entity: 'user', entityId: userId, summary: Object.keys(patch).join(', ') });
   return publicUser(u);
 }

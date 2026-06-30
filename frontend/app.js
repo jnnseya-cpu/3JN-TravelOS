@@ -129,7 +129,7 @@ $('#navToggle')?.addEventListener('click', () => {
 });
 $('#navScrim')?.addEventListener('click', closeMobileNav);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMobileNav(); });
-window.addEventListener('resize', () => { if (window.innerWidth > 1080) closeMobileNav(); });
+window.addEventListener('resize', () => { if (window.innerWidth > 1240) closeMobileNav(); });
 
 // ---- Static content (agents, tiers, steps, loyalty) -----------------------
 const AGENTS = [
@@ -516,12 +516,13 @@ window.openBooking = async (tier) => {
 
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller (exact passport spelling)</span></div>
     <div class="composer-row" style="margin-top:6px">
-      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="As on passport" value="${esc(state.user?.name || '')}"></div>
-      <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date"></div>
-      <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.country || 'GB')}" style="width:90px"></div>
-      <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567"></div>
-      <div class="field"><label>Passport expiry</label><input class="in" id="bkExp" type="date"></div>
+      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="As on passport" value="${esc((state.user?.travelProfile?.fullLegalName) || state.user?.name || '')}"></div>
+      <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date" value="${esc(state.user?.travelProfile?.dob || '')}"></div>
+      <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.user?.travelProfile?.nationality || state.country || 'GB')}" style="width:90px"></div>
+      <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567" value="${esc(state.user?.travelProfile?.passportNumber || '')}"></div>
+      <div class="field"><label>Passport expiry</label><input class="in" id="bkExp" type="date" value="${esc(state.user?.travelProfile?.passportExpiry || '')}"></div>
     </div>
+    ${Object.keys(state.user?.travelProfile || {}).length ? '<div class="muted" style="font-size:11px;margin-top:4px">✓ auto-filled from your Master Travel Profile</div>' : ''}
     <div class="muted" style="font-size:11.5px;margin-top:6px">${intent.travellers.total > 1 ? `+${intent.travellers.total - 1} more passenger${intent.travellers.total > 2 ? 's' : ''} — details collected after deposit.` : ''}</div>
 
     <div style="margin-top:14px"><span class="eyebrow">Documents needed</span><ul class="comp-list">${docList}</ul></div>
@@ -608,7 +609,8 @@ async function renderConsole() {
 
   const profile = `
     <div class="card pad">
-      <div style="display:flex;align-items:center;gap:12px">
+      <div class="cover-banner" style="${u.coverImage ? `background-image:url('${u.coverImage}')` : ''}"></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
         ${avatarHTML(u, 52)}
         <div><h3 style="margin:0">${u.name}</h3><div class="muted" style="font-size:12.5px">${u.email}</div>
         <span class="role-badge">${u.role}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
@@ -633,6 +635,7 @@ async function renderConsole() {
       </div>
     </div>
     ${loyaltyHub(u)}
+    <div class="card pad" style="margin-top:16px" id="travelProfileCard"></div>
     <div class="card pad" style="margin-top:16px" id="intelCard">
       <span class="eyebrow">Travel Intelligence · Visa &amp; Risk</span>
       <div style="display:flex;gap:8px;margin-top:10px">
@@ -650,9 +653,59 @@ async function renderConsole() {
 
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
+  renderTravelProfile();
   renderEsims();
   renderExpense();
 }
+
+// ---- Master Travel Profile — one account for visa, flight, hotel, holiday ---
+// Filled once here; every module (VisaOS application, booking, etc.) auto-fills
+// from it and writes new details back, so the user never re-types passport/DOB.
+const TRAVEL_PROFILE_FIELDS = [
+  { key: 'fullLegalName', label: 'Full legal name (passport)' },
+  { key: 'dob', label: 'Date of birth', type: 'date' },
+  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Other'] },
+  { key: 'nationality', label: 'Nationality', type: 'country' },
+  { key: 'passportNumber', label: 'Passport number' },
+  { key: 'passportExpiry', label: 'Passport expiry', type: 'date' },
+  { key: 'passportCountry', label: 'Passport issuing country', type: 'country' },
+  { key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'] },
+  { key: 'mobile', label: 'Mobile number' },
+  { key: 'residentialAddress', label: 'Residential address' },
+  { key: 'countryOfResidence', label: 'Country of residence', type: 'country' },
+  { key: 'occupation', label: 'Occupation' },
+  { key: 'employer', label: 'Employer / school' },
+  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number' },
+  { key: 'emergencyContact', label: 'Emergency contact' },
+];
+function renderTravelProfile() {
+  const el = $('#travelProfileCard');
+  if (!el) return;
+  const tp = state.user?.travelProfile || {};
+  const filled = TRAVEL_PROFILE_FIELDS.filter((f) => tp[f.key]).length;
+  const fieldHTML = (f) => {
+    const id = `tp_${f.key}`;
+    const val = tp[f.key] != null ? String(tp[f.key]) : '';
+    if (f.type === 'country') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">— select —</option>${countryOptions(val)}</select></div>`;
+    if (f.type === 'select') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">—</option>${f.options.map((o) => `<option${o === val ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    return `<div class="field"><label>${f.label}</label><input class="in" id="${id}" type="${f.type || 'text'}" value="${esc(val)}"></div>`;
+  };
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+      <span class="eyebrow" style="margin:0">🪪 Master Travel Profile</span>
+      <span class="muted" style="font-size:12px">${filled}/${TRAVEL_PROFILE_FIELDS.length} complete · auto-fills visa, flight, hotel & holiday</span>
+    </div>
+    <div class="composer-row" style="margin-top:10px">${TRAVEL_PROFILE_FIELDS.map(fieldHTML).join('')}</div>
+    <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="saveTravelProfile()">Save travel profile</button>`;
+}
+window.saveTravelProfile = async () => {
+  const tp = {};
+  TRAVEL_PROFILE_FIELDS.forEach((f) => { const el = $(`#tp_${f.key}`); if (el && el.value.trim()) tp[f.key] = f.type === 'number' ? Number(el.value) : el.value.trim(); });
+  let data; try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) }); } catch { return; }
+  setUser(data.user);
+  toast('✓ Travel profile saved — it now auto-fills your visa & bookings.');
+  renderTravelProfile();
+};
 
 // ---- eSIM Manager ---------------------------------------------------------
 async function renderEsims() {
@@ -766,10 +819,13 @@ window.editProfile = () => {
     .map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('');
   modal(`
     <span class="eyebrow">Edit profile</span>
+    <div class="cover-edit" id="coverPreview" style="background-image:${u.coverImage ? `url('${u.coverImage}')` : 'none'}">
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer">🖼 Cover picture<input type="file" id="coverFile" accept="image/*" style="display:none"></label>
+    </div>
     <div style="display:flex;align-items:center;gap:14px;margin:10px 0">
       <span id="avatarPreview">${avatarHTML(u, 64)}</span>
       <div>
-        <label class="btn btn-ghost btn-sm" style="cursor:pointer">📷 Upload picture<input type="file" id="avatarFile" accept="image/*" style="display:none"></label>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer">📷 Profile photo<input type="file" id="avatarFile" accept="image/*" style="display:none"></label>
         <div class="muted" style="font-size:11px;margin-top:6px">or pick an emoji:</div>
         <div class="chips" style="margin-top:4px">${['🧳','💼','🏪','🤝','🛡️','🧑‍✈️','🌍','⭐'].map((e) => `<span class="chip" onclick="pickEmoji('${e}')">${e}</span>`).join('')}</div>
       </div>
@@ -780,12 +836,21 @@ window.editProfile = () => {
     <div class="field" style="margin-top:10px"><label>Bio</label><textarea class="in" id="pfBio" style="width:100%;min-height:60px">${u.bio || ''}</textarea></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveProfile()">Save profile</button>`);
   window.__avatar = u.avatar;
+  window.__cover = u.coverImage || null;
   $('#avatarFile')?.addEventListener('change', (e) => {
     const f = e.target.files[0];
     if (!f) return;
     if (f.size > 500000) { toast('Image too large (max ~500KB).'); return; }
     const reader = new FileReader();
     reader.onload = () => { window.__avatar = reader.result; $('#avatarPreview').innerHTML = `<img class="avatar" src="${reader.result}" style="width:64px;height:64px" alt="">`; };
+    reader.readAsDataURL(f);
+  });
+  $('#coverFile')?.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 800000) { toast('Cover too large (max ~800KB).'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { window.__cover = reader.result; $('#coverPreview').style.backgroundImage = `url('${reader.result}')`; };
     reader.readAsDataURL(f);
   });
 };
@@ -802,6 +867,7 @@ window.saveProfile = async () => {
   const patch = {
     name: $('#pfName').value, email: newEmail,
     role: $('#pfRole').value, bio: $('#pfBio').value, avatar: window.__avatar,
+    coverImage: window.__cover || '',
   };
   let data;
   try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); } catch { return; }
@@ -1234,14 +1300,25 @@ const VISA_FORM_FIELDS = [
   { key: 'fundingSource', label: 'Funding source', type: 'select', options: ['Self', 'Employer', 'Sponsor', 'Scholarship', 'Family'] },
 ];
 
-function visaFieldHTML(f) {
+function visaFieldHTML(f, val = '') {
   const id = `vf_${f.key}`;
   const star = f.req ? ' <span style="color:var(--gold)">*</span>' : '';
+  const v = val != null ? String(val) : '';
   let input;
-  if (f.type === 'country') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${countryOptions(f.key === 'nationality' ? 'NG' : '')}</select>`;
-  else if (f.type === 'select') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${f.options.map((o) => `<option>${o}</option>`).join('')}</select>`;
-  else input = `<input class="in vf" id="${id}" data-req="${!!f.req}" type="${f.type || 'text'}">`;
+  if (f.type === 'country') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${countryOptions(v || (f.key === 'nationality' ? 'NG' : ''))}</select>`;
+  else if (f.type === 'select') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${f.options.map((o) => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+  else input = `<input class="in vf" id="${id}" data-req="${!!f.req}" type="${f.type || 'text'}" value="${esc(v)}">`;
   return `<div class="field"><label>${esc(f.label)}${star}</label>${input}</div>`;
+}
+// Pre-fill the visa form from the user's Master Travel Profile.
+function visaPrefill() {
+  const tp = state.user?.travelProfile || {};
+  return {
+    fullName: tp.fullLegalName, dob: tp.dob, gender: tp.gender, nationality: tp.nationality,
+    passportNumber: tp.passportNumber, passportExpiry: tp.passportExpiry, passportCountry: tp.passportCountry,
+    maritalStatus: tp.maritalStatus, address: tp.residentialAddress, email: state.user?.email,
+    phone: tp.mobile, occupation: tp.occupation, employer: tp.employer, monthlyIncome: tp.monthlyIncome,
+  };
 }
 
 async function renderVisaApply() {
@@ -1272,8 +1349,8 @@ async function renderVisaApply() {
           <div class="field"><label>Purpose <span style="color:var(--gold)">*</span></label><select class="in vf" id="vf_purpose" data-req="true"><option value="">— select —</option>${['tourism', 'business', 'study', 'work', 'family', 'medical', 'transit'].map((p) => `<option>${p}</option>`).join('')}</select></div>
         </div>
 
-        <div style="margin-top:14px"><span class="eyebrow">Applicant information</span></div>
-        <div class="composer-row" style="margin-top:6px">${VISA_FORM_FIELDS.map(visaFieldHTML).join('')}</div>
+        <div style="margin-top:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><span class="eyebrow" style="margin:0">Applicant information</span><span class="muted" style="font-size:11.5px">${Object.values(visaPrefill()).filter(Boolean).length ? '✓ auto-filled from your Master Travel Profile' : 'Tip: fill your Master Travel Profile in the Console to auto-fill this'}</span></div>
+        <div class="composer-row" style="margin-top:6px">${(() => { const pf = visaPrefill(); return VISA_FORM_FIELDS.map((f) => visaFieldHTML(f, pf[f.key])).join(''); })()}</div>
 
         <div style="margin-top:14px"><span class="eyebrow">Verification signals (simulate upstream agent findings)</span></div>
         <div class="chips" style="margin-top:8px" id="vSignals">
@@ -1450,6 +1527,19 @@ async function submitVisa() {
     });
   } catch { return; }
   renderVisaFile(data.file);
+  // Save captured identity back to the Master Travel Profile (retrieved
+  // automatically next time across visa & bookings).
+  if (state.user) {
+    const tp = {
+      fullLegalName: applicant.fullName, dob: applicant.dob, nationality: applicant.nationality,
+      passportNumber: applicant.passportNumber, passportExpiry: applicant.passportExpiry,
+      maritalStatus: applicant.maritalStatus, occupation: applicant.occupation,
+      employer: applicant.employer, monthlyIncome: applicant.monthlyIncome,
+    };
+    Object.keys(tp).forEach((k) => { if (!tp[k]) delete tp[k]; });
+    api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) })
+      .then((d) => { if (d.user) state.user = d.user; }).catch(() => {});
+  }
 }
 
 // Render the full decision-ready file: recommendation + checklist completeness +
