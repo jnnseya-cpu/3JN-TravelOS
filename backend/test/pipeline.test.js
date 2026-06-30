@@ -136,6 +136,21 @@ test('accuracy: only a carrier that truly operates the route flies it non-stop',
   assert.equal(r.flightPrefs.directUnavailable, false);
 });
 
+test('price sanity: a family Dubai package stays competitive, not 2x the market', () => {
+  // Real market comparison (BHX→DXB, 17–24 Aug 2026, 2 adults + ages 16/13/9,
+  // 7 nights): LoveHolidays £3,795, Trip.com £4,547. Our recommended package
+  // must land in the real-world band — never the ~£7.6k (2x) it once did.
+  const text = 'Dubai from birmingham on 17/08 to 24/08, 2 adults and 3 children 16,13 and 9 years old, direct flights and hotel, cheapest reliable price';
+  const r = plan({ text, context: GB, user: null, searchTier: 'deep', preferences: { directOnly: true } });
+  const rec = r.packages.options.find((o) => o.recommended) || r.packages.options[0];
+  assert.ok(rec.pricing.local.total < 4500, `recommended ${rec.pricing.local.total} must beat the cheapest competitor band`);
+  assert.ok(rec.pricing.local.total > 1500, `recommended ${rec.pricing.local.total} must not be implausibly low`);
+  // Round-trip economy fare per seat for a major carrier should be realistic.
+  const f = rec.components.find((c) => c.type === 'flight');
+  assert.ok(f.details.adultFareUSD < 1100, `per-seat RT fare ${f.details.adultFareUSD} USD too high`);
+  assert.ok(f.details.adultFareUSD > 250, `per-seat RT fare ${f.details.adultFareUSD} USD too low`);
+});
+
 test('fare bands: 12+ pay adult fare, 2–11 pay 75%, under-2 pay 10%', () => {
   assert.equal(fareBandForAge(16), 'adult');
   assert.equal(fareBandForAge(12), 'adult');
