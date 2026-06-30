@@ -1353,17 +1353,6 @@ $('#apiTryBtn').addEventListener('click', async () => {
   } catch { pre.textContent = 'Request failed.'; }
 });
 
-// ---- WhatsApp-first conversational commerce -------------------------------
-const WA_NUMBER = '442000000000'; // 3JN WhatsApp business line (placeholder)
-function openWhatsApp(prefill) {
-  const msg = prefill || ($('#intentInput')?.value?.trim()) ||
-    'Hi 3JN Travel OS — I want to plan a trip. Here are my dates, group size and destination:';
-  const url = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`;
-  window.open(url, '_blank');
-  toast('💬 Opening WhatsApp — your travel request is pre-filled.');
-}
-$('#waHero')?.addEventListener('click', () => openWhatsApp());
-
 // ---- Footer content (punchy, persuasive marketing copy) -------------------
 const CONTENT = {
   flights: {
