@@ -114,7 +114,103 @@ const ORIGIN_BY_COUNTRY = {
 };
 
 export function originForCountry(country) {
-  return ORIGIN_BY_COUNTRY[country] || ORIGIN_BY_COUNTRY.GB;
+  const o = ORIGIN_BY_COUNTRY[country] || ORIGIN_BY_COUNTRY.GB;
+  return { ...o, country: ORIGIN_BY_COUNTRY[country] ? country : 'GB' };
+}
+
+// Real IATA codes for major world origin cities. Deriving an airport code from
+// the first three letters of a city name produces nonsense ("Birmingham"→"BIR",
+// which is Biratnagar, Nepal). This table keeps departures accurate worldwide.
+// Keyed by lowercase city name (with common aliases). country is ISO-3166-1.
+const CITY_AIRPORTS = {
+  // United Kingdom & Ireland
+  london: { airport: 'LHR', city: 'London', country: 'GB' },
+  birmingham: { airport: 'BHX', city: 'Birmingham', country: 'GB' },
+  manchester: { airport: 'MAN', city: 'Manchester', country: 'GB' },
+  glasgow: { airport: 'GLA', city: 'Glasgow', country: 'GB' },
+  edinburgh: { airport: 'EDI', city: 'Edinburgh', country: 'GB' },
+  bristol: { airport: 'BRS', city: 'Bristol', country: 'GB' },
+  leeds: { airport: 'LBA', city: 'Leeds', country: 'GB' },
+  liverpool: { airport: 'LPL', city: 'Liverpool', country: 'GB' },
+  newcastle: { airport: 'NCL', city: 'Newcastle', country: 'GB' },
+  'london gatwick': { airport: 'LGW', city: 'London', country: 'GB' },
+  'london stansted': { airport: 'STN', city: 'London', country: 'GB' },
+  dublin: { airport: 'DUB', city: 'Dublin', country: 'IE' },
+  // Europe
+  paris: { airport: 'CDG', city: 'Paris', country: 'FR' },
+  frankfurt: { airport: 'FRA', city: 'Frankfurt', country: 'DE' },
+  munich: { airport: 'MUC', city: 'Munich', country: 'DE' },
+  berlin: { airport: 'BER', city: 'Berlin', country: 'DE' },
+  amsterdam: { airport: 'AMS', city: 'Amsterdam', country: 'NL' },
+  madrid: { airport: 'MAD', city: 'Madrid', country: 'ES' },
+  barcelona: { airport: 'BCN', city: 'Barcelona', country: 'ES' },
+  lisbon: { airport: 'LIS', city: 'Lisbon', country: 'PT' },
+  rome: { airport: 'FCO', city: 'Rome', country: 'IT' },
+  milan: { airport: 'MXP', city: 'Milan', country: 'IT' },
+  zurich: { airport: 'ZRH', city: 'Zurich', country: 'CH' },
+  geneva: { airport: 'GVA', city: 'Geneva', country: 'CH' },
+  vienna: { airport: 'VIE', city: 'Vienna', country: 'AT' },
+  brussels: { airport: 'BRU', city: 'Brussels', country: 'BE' },
+  copenhagen: { airport: 'CPH', city: 'Copenhagen', country: 'DK' },
+  stockholm: { airport: 'ARN', city: 'Stockholm', country: 'SE' },
+  oslo: { airport: 'OSL', city: 'Oslo', country: 'NO' },
+  helsinki: { airport: 'HEL', city: 'Helsinki', country: 'FI' },
+  athens: { airport: 'ATH', city: 'Athens', country: 'GR' },
+  istanbul: { airport: 'IST', city: 'Istanbul', country: 'TR' },
+  warsaw: { airport: 'WAW', city: 'Warsaw', country: 'PL' },
+  // Middle East
+  dubai: { airport: 'DXB', city: 'Dubai', country: 'AE' },
+  'abu dhabi': { airport: 'AUH', city: 'Abu Dhabi', country: 'AE' },
+  doha: { airport: 'DOH', city: 'Doha', country: 'QA' },
+  riyadh: { airport: 'RUH', city: 'Riyadh', country: 'SA' },
+  jeddah: { airport: 'JED', city: 'Jeddah', country: 'SA' },
+  'tel aviv': { airport: 'TLV', city: 'Tel Aviv', country: 'IL' },
+  amman: { airport: 'AMM', city: 'Amman', country: 'JO' },
+  // Africa
+  lagos: { airport: 'LOS', city: 'Lagos', country: 'NG' },
+  abuja: { airport: 'ABV', city: 'Abuja', country: 'NG' },
+  accra: { airport: 'ACC', city: 'Accra', country: 'GH' },
+  nairobi: { airport: 'NBO', city: 'Nairobi', country: 'KE' },
+  johannesburg: { airport: 'JNB', city: 'Johannesburg', country: 'ZA' },
+  'cape town': { airport: 'CPT', city: 'Cape Town', country: 'ZA' },
+  cairo: { airport: 'CAI', city: 'Cairo', country: 'EG' },
+  casablanca: { airport: 'CMN', city: 'Casablanca', country: 'MA' },
+  kinshasa: { airport: 'FIH', city: 'Kinshasa', country: 'CD' },
+  'addis ababa': { airport: 'ADD', city: 'Addis Ababa', country: 'ET' },
+  // Americas
+  'new york': { airport: 'JFK', city: 'New York', country: 'US' },
+  'los angeles': { airport: 'LAX', city: 'Los Angeles', country: 'US' },
+  chicago: { airport: 'ORD', city: 'Chicago', country: 'US' },
+  miami: { airport: 'MIA', city: 'Miami', country: 'US' },
+  'san francisco': { airport: 'SFO', city: 'San Francisco', country: 'US' },
+  boston: { airport: 'BOS', city: 'Boston', country: 'US' },
+  toronto: { airport: 'YYZ', city: 'Toronto', country: 'CA' },
+  vancouver: { airport: 'YVR', city: 'Vancouver', country: 'CA' },
+  'mexico city': { airport: 'MEX', city: 'Mexico City', country: 'MX' },
+  'sao paulo': { airport: 'GRU', city: 'São Paulo', country: 'BR' },
+  'são paulo': { airport: 'GRU', city: 'São Paulo', country: 'BR' },
+  'buenos aires': { airport: 'EZE', city: 'Buenos Aires', country: 'AR' },
+  // Asia-Pacific
+  delhi: { airport: 'DEL', city: 'Delhi', country: 'IN' },
+  mumbai: { airport: 'BOM', city: 'Mumbai', country: 'IN' },
+  bangalore: { airport: 'BLR', city: 'Bangalore', country: 'IN' },
+  singapore: { airport: 'SIN', city: 'Singapore', country: 'SG' },
+  'hong kong': { airport: 'HKG', city: 'Hong Kong', country: 'HK' },
+  bangkok: { airport: 'BKK', city: 'Bangkok', country: 'TH' },
+  'kuala lumpur': { airport: 'KUL', city: 'Kuala Lumpur', country: 'MY' },
+  tokyo: { airport: 'HND', city: 'Tokyo', country: 'JP' },
+  seoul: { airport: 'ICN', city: 'Seoul', country: 'KR' },
+  beijing: { airport: 'PEK', city: 'Beijing', country: 'CN' },
+  shanghai: { airport: 'PVG', city: 'Shanghai', country: 'CN' },
+  sydney: { airport: 'SYD', city: 'Sydney', country: 'AU' },
+  melbourne: { airport: 'MEL', city: 'Melbourne', country: 'AU' },
+  auckland: { airport: 'AKL', city: 'Auckland', country: 'NZ' },
+};
+
+// Look up a city's real airport + country. Returns null when unknown.
+export function airportForCity(name) {
+  const key = (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return CITY_AIRPORTS[key] || null;
 }
 
 // Public catalogue for the Destination Marketplace — indicative "from" prices
@@ -262,12 +358,18 @@ export function resolveDestination(name) {
 // Resolve an ORIGIN / departure city → an airport + city. Falls back to a code
 // derived from the city name for anywhere not in the catalogue.
 export function resolveOrigin(name) {
+  // 1) Real IATA table for major world cities (accurate codes + country).
+  const real = airportForCity(name);
+  if (real) return { airport: real.airport, city: real.city, country: real.country };
+  // 2) Destination catalogue (carries its own airport + ISO country).
   const known = findDestination(name);
-  if (known) return { airport: known.airport, city: known.city };
+  if (known) return { airport: known.airport, city: known.city, country: known.country };
+  // 3) Unknown city — title-case it and derive a placeholder code, flagged so
+  //    the UI can tell the traveller we assumed the nearest code.
   const city = titleCaseDest(name);
   if (!city) return null;
   const airport = (city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT';
-  return { airport, city };
+  return { airport, city, country: null, approxCode: true };
 }
 
 // Resolve from a free-text REQUEST sentence → catalogue, or synthesised from the
