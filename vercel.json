@@ -2,11 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "name": "3jn-travel-os",
-  "buildCommand": null,
   "outputDirectory": "frontend",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://api.3jntravel.com/api/$1" },
-    { "source": "/shared/(.*)", "destination": "https://api.3jntravel.com/shared/$1" },
+    { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/how-it-works", "destination": "/index.html" },
     { "source": "/api-portal", "destination": "/index.html" },
     { "source": "/membership", "destination": "/index.html" },

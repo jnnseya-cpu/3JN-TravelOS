@@ -478,7 +478,7 @@ if (process.env.NODE_ENV !== 'test') {
 // under Firebase Functions (FUNCTION_TARGET set) — there the function wrapper
 // owns the lifecycle — and during tests.
 const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET) {
+if (process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET && !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`\n  3JN Travel OS running → http://localhost:${PORT}\n`);
   });
