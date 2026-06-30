@@ -714,13 +714,14 @@ window.showComponentInfo = (tier, idx) => {
 window.openBooking = async (tier) => {
   const option = window.__options[tier];
   const intent = window.__intent;
+  const international = state.lastPlan?.international !== false;
   let data, reqs;
   try {
     data = await api('/api/quote', { method: 'POST', body: JSON.stringify({ option, intent, months: 3, depositPct: 0.2 }) });
     reqs = await api('/api/booking/requirements', { method: 'POST', body: JSON.stringify({
       components: option.components.map((c) => c.category || c.type),
       destination: intent.destination.city, nationality: state.country || 'GB',
-      passengers: intent.travellers.total,
+      passengers: intent.travellers.total, international,
     }) });
   } catch { return; }
   state.lastQuote = data.quote;
@@ -738,14 +739,17 @@ window.openBooking = async (tier) => {
     <div class="kv" style="font-weight:700"><span>Deposit today</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
     ${rows}
 
-    <div style="margin-top:16px"><span class="eyebrow">Lead traveller (exact passport spelling)</span></div>
+    <div style="margin-top:16px"><span class="eyebrow">Lead traveller${international ? ' (exact passport spelling)' : ''}</span></div>
     <div class="composer-row" style="margin-top:6px">
-      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="As on passport" value="${esc((state.user?.travelProfile?.fullLegalName) || state.user?.name || '')}"></div>
+      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="${international ? 'As on passport' : 'As on photo ID'}" value="${esc((state.user?.travelProfile?.fullLegalName) || state.user?.name || '')}"></div>
       <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date" value="${esc(state.user?.travelProfile?.dob || '')}"></div>
+      ${international ? `
       <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.user?.travelProfile?.nationality || state.country || 'GB')}" style="width:90px"></div>
       <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567" value="${esc(state.user?.travelProfile?.passportNumber || '')}"></div>
       <div class="field"><label>Passport expiry</label><input class="in" id="bkExp" type="date" value="${esc(state.user?.travelProfile?.passportExpiry || '')}"></div>
+      ` : '<div class="field"><label>Photo ID number (optional)</label><input class="in" id="bkIdNum" placeholder="Driving licence / national ID" value=""></div>'}
     </div>
+    ${international ? '' : '<div class="muted" style="font-size:11.5px;margin-top:4px">🚆 Local trip — no passport or visa required, just photo ID to travel.</div>'}
     ${Object.keys(state.user?.travelProfile || {}).length ? '<div class="muted" style="font-size:11px;margin-top:4px">✓ auto-filled from your Master Travel Profile</div>' : ''}
     <div class="muted" style="font-size:11.5px;margin-top:6px">${intent.travellers.total > 1 ? `+${intent.travellers.total - 1} more passenger${intent.travellers.total > 2 ? 's' : ''} — details collected after deposit.` : ''}</div>
 
@@ -770,19 +774,25 @@ window.openBooking = async (tier) => {
 window.confirmBooking = async () => {
   if (!state.lastQuote) return;
   const intent = window.__intent;
+  const international = state.lastPlan?.international !== false;
   const lead = {
     fullName: $('#bkName')?.value.trim(), dob: $('#bkDob')?.value,
-    nationality: ($('#bkNat')?.value || 'GB').trim().toUpperCase(),
-    passportNumber: $('#bkPass')?.value.trim(), passportExpiry: $('#bkExp')?.value,
+    nationality: ($('#bkNat')?.value || state.country || 'GB').trim().toUpperCase(),
   };
-  // Validate traveller + documents + entry rules BEFORE taking payment.
+  if (international) {
+    lead.passportNumber = $('#bkPass')?.value.trim();
+    lead.passportExpiry = $('#bkExp')?.value;
+  } else if ($('#bkIdNum')?.value) {
+    lead.idNumber = $('#bkIdNum').value.trim();
+  }
+  // Validate traveller + documents (+ entry rules for international) BEFORE pay.
   const vbox = $('#bkValidate');
-  if (vbox) vbox.innerHTML = '<div class="muted" style="font-size:12.5px;margin-top:10px"><span class="loader"></span> Validating documents & entry rules…</div>';
+  if (vbox) vbox.innerHTML = `<div class="muted" style="font-size:12.5px;margin-top:10px"><span class="loader"></span> Validating ${international ? 'documents & entry rules' : 'traveller details'}…</div>`;
   let val;
   try {
     val = await api('/api/booking/validate', { method: 'POST', body: JSON.stringify({
       travellers: [lead], travelDate: intent?.dates?.checkIn,
-      nationality: lead.nationality, destination: intent?.destination?.city,
+      nationality: lead.nationality, destination: intent?.destination?.city, international,
     }) });
   } catch { return; }
   if (!val.valid) {

@@ -159,6 +159,24 @@ test('multi-modal: a search shows ONLY the modes asked for — no auto flights/h
   assert.deepEqual([...set].sort(), ['hotel', 'train']);
 });
 
+test('local trip needs no passport/visa; international does', () => {
+  // A domestic train (London→Manchester) is local — no passport, no visa.
+  const local = plan({ text: 'train from London to Manchester for 2 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(local.international, false);
+  assert.equal(local.visa.ok, false); // no visa surfaced for a local trip
+  const lreq = bookingRequirements({ components: ['train'], destination: 'Manchester', nationality: 'GB', international: local.international });
+  assert.ok(!lreq.documents.some((d) => /passport/i.test(d)), 'no passport asked for a local trip');
+  assert.equal(lreq.entryRules.length, 0);
+  assert.equal(validateBooking({ travellers: [{ fullName: 'A B', dob: '1990-01-01' }], international: false }).valid, true);
+
+  // An international train (London→Paris) does need a passport.
+  const intl = plan({ text: 'train from London to Paris for 3 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(intl.international, true);
+  const ereq = bookingRequirements({ components: ['train'], destination: 'Paris', nationality: 'GB', international: intl.international });
+  assert.ok(ereq.documents.some((d) => /passport/i.test(d)), 'passport required for an international train');
+  assert.equal(validateBooking({ travellers: [{ fullName: 'A B', dob: '1990-01-01' }], international: true }).valid, false);
+});
+
 test('plain-English: an unspecified need asks rather than assuming components', () => {
   // Just a place, no need stated → clarify (don't invent flights/hotel).
   const bare = plan({ text: 'Dubai', context: GB, user: null, searchTier: 'smart' });
