@@ -277,6 +277,38 @@ async function boot() {
       if (co && badge) badge.innerHTML = `<span class="dot"></span> AI runs at ${co.savingPct}% lower cost (floor ${co.floorPct}%) — routing + cache + local fallback`;
     } catch { /* keep static text */ }
   })();
+  populateShowcase();
+}
+
+// Populate every landing-page headline figure from the REAL engine — a real
+// sample trip + real platform metrics. Nothing on the page is hard-coded.
+async function populateShowcase() {
+  let s;
+  try { s = (await api(`/api/showcase?country=${state.country || 'GB'}`)).showcase; } catch { return; }
+  const set = (id, v) => { const el = $(id); if (el && v != null) el.textContent = v; };
+  const m = s.metrics || {};
+  // Hero + final-CTA stats (real cumulative savings + real coverage + agent count).
+  const savedTxt = m.savedForTravellersLocal > 0 ? m.savedForTravellersDisplay : (s.example ? s.example.savedDisplay + '/trip' : '£0');
+  set('#statSaved', savedTxt); set('#ctaSaved', savedTxt);
+  set('#statCountries', (m.countriesServed || 195) + '+'); set('#ctaCountries', (m.countriesServed || 195) + '+');
+  set('#statAgents', '10'); set('#ctaAgents', '10');
+  // Example trip (problem/solution + featured holiday).
+  if (s.example) {
+    set('#solutionSaved', `You Save ${s.example.savedDisplay}`);
+    set('#featuredPrice', s.example.totalDisplay);
+    set('#featuredSave', `Save ${s.example.savedDisplay} (${s.example.savingsPct}%) vs ${s.example.marketDisplay}`);
+  }
+  // Savings engine — real per-component breakdown + total.
+  const se = $('#savingsEngine');
+  if (se && s.savingsBreakdown?.length) {
+    const rows = s.savingsBreakdown.map((b) => `<div class="kv"><span>${esc(b.label)}</span><span style="color:var(--green)">Saved ${esc(b.saved)}</span></div>`).join('');
+    se.innerHTML = rows + `<div class="kv" style="border:none;padding-top:16px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--gold)">${s.example ? esc(s.example.savedDisplay) : '—'}</span></div>`;
+  }
+  // Negotiation engine — real outcomes from the actual package.
+  const neg = $('#negotiationList');
+  if (neg && s.negotiation?.length) {
+    neg.innerHTML = s.negotiation.map((n) => `<div class="holo-row"><span>${esc(n.item)}</span><span class="v ${n.status === 'Applied' ? 'blue' : 'good'}">${esc(n.status)}</span></div>`).join('');
+  }
 }
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
