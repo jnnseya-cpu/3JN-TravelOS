@@ -158,7 +158,6 @@ export function scanHotels(intent, dest) {
         guestRating: Math.round((78 + rnd() * 20)) / 10, // /10 scale e.g. 8.6
         reviews: 200 + Math.floor(rnd() * 4800),
         amenities: amenitiesFor(rnd, h.stars),
-        images: hotelImages(dest.city, `${h.name}-${dest.code}`),
         description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${pick(AREAS, rnd, dest.city)}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
       },
       priceUSD: round(nightly * nights * rooms),
@@ -186,7 +185,6 @@ export function scanHotels(intent, dest) {
       guestRating: Math.round((86 + rnd() * 12)) / 10,
       reviews: 60 + Math.floor(rnd() * 900),
       amenities: ['Full kitchen', 'Free WiFi', 'Washing machine', 'Self check-in', 'Workspace', 'Family friendly'],
-      images: hotelImages(dest.city, `host-${dest.code}`),
       description: `A verified entire apartment in ${dest.city} with a full kitchen — great value and space for your group.`,
     },
     priceUSD: round(hostNightly * nights),
@@ -208,13 +206,6 @@ function amenitiesFor(rnd, stars) {
   const out = [];
   while (out.length < n && pool.length) out.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
   return out;
-}
-// City-relevant, deterministic image URLs (load in a deployment with outbound
-// network; the frontend shows a gradient fallback if a provider is unreachable).
-function hotelImages(city, lockSeed) {
-  let base = 0; for (let i = 0; i < lockSeed.length; i++) base = (base * 31 + lockSeed.charCodeAt(i)) % 100000;
-  const q = encodeURIComponent(city + ',hotel');
-  return [0, 1, 2, 3].map((i) => `https://loremflickr.com/640/420/${q}/all?lock=${base + i}`);
 }
 
 // Build destination-appropriate activity names — curated experiences for a
