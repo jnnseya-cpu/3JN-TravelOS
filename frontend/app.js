@@ -458,8 +458,10 @@ function renderOptions(data) {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;align-items:center">
         <div>
           <span class="eyebrow">Trip understood</span>
-          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${intent.destination.city}${intent.destination.countryName ? ', ' + intent.destination.countryName : ''}</div>
-          <div class="muted" style="font-size:13.5px">${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} children` : ''} · ${intent.nights} nights · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
+          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${data.origin ? esc(data.origin.city) + ' → ' : ''}${esc(intent.destination.city)}${intent.destination.countryName ? ', ' + esc(intent.destination.countryName) : ''}</div>
+          <div class="muted" style="font-size:13.5px">${data.origin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} children` : ''} · ${intent.nights} nights · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
+          ${data.recommendedDestination ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 You named ${esc(data.recommendedDestination)} — we recommend <strong>${esc(intent.destination.city)}</strong> as the gateway city. Name a specific city to change it.</div>` : ''}
+          ${data.origin && data.origin.inferred ? `<div class="muted" style="font-size:12px;margin-top:4px">🛫 Departure assumed <strong>${esc(data.origin.city)}</strong> — add "from &lt;your city&gt;" to your request for exact flights.</div>` : ''}
         </div>
         <div style="text-align:right">
           <div class="t-label">Components</div>
@@ -488,10 +490,11 @@ function renderOptions(data) {
 
 function optionCard(o, sym, intent) {
   const p = o.pricing;
-  const comps = o.components.map((c) => {
+  const comps = o.components.map((c, i) => {
     const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}" title="${c.agent && c.agentId ? '3JN agent account ' + c.agentId : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}${c.agent && c.agentId ? ' · ' + c.agentId : ''}</span>` : '';
+    const more = ['flight', 'hotel', 'host'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more &amp; images</span>` : '';
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${c.supplier}</span> ${src}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span> ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">
@@ -514,9 +517,54 @@ function optionCard(o, sym, intent) {
 }
 
 function labelFor(c) {
-  const map = { flight: '✈ Flights', hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + c.supplier, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + c.supplier, boat: '⛵ ' + c.supplier, esim: '📶 eSIM' };
-  return map[c.type] || c.type;
+  const s = esc(c.supplier);
+  const map = { flight: '✈ Flights', hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
+  return map[c.type] || esc(c.type);
 }
+
+// Detailed info + images for a selected flight or hotel.
+window.showComponentInfo = (tier, idx) => {
+  const o = window.__options?.[tier];
+  const c = o?.components?.[idx];
+  if (!c) return;
+  const sym = o.pricing.symbol;
+  const toLocal = (usd) => money2(usd * (o.pricing.local.total / o.pricing.lines.totalUSD), sym);
+  const d = c.details || {};
+  if (c.type === 'flight') {
+    const legHTML = (l, title) => l ? `
+      <div class="card pad" style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <strong>${title}</strong><span class="muted" style="font-size:12px">${esc(l.date)} · ${esc(l.stopLabel)} · ${esc(l.durationLabel)}</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.depart)}</div><div class="muted" style="font-size:12px">${esc(l.from)}${l.fromCity ? ' · ' + esc(l.fromCity) : ''}</div></div>
+          <div class="muted" style="flex:1;text-align:center;font-size:12px">✈ ${esc(l.durationLabel)}<div class="rel-bar" style="margin:6px 12px"><i style="width:100%"></i></div>${esc(l.stopLabel)}</div>
+          <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</div><div class="muted" style="font-size:12px">${esc(l.to)}${l.toCity ? ' · ' + esc(l.toCity) : ''}</div></div>
+        </div></div>` : '';
+    modal(`<span class="eyebrow">Flight details · ${esc(c.supplier)}</span>
+      <h3 style="margin:6px 0 2px">${esc(d.outbound?.fromCity || d.outbound?.from)} → ${esc(d.outbound?.toCity || d.outbound?.to)}</h3>
+      <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}</div>
+      ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
+      <div class="kv" style="margin-top:12px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
+    return;
+  }
+  // Hotel / host
+  const imgs = (d.images || []).map((src, i) => `<img class="hotel-img" src="${esc(src)}" alt="${esc(c.supplier)}" loading="lazy" onerror="this.classList.add('img-fallback');this.removeAttribute('src')">`).join('');
+  const stars = '★'.repeat(c.stars || 0);
+  const amen = (d.amenities || []).map((a) => `<span class="chip">${esc(a)}</span>`).join('');
+  modal(`<span class="eyebrow">${c.type === 'host' ? 'Private host' : 'Hotel'} details</span>
+    <h3 style="margin:6px 0 2px">${esc(c.supplier)}</h3>
+    <div class="muted" style="font-size:12.5px"><span style="color:var(--gold)">${stars}</span> · ${esc(d.area || '')} · ${d.distanceToCentreKm}km to centre · ${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' reviews)' : ''}</div>
+    ${imgs ? `<div class="hotel-gallery">${imgs}</div>` : ''}
+    <p class="muted" style="font-size:13px;margin:10px 0">${esc(d.description || '')}</p>
+    <div class="kv"><span>Room</span><span>${esc(d.roomType || '')}</span></div>
+    <div class="kv"><span>Board</span><span>${esc(d.board || '')}</span></div>
+    <div class="kv"><span>Stay</span><span>${d.nights} nights · ${d.rooms} room${d.rooms > 1 ? 's' : ''}</span></div>
+    <div class="kv"><span>Cancellation</span><span>${d.freeCancellation ? '<span style="color:var(--green)">Free cancellation</span>' : 'Non-refundable'}</span></div>
+    <div style="margin-top:10px"><span class="eyebrow">Amenities</span><div class="chips" style="margin-top:6px">${amen}</div></div>
+    <div class="kv" style="margin-top:12px;font-weight:700"><span>Total stay</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
+};
 
 // ---- Booking + instalments ------------------------------------------------
 window.openBooking = async (tier) => {

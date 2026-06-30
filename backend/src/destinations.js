@@ -170,10 +170,18 @@ const titleCaseDest = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
 const DEST_STOP = /^(in|for|with|on|during|next|this|the|my|our|a|an|and|over|plus|including|nights?|days?|weeks?|month|months|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
 export function extractDestination(text) {
   if (!text) return null;
-  const m = text.match(/\b(?:travel(?:ling|ing)?|trip|fly(?:ing)?|going|go|holiday|vacation|getaway|visit(?:ing)?|destination|head(?:ing)?)\s+(?:to\s+|in\s+|for\s+)?(.+)/i);
-  const tail = m ? m[1] : null;
+  // Work on a padded, punctuation-stripped copy.
+  let t = ' ' + text.replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  // Strip a "from <origin>" clause so the origin is never mistaken for the
+  // destination ("fly from Manchester to Lisbon" → destination is Lisbon).
+  t = t.replace(/\sfrom\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\- ]*?(?=\s+(?:to|in|for|with|on|and|by|next|this|during)\s|\s\d|\s*$)/ig, ' ');
+  // The destination follows the LAST " to " ("I want to travel to Lisbon").
+  let tail = null;
+  const parts = t.split(/\sto\s/i);
+  if (parts.length > 1) tail = parts[parts.length - 1];
+  else { const m = t.match(/\b(?:visit(?:ing)?|destination|holiday\s+in|vacation\s+in|getaway\s+to|\bin)\s+(.+)/i); tail = m ? m[1] : null; }
   if (!tail) return null;
-  const words = tail.replace(/[.,!?].*$/, '').split(/\s+/);
+  const words = tail.trim().split(/\s+/);
   const out = [];
   for (const w of words) {
     if (!w) continue;
@@ -218,9 +226,48 @@ export function synthesizeDestination(name) {
   };
 }
 
+// When the user names an arrival COUNTRY instead of a city, recommend the main
+// gateway city for that country so we never return a "country as a city".
+const COUNTRY_TO_CITY = {
+  nigeria: 'Lagos', ghana: 'Accra', kenya: 'Nairobi', 'south africa': 'Johannesburg', egypt: 'Cairo',
+  morocco: 'Casablanca', 'democratic republic of the congo': 'Kinshasa', congo: 'Kinshasa', drc: 'Kinshasa',
+  japan: 'Tokyo', china: 'Beijing', india: 'New Delhi', thailand: 'Bangkok', indonesia: 'Bali',
+  'south korea': 'Seoul', singapore: 'Singapore', malaysia: 'Kuala Lumpur', vietnam: 'Hanoi',
+  france: 'Paris', spain: 'Barcelona', italy: 'Rome', germany: 'Berlin', portugal: 'Lisbon',
+  'united kingdom': 'London', uk: 'London', britain: 'London', greece: 'Athens', netherlands: 'Amsterdam',
+  'united states': 'New York', usa: 'New York', america: 'New York', canada: 'Toronto', brazil: 'Rio de Janeiro',
+  mexico: 'Cancún', argentina: 'Buenos Aires', australia: 'Sydney', 'new zealand': 'Auckland',
+  uae: 'Dubai', 'united arab emirates': 'Dubai', 'saudi arabia': 'Riyadh', qatar: 'Doha', turkey: 'Istanbul',
+};
+// Returns the recommended city if `name` is a known country, else null.
+export function recommendedCityForCountry(name) {
+  const c = COUNTRY_TO_CITY[(name || '').trim().toLowerCase()];
+  return c || null;
+}
+
 // Resolve a place NAME (already isolated) → catalogue or synthesised destination.
+// If the name is a country, recommend its gateway city.
 export function resolveDestination(name) {
-  return findDestination(name) || synthesizeDestination(name);
+  const known = findDestination(name);
+  if (known) return known;
+  const rec = recommendedCityForCountry(name);
+  if (rec) {
+    const d = findDestination(rec) || synthesizeDestination(rec);
+    if (d) { d.recommendedFromCountry = titleCaseDest(name); }
+    return d;
+  }
+  return synthesizeDestination(name);
+}
+
+// Resolve an ORIGIN / departure city → an airport + city. Falls back to a code
+// derived from the city name for anywhere not in the catalogue.
+export function resolveOrigin(name) {
+  const known = findDestination(name);
+  if (known) return { airport: known.airport, city: known.city };
+  const city = titleCaseDest(name);
+  if (!city) return null;
+  const airport = (city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT';
+  return { airport, city };
 }
 
 // Resolve from a free-text REQUEST sentence → catalogue, or synthesised from the
@@ -229,5 +276,5 @@ export function resolveDestinationFromText(text) {
   const known = findDestination(text);
   if (known) return known;
   const guess = extractDestination(text);
-  return guess ? synthesizeDestination(guess) : null;
+  return guess ? resolveDestination(guess) : null;
 }
