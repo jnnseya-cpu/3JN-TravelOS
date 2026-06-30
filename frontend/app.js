@@ -22,15 +22,31 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.user) headers['x-user-id'] = state.user.id;
   if (state.country) headers['x-country'] = state.country;
+  let res;
   try {
-    const res = await fetch(API_BASE + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
-    return data;
-  } catch (err) {
-    toast(`⚠ ${err.message}`);
-    throw err;
+    res = await fetch(API_BASE + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  } catch (netErr) {
+    toast('⚠ Cannot reach the 3JN API — check your connection or the API URL.');
+    throw new Error('network');
   }
+  // Read as text first so a non-JSON error page doesn't blow up JSON.parse.
+  const raw = await res.text();
+  let data;
+  try { data = raw ? JSON.parse(raw) : {}; }
+  catch {
+    // Backend returned HTML/text (e.g. a proxy/error page) — usually means the
+    // frontend isn't routed to the API. Give an actionable message, not a parse error.
+    const hint = API_BASE ? `API_BASE=${API_BASE}` : 'same-origin /api (set window.API_BASE or a rewrite to your backend)';
+    const msg = `API returned a non-JSON response (HTTP ${res.status}). The backend may not be deployed/routed — ${hint}.`;
+    toast(`⚠ ${msg}`);
+    throw new Error(msg);
+  }
+  if (!res.ok) {
+    const m = data.message || data.error || `HTTP ${res.status}`;
+    toast(`⚠ ${m}`);
+    throw new Error(m);
+  }
+  return data;
 }
 
 function money(n, sym) {

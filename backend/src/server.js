@@ -427,6 +427,12 @@ app.post('/api/v1/search', safe((req, res) => {
   });
 }));
 
+// Any unmatched /api/* route returns JSON (never HTML) so the frontend's JSON
+// parsing never breaks on an error page.
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: 'not-found', path: req.path });
+});
+
 // ---- Static frontend ------------------------------------------------------
 const FRONTEND_DIR = path.join(__dirname, '..', '..', 'frontend');
 const SHARED_DIR = path.join(__dirname, '..', '..', 'shared');
@@ -437,6 +443,17 @@ app.use('/shared', express.static(SHARED_DIR));
 // SPA-ish fallback for the page routes.
 app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos', '/marketplace'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+});
+
+// Global error handler — any error reaching here (e.g. malformed JSON body,
+// payload too large) returns JSON for /api so the frontend never sees HTML.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[unhandled]', req.path, err?.message || err);
+  if (req.path.startsWith('/api') || req.path.startsWith('/shared')) {
+    return res.status(err.status || 500).json({ error: 'internal', message: String(err?.message || err) });
+  }
+  res.status(500).send('Internal Server Error');
 });
 
 // Initialise Firebase RTDB persistence (credential-gated; no-op offline). Load
