@@ -159,6 +159,21 @@ test('multi-modal: a search shows ONLY the modes asked for — no auto flights/h
   assert.deepEqual([...set].sort(), ['hotel', 'train']);
 });
 
+test('standalone eSIM: cheap, tiered, and no flight/visa framing', () => {
+  const r = plan({ text: 'I want to get an e-sim to use in Dubai', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  assert.deepEqual([...new Set(r.packages.options[0].components.map((c) => c.type))], ['esim']);
+  // Utility purchase → not a journey: no visa panel, no flight route.
+  assert.equal(r.journey, false);
+  assert.equal(r.visa.ok, false);
+  // Realistic price — a week's Dubai eSIM is single digits, not ~£40.
+  const total = r.packages.options[0].pricing.local.total;
+  assert.ok(total < 15, `eSIM total ${total} should be modest`);
+  const esim = r.packages.options[0].components.find((c) => c.type === 'esim');
+  assert.ok(esim.details.dataGB >= 1 && esim.details.dataGB <= 8);
+  assert.ok(esim.details.planLabel.includes('GB'));
+});
+
 test('mini cruise: "family of 5", Newcastle, 2 nights, priced as a ferry-cruise', () => {
   const r = plan({ text: 'travel to Amsterdam from new castle on a mini cruise in September for a family of 5, only 2 nights in total', context: GB, user: null, searchTier: 'smart' });
   assert.equal(r.stage, 'options');

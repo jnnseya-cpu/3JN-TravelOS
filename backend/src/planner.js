@@ -82,6 +82,11 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // decides whether a passport/visa is needed at booking (a local train is not).
   const international = !(origin.country && intent.destination.country && origin.country === intent.destination.country);
 
+  // Is this an actual journey (transport/stay) or just a utility/add-on (e.g. an
+  // eSIM)? A standalone eSIM purchase shouldn't show a flight route or visa.
+  const JOURNEY_COMPONENTS = ['flights', 'train', 'coach', 'cruise', 'ferry', 'hotel'];
+  const journey = intent.components.some((c) => JOURNEY_COMPONENTS.includes(c));
+
   // Provenance, read from the actual offers used. Price-live = a real fare
   // (Duffel/Amadeus); schedule-live = a real operated schedule (OAG) priced by
   // the estimator. Flights can be schedule-live but price-estimated.
@@ -123,6 +128,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     priceSource,
     scheduleSource,
     international,
+    journey,
     context,
     gate: {
       requestedTier: searchTier,
@@ -134,9 +140,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       requirement: gate.requirement || null,
     },
     scanSummary: summariseScan(scan),
-    // 3JN VisaOS: pre-booking visa approval probability — only for international
-    // trips. A local/domestic journey needs no visa, so we don't surface one.
-    visa: international ? approvalProbability(intent.nationality, intent.destination.city) : { ok: false, domestic: true },
+    // 3JN VisaOS: pre-booking visa approval probability — only for an actual
+    // international journey. A local trip or a utility purchase (eSIM) needs none.
+    visa: (international && journey) ? approvalProbability(intent.nationality, intent.destination.city) : { ok: false, domestic: !international, utility: !journey },
     // Which AI provider the gateway routes intent extraction to (Claude by
     // default; OpenAI/Gemini for other tasks). Runs locally when no key is set.
     aiRouting: route('intentExtraction'),
