@@ -187,6 +187,7 @@ async function boot() {
     }
   } catch { /* toast already shown */ }
   refreshNotifications();
+  restoreSession();
 }
 function syncCurrency(country) {
   const fc = $('#footerCurrency');
@@ -442,6 +443,8 @@ async function renderConsole() {
       </div>
       <div id="intelOut"></div>
     </div>
+    <div id="esimCard" class="card pad" style="margin-top:16px"></div>
+    ${['executive', 'business', 'admin'].includes(u.role) || u.tier === 'Elite' || u.tier === 'Nomad' ? '<div id="expenseCard" class="card pad" style="margin-top:16px"></div>' : ''}
     ${['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
 
   const cards = bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
@@ -449,6 +452,45 @@ async function renderConsole() {
 
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
+  renderEsims();
+  renderExpense();
+}
+
+// ---- eSIM Manager ---------------------------------------------------------
+async function renderEsims() {
+  const el = $('#esimCard');
+  if (!el) return;
+  let data; try { data = await api('/api/esims'); } catch { return; }
+  const rows = (data.esims || []).map((e) => `
+    <div class="kv"><span>📶 ${e.destination} · ${e.dataGB}GB <span class="muted">${e.coverage}</span></span>
+      <span>${e.status === 'active'
+        ? `<span style="color:var(--green)">active · ${e.dataUsedGB}/${e.dataGB}GB</span>`
+        : `<a onclick="activateEsim('${e.id}')" style="color:var(--gold);cursor:pointer">activate</a>`}</span></div>`).join('')
+    || '<div class="muted" style="font-size:13px">No eSIMs yet.</div>';
+  el.innerHTML = `<span class="eyebrow">eSIM Manager · global connectivity</span>${rows}
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <select class="in" id="esimDest"><option>Dubai</option><option>Istanbul</option><option>Barcelona</option><option>New York</option><option>Bali</option></select>
+      <button class="btn btn-ghost btn-sm" onclick="provisionEsim()">+ Provision eSIM</button>
+    </div>`;
+}
+window.provisionEsim = async () => {
+  try { await api('/api/esims', { method: 'POST', body: JSON.stringify({ destination: $('#esimDest').value, dataGB: 5, days: 9 }) }); } catch { return; }
+  toast('✓ eSIM provisioned.'); renderEsims();
+};
+window.activateEsim = async (id) => { try { await api(`/api/esims/${id}/activate`, { method: 'POST', body: '{}' }); } catch { return; } toast('✓ eSIM activated.'); renderEsims(); };
+
+// ---- Expense Intelligence -------------------------------------------------
+async function renderExpense() {
+  const el = $('#expenseCard');
+  if (!el) return;
+  let data; try { data = await api('/api/expense'); } catch { return; }
+  const r = data.report;
+  const cats = Object.entries(r.categories || {});
+  if (!cats.length) { el.innerHTML = '<span class="eyebrow">Expense Intelligence</span><div class="muted" style="font-size:13px;margin-top:6px">No expenses yet — book a trip to populate.</div>'; return; }
+  const rows = cats.map(([k, v]) => `<div class="kv"><span>${k}</span><span>${r.currency} ${v.toLocaleString()}</span></div>`).join('');
+  el.innerHTML = `<span class="eyebrow">Expense Intelligence</span>${rows}
+    <div class="kv" style="font-weight:700"><span>Total</span><span style="color:var(--gold)">${r.currency} ${r.total.toLocaleString()}</span></div>
+    <button class="btn btn-ghost btn-sm btn-block" style="margin-top:10px" onclick='downloadDoc("expenses", ${JSON.stringify(r.csv)})'>⬇ Export CSV (Xero/QuickBooks)</button>`;
 }
 
 // ---- Loyalty Hub ----------------------------------------------------------
@@ -1011,8 +1053,57 @@ function setUser(u) {
   const chip = $('#userChip');
   chip.classList.remove('hidden');
   chip.innerHTML = `${avatarHTML(u, 22)} ${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
+  try { localStorage.setItem('3jn_uid', u.id); } catch {}
+  const signBtn = $('#signBtn'); if (signBtn) signBtn.textContent = 'Sign out';
   refreshNotifications();
 }
+async function restoreSession() {
+  let uid; try { uid = localStorage.getItem('3jn_uid'); } catch {}
+  if (!uid) return;
+  try { const d = await api(`/api/account/${uid}`); if (d.user) setUser(d.user); } catch {}
+}
+window.signOut = () => { try { localStorage.removeItem('3jn_uid'); } catch {} state.user = null; $('#userChip').classList.add('hidden'); $('#signBtn').textContent = 'Sign in'; toast('Signed out.'); };
+
+// ---- Login / Signup -------------------------------------------------------
+$('#signBtn')?.addEventListener('click', () => { if (state.user) return window.signOut(); openAuth(); });
+function openAuth() {
+  modal(`
+    <span class="eyebrow">Welcome to 3JN Travel OS</span>
+    <div class="chips" style="margin:10px 0">
+      <span class="chip on" id="authTabSignup" onclick="authTab('signup')">Sign up</span>
+      <span class="chip" id="authTabLogin" onclick="authTab('login')">Log in</span>
+    </div>
+    <div id="authSignup">
+      <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="auName" placeholder="Your name"></div>
+      <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="auEmail" placeholder="you@email.com"></div>
+      <div class="field" style="margin-top:10px"><label>I am a…</label><select class="in" id="auRole"><option value="consumer">Traveller</option><option value="business">Business</option><option value="merchant">Merchant</option><option value="partner">Agency partner</option></select></div>
+      <div class="field" style="margin-top:10px"><label>Referral code (optional)</label><input class="in" id="auRef" placeholder="3JN-XXXX"></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doSignup()">Create account · 250 pts bonus</button>
+    </div>
+    <div id="authLogin" style="display:none">
+      <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@email.com"></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
+      <p class="muted" style="font-size:12px;margin-top:10px">Try the seeded accounts: admin@3jntravel.com, business@3jntravel.com, merchant@3jntravel.com.</p>
+    </div>`);
+}
+window.authTab = (t) => {
+  $('#authTabSignup').classList.toggle('on', t === 'signup');
+  $('#authTabLogin').classList.toggle('on', t === 'login');
+  $('#authSignup').style.display = t === 'signup' ? 'block' : 'none';
+  $('#authLogin').style.display = t === 'login' ? 'block' : 'none';
+};
+window.doSignup = async () => {
+  const body = { name: $('#auName').value.trim(), email: $('#auEmail').value.trim(), role: $('#auRole').value, referredByCode: $('#auRef').value.trim() || undefined };
+  if (!body.name) { toast('Enter your name.'); return; }
+  let d; try { d = await api('/api/account', { method: 'POST', body: JSON.stringify(body) }); } catch { return; }
+  setUser(d.user); closeModal(); toast(`✓ Welcome, ${d.user.name}!`); nav('console');
+};
+window.doLogin = async () => {
+  const email = $('#liEmail').value.trim();
+  if (!email) { toast('Enter your email.'); return; }
+  let d; try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email }) }); } catch { return; }
+  setUser(d.user); closeModal(); toast(`✓ Welcome back, ${d.user.name}!`); nav('console');
+};
 
 window.provisionTest = async () => {
   try { const data = await api('/api/account/test', { method: 'POST', body: JSON.stringify({}) });

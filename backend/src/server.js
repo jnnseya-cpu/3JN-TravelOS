@@ -19,6 +19,7 @@ import {
   listApprovals, decideApproval,
   listNotifications, markNotificationsRead,
   recordVisaApplication, govAnalytics,
+  findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
 } from './store.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
@@ -87,6 +88,39 @@ app.post('/api/account/test', safe((req, res) => {
 app.post('/api/account/:id/acu', safe((req, res) => {
   const result = buyAcu(req.params.id, (req.body || {}).pack);
   res.json(result);
+}));
+
+// Lightweight "login" — look up an existing account by email (prototype: no
+// password; a real build authenticates via Auth0/Firebase).
+app.post('/api/login', safe((req, res) => {
+  const email = ((req.body || {}).email || '').trim().toLowerCase();
+  const user = findUserByEmail(email);
+  if (!user) return res.status(404).json({ error: 'not-found', message: 'No account with that email. Sign up instead.' });
+  res.json({ user });
+}));
+
+// ---- eSIM Manager ---------------------------------------------------------
+app.get('/api/esims', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ esims: listEsims(user.id) });
+}));
+app.post('/api/esims', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ esim: provisionEsim(user.id, req.body || {}) });
+}));
+app.post('/api/esims/:id/activate', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(activateEsim(user.id, req.params.id));
+}));
+
+// ---- Expense Intelligence -------------------------------------------------
+app.get('/api/expense', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ report: expenseReport(user.id) });
 }));
 
 // ---- Plan: the core pipeline ---------------------------------------------

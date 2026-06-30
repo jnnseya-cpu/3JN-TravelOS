@@ -1,5 +1,48 @@
 # Deploying 3JN Travel OS
 
+## Recommended long-term architecture (enterprise / VisaOS-grade)
+
+Because 3JN Travel OS + **VisaOS** handle sensitive documents (passports, bank
+statements), visa decisions, payments, audit logs and AI decisions, the
+recommended production stack prioritises security, document storage, compliance
+and auditability:
+
+```
+Claude build → GitHub
+  → Vercel                      (frontend, static)
+  → Firebase Auth               (identity, MFA, social login)
+  → Cloud Run / Cloud Functions (backend logic — this Express app, containerised)
+  → Firestore                   (app activity + realtime journey/visa status)
+  → Google Cloud Storage        (visa documents, e-tickets — large objects, lifecycle rules)
+  → Cloud SQL PostgreSQL        (payments, audit, visa decisions, ACU ledger, financial records)
+  → Stripe / BitriPay           (payments)
+  → AI gateway                  (Claude / OpenAI / Gemini, controlled)
+```
+
+| Concern | Service | Why |
+|---|---|---|
+| Domain | **Hostinger** | DNS for `3jntravel.com` / `api.3jntravel.com` |
+| Frontend | **Vercel** | CDN, instant deploys, no build step |
+| Auth | **Firebase Auth** | MFA, social login, fast UX |
+| Backend | **Cloud Run** | long-running Express, autoscale, custom domain |
+| App data / realtime | **Firestore** | journey + visa status, low-latency reads |
+| Documents | **Google Cloud Storage** | large sensitive files, per-GB pricing, lifecycle, ACLs — **not** in the DB |
+| Financial / visa / audit | **Cloud SQL PostgreSQL** | structured, transactional, auditable records |
+| Payments | **Stripe + BitriPay** | cards + African rail (CDF/mobile money) |
+| AI | **AI Gateway** (`backend/src/ai-gateway.js`) | provider-agnostic routing |
+
+> **Why not Vercel + Neon as the main backend?** Neon is great serverless
+> Postgres, but the hard problems here are heavy/sensitive document storage,
+> identity verification, audit logs and government-grade access control — which
+> belong in **GCS + Firestore + Cloud SQL inside Google Cloud**, not a single
+> Postgres layer. Keep documents in object storage, never in the database.
+
+The config files below already target **Vercel (frontend) + Cloud Run/Firebase
+(backend) + Hostinger DNS**; add Firestore/GCS/Cloud SQL when you move off the
+in-memory store.
+
+---
+
 The app is two pieces:
 
 - **frontend/** — static files (HTML/CSS/JS). Best on a CDN/static host (Vercel).

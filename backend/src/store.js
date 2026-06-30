@@ -23,7 +23,53 @@ const db = {
   approvals: [], // business travel approval queue
   notifications: [], // per-user notification feed
   visaApps: [], // VisaOS applications + decisions
+  esims: [], // provisioned eSIM profiles
 };
+
+// ---- eSIM Manager ---------------------------------------------------------
+const ESIM_COVERAGE = { Dubai: '5G · Etisalat/du', Istanbul: '4G/5G · Turkcell', Barcelona: '5G · Movistar', 'New York': '5G · T-Mobile/AT&T', Bali: '4G · Telkomsel' };
+export function provisionEsim(userId, { destination = 'Dubai', dataGB = 5, days = 9, provider = 'Airalo' } = {}) {
+  const rec = {
+    id: id('esim'), userId: userId || null, destination, provider,
+    dataGB, dataUsedGB: 0, days, coverage: ESIM_COVERAGE[destination] || 'Regional 4G/5G',
+    iccid: '8944' + randomKey().slice(0, 14).replace(/[a-z]/g, (c) => (c.charCodeAt(0) % 10)),
+    status: 'provisioned', activatedAt: null, createdAt: nowISO(),
+  };
+  db.esims.push(rec);
+  recordAudit({ actor: userId || 'guest', role: 'agent', action: 'esim.provisioned', entity: 'esim', entityId: rec.id, summary: `${dataGB}GB ${destination}` });
+  if (userId) pushNotification(userId, { type: 'info', icon: '📶', title: 'eSIM ready', body: `${dataGB}GB for ${destination} — activate before departure.` });
+  return rec;
+}
+export function listEsims(userId) {
+  return db.esims.filter((e) => e.userId === userId).map((e) => ({ ...e }));
+}
+export function activateEsim(userId, esimId) {
+  const e = db.esims.find((x) => x.id === esimId && x.userId === userId);
+  if (!e) return { ok: false, error: 'not-found' };
+  e.status = 'active'; e.activatedAt = nowISO();
+  e.dataUsedGB = Math.round(e.dataGB * 0.18 * 10) / 10; // simulate some usage
+  return { ok: true, esim: e };
+}
+
+// ---- Expense Intelligence (Executive tier) --------------------------------
+// Categorise a user's bookings into expense lines and produce a CSV export.
+export function expenseReport(userId) {
+  const bookings = [...db.bookings.values()].filter((b) => b.userId === userId);
+  const categories = {};
+  const rows = [];
+  for (const b of bookings) {
+    const sym = b.option?.pricing?.symbol || '£';
+    for (const c of (b.option?.components || [])) {
+      const cat = { flight: 'Flights', host: 'Accommodation', hotel: 'Accommodation', activity: 'Activities', tickets: 'Activities', boat: 'Activities', visa: 'Visa', insurance: 'Insurance', transfer: 'Transfers', carhire: 'Car hire', esim: 'Connectivity' }[c.type] || 'Other';
+      const local = Math.round((c.priceUSD || 0) * (b.option.pricing.local.total / b.option.pricing.lines.totalUSD) * 100) / 100;
+      categories[cat] = Math.round(((categories[cat] || 0) + local) * 100) / 100;
+      rows.push({ bookingId: b.id, category: cat, supplier: c.supplier, amount: local, currency: b.option.pricing.currency });
+    }
+  }
+  const total = Object.values(categories).reduce((s, v) => s + v, 0);
+  const csv = ['booking,category,supplier,amount,currency', ...rows.map((r) => `${r.bookingId},${r.category},"${r.supplier}",${r.amount},${r.currency}`)].join('\n');
+  return { categories, rows, total: Math.round(total * 100) / 100, currency: bookings[0]?.option?.pricing?.currency || 'GBP', csv };
+}
 
 // ---- 3JN VisaOS: applications + government analytics ----------------------
 export function recordVisaApplication(assessment) {
@@ -142,6 +188,11 @@ export function getUser(userId) {
 
 export function getUserRaw(userId) {
   return db.users.get(userId);
+}
+
+export function findUserByEmail(email) {
+  const u = [...db.users.values()].find((x) => x.email.toLowerCase() === (email || '').toLowerCase());
+  return u ? publicUser(u) : null;
 }
 
 export function addPoints(userId, points) {

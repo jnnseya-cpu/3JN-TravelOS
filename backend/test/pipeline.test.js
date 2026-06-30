@@ -18,6 +18,7 @@ import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
+import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport } from '../src/store.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
 
@@ -228,6 +229,22 @@ test('risk feed returns a score and the seven intelligence layers', () => {
   assert.equal(r.ok, true);
   assert.ok(r.riskScore >= 70 && r.riskScore <= 100);
   assert.equal(r.layers.length, 7);
+});
+
+test('login finds a seeded account by email; eSIM + expense work', () => {
+  seedAllRoles();
+  const admin = findUserByEmail('admin@3jntravel.com');
+  assert.ok(admin && admin.role === 'admin');
+  assert.equal(findUserByEmail('nope@nowhere.com'), null);
+
+  const u = createUser({ name: 'Sim', role: 'consumer' });
+  const e = provisionEsim(u.id, { destination: 'Dubai', dataGB: 5 });
+  assert.equal(e.status, 'provisioned');
+  assert.equal(listEsims(u.id).length, 1);
+  assert.equal(activateEsim(u.id, e.id).esim.status, 'active');
+
+  const rep = expenseReport(u.id); // no bookings yet
+  assert.ok('categories' in rep && 'csv' in rep);
 });
 
 test('VisaOS: clean low-risk application is auto-approved', () => {
