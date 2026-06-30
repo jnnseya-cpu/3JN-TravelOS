@@ -9,28 +9,9 @@
 // demonstrates the profit-protection logic rather than running an actual
 // expensive model.
 
-// Per-agent-action ACU costs — from the master blueprint, Appendix B.
-export const ACU_ACTIONS = {
-  intent: 8,            // natural language intent extraction
-  flightSearch: 15,     // GDS + wholesale
-  hotelSearch: 12,      // Hotelbeds wholesale
-  priceMonitor: 3,      // automated check cycle
-  visaCheck: 10,        // per destination per passport
-  riskBriefing: 18,     // full destination risk report
-  chiefOfStaff: 12,     // per dialogue turn
-  expense: 5,           // per receipt (Executive+)
-  privateAviation: 25,  // Elite only
-  coworking: 8,         // Executive+
-};
-
-// Indicative ACU -> GBP overage price by tier (blueprint §12.2). Used to value
-// AI cost in money terms for the cost-protection gate.
-export const ACU_GBP = 0.003; // ~£0.003 per ACU (mid-tier overage)
-
-// Monthly ACU allowances per tier (blueprint §12.2).
-export const TIER_ACU_ALLOWANCE = {
-  Nomad: 1500, Family: 4000, Executive: 10000, Elite: 30000, Business: 50000,
-};
+// ACU economy constants are shared with the frontend — see shared/constants.js.
+import { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE } from '../../shared/constants.js';
+export { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE };
 
 // Search tiers are now composed from real agent actions, so the ACU cost is the
 // sum of the actions that depth runs. AI cost (USD) is derived from ACU price.

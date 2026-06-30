@@ -170,11 +170,15 @@ app.post('/api/v1/search', safe((req, res) => {
 }));
 
 // ---- Static frontend ------------------------------------------------------
-app.use(express.static(path.join(__dirname, '..', 'public')));
+const FRONTEND_DIR = path.join(__dirname, '..', '..', 'frontend');
+const SHARED_DIR = path.join(__dirname, '..', '..', 'shared');
+app.use(express.static(FRONTEND_DIR));
+// Expose shared constants to the browser so frontend and backend never drift.
+app.use('/shared', express.static(SHARED_DIR));
 
 // SPA-ish fallback for the page routes.
 app.get(['/how-it-works', '/api-portal', '/membership', '/console'], (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+  res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;

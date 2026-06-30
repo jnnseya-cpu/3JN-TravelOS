@@ -11,6 +11,7 @@
 
 import { visaRule } from './destinations.js';
 import { applySourcing } from './partners.js';
+import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
 
 // Deterministic pseudo-random so results are stable for a given seed (no
 // Math.random — keeps runs reproducible and testable).
@@ -71,7 +72,7 @@ const ACTIVITY_CATALOG = [
 
 // Reliability floor — below this a supplier is considered unreliable and is
 // excluded from "cheapest reliable" results.
-export const RELIABILITY_FLOOR = 70;
+export const RELIABILITY_FLOOR = SHARED_FLOOR;
 
 function round(n) {
   return Math.round(n * 100) / 100;

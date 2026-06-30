@@ -3,25 +3,13 @@
 // Everything internally is computed in USD then converted to the traveller's
 // currency for presentation, so the maths stays consistent.
 
-// 3JN's headline revenue: a 10% fee on the final package value (the brief and
-// the spec both fix this as the "main revenue").
-export const COMMISSION_RATE = 0.10;
+// Canonical economic constants live in shared/ so the frontend and backend
+// share one source of truth. Re-exported here for existing call sites.
+import {
+  COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
+} from '../../shared/constants.js';
 
-// Savings-share: when the OS beats the public "market" reference price, 3JN
-// takes a small share of the value it created.
-export const SAVINGS_SHARE_RATE = 0.10;
-
-// Loyalty tiers — points -> discount. (1 point per $2 spent; 250-point signup
-// bonus.) Mirrors the values the user settled on in the session.
-export const LOYALTY_TIERS = [
-  { name: 'Explorer', minPoints: 0, discount: 0.02 },
-  { name: 'Voyager', minPoints: 1000, discount: 0.05 },
-  { name: 'Nomad', minPoints: 5000, discount: 0.08 },
-  { name: 'Elite', minPoints: 15000, discount: 0.12 },
-];
-
-export const POINTS_PER_USD = 0.5; // 1 point per $2
-export const SIGNUP_BONUS_POINTS = 250;
+export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS };
 
 export function tierForPoints(points = 0) {
   let tier = LOYALTY_TIERS[0];

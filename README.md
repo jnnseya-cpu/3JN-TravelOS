@@ -38,18 +38,18 @@ Type a sentence like:
 
 | Stage | Module | What happens |
 |------|--------|--------------|
-| **Understand intent** | `src/intent.js` | Destination, travellers (family → 2+2), nights, month, dates, requested components, instalments, "cheapest reliable" — all parsed deterministically. Ambiguous requests return clarifying questions instead of crashing. |
-| **Detect location/language/currency** | `src/geo.js` | Reads `Accept-Language` / country and prices everything in the traveller's currency. |
-| **Cost-protection gate (ACPE)** | `src/revenue.js` | No costly search runs unless funded by ACU balance, deposit, subscription, supplier commission or expected booking revenue (revenue ≥ AI cost × 10). Otherwise it downgrades to cached results. |
-| **Scan global suppliers** | `src/suppliers.js` | Flights (inbound **and** outbound), hotels, private hosts, activities, visa, insurance, transfers, car/bike hire, event tickets, boat/yacht charter, roaming/eSIM — each with a reliability score and verified flag. |
-| **Partner & agent sourcing** | `src/partners.js` | Every component is attributed to a real booking partner with a deep-link. **Rayna Tours** is the **agent account** for Dubai/UAE land products (activities, tickets, transfers, visa, boats) — 3JN buys at **net rates ~18% below public**, funding the "up to 30% cheaper" promise. Flights → Kiwi/Trip, hotels → Trip/Expedia, eSIM → Airalo, etc. |
-| **Compare & filter** | `src/packager.js` | Keeps only **verified** suppliers above the reliability floor (70). |
-| **Find cheapest reliable combination** | `src/packager.js` | Builds 3 tiered options — **Standard (cheapest reliable)**, **Premium (best balance)**, **Luxury (top-rated)** — and **recommends the best value**. |
-| **Add 3JN commission** | `src/pricing.js` | Transparent 10% fee, loyalty discount and savings-vs-market shown in every breakdown. |
-| **Deposit & instalments** | `src/pricing.js` | 20% deposit + interest-free monthly schedule ending before departure. |
-| **Monitor price after booking** | `src/monitor.js` | Neural Price Guard re-scans the market; if the price drops it rebooks and refunds the difference; if it rises it confirms your locked rate saved you money. |
-| **Reviews & supplier scoring** | `src/reviews.js` | Post-trip reviews feed live supplier scores that blend back into future reliability rankings. |
-| **Revenue model** | `src/revenue.js` | 15+ streams: 10% fee, ACU packs, deposits, supplier commissions, savings-share, subscriptions, corporate, group, marketplace, white-label, API, finance. |
+| **Understand intent** | `backend/src/intent.js` | Destination, travellers (family → 2+2), nights, month, dates, requested components, instalments, "cheapest reliable" — all parsed deterministically. Ambiguous requests return clarifying questions instead of crashing. |
+| **Detect location/language/currency** | `backend/src/geo.js` | Reads `Accept-Language` / country and prices everything in the traveller's currency. |
+| **Cost-protection gate (ACPE)** | `backend/src/revenue.js` | No costly search runs unless funded by ACU balance, deposit, subscription, supplier commission or expected booking revenue (revenue ≥ AI cost × 10). Otherwise it downgrades to cached results. |
+| **Scan global suppliers** | `backend/src/suppliers.js` | Flights (inbound **and** outbound), hotels, private hosts, activities, visa, insurance, transfers, car/bike hire, event tickets, boat/yacht charter, roaming/eSIM — each with a reliability score and verified flag. |
+| **Partner & agent sourcing** | `backend/src/partners.js` | Every component is attributed to a real booking partner with a deep-link. **Rayna Tours** is the **agent account** for Dubai/UAE land products (activities, tickets, transfers, visa, boats) — 3JN buys at **net rates ~18% below public**, funding the "up to 30% cheaper" promise. Flights → Kiwi/Trip, hotels → Trip/Expedia, eSIM → Airalo, etc. |
+| **Compare & filter** | `backend/src/packager.js` | Keeps only **verified** suppliers above the reliability floor (70). |
+| **Find cheapest reliable combination** | `backend/src/packager.js` | Builds 3 tiered options — **Standard (cheapest reliable)**, **Premium (best balance)**, **Luxury (top-rated)** — and **recommends the best value**. |
+| **Add 3JN commission** | `backend/src/pricing.js` | Transparent 10% fee, loyalty discount and savings-vs-market shown in every breakdown. |
+| **Deposit & instalments** | `backend/src/pricing.js` | 20% deposit + interest-free monthly schedule ending before departure. |
+| **Monitor price after booking** | `backend/src/monitor.js` | Neural Price Guard re-scans the market; if the price drops it rebooks and refunds the difference; if it rises it confirms your locked rate saved you money. |
+| **Reviews & supplier scoring** | `backend/src/reviews.js` | Post-trip reviews feed live supplier scores that blend back into future reliability rankings. |
+| **Revenue model** | `backend/src/revenue.js` | 15+ streams: 10% fee, ACU packs, deposits, supplier commissions, savings-share, subscriptions, corporate, group, marketplace, white-label, API, finance. |
 
 ## Pages (frontend in `public/`)
 
@@ -95,9 +95,31 @@ POST /api/v1/search               white-label partner search endpoint
   wrapped so an error always returns clean JSON — never an empty object.
 - **Deterministic suppliers.** Inventory is synthesised from a per-destination
   cost basis with a seeded PRNG, so results are stable and testable. Swap
-  `src/suppliers.js` for real GDS/aggregator calls to go live.
-- **In-memory store** (`src/store.js`) — swap for Postgres/Firestore for
+  `backend/src/suppliers.js` for real GDS/aggregator calls to go live.
+- **In-memory store** (`backend/src/store.js`) — swap for Postgres/Firestore for
   persistence.
+
+## Project structure
+
+```
+3JN-TravelOS/
+├── frontend/            # Browser app — no build step
+│   ├── index.html       #   cinematic landing + planner + console + how-it-works + API + membership
+│   ├── app.js           #   controller: API calls, view routing, the full pipeline UI
+│   └── styles.css       #   premium navy/gold/electric-blue design system
+├── backend/             # Node/Express API + engine
+│   ├── src/             #   server.js + intent, geo, destinations, suppliers, packager,
+│   │                    #   pricing, revenue, monitor, reviews, store, planner, partners
+│   └── test/            #   node:test suite (12 tests)
+├── shared/              # Single source of truth imported by backend + served to frontend
+│   └── constants.js     #   commission, loyalty tiers, membership plans, ACU economy, reliability floor
+├── docs/
+│   └── BLUEPRINT.md     # Full investor-grade AI-OS master blueprint (16 sections)
+└── package.json
+```
+
+The `shared/` module is imported directly by the backend and mounted at `/shared`
+so the browser reads the same constants — frontend and backend never drift.
 
 ## Stack
 

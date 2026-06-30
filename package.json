@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "description": "3JN Global Travel Operating System — say what you want, get a complete, transparently-priced travel package.",
   "type": "module",
-  "main": "src/server.js",
+  "main": "backend/src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "start": "node backend/src/server.js",
+    "dev": "node --watch backend/src/server.js",
+    "test": "node --test backend/test/*.test.js"
   },
   "keywords": [
     "travel",
