@@ -29,6 +29,7 @@ import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
 import { gatewayStatus } from './ai-gateway.js';
+import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost } from './agents.js';
 import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
@@ -409,6 +410,21 @@ app.get('/api/ai/status', safe((req, res) => {
   res.json({ gateway: gatewayStatus() });
 }));
 
+// ---- Enterprise AI agents: Security, Ops, SEO, Marketing ------------------
+app.get('/api/agents/security', safe((req, res) => res.json({ report: securityReport() })));
+app.get('/api/agents/ops', safe((req, res) => res.json({ report: opsDiagnostics({ persistence: isEnabled(), email: isMailerEnabled() }) })));
+app.get('/api/agents/seo', safe((req, res) => res.json({ report: seoReport() })));
+app.get('/api/agents/marketing', safe((req, res) => res.json({ report: marketingPlan() })));
+
+// ---- Blog (AI-written, hyperlinked, shareable) ---------------------------
+app.get('/api/blog', safe((req, res) => res.json({ posts: listPosts() })));
+app.get('/api/blog/:slug', safe((req, res) => {
+  const post = getPost(req.params.slug);
+  if (!post) return res.status(404).json({ error: 'not-found' });
+  res.json({ post });
+}));
+app.post('/api/blog/generate', safe((req, res) => res.json({ post: createPost(req.body || {}) })));
+
 // ---- Public "white-label" partner endpoint (returns a package) -----------
 // Demonstrates the API other businesses would integrate.
 app.post('/api/v1/search', safe((req, res) => {
@@ -427,6 +443,27 @@ app.post('/api/v1/search', safe((req, res) => {
   });
 }));
 
+// ---- SEO: robots.txt + dynamic sitemap.xml --------------------------------
+app.get('/robots.txt', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`);
+});
+app.get('/sitemap.xml', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/api-portal'];
+  const blogUrls = listPosts().map((p) => `/blog/${p.slug}`);
+  const urls = [...staticUrls, ...blogUrls]
+    .map((u) => `  <url><loc>${base}${u}</loc><changefreq>weekly</changefreq></url>`)
+    .join('\n');
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
+});
+
+// Any unmatched /api/* route returns JSON (never HTML) so the frontend's JSON
+// parsing never breaks on an error page.
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: 'not-found', path: req.path });
+});
+
 // ---- Static frontend ------------------------------------------------------
 const FRONTEND_DIR = path.join(__dirname, '..', '..', 'frontend');
 const SHARED_DIR = path.join(__dirname, '..', '..', 'shared');
@@ -435,8 +472,19 @@ app.use(express.static(FRONTEND_DIR));
 app.use('/shared', express.static(SHARED_DIR));
 
 // SPA-ish fallback for the page routes.
-app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos', '/marketplace'], (req, res) => {
+app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos', '/marketplace', '/blog', '/blog/:slug'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+});
+
+// Global error handler — any error reaching here (e.g. malformed JSON body,
+// payload too large) returns JSON for /api so the frontend never sees HTML.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[unhandled]', req.path, err?.message || err);
+  if (req.path.startsWith('/api') || req.path.startsWith('/shared')) {
+    return res.status(err.status || 500).json({ error: 'internal', message: String(err?.message || err) });
+  }
+  res.status(500).send('Internal Server Error');
 });
 
 // Initialise Firebase RTDB persistence (credential-gated; no-op offline). Load
@@ -461,7 +509,7 @@ if (process.env.NODE_ENV !== 'test') {
 // under Firebase Functions (FUNCTION_TARGET set) — there the function wrapper
 // owns the lifecycle — and during tests.
 const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET) {
+if (process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET && !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`\n  3JN Travel OS running → http://localhost:${PORT}\n`);
   });

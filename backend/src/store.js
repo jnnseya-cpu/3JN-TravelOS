@@ -25,6 +25,7 @@ const db = {
   visaApps: [], // VisaOS applications + decisions
   esims: [], // provisioned eSIM profiles
   contracts: [], // supplier volume agreements
+  blog: [], // AI-written blog posts
 };
 
 // ---- Supplier Contract Manager (Enterprise) -------------------------------
@@ -613,7 +614,7 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog'];
 
 export function snapshot() {
   const out = { counter };

@@ -22,6 +22,7 @@ let saveTimer = null;
 
 function hasCredentials() {
   return !!(
+    process.env.FIREBASE_SERVICE_ACCOUNT ||          // explicit key (Vercel/any host)
     process.env.GOOGLE_APPLICATION_CREDENTIALS ||
     process.env.K_SERVICE ||          // Cloud Run
     process.env.FUNCTION_TARGET ||    // Firebase Functions
@@ -34,7 +35,14 @@ export function initPersistence({ databaseURL } = {}) {
   const url = databaseURL || process.env.FIREBASE_DATABASE_URL || DEFAULT_DB_URL;
   if (!hasCredentials()) return { enabled: false, reason: 'no-credentials' };
   try {
-    if (!admin.apps.length) admin.initializeApp({ databaseURL: url });
+    if (!admin.apps.length) {
+      // On GCP, ADC is automatic. Elsewhere (e.g. Vercel), pass a service
+      // account JSON via FIREBASE_SERVICE_ACCOUNT (a secret env var).
+      const sa = process.env.FIREBASE_SERVICE_ACCOUNT;
+      const opts = { databaseURL: url };
+      if (sa) opts.credential = admin.credential.cert(JSON.parse(sa));
+      admin.initializeApp(opts);
+    }
     ref = admin.database().ref('3jnos');
     enabled = true;
     return { enabled: true, url };

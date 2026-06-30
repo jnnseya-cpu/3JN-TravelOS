@@ -22,15 +22,31 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.user) headers['x-user-id'] = state.user.id;
   if (state.country) headers['x-country'] = state.country;
+  let res;
   try {
-    const res = await fetch(API_BASE + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
-    return data;
-  } catch (err) {
-    toast(`⚠ ${err.message}`);
-    throw err;
+    res = await fetch(API_BASE + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  } catch (netErr) {
+    toast('⚠ Cannot reach the 3JN API — check your connection or the API URL.');
+    throw new Error('network');
   }
+  // Read as text first so a non-JSON error page doesn't blow up JSON.parse.
+  const raw = await res.text();
+  let data;
+  try { data = raw ? JSON.parse(raw) : {}; }
+  catch {
+    // Backend returned HTML/text (e.g. a proxy/error page) — usually means the
+    // frontend isn't routed to the API. Give an actionable message, not a parse error.
+    const hint = API_BASE ? `API_BASE=${API_BASE}` : 'same-origin /api (set window.API_BASE or a rewrite to your backend)';
+    const msg = `API returned a non-JSON response (HTTP ${res.status}). The backend may not be deployed/routed — ${hint}.`;
+    toast(`⚠ ${msg}`);
+    throw new Error(msg);
+  }
+  if (!res.ok) {
+    const m = data.message || data.error || `HTTP ${res.status}`;
+    toast(`⚠ ${m}`);
+    throw new Error(m);
+  }
+  return data;
 }
 
 function money(n, sym) {
@@ -69,6 +85,7 @@ function nav(view) {
   if (view === 'business') renderBusiness();
   if (view === 'visaos') renderVisaApply();
   if (view === 'marketplace') renderMarketplace();
+  if (view === 'blog') renderBlog();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -819,8 +836,12 @@ window.submitReview = async (bookingId) => {
 // ---- Admin Super Control Centre -------------------------------------------
 async function renderAdmin() {
   const out = $('#adminOut');
-  let data, auditData;
-  try { data = await api('/api/admin/overview'); auditData = await api('/api/admin/audit?limit=20'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  let data, auditData, sec, ops, seo, mkt;
+  try {
+    data = await api('/api/admin/overview'); auditData = await api('/api/admin/audit?limit=20');
+    sec = (await api('/api/agents/security')).report; ops = (await api('/api/agents/ops')).report;
+    seo = (await api('/api/agents/seo')).report; mkt = (await api('/api/agents/marketing')).report;
+  } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -873,8 +894,86 @@ async function renderAdmin() {
         }</div></div>
       </div>
     </div>
+    <div class="section-head left" style="margin:28px 0 10px"><h2 style="font-size:20px">Enterprise AI agents</h2></div>
+    <div class="console-grid">
+      <div class="card pad">
+        <span class="eyebrow">🛡 Security Agent · ${sec.level} (${sec.postureScore})</span>
+        ${sec.controls.map((c) => `<div class="kv"><span>${c.control}</span><span class="muted" style="font-size:12px">${c.status}</span></div>`).join('')}
+        ${sec.threats.length ? sec.threats.map((t) => `<div class="pg-event" style="border-color:rgba(255,90,90,.3)">${t.type} · ${t.severity} · ${t.note}</div>`).join('') : '<div class="muted" style="font-size:12px;margin-top:6px">No active threats.</div>'}
+        <p class="muted" style="font-size:12px;margin-top:8px">${sec.recommendation}</p>
+      </div>
+      <div class="card pad">
+        <span class="eyebrow">🔧 Ops / Self-healing Agent · ${ops.health}</span>
+        ${ops.checks.map((c) => `<div class="kv"><span><span class="vstatus ${c.status === 'ok' ? 'pass' : c.status === 'disabled' ? 'watch' : 'fail'}"></span>${c.system}</span><span class="muted" style="font-size:12px">${c.detail}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="console-grid" style="margin-top:16px">
+      <div class="card pad">
+        <span class="eyebrow">🔎 SEO Agent</span>
+        <p class="muted" style="font-size:12.5px;margin:6px 0">${seo.recommendation}</p>
+        <div class="chips">${seo.targetKeywords.slice(0, 8).map((k) => `<span class="chip">${k}</span>`).join('')}</div>
+        <div style="margin-top:8px"><a class="muted" href="/sitemap.xml" target="_blank" style="font-size:12px;text-decoration:underline">sitemap.xml</a> · <a class="muted" href="/robots.txt" target="_blank" style="font-size:12px;text-decoration:underline">robots.txt</a></div>
+      </div>
+      <div class="card pad">
+        <span class="eyebrow">📣 Marketing Agent</span>
+        <p class="muted" style="font-size:12.5px;margin:6px 0">${mkt.positioning}</p>
+        ${mkt.channels.slice(0, 4).map((c) => `<div class="kv"><span>${c.channel}</span><span class="muted" style="font-size:12px">${c.play}</span></div>`).join('')}
+        <p class="muted" style="font-size:12px;margin-top:8px">${mkt.recommendation}</p>
+      </div>
+    </div>
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
 }
+
+// ---- Blog (AI-written, hyperlinked, shareable) ----------------------------
+$('#genPostBtn')?.addEventListener('click', async () => {
+  try { await api('/api/blog/generate', { method: 'POST', body: '{}' }); toast('✨ New post published.'); renderBlog(); } catch {}
+});
+async function renderBlog() {
+  const out = $('#blogOut');
+  if (!out) return;
+  let data; try { data = await api('/api/blog'); } catch { return; }
+  const cards = (data.posts || []).map((p) => `
+    <div class="card pad blog-card">
+      <span class="eyebrow">${p.destination} · ${p.readMins} min read</span>
+      <h3 style="margin:6px 0 6px;cursor:pointer" onclick="openPost('${p.slug}')">${p.title}</h3>
+      <p class="muted" style="font-size:13.5px">${p.excerpt}</p>
+      <div class="chips" style="margin-top:8px">${p.tags.map((t) => `<span class="chip">#${t}</span>`).join('')}</div>
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+        <button class="btn btn-gold btn-sm" onclick="openPost('${p.slug}')">Read</button>
+        ${shareButtons(p)}
+      </div>
+    </div>`).join('');
+  out.innerHTML = `<div class="steps">${cards}</div>`;
+}
+function shareButtons(p) {
+  const url = `${location.origin}/blog/${p.slug}`;
+  const text = encodeURIComponent(p.title + ' — 3JN Travel OS');
+  const u = encodeURIComponent(url);
+  return `
+    <a class="share" title="Share on X" target="_blank" href="https://twitter.com/intent/tweet?text=${text}&url=${u}">𝕏</a>
+    <a class="share" title="Share on Facebook" target="_blank" href="https://www.facebook.com/sharer/sharer.php?u=${u}">f</a>
+    <a class="share" title="Share on LinkedIn" target="_blank" href="https://www.linkedin.com/sharing/share-offsite/?url=${u}">in</a>
+    <a class="share" title="Share on WhatsApp" target="_blank" href="https://wa.me/?text=${text}%20${u}">✆</a>
+    <a class="share" title="Copy link" onclick="copyText('${url}')">🔗</a>`;
+}
+window.copyText = (t) => { try { navigator.clipboard.writeText(t); } catch {} toast('✓ Link copied.'); };
+window.openPost = async (slug) => {
+  let data; try { data = await api(`/api/blog/${slug}`); } catch { return; }
+  const p = data.post;
+  modal(`
+    <span class="eyebrow">${p.destination} · ${p.readMins} min read · ${p.author}</span>
+    <h2 style="margin:6px 0 4px;font-size:24px">${p.title}</h2>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">${p.tags.map((t) => '#' + t).join(' ')}</div>
+    <div class="blog-body" onclick="blogLink(event)">${p.body}</div>
+    <div style="display:flex;gap:8px;margin-top:16px;align-items:center"><span class="muted" style="font-size:12px">Share:</span>${shareButtons(p)}</div>`);
+};
+// Intercept internal links inside a post so they navigate the SPA, not reload.
+window.blogLink = (e) => {
+  const a = e.target.closest('a'); if (!a) return;
+  const href = a.getAttribute('href') || '';
+  const map = { '/planner': 'planner', '/marketplace': 'marketplace', '/visaos': 'visaos', '/membership': 'membership', '/blog': 'blog' };
+  if (map[href]) { e.preventDefault(); closeModal(); nav(map[href]); if (map[href] === 'planner') runPlan(); }
+};
 
 // ---- Destination Marketplace ----------------------------------------------
 async function renderMarketplace() {
@@ -1253,17 +1352,6 @@ $('#apiTryBtn').addEventListener('click', async () => {
     pre.textContent = JSON.stringify(data, null, 2);
   } catch { pre.textContent = 'Request failed.'; }
 });
-
-// ---- WhatsApp-first conversational commerce -------------------------------
-const WA_NUMBER = '442000000000'; // 3JN WhatsApp business line (placeholder)
-function openWhatsApp(prefill) {
-  const msg = prefill || ($('#intentInput')?.value?.trim()) ||
-    'Hi 3JN Travel OS — I want to plan a trip. Here are my dates, group size and destination:';
-  const url = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`;
-  window.open(url, '_blank');
-  toast('💬 Opening WhatsApp — your travel request is pre-filled.');
-}
-$('#waHero')?.addEventListener('click', () => openWhatsApp());
 
 // ---- Footer content (punchy, persuasive marketing copy) -------------------
 const CONTENT = {

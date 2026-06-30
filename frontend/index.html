@@ -5,6 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>3JN Travel OS — Stop Searching. Start Saving.</title>
   <meta name="description" content="3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence." />
+  <meta name="keywords" content="AI travel planner, cheapest reliable flights and hotel, pay monthly holidays, visa approval probability, eSIM travel, African diaspora travel, instalment travel booking" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://3jntravel.com/" />
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="3JN Travel OS" />
+  <meta property="og:title" content="3JN Travel OS — Stop Searching. Start Saving." />
+  <meta property="og:description" content="AI builds the cheapest reliable travel package — flights, hotel, visa, activities, eSIM & transfers — with pay-monthly instalments and an AI visa decision engine." />
+  <meta property="og:url" content="https://3jntravel.com/" />
+  <meta property="og:image" content="https://3jntravel.com/og-image.png" />
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="3JN Travel OS — Stop Searching. Start Saving." />
+  <meta name="twitter:description" content="AI travel operating system: cheapest reliable packages, pay monthly, AI visa decisions." />
+  <meta name="twitter:image" content="https://3jntravel.com/og-image.png" />
+  <!-- Structured data -->
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Organization","name":"3JN Travel OS","url":"https://3jntravel.com","description":"AI-powered global travel operating system.","sameAs":["https://www.facebook.com/","https://www.instagram.com/","https://www.linkedin.com/"],"contactPoint":{"@type":"ContactPoint","email":"info@3jntravel.com","contactType":"customer support"}}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -25,6 +44,7 @@
         <a data-nav="planner" data-i18n="nav.plan">Plan a Trip</a>
         <a data-nav="how" data-i18n="nav.how">How it Works</a>
         <a data-nav="marketplace">Destinations</a>
+        <a data-nav="blog">Blog</a>
         <a data-nav="visaos">VisaOS</a>
         <a data-nav="membership" data-i18n="nav.membership">Membership</a>
         <a data-nav="api" data-i18n="nav.api">API</a>
@@ -57,7 +77,6 @@
             <div class="hero-cta">
               <button class="btn btn-gold" data-nav="planner" data-i18n="hero.cta1">Get My Best Trip</button>
               <button class="btn btn-ghost" data-nav="how" data-i18n="hero.cta2">See How It Works</button>
-              <button class="btn btn-whatsapp" id="waHero" data-i18n="hero.whatsapp">💬 Book on WhatsApp</button>
             </div>
             <p class="muted" style="font-size:13px;margin-top:16px">AI-led managed execution · pay monthly · multilingual · built for the African diaspora & community travel.</p>
             <div class="trust-row">
@@ -446,6 +465,17 @@
         <button class="btn btn-ghost btn-sm" id="apiTryBtn">Run sample request</button>
         <pre id="apiResult" class="card pad" style="margin-top:14px;display:none;font-size:12px;overflow:auto;max-height:300px;font-family:monospace"></pre>
       </div>
+    </section>
+
+    <!-- ===================== BLOG ===================== -->
+    <section class="view" id="view-blog">
+      <div class="section-head center">
+        <span class="eyebrow">3JN Travel Journal · AI Editorial</span>
+        <h2>Travel smarter — stories, guides &amp; deals.</h2>
+        <p>AI-written, continuously refreshed. Tap a story, follow the links, and share.</p>
+        <button class="btn btn-ghost btn-sm" id="genPostBtn" style="margin-top:10px">✨ Generate a new post</button>
+      </div>
+      <div id="blogOut"><div class="card pad center muted">Loading the journal…</div></div>
     </section>
 
     <!-- ===================== DESTINATION MARKETPLACE ===================== -->
