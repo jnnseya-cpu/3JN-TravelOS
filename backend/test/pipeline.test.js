@@ -25,6 +25,7 @@ import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/s
 import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
 import { visaFramework, buildChecklist, assessApplication } from '../src/visa-framework.js';
+import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } from '../src/booking-schema.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
@@ -357,6 +358,30 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('booking engine: dynamic requirements, document validation and fraud score', () => {
+  // Requirements adapt to components + destination (US → ESTA, per-passenger PNR).
+  const reqs = bookingRequirements({ components: ['flight', 'hotel', 'transfer'], destination: 'New York', nationality: 'NG', passengers: 2 });
+  assert.ok(reqs.documents.length > 0);
+  assert.equal(reqs.perPassenger.count, 2);
+  assert.ok(reqs.entryRules.some((r) => r.type === 'ESTA'));
+
+  // Passport 6-month rule blocks an expiring passport.
+  const bad = validateBooking({ travelDate: '2026-09-01', nationality: 'GB', destination: 'Dubai', travellers: [{ fullName: 'Jane', dob: '1990-01-01', nationality: 'GB', passportNumber: 'X1', passportExpiry: '2026-10-01' }] });
+  assert.equal(bad.valid, false);
+  assert.ok(bad.blocking.length >= 1);
+
+  // A valid passport passes.
+  const good = validateBooking({ travelDate: '2026-09-01', nationality: 'GB', destination: 'Dubai', travellers: [{ fullName: 'Jane', dob: '1990-01-01', nationality: 'GB', passportNumber: 'X1', passportExpiry: '2030-10-01' }] });
+  assert.equal(good.valid, true);
+
+  // Fraud signals escalate the booking risk decision.
+  assert.equal(bookingRiskScore({}).decision, 'approve');
+  assert.equal(bookingRiskScore({ cardStolen: true, botBooking: true }).decision, 'reject');
+
+  // The structured field architecture is substantial.
+  assert.ok(fieldCount().total >= 250);
 });
 
 test('visa framework: dynamic checklist adapts to country, type and applicant', () => {
