@@ -517,12 +517,61 @@ function renderOptions(data) {
   $('#plannerOut').innerHTML = gateBanner + flightPrefNote + psNote + summary + scanCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. 3JN's 10% fee is shown openly in every breakdown.</p></div>
-    <div class="opt-grid">${opts}</div>`;
+    <div class="opt-grid">${opts}</div>` + compareCard(data, sym);
 
   // stash options for booking
   window.__options = {};
   data.packages.options.forEach((o) => { window.__options[o.tier] = o; });
   window.__intent = intent;
+}
+
+// Independent "verify our price" deep-links — built from the actual trip so the
+// customer can check the SAME dates and passengers on neutral sites. We never
+// fabricate a competitor's number; we let them confirm it live.
+function yymmdd(d) { return (d || '').slice(2, 4) + (d || '').slice(5, 7) + (d || '').slice(8, 10); }
+function verifyLinks(data) {
+  const o = data.origin?.airport || '';
+  const dcode = data.intent?.destination?.code || '';
+  const city = data.intent?.destination?.city || '';
+  const ci = data.intent?.dates?.checkIn || '';
+  const co = data.intent?.dates?.checkOut || '';
+  const t = data.intent?.travellers || {};
+  const A = t.adults || 1; const C = t.children || 0; const ages = t.childAges || [];
+  const links = [];
+  if (o && dcode && ci && co) {
+    links.push({ name: 'Skyscanner', what: 'flights', url: `https://www.skyscanner.net/transport/flights/${o.toLowerCase()}/${dcode.toLowerCase()}/${yymmdd(ci)}/${yymmdd(co)}/?adults=${A}&children=${C}&cabinclass=economy&preferdirects=${data.flightPrefs?.directOnly ? 'true' : 'false'}` });
+    links.push({ name: 'Google Flights', what: 'flights', url: `https://www.google.com/travel/flights?q=${encodeURIComponent(`flights from ${o} to ${dcode} on ${ci} returning ${co} ${A} adults ${C} children economy`)}` });
+    links.push({ name: 'Kayak', what: 'flights', url: `https://www.kayak.co.uk/flights/${o}-${dcode}/${ci}/${co}/${A}adults${C ? '/' + C + 'children' : ''}?sort=price_a` });
+  }
+  if (city && ci && co) {
+    const ageParams = ages.map((a) => `&age=${a}`).join('');
+    links.push({ name: 'Booking.com', what: 'hotel', url: `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&checkin=${ci}&checkout=${co}&group_adults=${A}&group_children=${C}${ageParams}` });
+  }
+  return links;
+}
+
+// Price-check panel: our all-in vs a typical-retail estimate, plus live verify
+// links. Lets you demo "we're cheapest" with receipts the customer can click.
+function compareCard(data, sym) {
+  const opts = data.packages?.options || [];
+  if (!opts.length) return '';
+  const rec = opts.find((o) => o.recommended) || opts[0];
+  const our = rec.pricing.local.total;
+  const market = our + (rec.pricing.local.savingsVsMarket || 0);
+  const links = verifyLinks(data);
+  const linkBtns = links.map((l) =>
+    `<a class="btn btn-ghost btn-sm" href="${l.url}" target="_blank" rel="noopener noreferrer">Check ${l.what} · ${esc(l.name)} ↗</a>`).join('');
+  const realFare = data.priceSource?.flights === 'live';
+  return `<div class="card pad" style="margin-top:26px;border-color:rgba(70,211,154,0.32)">
+    <span class="eyebrow">Price check — don't take our word for it</span>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+      <div><div class="t-label">3JN all-in (incl. 10% fee)</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
+      ${market > our ? `<div><div class="t-label">Typical retail (our estimate)</div><div style="font-size:22px;text-decoration:line-through;color:var(--muted-dim)">${money(market, sym)}</div></div>` : ''}
+      ${market > our ? `<div><div class="t-label">You save vs retail</div><div style="font-size:22px;color:var(--green);font-weight:700">${money(market - our, sym)}</div></div>` : ''}
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 10px">Verify the exact trip live — same dates, same passengers — on independent sites. ${realFare ? 'Our flight price is a <strong style="color:var(--green)">real bookable fare</strong>.' : 'Our price is an <strong>indicative estimate</strong>; connect a live fare provider for bookable quotes.'}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${linkBtns || '<span class="muted" style="font-size:12px">Add a departure city and dates to generate verify links.</span>'}</div>
+  </div>`;
 }
 
 function optionCard(o, sym, intent) {
