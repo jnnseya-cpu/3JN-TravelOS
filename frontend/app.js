@@ -383,6 +383,10 @@ async function runPlan(overrides = {}) {
         country: state.country,
         currencyCountry: state.country,
         overrides,
+        preferences: {
+          directOnly: !!$('#directOnly')?.checked,
+          departureWindow: $('#departWindow')?.value || null,
+        },
       }),
     });
   } catch { out.innerHTML = ''; return; }
@@ -478,7 +482,21 @@ function renderOptions(data) {
 
   const opts = data.packages.options.map((o) => optionCard(o, sym, intent)).join('');
 
-  $('#plannerOut').innerHTML = gateBanner + summary + scanCard +
+  // Flight-preference feedback: confirm direct/departure-window honoured, or
+  // explain honestly when a non-stop wasn't available on this route.
+  const fp = data.flightPrefs || {};
+  const fpBits = [];
+  if (fp.directOnly) {
+    fpBits.push(fp.directUnavailable
+      ? '⚠ No non-stop on this route — showing the best connecting flights'
+      : '⭐ Direct flights only — honoured');
+  }
+  if (fp.departureWindow) fpBits.push(`🕑 Preferred departure: ${esc(fp.departureWindow)}`);
+  const flightPrefNote = fpBits.length
+    ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(216,180,106,0.45)' : 'rgba(70,211,154,0.35)'}">${fpBits.join(' · ')}</div>`
+    : '';
+
+  $('#plannerOut').innerHTML = gateBanner + flightPrefNote + summary + scanCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. 3JN's 10% fee is shown openly in every breakdown.</p></div>
     <div class="opt-grid">${opts}</div>`;

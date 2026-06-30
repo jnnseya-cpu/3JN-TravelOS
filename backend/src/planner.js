@@ -14,8 +14,15 @@ import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
 import { approvalProbability } from './visaos.js';
 
-export function plan({ text, context, user, searchTier = 'smart', overrides = {} }) {
+export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {} }) {
   const intent = parseIntent(text, context, new Date(Date.UTC(2026, 5, 30)));
+
+  // Flight preferences: explicit toggles win, else inferred from the request text.
+  const win = ['morning', 'afternoon', 'evening', 'night'].find((w) => new RegExp(`\\b${w}\\b`, 'i').test(text || ''));
+  intent.flightPrefs = {
+    directOnly: preferences.directOnly != null ? !!preferences.directOnly : /\b(direct|non.?stop)\b/i.test(text || ''),
+    departureWindow: preferences.departureWindow || win || null,
+  };
 
   // Apply any answers the user gave to clarifying questions.
   if (overrides.destination && !intent.destination) {
@@ -53,11 +60,16 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const points = user ? user.points : 0;
   const packages = buildPackages(scan, intent, currency, points);
 
+  // Was "direct only" honoured? (false when the route has no non-stop option.)
+  const recFlight = (packages.options[0]?.components || []).find((c) => c.type === 'flight');
+  const chosenDirect = recFlight ? (recFlight.details.outbound.stops || 0) === 0 && (recFlight.details.inbound.stops || 0) === 0 : false;
+
   return {
     stage: 'options',
     intent: publicIntent(intent),
     origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred },
     recommendedDestination: intent.recommendedDestination || null,
+    flightPrefs: { ...intent.flightPrefs, directUnavailable: intent.flightPrefs.directOnly && !chosenDirect },
     context,
     gate: {
       requestedTier: searchTier,
