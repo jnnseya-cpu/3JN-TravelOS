@@ -528,6 +528,94 @@ export function scanBoat(intent) {
   }));
 }
 
+// --- Rail (intercity train) ------------------------------------------------
+const RAIL_PROVIDERS = [
+  { name: 'Eurostar', rating: 93, verified: true, mult: 1.0, cls: 'Standard' },
+  { name: 'Rail Europe', rating: 89, verified: true, mult: 0.9, cls: 'Standard' },
+  { name: 'Trainline', rating: 90, verified: true, mult: 0.82, cls: 'Standard (advance)' },
+];
+// Distance between origin & destination (km) — used to price overland modes.
+function routeKm(origin, dest, fallback) {
+  const a = airportCoords(origin.airport);
+  const b = airportCoords(dest.code || dest.airport);
+  return a && b ? haversineKm(a, b) : fallback;
+}
+export function scanTrain(intent, dest, origin) {
+  const rnd = seeded(`trn-${dest.code}-${origin.airport}-${intent.dates.checkIn}`);
+  const km = routeKm(origin, dest, 700);
+  const people = intent.travellers.total;
+  const baseRT = Math.max(45, km * 0.12 * 2); // per-person return, USD
+  return RAIL_PROVIDERS.map((p) => ({
+    type: 'train',
+    supplier: p.name,
+    verified: p.verified,
+    reliabilityScore: p.rating,
+    details: { basis: 'per person · return', people, travelClass: p.cls, approxDurationLabel: `${Math.max(1, Math.round(km / 110))}h approx`, route: `${origin.city} → ${dest.city}` },
+    priceUSD: round(baseRT * p.mult * (0.9 + rnd() * 0.2) * people),
+  }));
+}
+
+// --- Coach / bus -----------------------------------------------------------
+const COACH_PROVIDERS = [
+  { name: 'FlixBus', rating: 86, verified: true, mult: 1.0 },
+  { name: 'National Express', rating: 85, verified: true, mult: 1.1 },
+  { name: 'Megabus', rating: 80, verified: true, mult: 0.85 },
+];
+export function scanCoach(intent, dest, origin) {
+  const rnd = seeded(`cch-${dest.code}-${origin.airport}-${intent.dates.checkIn}`);
+  const km = routeKm(origin, dest, 700);
+  const people = intent.travellers.total;
+  const baseRT = Math.max(22, km * 0.05 * 2); // per-person return, USD
+  return COACH_PROVIDERS.map((p) => ({
+    type: 'coach',
+    supplier: p.name,
+    verified: p.verified,
+    reliabilityScore: p.rating,
+    details: { basis: 'per person · return', people, approxDurationLabel: `${Math.max(2, Math.round(km / 75))}h approx`, route: `${origin.city} → ${dest.city}` },
+    priceUSD: round(baseRT * p.mult * (0.9 + rnd() * 0.2) * people),
+  }));
+}
+
+// --- Ferry / sea crossing --------------------------------------------------
+const FERRY_PROVIDERS = [
+  { name: 'DFDS Seaways', rating: 88, verified: true, mult: 1.0 },
+  { name: 'P&O Ferries', rating: 86, verified: true, mult: 1.05 },
+  { name: 'Brittany Ferries', rating: 89, verified: true, mult: 1.15 },
+];
+export function scanFerry(intent, dest, origin) {
+  const rnd = seeded(`fry-${dest.code}-${origin.airport}-${intent.dates.checkIn}`);
+  const people = intent.travellers.total;
+  const baseRT = 60; // per-person return, USD (short sea crossing)
+  return FERRY_PROVIDERS.map((p) => ({
+    type: 'ferry',
+    supplier: p.name,
+    verified: p.verified,
+    reliabilityScore: p.rating,
+    details: { basis: 'per person · return (foot passenger)', people, vehicleOption: 'Add a car at checkout', route: `${origin.city} → ${dest.city}` },
+    priceUSD: round(baseRT * p.mult * (0.9 + rnd() * 0.25) * people),
+  }));
+}
+
+// --- Cruise (multi-night sailing holiday) ----------------------------------
+const CRUISE_LINES = [
+  { name: 'MSC Cruises', rating: 90, verified: true, nightlyUSD: 145, cabin: 'Balcony · full board' },
+  { name: 'Royal Caribbean', rating: 93, verified: true, nightlyUSD: 205, cabin: 'Balcony · full board' },
+  { name: 'Costa Cruises', rating: 87, verified: true, nightlyUSD: 125, cabin: 'Ocean view · full board' },
+];
+export function scanCruise(intent, dest) {
+  const rnd = seeded(`crz-${dest.code}-${intent.dates.checkIn}`);
+  const nights = intent.nights;
+  const people = intent.travellers.total;
+  return CRUISE_LINES.map((c) => ({
+    type: 'cruise',
+    supplier: c.name,
+    verified: c.verified,
+    reliabilityScore: c.rating,
+    details: { basis: 'per person · full board', nights, people, cabin: c.cabin, nightlyUSD: c.nightlyUSD, region: dest.city },
+    priceUSD: round(c.nightlyUSD * nights * people * (0.9 + rnd() * 0.25)),
+  }));
+}
+
 // Run a full scan across every requested component. Returns a map of
 // component -> array of supplier offers (or a single offer for visa).
 export function scanAll(intent, dest, origin, live = null) {
@@ -542,6 +630,10 @@ export function scanAll(intent, dest, origin, live = null) {
   if (wanted.has('hotel')) {
     scan.hotel = (live && live.hotels && live.hotels.length) ? live.hotels : scanHotels(intent, dest);
   }
+  if (wanted.has('train')) scan.train = scanTrain(intent, dest, origin);
+  if (wanted.has('coach')) scan.coach = scanCoach(intent, dest, origin);
+  if (wanted.has('ferry')) scan.ferry = scanFerry(intent, dest, origin);
+  if (wanted.has('cruise')) scan.cruise = scanCruise(intent, dest);
   if (wanted.has('activities')) scan.activities = scanActivities(intent, dest);
   if (wanted.has('visa')) scan.visa = [scanVisa(intent, dest)];
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);

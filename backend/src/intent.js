@@ -18,17 +18,23 @@ const MONTHS = [
   'july', 'august', 'september', 'october', 'november', 'december',
 ];
 
-// Component requests we recognise, with the phrases that trigger them.
+// Component requests we recognise, with the phrases that trigger them. The OS is
+// multi-modal: a traveller can search trains, coaches, cruises or ferries — and
+// must see ONLY what they ask for (no auto flights/hotel/activities).
 const COMPONENT_TRIGGERS = {
-  flights: ['flight', 'fly', 'airfare', 'plane'],
-  hotel: ['hotel', 'accommodation', 'stay', 'resort', 'apartment', 'host', 'airbnb'],
+  flights: ['flight', 'flights', 'fly', 'flying', 'airfare', 'plane'],
+  train: ['train', 'trains', 'rail', 'eurostar', 'by rail', 'tgv', 'railway'],
+  coach: ['coach', 'bus', 'megabus', 'flixbus', 'national express', 'by coach'],
+  cruise: ['cruise', 'cruises', 'cruising', 'cruise ship', 'ocean liner'],
+  ferry: ['ferry', 'ferries', 'crossing', 'by sea'],
+  hotel: ['hotel', 'accommodation', 'stay', 'resort', 'apartment', 'host', 'airbnb', 'hostel', 'lodge', 'villa'],
   visa: ['visa'],
   activities: ['activity', 'activities', 'tours', 'excursion', 'things to do', 'experiences'],
-  esim: ['internet', 'esim', 'e-sim', 'roaming', 'data abroad', 'sim'],
+  esim: ['internet', 'esim', 'e-sim', 'roaming', 'data abroad', 'sim card', 'sim'],
   transfer: ['transfer', 'airport pickup', 'airport pick-up', 'chauffeur', 'taxi'],
   carhire: ['car rental', 'car hire', 'rent a car', 'hire a car', 'bike rental', 'bike hire', 'scooter', 'self drive', 'self-drive'],
   tickets: ['event ticket', 'concert', 'show ticket', 'match ticket', 'attraction ticket', 'theatre', 'sports ticket'],
-  boat: ['yacht', 'boat', 'charter', 'sailing', 'cruise', 'catamaran', 'dhow'],
+  boat: ['yacht', 'boat', 'sailing', 'catamaran', 'dhow', 'yacht charter'],
   insurance: ['insurance', 'cover', 'protection'],
 };
 
@@ -88,10 +94,13 @@ function parseMonth(text) {
 }
 
 function parseComponents(text) {
-  const lower = text.toLowerCase();
+  const lower = ` ${text.toLowerCase()} `;
   const requested = new Set();
   for (const [component, triggers] of Object.entries(COMPONENT_TRIGGERS)) {
-    if (triggers.some((t) => lower.includes(t))) requested.add(component);
+    // Whole-word match so "bus" doesn't fire on "business", "sim" on "simple", etc.
+    if (triggers.some((t) => new RegExp(`\\b${t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(lower))) {
+      requested.add(component);
+    }
   }
   return requested;
 }
@@ -242,10 +251,14 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   const wantsInstalments = /instal?ment|instalments|monthly|pay later|split/i.test(raw);
   const wantsCheapestReliable = /cheapest|reliable|best price|value|affordable/i.test(raw);
 
-  // If the user listed no explicit components but clearly wants a trip, assume a
-  // sensible full package.
+  // Respect exactly what the traveller asked for. Only fill in components when
+  // they named NONE — and even then, a full package is added solely when they
+  // signalled they want a holiday/package; otherwise just the essentials.
+  // A search for "train to Paris" must never sprout flights, hotel or activities.
+  const wantsFullPackage = /\b(holiday|holidays|package|all.?inclusive|getaway|vacation|honeymoon|full package|complete trip|everything)\b/i.test(raw);
   if (requested.size === 0 && destination) {
-    ['flights', 'hotel', 'activities', 'transfer', 'esim'].forEach((c) => requested.add(c));
+    if (wantsFullPackage) ['flights', 'hotel', 'activities', 'transfer', 'esim'].forEach((c) => requested.add(c));
+    else ['flights', 'hotel'].forEach((c) => requested.add(c)); // minimal "get there + stay"
   }
 
   return {

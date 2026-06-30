@@ -137,6 +137,44 @@ test('accuracy: only a carrier that truly operates the route flies it non-stop',
   assert.equal(r.flightPrefs.directUnavailable, false);
 });
 
+test('multi-modal: a search shows ONLY the modes asked for — no auto flights/hotel', () => {
+  const types = (r) => (r.packages.options[0].components || []).map((c) => c.type);
+
+  // Train only — must not sprout flights, hotel or activities.
+  const train = plan({ text: 'train from London to Paris for 3 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.deepEqual([...new Set(types(train))], ['train']);
+
+  // Coach only.
+  const coach = plan({ text: 'coach from London to Amsterdam for 4 nights, 1 adult', context: GB, user: null, searchTier: 'smart' });
+  assert.deepEqual([...new Set(types(coach))], ['coach']);
+
+  // Cruise only.
+  const cruise = plan({ text: 'Mediterranean cruise from Barcelona for 7 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.ok(types(cruise).includes('cruise'));
+  assert.ok(!types(cruise).includes('flight') && !types(cruise).includes('hotel') && !types(cruise).includes('host'));
+
+  // Train + hotel — exactly those two, no flights/activities.
+  const th = plan({ text: 'train and hotel in Paris for 5 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const set = new Set(types(th).map((t) => (t === 'host' ? 'hotel' : t)));
+  assert.deepEqual([...set].sort(), ['hotel', 'train']);
+});
+
+test('multi-modal: bare destination = essentials; "holiday" = full package', () => {
+  const types = (r) => (r.packages.options[0].components || []).map((c) => (c.type === 'host' ? 'hotel' : c.type));
+
+  // Bare "Dubai for 7 nights" → flights + hotel only (no activities/transfer/esim).
+  const bare = new Set(types(plan({ text: 'Dubai for 7 nights, 2 adults', context: GB, user: null, searchTier: 'smart' })));
+  assert.deepEqual([...bare].sort(), ['flight', 'hotel']);
+
+  // "holiday to Dubai" → full package.
+  const hol = new Set(types(plan({ text: 'holiday to Dubai for 7 nights, 2 adults', context: GB, user: null, searchTier: 'smart' })));
+  assert.ok(hol.has('activity') && hol.has('transfer') && hol.has('esim'), 'holiday signal adds the full package');
+
+  // "bus" must not be mistaken inside "business".
+  const biz = new Set(types(plan({ text: 'business trip to Dubai, flights only, 1 adult', context: GB, user: null, searchTier: 'smart' })));
+  assert.ok(!biz.has('coach'), '"business" does not trigger coach');
+});
+
 test('origin: "<City> to <Dest>" without the word "from" sets the departure city', () => {
   // The user's phrasing "Birmingham to Kinshasa" must depart Birmingham (BHX),
   // not default to London.
