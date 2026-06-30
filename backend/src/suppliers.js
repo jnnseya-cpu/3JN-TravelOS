@@ -76,11 +76,14 @@ const HOTEL_BRANDS = [
   { name: 'BudgetBunk Rooms', stars: 2, rating: 58, verified: false }, // filtered out
 ];
 
+// eSIM pricing is tiered, not linear — a small base + a low marginal £/GB (big
+// data plans are far cheaper per GB). Calibrated to real Airalo-style fares
+// (~$5 for 1GB, ~$10 for 5GB, ~$18 for 10GB).
 const ESIM_PROVIDERS = [
-  { name: 'Airalo', rating: 92, verified: true, perGB_USD: 4.5 },
-  { name: 'Holafly', rating: 87, verified: true, perGB_USD: 6.0 },
-  { name: 'Nomad eSIM', rating: 85, verified: true, perGB_USD: 5.0 },
-  { name: 'CheapData SIM', rating: 55, verified: false, perGB_USD: 2.0 }, // filtered out
+  { name: 'Airalo', rating: 92, verified: true, baseUSD: 2.5, perGB_USD: 1.4 },
+  { name: 'Nomad eSIM', rating: 85, verified: true, baseUSD: 3.5, perGB_USD: 1.5 },
+  { name: 'Holafly', rating: 87, verified: true, baseUSD: 6.0, perGB_USD: 1.6 },
+  { name: 'CheapData SIM', rating: 55, verified: false, baseUSD: 1.5, perGB_USD: 0.9 }, // filtered out
 ];
 
 const INSURERS = [
@@ -454,14 +457,15 @@ export function scanTransfers(intent, dest) {
 
 // --- Roaming / eSIM --------------------------------------------------------
 export function scanEsim(intent) {
-  const gb = Math.max(3, Math.round(intent.nights * 1.5));
+  const gb = Math.max(1, Math.round(intent.nights * 0.7)); // ~0.7GB/day is plenty
+  const validityDays = intent.nights + 2;
   return ESIM_PROVIDERS.map((p) => ({
     type: 'esim',
     supplier: p.name,
     verified: p.verified,
     reliabilityScore: p.rating,
-    details: { dataGB: gb, validityDays: intent.nights + 2, perGB_USD: p.perGB_USD },
-    priceUSD: round(p.perGB_USD * gb),
+    details: { dataGB: gb, validityDays, planLabel: `${gb}GB · ${validityDays} days`, perGB_USD: p.perGB_USD },
+    priceUSD: round(p.baseUSD + p.perGB_USD * gb),
   }));
 }
 
