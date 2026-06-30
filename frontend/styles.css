@@ -325,6 +325,14 @@ select, input.in {
   background: rgba(78,161,255,0.08); border: 1px solid var(--line); color: var(--text);
 }
 
+/* notifications bell */
+.bell { position: relative; background: rgba(255,255,255,0.04); border: 1px solid var(--line-strong); color: var(--text); width: 36px; height: 34px; border-radius: 9px; cursor: pointer; font-size: 15px; }
+.bell:hover { background: rgba(255,255,255,0.09); }
+.bell-badge { position: absolute; top: -6px; right: -6px; background: #ff5a5a; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 999px; display: grid; place-items: center; padding: 0 4px; }
+.notif { display: flex; gap: 10px; align-items: flex-start; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.notif-ico { font-size: 18px; }
+.notif.unread { background: rgba(78,161,255,0.05); border-radius: 8px; padding: 11px 10px; }
+
 /* autosave indicator */
 .autosave { font-size: 12px; color: var(--green); align-self: center; min-width: 84px; text-align: right; }
 

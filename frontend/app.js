@@ -156,6 +156,7 @@ async function boot() {
     const lang = $('#langSelect');
     if (lang) lang.addEventListener('change', () => toast(`Language: ${lang.options[lang.selectedIndex].text}. (Full i18n in roadmap — EN/FR/SW/LN/AR.)`));
   } catch { /* toast already shown */ }
+  refreshNotifications();
 }
 function syncCurrency(country) {
   const fc = $('#footerCurrency');
@@ -401,6 +402,15 @@ async function renderConsole() {
       <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="editProfile()">✎ Edit profile &amp; picture</button>
       <button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px" onclick="buyAcuFlow()">Buy ACU pack</button>
     </div>
+    ${loyaltyHub(u)}
+    <div class="card pad" style="margin-top:16px" id="intelCard">
+      <span class="eyebrow">Travel Intelligence · Visa &amp; Risk</span>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <input class="in" id="intelDest" placeholder="Destination e.g. Dubai" style="flex:1">
+        <button class="btn btn-ghost btn-sm" onclick="checkIntel()">Check</button>
+      </div>
+      <div id="intelOut"></div>
+    </div>
     ${['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
 
   const cards = bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
@@ -409,6 +419,59 @@ async function renderConsole() {
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
 }
+
+// ---- Loyalty Hub ----------------------------------------------------------
+const LOYALTY_LADDER = [['Explorer', 0], ['Voyager', 1000], ['Nomad', 5000], ['Elite', 15000]];
+function loyaltyHub(u) {
+  const idx = LOYALTY_LADDER.findIndex(([n]) => n === u.tier);
+  const next = LOYALTY_LADDER[idx + 1];
+  const floor = LOYALTY_LADDER[idx][1];
+  const pct = next ? Math.min(100, Math.round(((u.points - floor) / (next[1] - floor)) * 100)) : 100;
+  const toNext = next ? `${(next[1] - u.points).toLocaleString()} pts to ${next[0]}` : 'Top tier reached 🏆';
+  const shareUrl = `https://3jntravel.com/?ref=${u.referralCode}`;
+  return `
+    <div class="card pad" style="margin-top:16px">
+      <span class="eyebrow">Loyalty Hub</span>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
+        <strong style="font-family:'Space Grotesk';font-size:18px;color:var(--gold)">${u.tier}</strong>
+        <span class="muted" style="font-size:12.5px">${u.points.toLocaleString()} pts · ${(u.tierDiscount * 100).toFixed(0)}% off</span>
+      </div>
+      <div class="rel-bar" style="margin:10px 0 6px"><i style="width:${pct}%"></i></div>
+      <div class="muted" style="font-size:12px">${toNext}</div>
+      <div class="kv" style="margin-top:12px"><span>Refer &amp; earn</span><span>+100 you · +50 friend</span></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input class="in" id="refLink" value="${shareUrl}" readonly style="flex:1;font-size:12px">
+        <button class="btn btn-ghost btn-sm" onclick="copyRef()">Copy</button>
+        <button class="btn btn-gold btn-sm" onclick="shareRef('${shareUrl}')">Share</button>
+      </div>
+    </div>`;
+}
+window.copyRef = () => { const i = $('#refLink'); i.select(); try { navigator.clipboard.writeText(i.value); } catch {} toast('✓ Referral link copied.'); };
+window.shareRef = async (url) => {
+  if (navigator.share) { try { await navigator.share({ title: '3JN Travel OS', text: 'Plan smarter, travel cheaper with 3JN.', url }); return; } catch {} }
+  window.copyRef();
+};
+
+// ---- Travel Intelligence (Visa + Risk) ------------------------------------
+window.checkIntel = async () => {
+  const dest = $('#intelDest').value.trim();
+  if (!dest) { toast('Enter a destination.'); return; }
+  const nat = state.country || 'GB';
+  const out = $('#intelOut');
+  out.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Checking…</div>';
+  let visa, risk;
+  try { visa = await api(`/api/visa/check?nationality=${nat}&destination=${encodeURIComponent(dest)}`); risk = await api(`/api/risk/${encodeURIComponent(dest)}`); } catch { return; }
+  if (!visa.ok) { out.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Destination not recognised. Try Dubai, Istanbul, Barcelona, New York or Bali.</div>'; return; }
+  const checklist = visa.checklist.map((c) => `<li><span class="cs">${c}</span></li>`).join('');
+  const layers = (risk.ok ? risk.layers : []).map((l) => `<span class="chip">${l.layer}: ${l.note}</span>`).join('');
+  out.innerHTML = `
+    <div style="margin-top:14px">
+      <div class="kv"><span>🛂 Visa (${visa.nationality} → ${visa.destination.city})</span><span>${visa.required ? `Required · $${visa.costUSD} · ${visa.processingDays}d` : '<span style="color:var(--green)">Not required</span>'}</span></div>
+      ${visa.required ? `<div class="muted" style="font-size:12px;margin:4px 0">${visa.visaType}</div><ul class="comp-list">${checklist}</ul>` : ''}
+      <div class="muted" style="font-size:12.5px;margin:6px 0 12px">${visa.recommendation}</div>
+      ${risk.ok ? `<div class="kv"><span>🛡 Travel Risk Score</span><span style="color:var(--green)">${risk.riskScore} · ${risk.level}</span></div><div class="chips" style="margin-top:8px">${layers}</div>` : ''}
+    </div>`;
+};
 
 // Render an avatar — emoji or uploaded image data URL.
 function avatarHTML(u, size = 32) {
@@ -590,6 +653,7 @@ window.runGuard = async (id) => {
     const data = await api(`/api/book/${id}/price-guard`, { method: 'POST', body: JSON.stringify({}) });
     toast(data.event.message);
   } catch { return; }
+  refreshNotifications();
   renderConsole();
 };
 
@@ -764,6 +828,7 @@ function setUser(u) {
   const chip = $('#userChip');
   chip.classList.remove('hidden');
   chip.innerHTML = `${avatarHTML(u, 22)} ${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
+  refreshNotifications();
 }
 
 window.provisionTest = async () => {
@@ -903,6 +968,26 @@ window.openContent = (key) => {
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-content]');
   if (el) { e.preventDefault(); window.openContent(el.dataset.content); }
+});
+
+// ---- Notifications engine -------------------------------------------------
+async function refreshNotifications() {
+  let data;
+  try { data = await api('/api/notifications'); } catch { return; }
+  const badge = $('#notifBadge');
+  if (data.unread > 0) { badge.textContent = data.unread; badge.classList.remove('hidden'); }
+  else badge.classList.add('hidden');
+  window.__notifs = data.notifications || [];
+}
+$('#notifBtn')?.addEventListener('click', async () => {
+  const items = window.__notifs || [];
+  const rows = items.length ? items.map((n) => `
+    <div class="notif ${n.read ? '' : 'unread'}"><span class="notif-ico">${n.icon}</span>
+      <div><strong>${n.title}</strong><div class="muted" style="font-size:12.5px">${n.body}</div></div></div>`).join('')
+    : '<div class="muted" style="font-size:13px">No notifications yet. Book a trip or run the Price Guard to see updates here.</div>';
+  modal(`<span class="eyebrow">Notifications</span><h3 style="margin:6px 0 10px">Your alerts</h3>${rows}`);
+  try { await api('/api/notifications/read', { method: 'POST', body: '{}' }); } catch {}
+  refreshNotifications();
 });
 
 // ---- Become a Host --------------------------------------------------------

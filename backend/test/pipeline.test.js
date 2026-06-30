@@ -15,6 +15,8 @@ import {
   listApprovals, decideApproval,
 } from '../src/store.js';
 import { runPriceGuard } from '../src/monitor.js';
+import { visaCheck, riskFeed } from '../src/intelligence.js';
+import { listNotifications, pushNotification } from '../src/store.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
 
@@ -209,6 +211,30 @@ test('BitriPay payment links create, settle and net out the gateway fee', () => 
   const s = merchantSettlement(m.id);
   assert.equal(s.grossMinor, 10000);
   assert.ok(s.feeMinor > 0 && s.netMinor === s.grossMinor - s.feeMinor);
+});
+
+test('visa centre returns eligibility + checklist by nationality', () => {
+  const gbDubai = visaCheck('GB', 'Dubai');
+  assert.equal(gbDubai.ok, true);
+  assert.equal(gbDubai.required, true);
+  assert.ok(gbDubai.checklist.length > 0);
+  const gbIstanbul = visaCheck('GB', 'Istanbul');
+  assert.equal(gbIstanbul.required, false); // visa-free for GB
+});
+
+test('risk feed returns a score and the seven intelligence layers', () => {
+  const r = riskFeed('Dubai');
+  assert.equal(r.ok, true);
+  assert.ok(r.riskScore >= 70 && r.riskScore <= 100);
+  assert.equal(r.layers.length, 7);
+});
+
+test('notifications: a booking notifies its owner', () => {
+  const u = createUser({ name: 'Notif' });
+  const before = listNotifications(u.id).length;
+  pushNotification(u.id, { title: 'Test', body: 'hello' });
+  assert.equal(listNotifications(u.id).length, before + 1);
+  assert.equal(listNotifications(u.id)[0].read, false);
 });
 
 test('high-value bookings enter the approval queue and can be decided', () => {

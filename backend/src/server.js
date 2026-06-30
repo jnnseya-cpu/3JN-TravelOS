@@ -17,7 +17,9 @@ import {
   adminAudit, saveDraft, getDraft,
   createPaymentLink, listPaymentLinks, settlePaymentLink, merchantSettlement,
   listApprovals, decideApproval,
+  listNotifications, markNotificationsRead,
 } from './store.js';
+import { visaCheck, riskFeed } from './intelligence.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -146,6 +148,25 @@ app.get('/api/book/:id', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   res.json({ booking });
+}));
+
+// ---- Notifications --------------------------------------------------------
+app.get('/api/notifications', safe((req, res) => {
+  const user = currentUser(req);
+  const items = listNotifications(user?.id);
+  res.json({ notifications: items, unread: items.filter((n) => !n.read).length });
+}));
+app.post('/api/notifications/read', safe((req, res) => {
+  const user = currentUser(req);
+  res.json(markNotificationsRead(user?.id));
+}));
+
+// ---- Visa Centre + Risk Intelligence Feed ---------------------------------
+app.get('/api/visa/check', safe((req, res) => {
+  res.json(visaCheck(req.query.nationality, req.query.destination));
+}));
+app.get('/api/risk/:destination', safe((req, res) => {
+  res.json(riskFeed(req.params.destination));
 }));
 
 // ---- Price guard ----------------------------------------------------------

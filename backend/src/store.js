@@ -21,7 +21,24 @@ const db = {
   drafts: new Map(), // autosave drafts keyed by `${userId}:${key}`
   paymentLinks: [], // BitriPay payment links / QR
   approvals: [], // business travel approval queue
+  notifications: [], // per-user notification feed
 };
+
+// ---- Notifications engine -------------------------------------------------
+// Agents and workflows push notifications here; the console renders a bell with
+// an unread count. (Price drops, visa alerts, approvals, booking confirmations.)
+export function pushNotification(userId, { type = 'info', title, body, icon } = {}) {
+  const n = { id: id('ntf'), userId: userId || null, type, icon: icon || '🔔', title, body: body || '', read: false, at: nowISO() };
+  db.notifications.push(n);
+  return n;
+}
+export function listNotifications(userId) {
+  return db.notifications.filter((n) => !userId || n.userId === userId || n.userId === null).reverse();
+}
+export function markNotificationsRead(userId) {
+  db.notifications.forEach((n) => { if (!userId || n.userId === userId || n.userId === null) n.read = true; });
+  return { ok: true };
+}
 
 // ---- Audit log (immutable) + autosave -------------------------------------
 // Every meaningful mutation is appended here with actor, action and a before/
@@ -282,6 +299,7 @@ export function decideApproval(approvalId, decision) {
   a.status = decision === 'approve' ? 'approved' : 'rejected';
   a.decidedAt = nowISO();
   recordAudit({ actor: 'business-admin', role: 'business', action: `approval.${a.status}`, entity: 'approval', entityId: approvalId, summary: `$${a.amountUSD}` });
+  if (a.userId) pushNotification(a.userId, { type: a.status === 'approved' ? 'success' : 'warning', icon: a.status === 'approved' ? '✅' : '⛔', title: `Trip ${a.status}`, body: `Your $${Math.round(a.amountUSD)} trip was ${a.status} by your travel manager.` });
   return { ok: true, approval: a };
 }
 
@@ -329,6 +347,7 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   if (userId) addPoints(userId, option.totalUSD * 0.5);
 
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'booking.created', entity: 'booking', entityId: bookingId, summary: `${option.tier} via ${gateway} ($${option.totalUSD})` });
+  if (userId) pushNotification(userId, { type: 'success', icon: '✅', title: 'Booking confirmed', body: `${option.tier} package — deposit paid. Price Guard is now active.` });
 
   // High-value bookings enter the business approval queue.
   if (option.totalUSD >= 4000) {
@@ -358,6 +377,9 @@ export function logPriceEvent(bookingId, event) {
   if (b) b.priceGuard.events.push(event);
   db.priceEvents.push({ bookingId, ...event });
   recordAudit({ actor: 'savings-guard-agent', role: 'agent', action: `priceguard.${event.action}`, entity: 'booking', entityId: bookingId, summary: event.message });
+  if (b?.userId && event.action !== 'hold') {
+    pushNotification(b.userId, { type: event.action === 'rebook-refund' ? 'success' : 'info', icon: '🛡', title: 'Price Guard update', body: event.message });
+  }
   return event;
 }
 
