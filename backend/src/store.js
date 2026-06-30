@@ -132,6 +132,55 @@ export function recordVisaApplication(assessment) {
   recordAudit({ actor: 'visaos', role: 'agent', action: `visa.${assessment.decision.replace(/\s+/g, '-').toLowerCase()}`, entity: 'visa_application', entityId: rec.id, summary: `${assessment.applicant.nationality}→${assessment.applicant.destination} score ${assessment.totalScore}` });
   return rec;
 }
+// Store a FULL visa application — the robust list of information + documents the
+// applicant provided, plus the AI decision file. This is what the embassy
+// workspace reviews and acts on.
+export function recordVisaFile({ applicant, country, visaType, documents, file, userId } = {}) {
+  const r = file?.risk || {};
+  const rec = {
+    id: id('visa'),
+    at: nowISO(),
+    userId: userId || null,
+    applicant: file?.applicant || applicant || {},
+    fullApplicant: applicant || {},
+    country: country || (file?.country?.name) || '',
+    visaType: visaType || (file?.visaType?.key) || '',
+    documents: Array.isArray(documents) ? documents : [],
+    file: file || null,
+    // top-level mirrors for govAnalytics compatibility
+    decision: r.decision || file?.recommendation || 'Pending',
+    recommendation: file?.recommendation || null,
+    totalScore: r.totalScore || 0,
+    band: r.band || '',
+    risk: r.risk || {},
+    status: 'submitted',
+    embassyDecision: null,
+  };
+  db.visaApps.push(rec);
+  recordAudit({ actor: userId || 'applicant', role: 'consumer', action: 'visa.application.submitted', entity: 'visa_application', entityId: rec.id, summary: `${rec.applicant.nationality}→${rec.country || rec.applicant.destination} · ${rec.recommendation || rec.decision}` });
+  return rec;
+}
+export function listVisaApplications() {
+  return [...db.visaApps].reverse();
+}
+export function listVisaApplicationsForUser(userId) {
+  return db.visaApps.filter((a) => a.userId === userId).reverse();
+}
+export function getVisaApplication(appId) {
+  return db.visaApps.find((a) => a.id === appId) || null;
+}
+export function decideVisaApplication(appId, { decision, reason, officerId } = {}) {
+  const a = db.visaApps.find((x) => x.id === appId);
+  if (!a) return { ok: false, error: 'not-found' };
+  const allowed = ['Approved', 'Refused', 'More info requested', 'Escalated'];
+  if (!allowed.includes(decision)) return { ok: false, error: 'invalid-decision' };
+  a.embassyDecision = { decision, reason: (reason || '').slice(0, 500), officerId: officerId || 'embassy', at: nowISO() };
+  a.status = decision === 'More info requested' ? 'awaiting-applicant' : 'decided';
+  recordAudit({ actor: officerId || 'embassy', role: 'embassy', action: `visa.embassy.${decision.replace(/\s+/g, '-').toLowerCase()}`, entity: 'visa_application', entityId: appId, summary: `${decision}${reason ? ' — ' + reason.slice(0, 60) : ''}` });
+  if (a.userId) pushNotification(a.userId, { type: 'info', icon: '🛂', title: `Visa: ${decision}`, body: reason || `Your application was ${decision.toLowerCase()} by the embassy.` });
+  return { ok: true, application: a };
+}
+
 export function govAnalytics() {
   const apps = db.visaApps;
   const by = (pred) => apps.filter(pred).length;
@@ -198,7 +247,7 @@ export function getDraft(userId, key) {
 }
 
 // Recognised account roles and their default avatar.
-export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'admin'];
+export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'embassy', 'admin'];
 const ROLE_AVATAR = { consumer: '🧳', business: '💼', merchant: '🏪', partner: '🤝', admin: '🛡️' };
 
 // ---- Users / loyalty / ACU wallet ----------------------------------------

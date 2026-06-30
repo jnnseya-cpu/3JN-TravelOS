@@ -815,7 +815,7 @@ function avatarHTML(u, size = 32) {
 // ---- Editable profile + picture -------------------------------------------
 window.editProfile = () => {
   const u = state.user;
-  const roleOpts = ['consumer', 'business', 'merchant', 'partner', 'admin']
+  const roleOpts = ['consumer', 'business', 'merchant', 'partner', 'embassy', 'admin']
     .map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('');
   modal(`
     <span class="eyebrow">Edit profile</span>
@@ -1515,6 +1515,11 @@ window.toggleSignal = (el) => { const on = el.dataset.on !== 'true'; el.dataset.
 
 async function submitVisa() {
   const applicant = applicantFromForm();
+  // The robust list of documents the applicant attached for THIS application.
+  const providedDocuments = [...document.querySelectorAll('.vdoc-row')]
+    .filter((r) => r.querySelector('.vdoc-check')?.checked)
+    .map((r) => r.querySelector('span')?.textContent.trim())
+    .filter(Boolean);
   const out = $('#visaDecision');
   const agents = ['Document Forensics', 'Financial Authenticity', 'Identity Verification', 'Online Footprint', 'Behavioural Intelligence', 'Overstay Risk', 'Fraud Detection', 'Intent Assessment', 'Border Risk', 'Decision Agent'];
   out.innerHTML = `<div class="card pad scanlog">${agents.map((a, i) => `<div class="ln" style="animation-delay:${i * 60}ms"><span class="ok">●</span> ${a} Agent verifying…</div>`).join('')}</div>`;
@@ -1523,7 +1528,7 @@ async function submitVisa() {
   try {
     data = await api('/api/visa/assess-application', {
       method: 'POST',
-      body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value }),
+      body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value, providedDocuments }),
     });
   } catch { return; }
   renderVisaFile(data.file);
@@ -1599,25 +1604,99 @@ function renderVisaDecision(a, target = '#visaDecision') {
 
 async function renderVisaGov() {
   const out = $('#visaosOut');
-  let data;
-  try { data = await api('/api/visaos/government'); } catch { return; }
+  // Embassy workspace is a government account feature.
+  const isEmbassy = state.user && (state.user.allAccess || ['embassy', 'admin'].includes(state.user.role));
+  if (!isEmbassy) {
+    out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto">
+      <div style="font-size:34px">🏛️</div>
+      <h3 style="margin:10px 0 6px">Embassy / Government workspace</h3>
+      <p class="muted" style="font-size:14px">This is a secured government account area — embassy officers review each application's full information and documents and issue decisions. Requires an <strong>embassy</strong> or admin account.</p>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="provisionTest()">Open with full-access demo</button>
+    </div>`;
+    return;
+  }
+  let data, apps;
+  try { data = await api('/api/visaos/government'); apps = await api('/api/visaos/applications'); } catch { return; }
   const g = data.analytics;
+  window.__visaApps = {};
+  (apps.applications || []).forEach((a) => { window.__visaApps[a.id] = a; });
   const kpis = [
     ['Applications', g.applications], ['Approval rate', g.approvalRate + '%'],
     ['Fraud attempts', g.fraudAttempts], ['Fully digital', g.autoDigitalRate + '%'], ['Avg risk', g.avgScore],
   ].map(([k, v]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div></div>`).join('');
   const decisions = Object.entries(g.decisions || {}).map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No applications yet — run one in the Applicant tab.</div>';
   const countries = (g.topCountries || []).map((c) => `<div class="kv"><span>${c.country}</span><span>${c.count}</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
-  const recent = (g.recent || []).map((r) => `<div class="ln"><span class="ok">●</span> ${r.nationality}→${r.destination} · <strong>${r.decision}</strong> <span class="muted">(${r.score})</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
+  // Application queue — each row opens the full file (info + documents + AI).
+  const queue = (apps.applications || []).length
+    ? (apps.applications || []).map((a) => {
+        const st = a.embassyDecision ? a.embassyDecision.decision : (a.status === 'submitted' ? 'Awaiting review' : a.status);
+        const col = a.embassyDecision ? (a.embassyDecision.decision === 'Approved' ? 'var(--green)' : a.embassyDecision.decision === 'Refused' ? '#ff6b6b' : 'var(--blue-bright)') : 'var(--gold)';
+        return `<div class="kv" style="cursor:pointer" onclick="openVisaApp('${a.id}')">
+          <span><span class="vstatus ${a.totalScore <= 200 ? 'pass' : a.totalScore <= 450 ? 'watch' : 'fail'}"></span>${esc(a.applicant.name || 'Applicant')} · ${esc(a.applicant.nationality || '')} → ${esc(a.country || a.applicant.destination || '')}</span>
+          <span style="color:${col};font-size:12.5px">${esc(st)} · ${a.totalScore}</span></div>`;
+      }).join('')
+    : '<div class="muted" style="font-size:13px">No applications yet — submit one in the Applicant tab.</div>';
   out.innerHTML = `
     <div class="kpi-grid">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
-      <div><div class="card pad"><span class="eyebrow">Decisions</span>${decisions}</div>
-        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Top applicant countries</span>${countries}</div></div>
-      <div class="card pad scanlog"><span class="eyebrow">Recent decisions</span><div style="margin-top:8px">${recent}</div>
-        <p class="muted" style="font-size:11px;margin-top:10px">Revenue: SaaS license · per-application fee · AI processing fee · biometric fee · fraud-intelligence subscription · Border Intelligence API.</p></div>
-    </div>`;
+      <div class="card pad"><span class="eyebrow">Application queue · click to review</span>${queue}</div>
+      <div>
+        <div class="card pad"><span class="eyebrow">Decisions</span>${decisions}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Top applicant countries</span>${countries}</div>
+        <p class="muted" style="font-size:11px;margin-top:12px">Revenue: SaaS license · per-application fee · AI processing fee · biometric fee · fraud-intelligence subscription · Border Intelligence API.</p>
+      </div>
+    </div>
+    <div id="visaAppDetail" style="margin-top:20px"></div>`;
 }
+
+// Embassy: open the full application — robust info + every document provided + AI.
+window.openVisaApp = (id) => {
+  const a = window.__visaApps?.[id];
+  if (!a) return;
+  const fa = a.fullApplicant || a.applicant || {};
+  const infoRows = Object.entries(fa)
+    .filter(([k, v]) => v !== '' && v != null && typeof v !== 'object')
+    .map(([k, v]) => `<div class="kv"><span class="muted" style="font-size:12px">${esc(k)}</span><span style="font-size:12.5px">${esc(String(v))}</span></div>`).join('');
+  const docs = (a.documents || []).length
+    ? (a.documents || []).map((d) => `<div class="ok-line"><span class="ck">📎</span>${esc(d)}</div>`).join('')
+    : '<div class="muted" style="font-size:13px">No documents recorded.</div>';
+  const f = a.file || {};
+  const fraud = f.fraud ? `${f.fraud.flagCount}/${f.fraud.results.length} flags` : '—';
+  const docv = f.documentVerification ? `${f.documentVerification.verified}/${f.documentVerification.total} verified` : '—';
+  const dec = a.embassyDecision;
+  $('#visaAppDetail').innerHTML = `
+    <div class="card pad">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline">
+        <strong style="font-family:'Space Grotesk';font-size:18px">${esc(fa.fullName || a.applicant.name || 'Applicant')}</strong>
+        <span class="muted" style="font-size:12.5px">${esc(a.country)} · ${esc(a.visaType)} · AI: ${esc(a.recommendation || a.decision)} · risk ${a.totalScore}/1000</span>
+      </div>
+      <div class="console-grid" style="margin-top:14px">
+        <div><span class="eyebrow">Information provided (${Object.keys(fa).length})</span>${infoRows || '<div class="muted" style="font-size:13px">—</div>'}</div>
+        <div><span class="eyebrow">Documents provided (${(a.documents || []).length})</span>${docs}
+          <div style="margin-top:10px"><span class="eyebrow">AI checks</span>
+            <div class="kv"><span>Document verification</span><span>${docv}</span></div>
+            <div class="kv"><span>Fraud battery</span><span>${fraud}</span></div>
+          </div></div>
+      </div>
+      ${dec
+        ? `<div class="card pad" style="margin-top:14px;border-color:rgba(70,211,154,0.3)"><strong>Embassy decision: ${esc(dec.decision)}</strong><div class="muted" style="font-size:12.5px;margin-top:4px">${esc(dec.reason || '')} · ${new Date(dec.at).toLocaleString()}</div></div>`
+        : `<div style="margin-top:14px"><span class="eyebrow">Officer decision</span>
+            <textarea class="in" id="embReason" placeholder="Reason / notes (recorded in the audit log)" style="width:100%;min-height:54px;margin-top:6px"></textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <button class="btn btn-gold btn-sm" onclick="decideVisa('${a.id}','Approved')">✓ Approve</button>
+              <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','More info requested')">Request more info</button>
+              <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','Escalated')">Escalate</button>
+              <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','Refused')" style="color:#ff8a8a">✕ Refuse</button>
+            </div></div>`}
+    </div>`;
+  $('#visaAppDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+window.decideVisa = async (id, decision) => {
+  const reason = $('#embReason')?.value || '';
+  let d; try { d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); } catch { return; }
+  toast(`✓ Decision recorded: ${decision}`);
+  renderVisaGov();
+};
 
 // ---- Business / Enterprise Command Centre ---------------------------------
 async function renderBusiness() {
