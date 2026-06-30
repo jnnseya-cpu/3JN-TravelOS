@@ -8,6 +8,7 @@
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyC-BtZI8KceT2vF9Iz25aDiaURPF2DNY1s",
   authDomain: "studio-1885689950-9b056.firebaseapp.com",
+  databaseURL: "https://studio-1885689950-9b056-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "studio-1885689950-9b056",
   storageBucket: "studio-1885689950-9b056.firebasestorage.app",
   messagingSenderId: "250288562753",
