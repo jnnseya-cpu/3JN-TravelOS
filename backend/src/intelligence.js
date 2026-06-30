@@ -7,14 +7,42 @@
 
 import { DESTINATIONS, findDestination, visaRule } from './destinations.js';
 
+const titleCase = (s) => (s || '').trim().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Resolve ANY destination the user types — a catalogue city (full data) or any
+// other place worldwide (a deterministic, clearly-estimated profile). This is
+// what makes the Travel Intelligence lookup global rather than 5 cities only.
+function resolveDest(text) {
+  const known = findDestination(text) || (DESTINATIONS[text] && { code: text, ...DESTINATIONS[text] });
+  if (known) return { ...known, estimated: false };
+  const city = titleCase(text);
+  if (!city) return null;
+  const code = (city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6)) || 'CITY';
+  return { code, city, countryName: city, estimated: true };
+}
+
+// Deterministic estimated visa rule for any non-catalogue destination.
+function estimatedVisaRule(nationality, city) {
+  const r = seed(`visa-${nationality}-${city}`);
+  const required = r() > 0.28; // most international tourist travel needs an eVisa/eTA
+  return {
+    required,
+    type: required ? 'eVisa / eTA (tourist) — estimated' : 'Likely visa-free (estimated)',
+    costUSD: required ? Math.round(20 + r() * 130) : 0,
+    processingDays: required ? Math.round(2 + r() * 13) : 0,
+  };
+}
+
 export function visaCheck(nationality, destinationText) {
-  const dest = findDestination(destinationText) || (DESTINATIONS[destinationText] && { code: destinationText, ...DESTINATIONS[destinationText] });
+  const dest = resolveDest(destinationText);
   if (!dest) return { ok: false, error: 'unknown-destination' };
-  const rule = visaRule(dest, (nationality || 'GB').toUpperCase());
+  const nat = (nationality || 'GB').toUpperCase();
+  const rule = dest.estimated ? estimatedVisaRule(nat, dest.city) : visaRule(dest, nat);
   return {
     ok: true,
+    estimated: !!dest.estimated,
     destination: { code: dest.code, city: dest.city, country: dest.countryName },
-    nationality: (nationality || 'GB').toUpperCase(),
+    nationality: nat,
     required: rule.required,
     visaType: rule.type,
     costUSD: rule.costUSD,
@@ -23,8 +51,8 @@ export function visaCheck(nationality, destinationText) {
       ? ['Valid passport (6+ months)', 'Passport-style photo', 'Return ticket', 'Proof of accommodation', rule.processingDays > 7 ? 'Bank statements (3 months)' : 'Online application']
       : ['Valid passport (6+ months)', 'Return ticket'],
     recommendation: rule.required
-      ? `Apply at least ${Math.max(7, rule.processingDays + 3)} days before travel. 3JN Visa Concierge can process this for you.`
-      : 'No visa required for this trip — travel on your passport.',
+      ? `Apply at least ${Math.max(7, rule.processingDays + 3)} days before travel. 3JN Visa Concierge can process this for you.${dest.estimated ? ' Figures are estimated — confirm with the official portal.' : ''}`
+      : `No visa expected for this trip — travel on your passport.${dest.estimated ? ' (Estimated — confirm officially.)' : ''}`,
   };
 }
 
@@ -37,7 +65,7 @@ function seed(str) {
 const LAYERS = ['Weather', 'Safety', 'Visa', 'Currency', 'Demand', 'Crowd', 'Health'];
 
 export function riskFeed(destinationText) {
-  const dest = findDestination(destinationText) || (DESTINATIONS[destinationText] && { code: destinationText, ...DESTINATIONS[destinationText] });
+  const dest = resolveDest(destinationText);
   if (!dest) return { ok: false, error: 'unknown-destination' };
   const rnd = seed('risk-' + dest.code);
   const score = Math.round(78 + rnd() * 20); // 78-98, higher = safer
@@ -48,6 +76,7 @@ export function riskFeed(destinationText) {
   });
   return {
     ok: true,
+    estimated: !!dest.estimated,
     destination: { code: dest.code, city: dest.city, country: dest.countryName },
     riskScore: score,
     level,

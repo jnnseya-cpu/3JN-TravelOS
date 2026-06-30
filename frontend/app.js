@@ -266,6 +266,15 @@ async function boot() {
   applyRoleVisibility();
   applyDeepLink();
   refreshJourney();
+  // Live AI cost-efficiency badge (guaranteed ≥66% saving).
+  (async () => {
+    try {
+      const s = await api('/api/ai/status');
+      const co = s.gateway?.costOptimization;
+      const badge = $('#aiSaveBadge');
+      if (co && badge) badge.innerHTML = `<span class="dot"></span> AI runs at ${co.savingPct}% lower cost (floor ${co.floorPct}%) — routing + cache + local fallback`;
+    } catch { /* keep static text */ }
+  })();
 }
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
@@ -658,26 +667,34 @@ window.shareRef = async (url) => {
   window.copyRef();
 };
 
-// ---- Travel Intelligence (Visa + Risk) ------------------------------------
-window.checkIntel = async () => {
-  const dest = $('#intelDest').value.trim();
+// ---- Travel Intelligence (Visa + Risk) — works for ANY city worldwide ------
+async function runIntel(dest, outEl) {
   if (!dest) { toast('Enter a destination.'); return; }
   const nat = state.country || 'GB';
-  const out = $('#intelOut');
-  out.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Checking…</div>';
+  outEl.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px"><span class="loader"></span> Checking global intelligence…</div>';
   let visa, risk;
-  try { visa = await api(`/api/visa/check?nationality=${nat}&destination=${encodeURIComponent(dest)}`); risk = await api(`/api/risk/${encodeURIComponent(dest)}`); } catch { return; }
-  if (!visa.ok) { out.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Destination not recognised. Try Dubai, Istanbul, Barcelona, New York or Bali.</div>'; return; }
-  const checklist = visa.checklist.map((c) => `<li><span class="cs">${c}</span></li>`).join('');
-  const layers = (risk.ok ? risk.layers : []).map((l) => `<span class="chip">${l.layer}: ${l.note}</span>`).join('');
-  out.innerHTML = `
+  try {
+    visa = await api(`/api/visa/check?nationality=${nat}&destination=${encodeURIComponent(dest)}`);
+    risk = await api(`/api/risk/${encodeURIComponent(dest)}`);
+  } catch { return; }
+  if (!visa.ok) { outEl.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Enter a city or country name.</div>'; return; }
+  const city = visa.destination.city;
+  const est = visa.estimated || risk.estimated;
+  const checklist = visa.checklist.map((c) => `<li><span class="cs">${esc(c)}</span></li>`).join('');
+  const layers = (risk.ok ? risk.layers : []).map((l) => `<span class="chip">${esc(l.layer)}: ${esc(l.note)}</span>`).join('');
+  outEl.innerHTML = `
     <div style="margin-top:14px">
-      <div class="kv"><span>🛂 Visa (${visa.nationality} → ${visa.destination.city})</span><span>${visa.required ? `Required · $${visa.costUSD} · ${visa.processingDays}d` : '<span style="color:var(--green)">Not required</span>'}</span></div>
-      ${visa.required ? `<div class="muted" style="font-size:12px;margin:4px 0">${visa.visaType}</div><ul class="comp-list">${checklist}</ul>` : ''}
-      <div class="muted" style="font-size:12.5px;margin:6px 0 12px">${visa.recommendation}</div>
-      ${risk.ok ? `<div class="kv"><span>🛡 Travel Risk Score</span><span style="color:var(--green)">${risk.riskScore} · ${risk.level}</span></div><div class="chips" style="margin-top:8px">${layers}</div>` : ''}
+      ${est ? '<div class="muted" style="font-size:11.5px;margin-bottom:8px">⚡ Estimated profile for this destination — confirm details on the official portal.</div>' : ''}
+      <div class="kv"><span>🛂 Visa (${esc(visa.nationality)} → ${esc(city)})</span><span>${visa.required ? `Required · $${visa.costUSD} · ${visa.processingDays}d` : '<span style="color:var(--green)">Not required</span>'}</span></div>
+      ${visa.required ? `<div class="muted" style="font-size:12px;margin:4px 0">${esc(visa.visaType)}</div><ul class="comp-list">${checklist}</ul>` : ''}
+      <div class="muted" style="font-size:12.5px;margin:6px 0 12px">${esc(visa.recommendation)}</div>
+      ${risk.ok ? `<div class="kv"><span>🛡 Travel Risk Score · ${esc(city)}</span><span style="color:var(--green)">${risk.riskScore} · ${esc(risk.level)}</span></div><div class="chips" style="margin-top:8px">${layers}</div>` : ''}
+      <button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="planDest('${esc(city).replace(/'/g, '')}')">Build a trip to ${esc(city)} →</button>
     </div>`;
-};
+}
+window.checkIntel = () => runIntel($('#intelDest').value.trim(), $('#intelOut'));
+window.checkIntelHome = () => runIntel($('#intelDestHome').value.trim(), $('#intelOutHome'));
+window.quickIntel = (city) => { const i = $('#intelDestHome'); if (i) i.value = city; runIntel(city, $('#intelOutHome')); };
 
 // Render an avatar — emoji or uploaded image data URL.
 function avatarHTML(u, size = 32) {
@@ -1001,7 +1018,10 @@ async function renderAdmin() {
     <div class="kpi-grid">${kpiCards}</div>
     <div class="console-grid" style="margin-top:20px">
       <div>
-        <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}</div>
+        <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}
+          ${g.costOptimization ? `<div class="kv" style="margin-top:8px"><span>AI cost saving <span class="muted">(floor ${g.costOptimization.floorPct}%)</span></span><span style="color:${g.costOptimization.meetsFloor ? 'var(--green)' : '#ff6b6b'}">${g.costOptimization.savingPct}% ${g.costOptimization.meetsFloor ? '✓' : '⚠'}</span></div>
+          <div class="kv"><span>Cache hit rate</span><span>${g.costOptimization.cacheHitRatePct}%</span></div>
+          <div class="muted" style="font-size:11.5px;margin-top:6px">${g.costOptimization.techniques.join(' · ')}</div>` : ''}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Tier mix</span>${mix(o.tierMix)}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Payment rail mix</span>${mix(o.gatewayMix)}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Supplier leaderboard</span>${board}</div>

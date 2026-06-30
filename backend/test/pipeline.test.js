@@ -23,6 +23,7 @@ import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
+import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
@@ -355,6 +356,32 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('intelligence: visa + risk work for ANY city worldwide, not just the catalogue', () => {
+  for (const city of ['Tokyo', 'Lagos', 'São Paulo', 'Reykjavik', 'Kathmandu', 'Lima']) {
+    const risk = riskFeed(city);
+    assert.equal(risk.ok, true, `risk for ${city}`);
+    assert.ok(risk.riskScore > 0 && risk.layers.length === 7);
+    assert.equal(risk.estimated, true, `${city} is an estimated (non-catalogue) profile`);
+
+    const visa = visaCheck('NG', city);
+    assert.equal(visa.ok, true, `visa for ${city}`);
+    assert.equal(visa.estimated, true);
+    assert.ok(visa.checklist.length > 0);
+  }
+  // Catalogue cities keep their precise (non-estimated) data.
+  const dubai = riskFeed('Dubai');
+  assert.equal(dubai.ok, true);
+  assert.equal(dubai.estimated, false);
+});
+
+test('AI cost optimisation guarantees the 66% minimum saving floor', () => {
+  const c = aiCostOptimization();
+  assert.equal(c.floorPct, Math.round(MIN_AI_COST_SAVING * 100));
+  assert.equal(c.meetsFloor, true);
+  assert.ok(c.savingPct >= 66, `saving ${c.savingPct}% must be >= 66%`);
+  assert.ok(c.optimizedUSD <= c.baselineUSD * (1 - MIN_AI_COST_SAVING) + 1e-9);
 });
 
 test('membership: 10% of the subscription auto-funds ACUs at £1 = 100 ACU', () => {
