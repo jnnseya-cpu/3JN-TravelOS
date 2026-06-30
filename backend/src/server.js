@@ -20,6 +20,7 @@ import {
   listNotifications, markNotificationsRead,
   recordVisaApplication, govAnalytics,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
+  createContract, listContracts,
 } from './store.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
@@ -78,11 +79,12 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
   res.json({ roles: ROLES, accounts: seedAllRoles() });
 }));
 
-// One-click testing account, pre-loaded (the session's /debug/seed).
+// One-click FULL-ACCESS account — a single account that can use every section of
+// the OS (admin, business, merchant, consumer, VisaOS government).
 app.post('/api/account/test', safe((req, res) => {
-  const user = createUser({ email: 'tester@3jntravel.com', name: 'Test Traveller' });
+  const user = createUser({ name: 'Full-Access Traveller', role: 'admin', allAccess: true });
   addPoints(user.id, 1250 - user.points); // land in Voyager tier (~1,250 pts)
-  res.json({ user: getUser(user.id), note: 'Voyager-tier test account provisioned.' });
+  res.json({ user: getUser(user.id), note: 'Full-access account provisioned — every section unlocked.' });
 }));
 
 app.post('/api/account/:id/acu', safe((req, res) => {
@@ -324,6 +326,15 @@ app.get('/api/business/approvals', safe((req, res) => {
 }));
 app.post('/api/business/approvals/:id', safe((req, res) => {
   res.json(decideApproval(req.params.id, (req.body || {}).decision));
+}));
+
+// ---- Supplier Contract Manager --------------------------------------------
+app.get('/api/business/contracts', safe((req, res) => {
+  res.json({ contracts: listContracts() });
+}));
+app.post('/api/business/contracts', safe((req, res) => {
+  const user = currentUser(req);
+  res.json({ contract: createContract(user?.id, req.body || {}) });
 }));
 
 // ---- AI Gateway status (which provider handles which task) ----------------

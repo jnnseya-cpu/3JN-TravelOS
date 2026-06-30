@@ -423,7 +423,7 @@ async function renderConsole() {
       <div style="display:flex;align-items:center;gap:12px">
         ${avatarHTML(u, 52)}
         <div><h3 style="margin:0">${u.name}</h3><div class="muted" style="font-size:12.5px">${u.email}</div>
-        <span class="role-badge">${u.role}</span></div>
+        <span class="role-badge">${u.role}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
       </div>
       ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${u.bio}</p>` : ''}
       <div class="kv" style="margin-top:12px"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
@@ -444,14 +444,14 @@ async function renderConsole() {
       <div id="intelOut"></div>
     </div>
     <div id="esimCard" class="card pad" style="margin-top:16px"></div>
-    ${['executive', 'business', 'admin'].includes(u.role) || u.tier === 'Elite' || u.tier === 'Nomad' ? '<div id="expenseCard" class="card pad" style="margin-top:16px"></div>' : ''}
-    ${['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
+    ${u.allAccess || ['executive', 'business', 'admin'].includes(u.role) || u.tier === 'Elite' || u.tier === 'Nomad' ? '<div id="expenseCard" class="card pad" style="margin-top:16px"></div>' : ''}
+    ${u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
 
   const cards = bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
     `<div class="card pad center muted">No bookings yet. <button class="btn btn-ghost btn-sm" data-nav="planner">Plan a trip</button></div>`;
 
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
-  if (['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
+  if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
   renderEsims();
   renderExpense();
 }
@@ -977,10 +977,11 @@ async function renderVisaGov() {
 // ---- Business / Enterprise Command Centre ---------------------------------
 async function renderBusiness() {
   const out = $('#businessOut');
-  let data;
-  try { data = await api('/api/business/approvals'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  let data, contractData;
+  try { data = await api('/api/business/approvals'); contractData = await api('/api/business/contracts'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
   const bookings = data.bookings || [];
   const approvals = data.approvals || [];
+  const contracts = contractData.contracts || [];
 
   const spendUSD = bookings.reduce((s, b) => s + (b.totalUSD || 0), 0);
   const destinations = [...new Set(bookings.map((b) => b.destination).filter((d) => d && d !== '—'))];
@@ -1021,8 +1022,25 @@ async function renderBusiness() {
         <div class="card pad"><span class="eyebrow">Approval queue</span>${apprRows}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Team itinerary mesh</span>${teamRows}</div>
       </div>
+    </div>
+    <div class="card pad" style="margin-top:16px">
+      <span class="eyebrow">Supplier Contract Manager · AI-negotiated volume deals</span>
+      ${contracts.length ? contracts.map((c) => `<div class="kv"><span>${c.supplier} <span class="muted">${c.category}</span></span><span>$${(c.annualVolumeUSD).toLocaleString()}/yr · <strong style="color:var(--green)">${(c.discountPct * 100).toFixed(1)}%</strong> · ${c.status}</span></div>`).join('') : '<div class="muted" style="font-size:13px">No contracts yet. The Supplier Negotiation Agent scales the discount with committed volume.</div>'}
+      <div class="composer-row" style="margin-top:12px">
+        <div class="field"><label>Supplier</label><input class="in" id="ctrSupplier" placeholder="e.g. Emirates" style="width:150px"></div>
+        <div class="field"><label>Category</label><select class="in" id="ctrCat"><option value="hotel">hotel</option><option value="flights">flights</option><option value="carhire">car hire</option><option value="transfer">transfer</option></select></div>
+        <div class="field"><label>Annual volume (USD)</label><input class="in" id="ctrVol" value="500000" style="width:130px"></div>
+        <div style="flex:1"></div>
+        <button class="btn btn-gold btn-sm" onclick="createContract()">🤝 Negotiate</button>
+      </div>
     </div>`;
 }
+window.createContract = async () => {
+  const supplier = $('#ctrSupplier').value.trim();
+  if (!supplier) { toast('Enter a supplier.'); return; }
+  try { await api('/api/business/contracts', { method: 'POST', body: JSON.stringify({ supplier, category: $('#ctrCat').value, annualVolumeUSD: Number($('#ctrVol').value) }) }); } catch { return; }
+  toast('✓ Contract negotiated.'); renderBusiness();
+};
 window.decideApproval = async (id, decision) => {
   try { await api(`/api/business/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision }) }); } catch { return; }
   toast(`✓ ${decision === 'approve' ? 'Approved' : 'Rejected'}.`);

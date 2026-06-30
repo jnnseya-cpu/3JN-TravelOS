@@ -24,7 +24,34 @@ const db = {
   notifications: [], // per-user notification feed
   visaApps: [], // VisaOS applications + decisions
   esims: [], // provisioned eSIM profiles
+  contracts: [], // supplier volume agreements
 };
+
+// ---- Supplier Contract Manager (Enterprise) -------------------------------
+// AI-negotiated volume agreements with airlines/hotels/car hire. The negotiated
+// discount scales with the committed annual volume (the Supplier Negotiation
+// Agent's logic, deterministic here).
+export function negotiatedDiscount(category, annualVolumeUSD) {
+  const tiers = { flights: 0.06, hotel: 0.12, carhire: 0.10, transfer: 0.08, activities: 0.10 };
+  const cap = tiers[category] ?? 0.08;
+  const scaled = Math.min(cap, 0.02 + (annualVolumeUSD / 1_000_000) * cap); // ramps to cap at ~$1M
+  return Math.round(scaled * 1000) / 1000;
+}
+export function createContract(userId, { supplier, category = 'hotel', annualVolumeUSD = 250000, validUntil } = {}) {
+  const discount = negotiatedDiscount(category, Number(annualVolumeUSD) || 0);
+  const rec = {
+    id: id('ctr'), userId: userId || null, supplier: (supplier || 'Supplier').slice(0, 60),
+    category, annualVolumeUSD: Math.round(Number(annualVolumeUSD) || 0),
+    discountPct: discount, status: 'active',
+    validUntil: validUntil || '2027-06-30', createdAt: nowISO(),
+  };
+  db.contracts.push(rec);
+  recordAudit({ actor: userId || 'business', role: 'business', action: 'contract.created', entity: 'contract', entityId: rec.id, summary: `${rec.supplier} ${category} ${(discount * 100).toFixed(1)}%` });
+  return rec;
+}
+export function listContracts() {
+  return [...db.contracts].reverse();
+}
 
 // ---- eSIM Manager ---------------------------------------------------------
 const ESIM_COVERAGE = { Dubai: '5G · Etisalat/du', Istanbul: '4G/5G · Turkcell', Barcelona: '5G · Movistar', 'New York': '5G · T-Mobile/AT&T', Bali: '4G · Telkomsel' };
@@ -148,7 +175,7 @@ export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'admin'];
 const ROLE_AVATAR = { consumer: '🧳', business: '💼', merchant: '🏪', partner: '🤝', admin: '🛡️' };
 
 // ---- Users / loyalty / ACU wallet ----------------------------------------
-export function createUser({ email, name, referredByCode, role, avatar, bio } = {}) {
+export function createUser({ email, name, referredByCode, role, avatar, bio, allAccess } = {}) {
   const userId = id('usr');
   const referralCode = '3JN-' + userId.slice(-4).toUpperCase();
   const safeRole = ROLES.includes(role) ? role : 'consumer';
@@ -157,6 +184,9 @@ export function createUser({ email, name, referredByCode, role, avatar, bio } = 
     email: email || `${userId}@guest.3jn`,
     name: name || 'Guest Traveller',
     role: safeRole,
+    // allAccess unlocks every section of the OS from a single account
+    // (admin + business + merchant + consumer), regardless of role gating.
+    allAccess: !!allAccess,
     avatar: avatar || ROLE_AVATAR[safeRole], // emoji or image data URL
     bio: bio || '',
     points: SIGNUP_BONUS_POINTS,
@@ -233,6 +263,7 @@ function publicUser(u) {
     email: u.email,
     name: u.name,
     role: u.role || 'consumer',
+    allAccess: !!u.allAccess,
     avatar: u.avatar,
     bio: u.bio || '',
     points: u.points,
@@ -254,6 +285,7 @@ export function updateUser(userId, patch = {}) {
   if (typeof patch.email === 'string' && patch.email.trim()) u.email = patch.email.trim().slice(0, 120);
   if (typeof patch.bio === 'string') u.bio = patch.bio.slice(0, 280);
   if (typeof patch.role === 'string' && ROLES.includes(patch.role)) u.role = patch.role;
+  if (typeof patch.allAccess === 'boolean') u.allAccess = patch.allAccess;
   if (typeof patch.avatar === 'string' && patch.avatar.length <= 600000) u.avatar = patch.avatar; // ~600KB cap
   recordAudit({ actor: userId, role: u.role, action: 'profile.updated', entity: 'user', entityId: userId, summary: Object.keys(patch).join(', ') });
   return publicUser(u);
@@ -290,7 +322,7 @@ function randomKey() {
 export function createApiKey(userId, { label, environment } = {}) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'unknown-user' };
-  if (!['merchant', 'partner', 'admin'].includes(u.role)) {
+  if (!u.allAccess && !['merchant', 'partner', 'admin'].includes(u.role)) {
     return { ok: false, error: 'role-not-permitted', message: 'Switch your account role to Merchant or Partner to create API keys.' };
   }
   const env = environment === 'production' ? 'production' : 'sandbox';
@@ -337,7 +369,7 @@ export function useApiKey(secret) {
 export function createPaymentLink(userId, { amountMinor, currency = 'GBP', description } = {}) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'unknown-user' };
-  if (!['merchant', 'partner', 'admin'].includes(u.role)) return { ok: false, error: 'role-not-permitted' };
+  if (!u.allAccess && !['merchant', 'partner', 'admin'].includes(u.role)) return { ok: false, error: 'role-not-permitted' };
   const linkId = id('pl');
   const ref = `BP-${randomKey().slice(0, 10).toUpperCase()}`;
   const record = {

@@ -18,7 +18,7 @@ import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
-import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport } from '../src/store.js';
+import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
 
@@ -229,6 +229,21 @@ test('risk feed returns a score and the seven intelligence layers', () => {
   assert.equal(r.ok, true);
   assert.ok(r.riskScore >= 70 && r.riskScore <= 100);
   assert.equal(r.layers.length, 7);
+});
+
+test('all-access account can create API keys regardless of role', () => {
+  const full = createUser({ name: 'Full', role: 'consumer', allAccess: true });
+  assert.equal(full.allAccess, true);
+  const key = createApiKey(full.id, { environment: 'sandbox' });
+  assert.equal(key.ok, true); // consumer role would normally be blocked
+});
+
+test('supplier contracts scale the negotiated discount with volume', () => {
+  assert.ok(negotiatedDiscount('hotel', 1_000_000) >= negotiatedDiscount('hotel', 100_000));
+  const u = createUser({ name: 'Biz', role: 'business' });
+  const c = createContract(u.id, { supplier: 'Emirates', category: 'flights', annualVolumeUSD: 800000 });
+  assert.equal(c.status, 'active');
+  assert.ok(c.discountPct > 0 && c.discountPct <= 0.06);
 });
 
 test('login finds a seeded account by email; eSIM + expense work', () => {
