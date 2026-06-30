@@ -66,8 +66,38 @@ Type a sentence like:
 - **Universal Console** — your bookings, instalment schedules, the price guard,
   loyalty/ACU balances, referral code and post-trip reviews.
 
-Try the **Test Account** button (top-right) to load a Voyager-tier member
-pre-populated for testing.
+Try the **Full Access** button (top-right) to load a single account that unlocks
+every section of the OS (admin, business, merchant, consumer, VisaOS).
+
+## Modules
+
+Beyond the core travel pipeline, the OS includes these working modules:
+
+- **3JN VisaOS** (`/visaos`) — AI visa decision engine: a 10-agent swarm →
+  7 risk dimensions → 0–1000 score → decision (Approve/Conditional/Review/Reject),
+  plus a Government Dashboard. Integrated into the planner as a pre-booking
+  approval-probability badge. (`backend/src/visaos.js`)
+- **Admin Super Control Centre** (`/admin`) — platform KPIs, AI-gateway routing,
+  tier/payment-rail mix, supplier leaderboard, revenue streams, live activity +
+  immutable audit log.
+- **Business / Enterprise Command Centre** (`/business`) — team itinerary mesh,
+  travel policy, multi-level approval queue, duty-of-care, **Supplier Contract
+  Manager** (AI-negotiated volume discounts).
+- **Destination Marketplace** (`/marketplace`) — browsable destinations with
+  localised "from" prices that deep-link into the planner.
+- **Universal Console** (`/console`) — bookings, instalments, price guard,
+  reviews, **Loyalty Hub**, **eSIM Manager**, **Expense Intelligence** (CSV
+  export), **Document Vault**, **Travel Intelligence** (Visa Centre + Risk Feed),
+  and the **Merchant / White-Label API + BitriPay portal** (keys, payment links,
+  QR, settlement).
+- **Accounts** — multi-role (consumer/business/merchant/partner/admin), editable
+  profile + profile picture, login/signup with session persistence, an
+  `allAccess` capability, loyalty + referrals.
+- **AI Gateway** (`backend/src/ai-gateway.js`) — Model Router across Claude /
+  OpenAI / Gemini / Cohere, anchored to the platform system prompt
+  (`docs/MASTER_AI_PROMPT.md`), ACU-metered, local fallback with no keys.
+- **Notifications**, **autosave + audit log**, **i18n** (EN/FR/SW/LN/AR, RTL),
+  and **device-based language/currency auto-detection**.
 
 ## API surface
 
