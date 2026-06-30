@@ -23,7 +23,7 @@ import {
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour,
-  subscribeMembership, renewMembership, cancelMembership, spendAcu,
+  subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -218,6 +218,7 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
 app.post('/api/account/test', safe((req, res) => {
   const user = createUser({ name: 'Full-Access Traveller', role: 'admin', allAccess: true });
   addPoints(user.id, 1250 - user.points); // land in Voyager tier (~1,250 pts)
+  creditAcu(user.id, 10000, 'full-access-demo'); // funded so every paid feature works
   res.json({ user: getUser(user.id), note: 'Full-access account provisioned — every section unlocked.' });
 }));
 
@@ -308,7 +309,7 @@ app.post('/api/plan', safe((req, res) => {
   // must hold enough ACU before a paid tier runs — members fund this from the
   // 10% of their subscription, everyone else tops up. The free/cached tier is
   // always allowed. Guests keep the demo via the cost-protection gate.
-  if (result.stage === 'options' && user) {
+  if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     const cost = reqTier.acu || 0;
     if (cost > 0) {
@@ -430,7 +431,7 @@ app.post('/api/book', safe((req, res) => {
     });
   }
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead });
   recordBehaviour(user?.id, {
     event: 'book',
     destination: quote.intent?.destination?.code || null,

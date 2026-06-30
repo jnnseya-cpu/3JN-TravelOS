@@ -494,7 +494,7 @@ function optionCard(o, sym, intent) {
     const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}" title="${c.agent && c.agentId ? '3JN agent account ' + c.agentId : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}${c.agent && c.agentId ? ' · ' + c.agentId : ''}</span>` : '';
     const more = ['flight', 'hotel', 'host'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more &amp; images</span>` : '';
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${c.supplier}</span> ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span> ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">
@@ -517,8 +517,9 @@ function optionCard(o, sym, intent) {
 }
 
 function labelFor(c) {
-  const map = { flight: '✈ Flights', hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + c.supplier, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + c.supplier, boat: '⛵ ' + c.supplier, esim: '📶 eSIM' };
-  return map[c.type] || c.type;
+  const s = esc(c.supplier);
+  const map = { flight: '✈ Flights', hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
+  return map[c.type] || esc(c.type);
 }
 
 // Detailed info + images for a selected flight or hotel.
