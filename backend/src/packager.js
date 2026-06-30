@@ -19,7 +19,7 @@ const TIERS = {
   Standard: {
     label: 'Standard — Cheapest Reliable',
     blurb: 'The lowest total price across verified, reliable suppliers.',
-    pickFlight: (list) => cheapest(list),
+    pickFlight: (list) => preferDirect(list, cheapest),
     pickHotel: (list) => cheapest(list),
     pickPerSupplier: (list) => cheapest(list),
     marketMultiplier: 1.18, // public price we beat
@@ -27,7 +27,7 @@ const TIERS = {
   Premium: {
     label: 'Premium — Best Balance',
     blurb: 'Higher-rated suppliers and better comfort for a modest uplift.',
-    pickFlight: (list) => bestValue(list),
+    pickFlight: (list) => preferDirect(list, bestValue),
     pickHotel: (list) => byStars(list, 4),
     pickPerSupplier: (list) => bestValue(list),
     marketMultiplier: 1.22,
@@ -35,7 +35,7 @@ const TIERS = {
   Luxury: {
     label: 'Luxury — Top Rated',
     blurb: 'The highest-rated, most premium verified options available.',
-    pickFlight: (list) => topRated(list),
+    pickFlight: (list) => preferDirect(list, topRated),
     pickHotel: (list) => byStars(list, 5),
     pickPerSupplier: (list) => topRated(list),
     marketMultiplier: 1.30,
@@ -47,6 +47,15 @@ function cheapest(list) {
 }
 function topRated(list) {
   return [...list].sort((a, b) => b.reliabilityScore - a.reliabilityScore || a.priceUSD - b.priceUSD)[0];
+}
+// Direct flights are a privilege: pick from the non-stop subset when any exist,
+// otherwise fall back to the full list (flights with stops are perfectly fine).
+function isDirect(f) {
+  return f.type === 'flight' && (f.details?.outbound?.stops || 0) === 0 && (f.details?.inbound?.stops || 0) === 0;
+}
+function preferDirect(list, picker) {
+  const direct = list.filter(isDirect);
+  return picker(direct.length ? direct : list);
 }
 // Value = reliability per unit cost — rewards reliable suppliers that aren't the
 // most expensive.

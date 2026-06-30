@@ -159,6 +159,7 @@ export function scanHotels(intent, dest) {
         reviews: 200 + Math.floor(rnd() * 4800),
         amenities: amenitiesFor(rnd, h.stars),
         description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${pick(AREAS, rnd, dest.city)}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
+        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel'),
       },
       priceUSD: round(nightly * nights * rooms),
     };
@@ -186,11 +187,47 @@ export function scanHotels(intent, dest) {
       reviews: 60 + Math.floor(rnd() * 900),
       amenities: ['Full kitchen', 'Free WiFi', 'Washing machine', 'Self check-in', 'Workspace', 'Family friendly'],
       description: `A verified entire apartment in ${dest.city} with a full kitchen — great value and space for your group.`,
+      ...hotelExtras(rnd, dest, intent, 4, 'host'),
     },
     priceUSD: round(hostNightly * nights),
   });
 
   return hotels;
+}
+
+// Extended, realistic accommodation detail so the traveller can decide with
+// confidence — times, policies, room spec, payment options and what's nearby.
+function hotelExtras(rnd, dest, intent, stars, type) {
+  const propertyType = type === 'host' ? 'Entire apartment'
+    : stars >= 5 ? 'Luxury hotel' : stars >= 4 ? 'Resort / 4★ hotel' : 'City hotel';
+  const beds = intent.travellers.children
+    ? '1 king + 1 sofa bed (family room)'
+    : intent.travellers.total >= 3 ? '2 double beds' : '1 queen bed';
+  const checkIn = type === 'host' ? 'Self check-in from 15:00' : '15:00';
+  const exp = destExperiences(dest.code);
+  const landmarks = (exp.length ? exp : [`${dest.city} City Centre`, `${dest.city} Old Town`, `${dest.city} Waterfront`]).slice(0, 3);
+  return {
+    propertyType,
+    checkInTime: checkIn,
+    checkOutTime: type === 'host' ? '11:00' : '12:00',
+    cancellationDeadline: stars >= 3 ? 'Free cancellation until 48h before check-in' : 'Non-refundable rate',
+    bedConfiguration: beds,
+    roomSizeSqm: 18 + Math.round(rnd() * (stars >= 5 ? 42 : 22)),
+    maxOccupancy: intent.travellers.total + (type === 'host' ? 1 : 0),
+    breakfastDetail: stars >= 4 ? 'Full buffet breakfast included' : stars >= 3 ? 'Continental breakfast (optional add-on)' : 'Breakfast not included',
+    paymentOptions: ['Pay deposit now + instalments', 'Pay in full now', stars >= 3 ? 'Pay at the property' : 'Prepaid only'].filter(Boolean),
+    depositPolicy: stars >= 4 ? 'Card pre-authorisation for incidentals at check-in' : 'Refundable damage deposit may apply',
+    taxesNote: 'Local taxes & tourism levy shown before payment',
+    parking: stars >= 4 ? 'On-site parking (chargeable)' : 'Public parking nearby',
+    wifi: 'Free high-speed WiFi in all rooms',
+    petsPolicy: rnd() > 0.5 ? 'Pets allowed on request' : 'No pets',
+    childrenPolicy: 'Children of all ages welcome · cots on request',
+    smoking: 'Non-smoking property',
+    accessibility: stars >= 4 ? 'Step-free access · accessible rooms available' : 'Limited accessibility — ask before booking',
+    languages: ['English', 'Local language', 'French'],
+    nearbyLandmarks: landmarks,
+    verifiedBadge: '50-point 3JN reliability check passed',
+  };
 }
 
 // Hotel enrichment helpers.
