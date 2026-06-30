@@ -117,6 +117,23 @@ export function originForCountry(country) {
   return ORIGIN_BY_COUNTRY[country] || ORIGIN_BY_COUNTRY.GB;
 }
 
+// Public catalogue for the Destination Marketplace — indicative "from" prices
+// (per person, derived from the cost basis) + headline experiences.
+const DEST_BLURB = {
+  DXB: { tag: 'Luxury · sun · skyline', emoji: '🌇', experiences: ['Desert safari', 'Burj Khalifa', 'Marina yacht'] },
+  IST: { tag: 'Culture · food · history', emoji: '🕌', experiences: ['Bosphorus cruise', 'Grand Bazaar', 'Hagia Sophia'] },
+  BCN: { tag: 'Beach · art · tapas', emoji: '🏖️', experiences: ['Sagrada Família', 'Gothic Quarter', 'Beach day'] },
+  JFK: { tag: 'City · shopping · shows', emoji: '🗽', experiences: ['Broadway show', 'Empire State', 'Central Park'] },
+  DPS: { tag: 'Tropical · wellness · surf', emoji: '🌴', experiences: ['Ubud rice terraces', 'Temple tour', 'Surf lesson'] },
+};
+export function destinationsCatalog() {
+  return Object.entries(DESTINATIONS).map(([code, d]) => {
+    const fromUSD = Math.round((d.flightBaseUSD + d.hotelNightBaseUSD * 7 + d.activityBaseUSD * 2) * 0.92);
+    const b = DEST_BLURB[code] || { tag: '', emoji: '✈️', experiences: [] };
+    return { code, city: d.city, country: d.countryName, airport: d.airport, tag: b.tag, emoji: b.emoji, experiences: b.experiences, fromUSD };
+  });
+}
+
 export function findDestination(text) {
   const lower = (text || '').toLowerCase();
   for (const [code, dest] of Object.entries(DESTINATIONS)) {

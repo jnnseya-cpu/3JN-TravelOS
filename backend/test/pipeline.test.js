@@ -16,6 +16,7 @@ import {
 } from '../src/store.js';
 import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
+import { destinationsCatalog } from '../src/destinations.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
@@ -229,6 +230,13 @@ test('risk feed returns a score and the seven intelligence layers', () => {
   assert.equal(r.ok, true);
   assert.ok(r.riskScore >= 70 && r.riskScore <= 100);
   assert.equal(r.layers.length, 7);
+});
+
+test('destination marketplace catalogue has from-prices + experiences', () => {
+  const cat = destinationsCatalog();
+  assert.ok(cat.length >= 5);
+  const dubai = cat.find((d) => d.city === 'Dubai');
+  assert.ok(dubai && dubai.fromUSD > 0 && dubai.experiences.length > 0);
 });
 
 test('all-access account can create API keys regardless of role', () => {

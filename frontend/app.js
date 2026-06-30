@@ -63,6 +63,7 @@ function nav(view) {
   if (view === 'admin') renderAdmin();
   if (view === 'business') renderBusiness();
   if (view === 'visaos') renderVisaApply();
+  if (view === 'marketplace') renderMarketplace();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -861,6 +862,37 @@ async function renderAdmin() {
     </div>
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
 }
+
+// ---- Destination Marketplace ----------------------------------------------
+async function renderMarketplace() {
+  const out = $('#marketOut');
+  if (!out) return;
+  let data;
+  try { data = await api(`/api/destinations?country=${state.country || 'GB'}`); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  const cards = (data.destinations || []).map((d) => `
+    <div class="card pad dest-card" onclick="planDest('${d.city}')">
+      <div class="dest-emoji">${d.emoji}</div>
+      <h3 style="margin:6px 0 2px">${d.city}</h3>
+      <div class="muted" style="font-size:12.5px">${d.country} · ${d.tag}</div>
+      <div class="exp-tags">${d.experiences.map((e) => `<span class="chip">${e}</span>`).join('')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px">
+        <span class="muted" style="font-size:12px">from</span>
+        <span style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${d.symbol}${d.fromLocal.toLocaleString()}</span>
+      </div>
+      <button class="btn btn-gold btn-sm btn-block" style="margin-top:10px">Build my package →</button>
+    </div>`).join('');
+  out.innerHTML = `
+    <div class="dest-grid">${cards}</div>
+    <div class="card pad" style="margin-top:24px">
+      <span class="eyebrow">Every trip is a marketplace basket</span>
+      <div class="chips" style="margin-top:10px">${(data.addOns || []).map((a) => `<span class="chip">＋ ${a}</span>`).join('')}</div>
+    </div>`;
+}
+window.planDest = (city) => {
+  $('#intentInput').value = `I want to travel to ${city} with my family for 7 nights with flights, hotel, activities, transfer and eSIM — the cheapest reliable price.`;
+  nav('planner');
+  runPlan();
+};
 
 // ---- 3JN VisaOS -----------------------------------------------------------
 $('#visaTabApply')?.addEventListener('click', renderVisaApply);

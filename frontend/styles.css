@@ -325,6 +325,14 @@ select, input.in {
   background: rgba(78,161,255,0.08); border: 1px solid var(--line); color: var(--text);
 }
 
+/* destination marketplace */
+.dest-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.dest-card { cursor: pointer; transition: transform 150ms ease, border-color 150ms ease; }
+.dest-card:hover { transform: translateY(-5px); border-color: var(--line-strong); }
+.dest-emoji { font-size: 40px; }
+.exp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.exp-tags .chip { font-size: 11px; padding: 4px 9px; }
+
 /* VisaOS */
 .vsig { transition: 150ms ease; }
 .vsig.on { color: var(--green); border-color: rgba(70,211,154,0.4); background: rgba(70,211,154,0.08); }
@@ -440,6 +448,7 @@ footer.ft { border-top: 1px solid var(--line); padding: 56px 0 36px; margin-top:
   .ft-top { grid-template-columns: 1fr; }
   .ft-cols { grid-template-columns: 1fr 1fr; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .dest-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .core-wrap, .steps { grid-template-columns: 1fr; }

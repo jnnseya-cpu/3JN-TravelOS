@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
+import { destinationsCatalog } from './destinations.js';
 import { plan } from './planner.js';
 import { instalmentPlan } from './pricing.js';
 import {
@@ -53,6 +54,14 @@ const safe = (fn) => async (req, res) => {
 // ---- Context / config -----------------------------------------------------
 app.get('/api/context', safe((req, res) => {
   res.json({ context: detectContext(req), currencies: listCurrencies(), searchTiers: SEARCH_TIERS });
+}));
+
+// ---- Destination Marketplace ----------------------------------------------
+app.get('/api/destinations', safe((req, res) => {
+  const ctx = detectContext(req, { country: req.query.country, currencyCountry: req.query.country });
+  const cur = ctx.currency;
+  const catalog = destinationsCatalog().map((d) => ({ ...d, fromLocal: Math.round(d.fromUSD * cur.rateFromUSD), currency: cur.code, symbol: cur.symbol }));
+  res.json({ destinations: catalog, addOns: ['Tours', 'Local drivers', 'Photographers', 'Guides', 'Restaurant bookings', 'Event tickets', 'Airport pickup', 'Translators', 'eSIM data', 'Travel insurance'] });
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------
@@ -368,7 +377,7 @@ app.use(express.static(FRONTEND_DIR));
 app.use('/shared', express.static(SHARED_DIR));
 
 // SPA-ish fallback for the page routes.
-app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos'], (req, res) => {
+app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos', '/marketplace'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 
