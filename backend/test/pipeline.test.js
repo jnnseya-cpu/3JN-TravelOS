@@ -228,6 +228,25 @@ test('OAG schedule: disabled without key; flight instance normalises to a real n
   assert.equal(leg.aircraft, '77W');
 });
 
+test('OAG schedules-shape entry normalises (fallback date, overnight + stops inferred)', () => {
+  // A Schedules-product entry: no explicit dates, arrival clock < departure
+  // (overnight), and a stop count.
+  const sched = {
+    carrier: { iata: 'EK' }, flightNumber: '40',
+    departure: { airport: { iata: 'BHX' }, time: { local: '20:05' } },
+    arrival: { airport: { iata: 'DXB' }, time: { local: '06:35' } },
+    scheduledDuration: 405, stops: 1, aircraftType: { iata: '388' },
+  };
+  const leg = oagInstanceToLeg(sched, '2026-08-17');
+  assert.equal(leg.date, '2026-08-17'); // fallback applied
+  assert.equal(leg.depart, '20:05');
+  assert.equal(leg.arrive, '06:35');
+  assert.equal(leg.arriveNextDay, true); // 06:35 < 20:05 → overnight
+  assert.equal(leg.stops, 1);
+  assert.equal(leg.stopLabel, '1 stop');
+  assert.equal(leg.flightNumber, 'EK40');
+});
+
 test('estimateFlightFares: shared pricing applies age bands and is deterministic', () => {
   const dest = { flightBaseUSD: 300, code: 'DXB' };
   const a = estimateFlightFares(dest, true, false, { adults: 2, children: 1, childAges: [9], total: 3 }, 'seed-x');
