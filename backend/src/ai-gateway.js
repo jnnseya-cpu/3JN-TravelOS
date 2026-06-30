@@ -55,6 +55,8 @@ export const TASK_ROUTES = {
   translation: { provider: 'gemini', acuAction: 'intent', why: 'multimodal + translation' },
   imageAnalysis: { provider: 'gemini', acuAction: 'intent', why: 'multimodal vision' },
   policyRag: { provider: 'cohere', acuAction: 'expense', why: 'enterprise RAG over policy docs' },
+  behaviourLearning: { provider: 'anthropic', acuAction: 'intent', why: 'behavioural profiling + pattern mining' },
+  recommendation: { provider: 'openai', acuAction: 'intent', why: 'personalised journey recommendation' },
 };
 
 const DEFAULT_PROVIDER = env.AI_GATEWAY_DEFAULT_PROVIDER || 'anthropic';

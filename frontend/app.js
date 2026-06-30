@@ -232,6 +232,7 @@ async function boot() {
   refreshNotifications();
   restoreSession();
   applyDeepLink();
+  refreshJourney();
 }
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
@@ -310,6 +311,8 @@ async function runPlan(overrides = {}) {
   } catch { out.innerHTML = ''; return; }
 
   state.lastPlan = data;
+  // The search just taught the behaviour model something — rebuild the dashboard.
+  refreshJourney();
 
   if (data.stage === 'clarify') { renderClarify(data); return; }
   renderOptions(data);
@@ -1017,7 +1020,7 @@ async function renderMarketplace() {
   let data;
   try { data = await api(`/api/destinations?country=${state.country || 'GB'}`); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
   const cards = (data.destinations || []).map((d) => `
-    <div class="card pad dest-card" onclick="planDest('${d.city}')">
+    <div class="card pad dest-card" onclick="trackView('${d.code}','${d.city}');planDest('${d.city}')">
       <div class="dest-emoji">${d.emoji}</div>
       <h3 style="margin:6px 0 2px">${d.city}</h3>
       <div class="muted" style="font-size:12.5px">${d.country} · ${d.tag}</div>
@@ -1500,6 +1503,42 @@ function applyLanguage(lang) {
   document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   state.lang = lang;
 }
+
+// ---- Behavioural learning + personalised Journey Dashboard ----------------
+// Fire-and-forget telemetry so the ML agents learn from real activity.
+function trackEvent(event, destination, payload) {
+  try {
+    api('/api/track', { method: 'POST', body: JSON.stringify({ event, destination, payload }) })
+      .then(() => { if (event !== 'dwell') refreshJourney(); })
+      .catch(() => {});
+  } catch { /* never block the UI */ }
+}
+window.trackEvent = trackEvent;
+window.trackView = (code, city) => trackEvent('view_destination', code, { city });
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function refreshJourney() {
+  const rowsEl = $('#journeyRows');
+  if (!rowsEl) return;
+  let d;
+  try { d = await api(`/api/journey?country=${state.country || 'GB'}`); } catch { return; }
+  rowsEl.innerHTML = (d.rows || []).map((r) => `
+    <div class="holo-row"><span><span class="ico">${esc(r.icon)}</span>${esc(r.label)}</span>
+      <span class="v ${r.kind === 'good' ? 'good' : 'blue'}">${esc(r.value)}</span></div>`).join('');
+  const dest = $('#journeyDest');
+  if (dest) dest.textContent = d.destination ? `· ${d.destination.emoji} ${d.destination.city}` : '';
+  const learned = $('#journeyLearned');
+  if (learned) learned.textContent = d.learnedFrom || '';
+  const save = $('#journeySave');
+  if (save && d.savings) save.textContent = `You Save ${d.savings.display}`;
+  const agentsEl = $('#journeyAgents');
+  if (agentsEl) {
+    agentsEl.innerHTML = (d.agents || []).map((a) => `
+      <span class="learn-chip" title="${esc(a.track)}"><b>${esc(a.agent)}</b> <span class="ld">${esc(a.learned)}</span></span>`).join('');
+  }
+}
+window.refreshJourney = refreshJourney;
 
 // ---- Notifications engine -------------------------------------------------
 async function refreshNotifications() {

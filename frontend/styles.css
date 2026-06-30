@@ -189,6 +189,15 @@ section { padding: 84px 0; }
   border: 1px solid rgba(70,211,154,0.3);
 }
 .holo-save .big { font-family: 'Space Grotesk'; font-weight: 700; font-size: 30px; color: var(--green); }
+/* behavioural-learning agent strip on the Journey Dashboard */
+.learn-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.learn-chip {
+  font-size: 10.5px; padding: 5px 9px; border-radius: 999px; line-height: 1.2;
+  background: rgba(78,161,255,0.08); border: 1px solid var(--line); color: var(--muted);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.learn-chip b { color: var(--blue-bright); font-weight: 600; }
+.learn-chip .ld { color: var(--text); font-weight: 500; }
 
 /* ---- Section headings ---- */
 .section-head { max-width: 760px; margin: 0 auto 48px; }

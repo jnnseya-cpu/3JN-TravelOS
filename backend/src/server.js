@@ -21,8 +21,9 @@ import {
   listNotifications, markNotificationsRead,
   recordVisaApplication, govAnalytics,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
-  createContract, listContracts,
+  createContract, listContracts, recordBehaviour,
 } from './store.js';
+import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
 import { runPriceGuard } from './monitor.js';
@@ -194,7 +195,46 @@ app.post('/api/plan', safe((req, res) => {
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
   const result = plan({ text, context, user, searchTier, overrides });
+  // Behavioural learning: log the search so the Journey Dashboard + ML agents
+  // learn from what this user actually looks for (guests included).
+  const i = result.intent;
+  recordBehaviour(user?.id, {
+    event: result.stage === 'options' ? 'plan' : 'search',
+    destination: i?.destination?.code || null,
+    payload: {
+      tier: searchTier,
+      party: i?.travellers?.total,
+      nights: i?.nights,
+      month: i?.month,
+      components: i?.components,
+      query: typeof text === 'string' ? text.slice(0, 140) : undefined,
+    },
+  });
   res.json(result);
+}));
+
+// ---- Behavioural learning + personalised Journey Dashboard ----------------
+// Lightweight client telemetry: destination views, dwell, chip taps, etc.
+app.post('/api/track', safe((req, res) => {
+  const { event, destination, payload } = req.body || {};
+  if (!event) return res.status(400).json({ error: 'event-required' });
+  const user = currentUser(req);
+  recordBehaviour(user?.id, { event, destination, payload });
+  res.json({ ok: true });
+}));
+
+// The personalised Journey Dashboard that powers the hero panel — driven by the
+// user's learned behaviour, not a hard-coded example.
+app.get('/api/journey', safe((req, res) => {
+  const context = detectContext(req, { country: req.query.country, currencyCountry: req.query.country });
+  const user = currentUser(req);
+  res.json(journeyDashboard(user?.id, context));
+}));
+
+// The learned profile + ML agent tracks (insight / debugging view).
+app.get('/api/learning/profile', safe((req, res) => {
+  const user = currentUser(req);
+  res.json({ profile: learnProfile(user?.id) });
 }));
 
 // ---- Quote: persist a chosen option + build instalments -------------------
@@ -210,6 +250,11 @@ app.post('/api/quote', safe((req, res) => {
     checkIn: intent?.dates?.checkIn,
   });
   const quote = saveQuote({ option, intent, instalment });
+  recordBehaviour(currentUser(req)?.id, {
+    event: 'quote',
+    destination: intent?.destination?.code || null,
+    payload: { nights: intent?.nights, party: intent?.travellers?.total, month: intent?.month, components: intent?.components },
+  });
   res.json({ quote });
 }));
 
@@ -233,6 +278,11 @@ app.post('/api/book', safe((req, res) => {
   }
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod });
+  recordBehaviour(user?.id, {
+    event: 'book',
+    destination: quote.intent?.destination?.code || null,
+    payload: { nights: quote.intent?.nights, party: quote.intent?.travellers?.total, month: quote.intent?.month, components: quote.intent?.components },
+  });
   // Fire-and-forget confirmation email (no-op if email disabled or guest email).
   if (user?.email) {
     const { subject, html, text } = bookingEmail(quote.option, booking);
