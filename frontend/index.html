@@ -27,6 +27,7 @@
         <a data-nav="membership">Membership</a>
         <a data-nav="api">API</a>
         <a data-nav="console">Console</a>
+        <a data-nav="business">Business</a>
         <a data-nav="admin">Admin</a>
       </nav>
       <div class="nav-cta">
@@ -331,6 +332,7 @@
               </select>
             </div>
             <div style="flex:1"></div>
+            <span id="autosaveStatus" class="autosave"></span>
             <button class="btn btn-gold" id="planBtn">⚡ Scan & Build Package</button>
           </div>
           <div class="chips">
@@ -440,6 +442,16 @@
         <button class="btn btn-ghost btn-sm" id="apiTryBtn">Run sample request</button>
         <pre id="apiResult" class="card pad" style="margin-top:14px;display:none;font-size:12px;overflow:auto;max-height:300px;font-family:monospace"></pre>
       </div>
+    </section>
+
+    <!-- ===================== BUSINESS / ENTERPRISE COMMAND CENTRE ===================== -->
+    <section class="view" id="view-business">
+      <div class="section-head left">
+        <span class="eyebrow">Business / Enterprise Command Centre</span>
+        <h2>Team travel, policy, approvals &amp; duty of care.</h2>
+        <p>Manage staff travel under one operational view — policy controls, multi-level approvals, and live traveller risk.</p>
+      </div>
+      <div id="businessOut"><div class="card pad center muted">Loading…</div></div>
     </section>
 
     <!-- ===================== ADMIN SUPER CONTROL CENTRE ===================== -->

@@ -10,6 +10,9 @@ import { costProtectionGate, whiteLabelPayout } from '../src/revenue.js';
 import {
   createUser, createBooking, saveQuote, updateUser, seedAllRoles,
   createApiKey, listApiKeys, revokeApiKey, useApiKey, adminOverview,
+  recordAudit, adminAudit, saveDraft, getDraft,
+  createPaymentLink, settlePaymentLink, merchantSettlement,
+  listApprovals, decideApproval,
 } from '../src/store.js';
 import { runPriceGuard } from '../src/monitor.js';
 
@@ -185,4 +188,36 @@ test('admin overview aggregates platform KPIs', () => {
   const o = adminOverview();
   assert.ok(typeof o.users === 'number' && o.users > 0);
   assert.ok('gmvUSD' in o && 'tierMix' in o && 'gatewayMix' in o);
+});
+
+test('audit log records actions and autosave round-trips a draft', () => {
+  const before = adminAudit(1000).length;
+  recordAudit({ actor: 'u1', role: 'consumer', action: 'test.action', entity: 'x', entityId: '1', summary: 'hi' });
+  assert.equal(adminAudit(1000).length, before + 1);
+  assert.equal(adminAudit(1)[0].action, 'test.action');
+
+  saveDraft('u1', 'intent', { text: 'Dubai' });
+  assert.equal(getDraft('u1', 'intent').payload.text, 'Dubai');
+});
+
+test('BitriPay payment links create, settle and net out the gateway fee', () => {
+  const m = createUser({ name: 'Shop', role: 'merchant' });
+  const link = createPaymentLink(m.id, { amountMinor: 10000, currency: 'GBP', description: 'Tour' });
+  assert.equal(link.ok, true);
+  assert.match(link.link.url, /pay\.3jntravel\.com/);
+  settlePaymentLink(m.id, link.link.id);
+  const s = merchantSettlement(m.id);
+  assert.equal(s.grossMinor, 10000);
+  assert.ok(s.feeMinor > 0 && s.netMinor === s.grossMinor - s.feeMinor);
+});
+
+test('high-value bookings enter the approval queue and can be decided', () => {
+  const u = createUser({ name: 'Biz', role: 'business' });
+  const option = { tier: 'Standard', totalUSD: 5000, components: [], pricing: { currency: 'GBP', lines: { totalUSD: 5000 }, local: { total: 3950 }, revenue: { commissionUSD: 500, savingsShareUSD: 0 } } };
+  const quote = saveQuote({ option, intent: { dates: { checkIn: '2026-08-12' } } });
+  createBooking({ quoteId: quote.id, option, instalment: instalmentPlan({ totalLocal: 3950, currency: GB.currency, months: 3, depositPct: 0.2 }), userId: u.id });
+  const pending = listApprovals().filter((a) => a.status === 'pending');
+  assert.ok(pending.length >= 1);
+  const decided = decideApproval(pending[0].id, 'approve');
+  assert.equal(decided.approval.status, 'approved');
 });

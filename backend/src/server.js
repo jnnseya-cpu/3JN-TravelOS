@@ -14,6 +14,9 @@ import {
   adminOverview, adminUsers, adminBookings, adminActivity,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
+  adminAudit, saveDraft, getDraft,
+  createPaymentLink, listPaymentLinks, settlePaymentLink, merchantSettlement,
+  listApprovals, decideApproval,
 } from './store.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -211,6 +214,48 @@ app.get('/api/admin/bookings', safe((req, res) => {
   res.json({ bookings: adminBookings() });
 }));
 
+app.get('/api/admin/audit', safe((req, res) => {
+  res.json({ audit: adminAudit(Number(req.query.limit) || 50) });
+}));
+
+// ---- Autosave drafts ------------------------------------------------------
+app.put('/api/drafts/:key', safe((req, res) => {
+  const user = currentUser(req);
+  const rec = saveDraft(user?.id, req.params.key, (req.body || {}).payload);
+  res.json({ saved: true, savedAt: rec.savedAt });
+}));
+app.get('/api/drafts/:key', safe((req, res) => {
+  const user = currentUser(req);
+  res.json({ draft: getDraft(user?.id, req.params.key) });
+}));
+
+// ---- BitriPay Merchant Portal ---------------------------------------------
+app.post('/api/bitripay/links', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const result = createPaymentLink(user.id, req.body || {});
+  if (!result.ok) return res.status(403).json(result);
+  res.json(result);
+}));
+app.get('/api/bitripay/links', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ links: listPaymentLinks(user.id), settlement: merchantSettlement(user.id) });
+}));
+app.post('/api/bitripay/links/:id/settle', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(settlePaymentLink(user.id, req.params.id));
+}));
+
+// ---- Business / Enterprise approvals --------------------------------------
+app.get('/api/business/approvals', safe((req, res) => {
+  res.json({ approvals: listApprovals(), bookings: adminBookings() });
+}));
+app.post('/api/business/approvals/:id', safe((req, res) => {
+  res.json(decideApproval(req.params.id, (req.body || {}).decision));
+}));
+
 // ---- AI Gateway status (which provider handles which task) ----------------
 app.get('/api/ai/status', safe((req, res) => {
   res.json({ gateway: gatewayStatus() });
@@ -242,7 +287,7 @@ app.use(express.static(FRONTEND_DIR));
 app.use('/shared', express.static(SHARED_DIR));
 
 // SPA-ish fallback for the page routes.
-app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin'], (req, res) => {
+app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 

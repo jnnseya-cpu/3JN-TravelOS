@@ -17,7 +17,34 @@ const db = {
   referrals: [], // { code, referrerId, friendId }
   priceEvents: [], // price-guard log
   apiKeys: [], // white-label / merchant API keys
+  audit: [], // immutable audit log (master-prompt requirement)
+  drafts: new Map(), // autosave drafts keyed by `${userId}:${key}`
+  paymentLinks: [], // BitriPay payment links / QR
+  approvals: [], // business travel approval queue
 };
+
+// ---- Audit log (immutable) + autosave -------------------------------------
+// Every meaningful mutation is appended here with actor, action and a before/
+// after summary. Mirrors the "save everything / audit trail" master-prompt rule.
+export function recordAudit({ actor = 'system', role = 'system', action, entity, entityId, summary }) {
+  const entry = { id: id('aud'), actor, role, action, entity, entityId, summary: summary || '', at: nowISO() };
+  db.audit.push(entry);
+  return entry;
+}
+export function adminAudit(limit = 50) {
+  return [...db.audit].reverse().slice(0, limit);
+}
+
+// Autosave: persist a draft (planner intent, profile edits in progress, etc.).
+export function saveDraft(userId, key, payload) {
+  const k = `${userId || 'anon'}:${key}`;
+  const rec = { key, payload, savedAt: nowISO() };
+  db.drafts.set(k, rec);
+  return rec;
+}
+export function getDraft(userId, key) {
+  return db.drafts.get(`${userId || 'anon'}:${key}`) || null;
+}
 
 // Recognised account roles and their default avatar.
 export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'admin'];
@@ -126,6 +153,7 @@ export function updateUser(userId, patch = {}) {
   if (typeof patch.bio === 'string') u.bio = patch.bio.slice(0, 280);
   if (typeof patch.role === 'string' && ROLES.includes(patch.role)) u.role = patch.role;
   if (typeof patch.avatar === 'string' && patch.avatar.length <= 600000) u.avatar = patch.avatar; // ~600KB cap
+  recordAudit({ actor: userId, role: u.role, action: 'profile.updated', entity: 'user', entityId: userId, summary: Object.keys(patch).join(', ') });
   return publicUser(u);
 }
 
@@ -178,6 +206,7 @@ export function createApiKey(userId, { label, environment } = {}) {
     lastUsedAt: null,
   };
   db.apiKeys.push(record);
+  recordAudit({ actor: userId, role: u.role, action: 'apikey.created', entity: 'api_key', entityId: record.id, summary: `${env} key ${record.prefix}…` });
   return { ok: true, key: record }; // caller strips secret on subsequent reads
 }
 
@@ -200,6 +229,60 @@ export function useApiKey(secret) {
   if (!k) return null;
   k.lastUsedAt = nowISO();
   return { userId: k.userId, environment: k.environment };
+}
+
+// ---- BitriPay Merchant Portal: payment links + settlement -----------------
+export function createPaymentLink(userId, { amountMinor, currency = 'GBP', description } = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'unknown-user' };
+  if (!['merchant', 'partner', 'admin'].includes(u.role)) return { ok: false, error: 'role-not-permitted' };
+  const linkId = id('pl');
+  const ref = `BP-${randomKey().slice(0, 10).toUpperCase()}`;
+  const record = {
+    id: linkId, userId, ref,
+    amountMinor: Math.max(0, Math.round(Number(amountMinor) || 0)),
+    currency, description: (description || 'Travel payment').slice(0, 120),
+    url: `https://pay.3jntravel.com/l/${ref}`,
+    qrData: `bitripay://pay?ref=${ref}&amt=${amountMinor}&cur=${currency}`,
+    status: 'pending', settledAt: null, createdAt: nowISO(),
+  };
+  db.paymentLinks.push(record);
+  recordAudit({ actor: userId, role: u.role, action: 'paymentlink.created', entity: 'payment_link', entityId: linkId, summary: `${currency} ${(record.amountMinor / 100).toFixed(2)}` });
+  return { ok: true, link: record };
+}
+export function listPaymentLinks(userId) {
+  return db.paymentLinks.filter((p) => p.userId === userId).map((p) => ({ ...p }));
+}
+export function settlePaymentLink(userId, linkId) {
+  const p = db.paymentLinks.find((x) => x.id === linkId && x.userId === userId);
+  if (!p) return { ok: false, error: 'not-found' };
+  p.status = 'settled'; p.settledAt = nowISO();
+  recordAudit({ actor: userId, role: 'merchant', action: 'paymentlink.settled', entity: 'payment_link', entityId: linkId, summary: p.ref });
+  return { ok: true, link: p };
+}
+export function merchantSettlement(userId) {
+  const links = db.paymentLinks.filter((p) => p.userId === userId);
+  const grossMinor = links.filter((p) => p.status === 'settled').reduce((s, p) => s + p.amountMinor, 0);
+  const feeMinor = Math.round(grossMinor * 0.012); // ~1.2% BitriPay gateway fee
+  return {
+    links: links.length,
+    settled: links.filter((p) => p.status === 'settled').length,
+    pending: links.filter((p) => p.status === 'pending').length,
+    grossMinor, feeMinor, netMinor: grossMinor - feeMinor, currency: links[0]?.currency || 'GBP',
+  };
+}
+
+// ---- Business / Enterprise approvals + team view --------------------------
+export function listApprovals() {
+  return [...db.approvals].reverse();
+}
+export function decideApproval(approvalId, decision) {
+  const a = db.approvals.find((x) => x.id === approvalId);
+  if (!a) return { ok: false, error: 'not-found' };
+  a.status = decision === 'approve' ? 'approved' : 'rejected';
+  a.decidedAt = nowISO();
+  recordAudit({ actor: 'business-admin', role: 'business', action: `approval.${a.status}`, entity: 'approval', entityId: approvalId, summary: `$${a.amountUSD}` });
+  return { ok: true, approval: a };
 }
 
 // ---- Quotes & bookings ----------------------------------------------------
@@ -245,6 +328,13 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   // Award loyalty points (0.5 pt / $1).
   if (userId) addPoints(userId, option.totalUSD * 0.5);
 
+  recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'booking.created', entity: 'booking', entityId: bookingId, summary: `${option.tier} via ${gateway} ($${option.totalUSD})` });
+
+  // High-value bookings enter the business approval queue.
+  if (option.totalUSD >= 4000) {
+    db.approvals.push({ id: id('apr'), bookingId, userId, amountUSD: option.totalUSD, status: 'pending', at: nowISO() });
+  }
+
   return booking;
 }
 
@@ -267,6 +357,7 @@ export function logPriceEvent(bookingId, event) {
   const b = db.bookings.get(bookingId);
   if (b) b.priceGuard.events.push(event);
   db.priceEvents.push({ bookingId, ...event });
+  recordAudit({ actor: 'savings-guard-agent', role: 'agent', action: `priceguard.${event.action}`, entity: 'booking', entityId: bookingId, summary: event.message });
   return event;
 }
 
@@ -280,6 +371,7 @@ export function addReview({ supplier, rating, comment, bookingId, userId }) {
   s.count += 1;
   s.avg = Math.round((s.sum / s.count) * 10) / 10;
   db.supplierScores.set(supplier, s);
+  recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'review.created', entity: 'review', entityId: review.id, summary: `${rating}★ ${supplier}` });
   return review;
 }
 

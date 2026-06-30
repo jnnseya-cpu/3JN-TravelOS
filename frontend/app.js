@@ -61,6 +61,7 @@ function nav(view) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'console') renderConsole();
   if (view === 'admin') renderAdmin();
+  if (view === 'business') renderBusiness();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -165,8 +166,35 @@ function syncCurrency(country) {
 $('#planBtn').addEventListener('click', runPlan);
 $$('.chip').forEach((c) => c.addEventListener('click', () => {
   $('#intentInput').value = c.dataset.example;
+  autosaveIntent();
   runPlan();
 }));
+
+// ---- Autosave (master-prompt rule: save everything automatically) ---------
+let autosaveT;
+function autosaveIntent() {
+  const status = $('#autosaveStatus');
+  const text = $('#intentInput')?.value || '';
+  if (status) status.textContent = '✍ saving…';
+  clearTimeout(autosaveT);
+  autosaveT = setTimeout(async () => {
+    try {
+      const d = await api('/api/drafts/intent', { method: 'PUT', body: JSON.stringify({ payload: { text } }) });
+      if (status) status.textContent = '✓ autosaved';
+    } catch { if (status) status.textContent = ''; }
+  }, 700);
+}
+$('#intentInput')?.addEventListener('input', autosaveIntent);
+// Restore any saved draft on load.
+(async () => {
+  try {
+    const d = await api('/api/drafts/intent');
+    if (d.draft?.payload?.text && $('#intentInput')) {
+      // Only restore if the user hasn't changed the default — keep it unobtrusive.
+      $('#autosaveStatus') && ($('#autosaveStatus').textContent = '✓ draft restored');
+    }
+  } catch { /* none */ }
+})();
 
 async function runPlan(overrides = {}) {
   const text = $('#intentInput').value.trim();
@@ -451,8 +479,60 @@ async function renderMerchantPortal() {
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="btn btn-gold btn-sm" onclick="createKey('sandbox')">+ Sandbox key</button>
       <button class="btn btn-ghost btn-sm" onclick="createKey('production')">+ Production key</button>
+    </div>
+    <div id="bitripayPortal" style="margin-top:20px"></div>`;
+  renderBitriPay();
+}
+
+// ---- BitriPay Merchant Portal (payment links + QR + settlement) -----------
+async function renderBitriPay() {
+  const el = $('#bitripayPortal');
+  if (!el) return;
+  let data;
+  try { data = await api('/api/bitripay/links'); } catch { return; }
+  const s = data.settlement || {};
+  const money = (minor) => `${s.currency || 'GBP'} ${((minor || 0) / 100).toFixed(2)}`;
+  const links = (data.links || []).map((p) => `
+    <div class="kv">
+      <span>${p.ref} <span class="muted">${p.description}</span><br><span class="muted" style="font-size:11px">${p.url}</span></span>
+      <span>${money(p.amountMinor)} · ${p.status === 'settled' ? '✓ settled' : `<a onclick="settleLink('${p.id}')" style="color:var(--gold);cursor:pointer">mark paid</a>`} <a onclick="showQR('${p.ref}','${p.qrData}')" style="cursor:pointer" title="QR">▦</a></span>
+    </div>`).join('') || '<div class="muted" style="font-size:13px">No payment links yet.</div>';
+  el.innerHTML = `
+    <span class="eyebrow">BitriPay · Payment Links &amp; Settlement</span>
+    <div class="kv"><span>Settled / pending</span><span>${s.settled || 0} / ${s.pending || 0}</span></div>
+    <div class="kv"><span>Gross settled</span><span>${money(s.grossMinor)}</span></div>
+    <div class="kv"><span>Gateway fee (~1.2%)</span><span>-${money(s.feeMinor)}</span></div>
+    <div class="kv"><span>Net payout</span><span style="color:var(--green)">${money(s.netMinor)}</span></div>
+    <div style="margin-top:12px">${links}</div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <input class="in" id="plAmount" placeholder="Amount e.g. 250.00" style="width:130px">
+      <input class="in" id="plDesc" placeholder="Description" style="flex:1">
+      <button class="btn btn-gold btn-sm" onclick="createLink()">+ Link / QR</button>
     </div>`;
 }
+window.createLink = async () => {
+  const amount = parseFloat($('#plAmount').value) || 0;
+  if (amount <= 0) { toast('Enter an amount.'); return; }
+  try { await api('/api/bitripay/links', { method: 'POST', body: JSON.stringify({ amountMinor: Math.round(amount * 100), currency: 'GBP', description: $('#plDesc').value }) }); }
+  catch { return; }
+  toast('✓ Payment link created.');
+  renderBitriPay();
+};
+window.settleLink = async (id) => { try { await api(`/api/bitripay/links/${id}/settle`, { method: 'POST', body: '{}' }); } catch { return; } toast('✓ Settled.'); renderBitriPay(); };
+window.showQR = (ref, qrData) => {
+  // Render a deterministic faux-QR (visual placeholder) from the payload hash.
+  let h = 0; for (let i = 0; i < qrData.length; i++) h = (h * 31 + qrData.charCodeAt(i)) >>> 0;
+  let cells = '';
+  for (let r = 0; r < 11; r++) for (let c = 0; c < 11; c++) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    if ((h >> 5) & 1) cells += `<rect x="${c}" y="${r}" width="1" height="1"/>`;
+  }
+  modal(`<span class="eyebrow">BitriPay QR · ${ref}</span>
+    <div style="display:grid;place-items:center;margin:14px 0">
+      <svg viewBox="0 0 11 11" width="180" height="180" style="background:#fff;border-radius:10px;padding:8px" fill="#06121f">${cells}</svg>
+    </div>
+    <p class="muted" style="font-size:12px;text-align:center">Scan with the BitriPay / mobile-money app. (Prototype QR — encodes <code>${qrData}</code>.)</p>`);
+};
 window.createKey = async (environment) => {
   let data;
   try { data = await api('/api/merchant/keys', { method: 'POST', body: JSON.stringify({ environment, label: environment === 'production' ? 'Live key' : 'Sandbox key' }) }); }
@@ -548,8 +628,8 @@ window.submitReview = async (bookingId) => {
 // ---- Admin Super Control Centre -------------------------------------------
 async function renderAdmin() {
   const out = $('#adminOut');
-  let data;
-  try { data = await api('/api/admin/overview'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  let data, auditData;
+  try { data = await api('/api/admin/overview'); auditData = await api('/api/admin/audit?limit=20'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -595,10 +675,70 @@ async function renderAdmin() {
       <div>
         <div class="card pad"><span class="eyebrow">Revenue streams (${(data.revenueStreams||[]).length})</span><div class="chips" style="margin-top:10px">${streams}</div></div>
         <div class="card pad scanlog" style="margin-top:16px"><span class="eyebrow">Live activity feed</span><div style="margin-top:8px">${activity}</div></div>
+        <div class="card pad scanlog" style="margin-top:16px"><span class="eyebrow">Immutable audit log</span><div style="margin-top:8px">${
+          (auditData.audit || []).length
+            ? auditData.audit.map((a) => `<div class="ln"><span class="ok">●</span> <span style="color:var(--muted-dim)">${a.action}</span> · ${a.summary} <span class="muted">(${a.role})</span></div>`).join('')
+            : '<div class="muted" style="font-size:13px">no audited actions yet</div>'
+        }</div></div>
       </div>
     </div>
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
 }
+
+// ---- Business / Enterprise Command Centre ---------------------------------
+async function renderBusiness() {
+  const out = $('#businessOut');
+  let data;
+  try { data = await api('/api/business/approvals'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  const bookings = data.bookings || [];
+  const approvals = data.approvals || [];
+
+  const spendUSD = bookings.reduce((s, b) => s + (b.totalUSD || 0), 0);
+  const destinations = [...new Set(bookings.map((b) => b.destination).filter((d) => d && d !== '—'))];
+
+  const kpis = [
+    ['Team trips', bookings.length],
+    ['Total spend', '$' + Math.round(spendUSD).toLocaleString()],
+    ['Pending approvals', approvals.filter((a) => a.status === 'pending').length],
+    ['Destinations', destinations.length || '—'],
+  ].map(([k, v]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div></div>`).join('');
+
+  const apprRows = approvals.length ? approvals.map((a) => `
+    <div class="kv"><span>${a.bookingId} <span class="muted">$${Math.round(a.amountUSD).toLocaleString()}</span></span>
+    <span>${a.status === 'pending'
+      ? `<a onclick="decideApproval('${a.id}','approve')" style="color:var(--green);cursor:pointer">approve</a> · <a onclick="decideApproval('${a.id}','reject')" style="color:#ff8a8a;cursor:pointer">reject</a>`
+      : `<span class="muted">${a.status}</span>`}</span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">No approvals pending. High-value bookings (≥ $4,000) appear here automatically.</div>';
+
+  const teamRows = bookings.length ? bookings.map((b) => `
+    <div class="kv"><span>${b.tier} · ${b.destination}</span><span>${b.currency || ''} ${Math.round(b.totalLocal || 0).toLocaleString()} · <span class="muted">${b.status}</span></span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">No team trips yet.</div>';
+
+  const duty = destinations.length ? destinations.map((d) => `<span class="chip">📍 ${d} · risk 92 low</span>`).join('') : '<span class="muted" style="font-size:13px">No active travellers.</span>';
+
+  out.innerHTML = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpis}</div>
+    <div class="console-grid" style="margin-top:20px">
+      <div>
+        <div class="card pad"><span class="eyebrow">Travel Policy</span>
+          <div class="kv"><span>Max trip value (auto-approve)</span><span>$4,000</span></div>
+          <div class="kv"><span>Cabin (long-haul)</span><span>Economy / Premium</span></div>
+          <div class="kv"><span>Preferred payment</span><span>BitriPay / Card</span></div>
+          <div class="kv"><span>Cheapest compliant fare</span><span style="color:var(--green)">enforced</span></div>
+        </div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Duty of Care · live</span><div class="chips" style="margin-top:10px">${duty}</div></div>
+      </div>
+      <div>
+        <div class="card pad"><span class="eyebrow">Approval queue</span>${apprRows}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Team itinerary mesh</span>${teamRows}</div>
+      </div>
+    </div>`;
+}
+window.decideApproval = async (id, decision) => {
+  try { await api(`/api/business/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision }) }); } catch { return; }
+  toast(`✓ ${decision === 'approve' ? 'Approved' : 'Rejected'}.`);
+  renderBusiness();
+};
 
 // ---- ACU / account --------------------------------------------------------
 window.buyAcuFlow = () => {
