@@ -11,6 +11,9 @@ import { instalmentPlan } from './pricing.js';
 import {
   createUser, getUser, buyAcu, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
+  adminOverview, adminUsers, adminBookings, adminActivity,
+  updateUser, seedAllRoles, ROLES,
+  createApiKey, listApiKeys, revokeApiKey, useApiKey,
 } from './store.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -53,6 +56,18 @@ app.get('/api/account/:id', safe((req, res) => {
   const user = getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'not-found' });
   res.json({ user, bookings: listBookings(user.id) });
+}));
+
+// Edit an account profile (name, email, bio, role, avatar).
+app.patch('/api/account/:id', safe((req, res) => {
+  const user = updateUser(req.params.id, req.body || {});
+  if (!user) return res.status(404).json({ error: 'not-found' });
+  res.json({ user });
+}));
+
+// Provision one account per role (consumer/business/merchant/partner/admin).
+app.post('/api/accounts/seed-roles', safe((req, res) => {
+  res.json({ roles: ROLES, accounts: seedAllRoles() });
 }));
 
 // One-click testing account, pre-loaded (the session's /debug/seed).
@@ -146,15 +161,54 @@ app.get('/api/suppliers/leaderboard', safe((req, res) => {
   res.json({ leaderboard: leaderboard() });
 }));
 
+// ---- Merchant / white-label API key management ----------------------------
+app.post('/api/merchant/keys', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const result = createApiKey(user.id, req.body || {});
+  if (!result.ok) return res.status(403).json(result);
+  res.json(result); // includes the full secret ONCE
+}));
+
+app.get('/api/merchant/keys', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ keys: listApiKeys(user.id) });
+}));
+
+app.delete('/api/merchant/keys/:keyId', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(revokeApiKey(user.id, req.params.keyId));
+}));
+
 // ---- White-label API revenue calculator ----------------------------------
 app.get('/api/white-label/payout', safe((req, res) => {
   const volume = Number(req.query.volume) || 100000;
   res.json({ payout: whiteLabelPayout(volume), revenueStreams: REVENUE_STREAMS });
 }));
 
-// ---- Admin / profitability snapshot --------------------------------------
+// ---- Admin Super Control Centre ------------------------------------------
 app.get('/api/admin/revenue', safe((req, res) => {
   res.json({ snapshot: revenueSnapshot(), revenueStreams: REVENUE_STREAMS });
+}));
+
+app.get('/api/admin/overview', safe((req, res) => {
+  res.json({
+    overview: adminOverview(),
+    revenueStreams: REVENUE_STREAMS,
+    leaderboard: leaderboard(),
+    gateway: gatewayStatus(),
+    activity: adminActivity(20),
+  });
+}));
+
+app.get('/api/admin/users', safe((req, res) => {
+  res.json({ users: adminUsers() });
+}));
+
+app.get('/api/admin/bookings', safe((req, res) => {
+  res.json({ bookings: adminBookings() });
 }));
 
 // ---- AI Gateway status (which provider handles which task) ----------------
@@ -166,10 +220,15 @@ app.get('/api/ai/status', safe((req, res) => {
 // Demonstrates the API other businesses would integrate.
 app.post('/api/v1/search', safe((req, res) => {
   const { text } = req.body || {};
+  const partnerKey = req.headers['x-partner-key'];
+  // Validate a real issued key if supplied; otherwise allow the public demo.
+  const keyInfo = partnerKey ? useApiKey(partnerKey) : null;
   const context = detectContext(req, {});
   const result = plan({ text, context, user: null, searchTier: 'smart' });
   res.json({
-    partner: req.headers['x-partner-key'] || 'demo-partner',
+    partner: keyInfo ? keyInfo.userId : (partnerKey ? 'invalid-or-revoked-key' : 'demo-partner'),
+    environment: keyInfo ? keyInfo.environment : 'demo',
+    authenticated: Boolean(keyInfo),
     revenueShare: '90% partner / 10% 3JN',
     result,
   });
@@ -183,7 +242,7 @@ app.use(express.static(FRONTEND_DIR));
 app.use('/shared', express.static(SHARED_DIR));
 
 // SPA-ish fallback for the page routes.
-app.get(['/how-it-works', '/api-portal', '/membership', '/console'], (req, res) => {
+app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 

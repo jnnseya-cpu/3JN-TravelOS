@@ -16,16 +16,25 @@ const db = {
   acuTxns: [],
   referrals: [], // { code, referrerId, friendId }
   priceEvents: [], // price-guard log
+  apiKeys: [], // white-label / merchant API keys
 };
 
+// Recognised account roles and their default avatar.
+export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'admin'];
+const ROLE_AVATAR = { consumer: '🧳', business: '💼', merchant: '🏪', partner: '🤝', admin: '🛡️' };
+
 // ---- Users / loyalty / ACU wallet ----------------------------------------
-export function createUser({ email, name, referredByCode } = {}) {
+export function createUser({ email, name, referredByCode, role, avatar, bio } = {}) {
   const userId = id('usr');
   const referralCode = '3JN-' + userId.slice(-4).toUpperCase();
+  const safeRole = ROLES.includes(role) ? role : 'consumer';
   const user = {
     id: userId,
     email: email || `${userId}@guest.3jn`,
     name: name || 'Guest Traveller',
+    role: safeRole,
+    avatar: avatar || ROLE_AVATAR[safeRole], // emoji or image data URL
+    bio: bio || '',
     points: SIGNUP_BONUS_POINTS,
     acuBalance: 100, // small free allowance
     referralCode,
@@ -94,6 +103,9 @@ function publicUser(u) {
     id: u.id,
     email: u.email,
     name: u.name,
+    role: u.role || 'consumer',
+    avatar: u.avatar,
+    bio: u.bio || '',
     points: u.points,
     tier: tier.name,
     tierDiscount: tier.discount,
@@ -101,6 +113,93 @@ function publicUser(u) {
     referralCode: u.referralCode,
     referrals: u.referrals,
   };
+}
+
+// Edit an account's profile. Only whitelisted fields are mutable; an avatar
+// image is accepted as a data URL but size-capped to keep the in-memory store
+// sane (a real build would upload to object storage and store a URL).
+export function updateUser(userId, patch = {}) {
+  const u = db.users.get(userId);
+  if (!u) return null;
+  if (typeof patch.name === 'string' && patch.name.trim()) u.name = patch.name.trim().slice(0, 80);
+  if (typeof patch.email === 'string' && patch.email.trim()) u.email = patch.email.trim().slice(0, 120);
+  if (typeof patch.bio === 'string') u.bio = patch.bio.slice(0, 280);
+  if (typeof patch.role === 'string' && ROLES.includes(patch.role)) u.role = patch.role;
+  if (typeof patch.avatar === 'string' && patch.avatar.length <= 600000) u.avatar = patch.avatar; // ~600KB cap
+  return publicUser(u);
+}
+
+// Provision one account per role for testing/admin (idempotent-ish by email).
+export function seedAllRoles() {
+  const specs = [
+    { role: 'admin', name: 'Platform Admin', email: 'admin@3jntravel.com' },
+    { role: 'business', name: 'Corporate Manager', email: 'business@3jntravel.com' },
+    { role: 'merchant', name: 'BitriPay Merchant', email: 'merchant@3jntravel.com' },
+    { role: 'partner', name: 'Agency Partner', email: 'partner@3jntravel.com' },
+    { role: 'consumer', name: 'Test Traveller', email: 'tester@3jntravel.com' },
+  ];
+  return specs.map((s) => {
+    const existing = [...db.users.values()].find((u) => u.email === s.email);
+    if (existing) return publicUser(existing);
+    return createUser(s);
+  });
+}
+
+// ---- Merchant / white-label API keys --------------------------------------
+// Any merchant or partner account can self-serve keys to call the white-label
+// API and earn the 90% revenue share. Keys are shown in full once on creation;
+// thereafter only a masked prefix is returned (the secret is never re-exposed).
+function randomKey() {
+  // Deterministic-friendly pseudo-random (no Math.random in this sandbox).
+  let s = (++counter * 2654435761) % 4294967296;
+  let out = '';
+  for (let i = 0; i < 32; i++) { s = (s * 1103515245 + 12345) % 4294967296; out += 'abcdefghijklmnopqrstuvwxyz0123456789'[s % 36]; }
+  return out;
+}
+
+export function createApiKey(userId, { label, environment } = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'unknown-user' };
+  if (!['merchant', 'partner', 'admin'].includes(u.role)) {
+    return { ok: false, error: 'role-not-permitted', message: 'Switch your account role to Merchant or Partner to create API keys.' };
+  }
+  const env = environment === 'production' ? 'production' : 'sandbox';
+  const secret = `3jn_${env === 'production' ? 'live' : 'test'}_${randomKey()}`;
+  const record = {
+    id: id('key'),
+    userId,
+    label: (label || 'Default key').slice(0, 60),
+    environment: env,
+    prefix: secret.slice(0, 16),
+    secret, // returned ONCE
+    revenueShare: '90% partner / 10% 3JN',
+    createdAt: nowISO(),
+    revokedAt: null,
+    lastUsedAt: null,
+  };
+  db.apiKeys.push(record);
+  return { ok: true, key: record }; // caller strips secret on subsequent reads
+}
+
+export function listApiKeys(userId) {
+  return db.apiKeys
+    .filter((k) => k.userId === userId)
+    .map((k) => ({ id: k.id, label: k.label, environment: k.environment, prefix: k.prefix + '…', revenueShare: k.revenueShare, createdAt: k.createdAt, revokedAt: k.revokedAt, lastUsedAt: k.lastUsedAt }));
+}
+
+export function revokeApiKey(userId, keyId) {
+  const k = db.apiKeys.find((x) => x.id === keyId && x.userId === userId);
+  if (!k) return { ok: false, error: 'not-found' };
+  k.revokedAt = nowISO();
+  return { ok: true };
+}
+
+// Validate an inbound partner key (used by the white-label endpoint).
+export function useApiKey(secret) {
+  const k = db.apiKeys.find((x) => x.secret === secret && !x.revokedAt);
+  if (!k) return null;
+  k.lastUsedAt = nowISO();
+  return { userId: k.userId, environment: k.environment };
 }
 
 // ---- Quotes & bookings ----------------------------------------------------
@@ -212,6 +311,62 @@ export function revenueSnapshot() {
     acuUsed,
     users: db.users.size,
     reviews: db.reviews.length,
+  };
+}
+
+// ---- Admin Super Control Centre aggregators -------------------------------
+export function adminUsers() {
+  return [...db.users.values()].map(publicUser);
+}
+
+export function adminBookings() {
+  return [...db.bookings.values()].map((b) => ({
+    id: b.id,
+    userId: b.userId,
+    tier: b.option?.tier,
+    destination: b.option?.components?.find((c) => c.type === 'flight')?.details?.outbound?.to || '—',
+    totalUSD: b.option?.totalUSD,
+    currency: b.option?.pricing?.currency,
+    totalLocal: b.option?.pricing?.local?.total,
+    gateway: b.gateway,
+    paymentMethod: b.paymentMethod,
+    status: b.status,
+    priceGuardEvents: b.priceGuard?.events?.length || 0,
+    createdAt: b.createdAt,
+  }));
+}
+
+// A unified, reverse-chronological activity feed across the platform.
+export function adminActivity(limit = 25) {
+  const events = [];
+  for (const b of db.bookings.values()) {
+    events.push({ at: b.createdAt, type: 'booking', detail: `${b.option?.tier} booking ${b.id} via ${b.gateway}` });
+    (b.priceGuard?.events || []).forEach((e) =>
+      events.push({ at: e.at, type: 'price-guard', detail: `${b.id}: ${e.action} (${e.message})` }));
+  }
+  db.acuTxns.forEach((t) => events.push({ at: t.at, type: 'acu', detail: `${t.type} ${t.amount} ACU (${t.reason})` }));
+  db.reviews.forEach((r) => events.push({ at: r.at, type: 'review', detail: `${r.rating}★ ${r.supplier}` }));
+  db.referrals.forEach((r) => events.push({ at: nowISO(), type: 'referral', detail: `${r.code} referred a friend` }));
+  return events.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, limit);
+}
+
+// Gross merchandise value + per-currency split + tier mix for the dashboard.
+export function adminOverview() {
+  const bookings = [...db.bookings.values()];
+  const gmvUSD = bookings.reduce((s, b) => s + (b.option?.totalUSD || 0), 0);
+  const tierMix = {};
+  const gatewayMix = {};
+  for (const b of bookings) {
+    tierMix[b.option?.tier || '—'] = (tierMix[b.option?.tier || '—'] || 0) + 1;
+    gatewayMix[b.gateway || '—'] = (gatewayMix[b.gateway || '—'] || 0) + 1;
+  }
+  return {
+    ...revenueSnapshot(),
+    gmvUSD: round2(gmvUSD),
+    tierMix,
+    gatewayMix,
+    suppliers: supplierScores().length,
+    referrals: db.referrals.length,
   };
 }
 

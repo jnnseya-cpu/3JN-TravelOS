@@ -7,7 +7,10 @@ import { detectContext } from '../src/geo.js';
 import { plan } from '../src/planner.js';
 import { priceBreakdown, instalmentPlan, tierForPoints } from '../src/pricing.js';
 import { costProtectionGate, whiteLabelPayout } from '../src/revenue.js';
-import { createUser, createBooking, saveQuote } from '../src/store.js';
+import {
+  createUser, createBooking, saveQuote, updateUser, seedAllRoles,
+  createApiKey, listApiKeys, revokeApiKey, useApiKey, adminOverview,
+} from '../src/store.js';
 import { runPriceGuard } from '../src/monitor.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
@@ -140,4 +143,46 @@ test('referral rewards both parties', () => {
   const referrer = createUser({ name: 'Referrer' });
   const friend = createUser({ name: 'Friend', referredByCode: referrer.referralCode });
   assert.equal(friend.points, 250 + 50); // signup bonus + referral
+});
+
+test('accounts have roles and an editable profile + avatar', () => {
+  const u = createUser({ name: 'Pat', role: 'business' });
+  assert.equal(u.role, 'business');
+  assert.ok(u.avatar, 'has a default avatar');
+  const updated = updateUser(u.id, { name: 'Patricia', avatar: '⭐', bio: 'frequent flyer', role: 'merchant' });
+  assert.equal(updated.name, 'Patricia');
+  assert.equal(updated.avatar, '⭐');
+  assert.equal(updated.role, 'merchant');
+});
+
+test('seedAllRoles provisions one account per role', () => {
+  const accounts = seedAllRoles();
+  const roles = accounts.map((a) => a.role);
+  ['admin', 'business', 'merchant', 'partner', 'consumer'].forEach((r) => assert.ok(roles.includes(r)));
+});
+
+test('merchants can create and use white-label API keys; consumers cannot', () => {
+  const consumer = createUser({ name: 'C', role: 'consumer' });
+  assert.equal(createApiKey(consumer.id, {}).ok, false); // role not permitted
+
+  const merchant = createUser({ name: 'M', role: 'merchant' });
+  const created = createApiKey(merchant.id, { environment: 'sandbox', label: 'Test' });
+  assert.equal(created.ok, true);
+  assert.match(created.key.secret, /^3jn_test_/);
+
+  // listing masks the secret
+  const listed = listApiKeys(merchant.id);
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].secret, undefined);
+
+  // the key validates, then revokes
+  assert.equal(useApiKey(created.key.secret).userId, merchant.id);
+  revokeApiKey(merchant.id, created.key.id);
+  assert.equal(useApiKey(created.key.secret), null);
+});
+
+test('admin overview aggregates platform KPIs', () => {
+  const o = adminOverview();
+  assert.ok(typeof o.users === 'number' && o.users > 0);
+  assert.ok('gmvUSD' in o && 'tierMix' in o && 'gatewayMix' in o);
 });

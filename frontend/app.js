@@ -60,6 +60,7 @@ function nav(view) {
   if (el) el.classList.add('active');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'console') renderConsole();
+  if (view === 'admin') renderAdmin();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -358,21 +359,119 @@ async function renderConsole() {
 
   const profile = `
     <div class="card pad">
-      <span class="eyebrow">Member</span>
-      <h3 style="margin:4px 0">${u.name}</h3>
-      <div class="kv"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
+      <div style="display:flex;align-items:center;gap:12px">
+        ${avatarHTML(u, 52)}
+        <div><h3 style="margin:0">${u.name}</h3><div class="muted" style="font-size:12.5px">${u.email}</div>
+        <span class="role-badge">${u.role}</span></div>
+      </div>
+      ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${u.bio}</p>` : ''}
+      <div class="kv" style="margin-top:12px"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
       <div class="kv"><span>Loyalty points</span><span>${u.points.toLocaleString()}</span></div>
       <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()}</span></div>
       <div class="kv"><span>Referral code</span><span>${u.referralCode}</span></div>
       <div class="kv"><span>Referrals</span><span>${u.referrals}</span></div>
-      <button class="btn btn-ghost btn-sm btn-block" style="margin-top:12px" onclick="buyAcuFlow()">Buy ACU pack</button>
-    </div>`;
+      <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="editProfile()">✎ Edit profile &amp; picture</button>
+      <button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px" onclick="buyAcuFlow()">Buy ACU pack</button>
+    </div>
+    ${['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
 
   const cards = bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
     `<div class="card pad center muted">No bookings yet. <button class="btn btn-ghost btn-sm" data-nav="planner">Plan a trip</button></div>`;
 
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
+  if (['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
 }
+
+// Render an avatar — emoji or uploaded image data URL.
+function avatarHTML(u, size = 32) {
+  const isImg = u.avatar && u.avatar.startsWith('data:');
+  if (isImg) return `<img class="avatar" src="${u.avatar}" style="width:${size}px;height:${size}px" alt="">`;
+  return `<span class="avatar avatar-emoji" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.5)}px">${u.avatar || '🧳'}</span>`;
+}
+
+// ---- Editable profile + picture -------------------------------------------
+window.editProfile = () => {
+  const u = state.user;
+  const roleOpts = ['consumer', 'business', 'merchant', 'partner', 'admin']
+    .map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('');
+  modal(`
+    <span class="eyebrow">Edit profile</span>
+    <div style="display:flex;align-items:center;gap:14px;margin:10px 0">
+      <span id="avatarPreview">${avatarHTML(u, 64)}</span>
+      <div>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer">📷 Upload picture<input type="file" id="avatarFile" accept="image/*" style="display:none"></label>
+        <div class="muted" style="font-size:11px;margin-top:6px">or pick an emoji:</div>
+        <div class="chips" style="margin-top:4px">${['🧳','💼','🏪','🤝','🛡️','🧑‍✈️','🌍','⭐'].map((e) => `<span class="chip" onclick="pickEmoji('${e}')">${e}</span>`).join('')}</div>
+      </div>
+    </div>
+    <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="pfName" value="${(u.name || '').replace(/"/g, '&quot;')}"></div>
+    <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="pfEmail" value="${(u.email || '').replace(/"/g, '&quot;')}"></div>
+    <div class="field" style="margin-top:10px"><label>Role</label><select class="in" id="pfRole">${roleOpts}</select></div>
+    <div class="field" style="margin-top:10px"><label>Bio</label><textarea class="in" id="pfBio" style="width:100%;min-height:60px">${u.bio || ''}</textarea></div>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveProfile()">Save profile</button>`);
+  window.__avatar = u.avatar;
+  $('#avatarFile')?.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 500000) { toast('Image too large (max ~500KB).'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { window.__avatar = reader.result; $('#avatarPreview').innerHTML = `<img class="avatar" src="${reader.result}" style="width:64px;height:64px" alt="">`; };
+    reader.readAsDataURL(f);
+  });
+};
+window.pickEmoji = (e) => { window.__avatar = e; $('#avatarPreview').innerHTML = `<span class="avatar avatar-emoji" style="width:64px;height:64px;font-size:32px">${e}</span>`; };
+window.saveProfile = async () => {
+  const patch = {
+    name: $('#pfName').value, email: $('#pfEmail').value,
+    role: $('#pfRole').value, bio: $('#pfBio').value, avatar: window.__avatar,
+  };
+  let data;
+  try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); } catch { return; }
+  setUser(data.user);
+  closeModal();
+  toast('✓ Profile updated.');
+  renderConsole();
+};
+
+// ---- Merchant / white-label API portal ------------------------------------
+async function renderMerchantPortal() {
+  const el = $('#merchantPortal');
+  if (!el) return;
+  let data;
+  try { data = await api('/api/merchant/keys'); } catch { return; }
+  const keys = data.keys || [];
+  const rows = keys.length ? keys.map((k) => `
+    <div class="kv"><span>${k.label} <span class="muted">${k.prefix} · ${k.environment}</span></span>
+    <span>${k.revokedAt ? '<span class="muted">revoked</span>' : `<a onclick="revokeKey('${k.id}')" style="color:#ff8a8a;cursor:pointer">revoke</a>`}</span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">No API keys yet. Create one to call the white-label API and earn 90% of generated commission.</div>';
+  el.innerHTML = `
+    <span class="eyebrow">Merchant / White-Label API</span>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 10px">Create keys to integrate the 3JN engine under your brand. You keep 90%; 3JN takes a 10% platform fee.</p>
+    ${rows}
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-gold btn-sm" onclick="createKey('sandbox')">+ Sandbox key</button>
+      <button class="btn btn-ghost btn-sm" onclick="createKey('production')">+ Production key</button>
+    </div>`;
+}
+window.createKey = async (environment) => {
+  let data;
+  try { data = await api('/api/merchant/keys', { method: 'POST', body: JSON.stringify({ environment, label: environment === 'production' ? 'Live key' : 'Sandbox key' }) }); }
+  catch { return; }
+  if (!data.ok) { toast(data.message || 'Could not create key.'); return; }
+  const k = data.key;
+  modal(`
+    <span class="eyebrow">API key created · ${k.environment}</span>
+    <h3 style="margin:6px 0">Copy your secret now</h3>
+    <p class="muted" style="font-size:13px">This is shown <strong>once</strong>. Store it securely — it won't be displayed again.</p>
+    <pre class="card pad" style="font-size:12px;overflow:auto;font-family:monospace;user-select:all">${k.secret}</pre>
+    <p class="muted" style="font-size:12px">Use it as the <code>x-partner-key</code> header on <code>POST /api/v1/search</code>. Revenue share: ${k.revenueShare}.</p>`);
+  renderMerchantPortal();
+};
+window.revokeKey = async (keyId) => {
+  try { await api(`/api/merchant/keys/${keyId}`, { method: 'DELETE' }); } catch { return; }
+  toast('Key revoked.');
+  renderMerchantPortal();
+};
 
 function bookingCard(b) {
   const o = b.option;
@@ -446,6 +545,61 @@ window.submitReview = async (bookingId) => {
   toast(`✓ Review saved for ${supplier}.`);
 };
 
+// ---- Admin Super Control Centre -------------------------------------------
+async function renderAdmin() {
+  const out = $('#adminOut');
+  let data;
+  try { data = await api('/api/admin/overview'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
+  const o = data.overview;
+  const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+  const kpis = [
+    ['Users', o.users],
+    ['Bookings', o.bookings],
+    ['GMV', usd(o.gmvUSD)],
+    ['3JN revenue', usd(o.totalRevenueUSD)],
+    ['Commission', usd(o.commissionUSD)],
+    ['Savings-share', usd(o.savingsShareUSD)],
+    ['ACU sold', (o.acuPurchased || 0).toLocaleString()],
+    ['ACU used', (o.acuUsed || 0).toLocaleString()],
+    ['Reviews', o.reviews],
+    ['Referrals', o.referrals],
+  ];
+  const kpiCards = kpis.map(([k, v]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div></div>`).join('');
+
+  const mix = (obj) => Object.entries(obj || {}).map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('') || '<div class="muted" style="font-size:13px">none yet</div>';
+
+  const board = (data.leaderboard || []).length
+    ? data.leaderboard.map((s) => `<div class="kv"><span>${s.supplier}</span><span>${s.avgRating}★ · ${s.reviews}</span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">no reviews yet</div>';
+
+  const g = data.gateway;
+  const providers = Object.entries(g.providers).map(([id, p]) =>
+    `<div class="kv"><span>${p.name} <span class="muted">${p.model}</span></span><span>${p.configured ? '🟢 live' : '⚪ local'}</span></div>`).join('');
+
+  const streams = (data.revenueStreams || []).map((s) => `<span class="chip">${s}</span>`).join('');
+
+  const activity = (data.activity || []).length
+    ? data.activity.map((e) => `<div class="ln"><span class="ok">●</span> <span style="color:var(--muted-dim)">[${e.type}]</span> ${e.detail}</div>`).join('')
+    : '<div class="muted" style="font-size:13px">no activity yet — make a booking to populate the feed</div>';
+
+  out.innerHTML = `
+    <div class="kpi-grid">${kpiCards}</div>
+    <div class="console-grid" style="margin-top:20px">
+      <div>
+        <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Tier mix</span>${mix(o.tierMix)}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Payment rail mix</span>${mix(o.gatewayMix)}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Supplier leaderboard</span>${board}</div>
+      </div>
+      <div>
+        <div class="card pad"><span class="eyebrow">Revenue streams (${(data.revenueStreams||[]).length})</span><div class="chips" style="margin-top:10px">${streams}</div></div>
+        <div class="card pad scanlog" style="margin-top:16px"><span class="eyebrow">Live activity feed</span><div style="margin-top:8px">${activity}</div></div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
+}
+
 // ---- ACU / account --------------------------------------------------------
 window.buyAcuFlow = () => {
   modal(`
@@ -469,7 +623,7 @@ function setUser(u) {
   state.user = u;
   const chip = $('#userChip');
   chip.classList.remove('hidden');
-  chip.innerHTML = `<span class="dot"></span> ${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
+  chip.innerHTML = `${avatarHTML(u, 22)} ${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
 }
 
 window.provisionTest = async () => {
@@ -567,6 +721,37 @@ const CONTENT = {
       <div class="kv"><span>WhatsApp / Chat</span><span>+44 20 0000 0000</span></div>
       <div class="kv"><span>Email</span><span>support@3jntravel.com</span></div>
       <div class="kv"><span>In-trip emergency line</span><span>24/7</span></div>`,
+  },
+  cookies: {
+    title: '🍪 Cookie Policy',
+    body: `<p class="muted">We use cookies and similar technologies to keep you signed in, remember your currency/language, measure performance, and improve recommendations.</p>
+      <ul class="comp-list">
+        <li><span class="cs">Essential</span><span class="cp">always on</span></li>
+        <li><span class="cs">Preferences (currency, language)</span><span class="cp">on</span></li>
+        <li><span class="cs">Analytics (anonymised)</span><span class="cp">optional</span></li>
+        <li><span class="cs">Marketing</span><span class="cp">opt-in only</span></li>
+      </ul>
+      <p class="muted" style="font-size:12px">Manage preferences any time via <strong>privacy@3jntravel.com</strong>. Prototype: this demo sets no third-party cookies.</p>`,
+  },
+  disclaimer: {
+    title: '⚠️ Disclaimer',
+    body: `<p class="muted">3JN Travel OS is a travel technology platform that aggregates and packages inventory from independent third-party suppliers (airlines, hotels, hosts, tour operators, insurers, transfer and eSIM providers). 3JN is not the operator of those services; the supplier's own terms apply to each component.</p>
+      <p class="muted">Prices, availability, visa rules and risk information are indicative and can change until booking is confirmed. AI-generated recommendations are decision-support, not professional travel, legal, financial or medical advice. Always verify visa and entry requirements with the relevant authority before travelling.</p>
+      <p class="muted" style="font-size:12px">Prototype notice: figures and inventory in this demo are synthesised for illustration.</p>`,
+  },
+  refund: {
+    title: '💷 Refund &amp; Cancellation Policy',
+    body: `<p class="muted">Refunds and rebookings are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Our Neural Price Guard automatically refunds the difference if a monitored price drops before you travel.</p>
+      <ul class="comp-list">
+        <li><span class="cs">Free-cancellation rates</span><span class="cp">full refund in window</span></li>
+        <li><span class="cs">Instalment deposits</span><span class="cp">per plan terms</span></li>
+        <li><span class="cs">Price-drop difference</span><span class="cp">auto-refunded</span></li>
+      </ul>
+      <p class="muted" style="font-size:12px">Requests: <strong>refunds@3jntravel.com</strong>. ATOL/ABTA financial protection applies to eligible UK package bookings.</p>`,
+  },
+  acceptable: {
+    title: '✅ Acceptable Use Policy',
+    body: `<p class="muted">Use the platform and API lawfully: no fraud, scraping abuse, reselling without a partner agreement, circumventing the cost-protection/ACU system, or automated bulk searches outside your rate limit. We may rate-limit, restrict or suspend accounts that breach this policy (see the Search Abuse Detection logic in our architecture docs).</p>`,
   },
 };
 window.openContent = (key) => {

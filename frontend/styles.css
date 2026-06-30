@@ -325,6 +325,18 @@ select, input.in {
   background: rgba(78,161,255,0.08); border: 1px solid var(--line); color: var(--text);
 }
 
+/* avatars + role badge */
+.avatar { border-radius: 50%; object-fit: cover; display: inline-grid; place-items: center; vertical-align: middle; border: 1px solid var(--line-strong); background: var(--navy-700); }
+.avatar-emoji { line-height: 1; }
+.role-badge { display: inline-block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); border: 1px solid rgba(216,180,106,0.35); background: rgba(216,180,106,0.08); padding: 2px 8px; border-radius: 999px; margin-top: 6px; }
+#userChip .avatar { margin-right: 2px; }
+
+/* admin KPI grid */
+.kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.kpi { text-align: center; padding: 18px 12px; }
+.kpi-v { font-family: 'Space Grotesk'; font-weight: 700; font-size: 24px; color: var(--gold); }
+.kpi-k { font-size: 11px; color: var(--muted-dim); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }
+
 /* gradient text helper */
 .grad {
   background: linear-gradient(120deg, var(--gold-soft), var(--gold) 40%, var(--blue-bright));
@@ -407,6 +419,7 @@ footer.ft { border-top: 1px solid var(--line); padding: 56px 0 36px; margin-top:
   .membership-layout { grid-template-columns: 1fr; }
   .ft-top { grid-template-columns: 1fr; }
   .ft-cols { grid-template-columns: 1fr 1fr; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 560px) {
   .core-wrap, .steps { grid-template-columns: 1fr; }
