@@ -3,7 +3,7 @@
 
 import express from 'express';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
 import { destinationsCatalog } from './destinations.js';
@@ -66,6 +66,22 @@ app.use((req, res, next) => {
 function currentUser(req) {
   const uid = req.headers['x-user-id'];
   return uid ? getUser(uid) : null;
+}
+
+// Role guard for privileged endpoints (admin / business / partner consoles).
+// Returns true if the caller may proceed; otherwise sends a 403 JSON and returns
+// false so the handler can `if (!requireRole(...)) return;`. allAccess accounts
+// (the Full-Access demo profile) bypass the role check by design.
+function requireRole(req, res, roles) {
+  const u = currentUser(req);
+  if (u && (u.allAccess || roles.includes(u.role))) return true;
+  res.status(403).json({
+    error: 'forbidden',
+    message: u
+      ? `This area requires a ${roles.join(' or ')} account. Your role is ${u.role}.`
+      : `Sign in with a ${roles.join(' or ')} account to access this area.`,
+  });
+  return false;
 }
 
 // Wrap handlers so a thrown error always returns clean JSON — never the empty
@@ -375,18 +391,22 @@ app.delete('/api/merchant/keys/:keyId', safe((req, res) => {
   res.json(revokeApiKey(user.id, req.params.keyId));
 }));
 
-// ---- White-label API revenue calculator ----------------------------------
+// ---- White-label API revenue calculator (admin / partner only) -----------
 app.get('/api/white-label/payout', safe((req, res) => {
+  if (!requireRole(req, res, ['admin', 'partner'])) return;
   const volume = Number(req.query.volume) || 100000;
   res.json({ payout: whiteLabelPayout(volume), revenueStreams: REVENUE_STREAMS });
 }));
 
-// ---- Admin Super Control Centre ------------------------------------------
+// ---- Admin Super Control Centre (admin only) -----------------------------
+// These expose platform-wide PII and financials, so every route is role-gated.
 app.get('/api/admin/revenue', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
   res.json({ snapshot: revenueSnapshot(), revenueStreams: REVENUE_STREAMS });
 }));
 
 app.get('/api/admin/overview', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
   res.json({
     overview: adminOverview(),
     revenueStreams: REVENUE_STREAMS,
@@ -397,14 +417,17 @@ app.get('/api/admin/overview', safe((req, res) => {
 }));
 
 app.get('/api/admin/users', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
   res.json({ users: adminUsers() });
 }));
 
 app.get('/api/admin/bookings', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
   res.json({ bookings: adminBookings() });
 }));
 
 app.get('/api/admin/audit', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
   res.json({ audit: adminAudit(Number(req.query.limit) || 50) });
 }));
 
@@ -438,19 +461,23 @@ app.post('/api/bitripay/links/:id/settle', safe((req, res) => {
   res.json(settlePaymentLink(user.id, req.params.id));
 }));
 
-// ---- Business / Enterprise approvals --------------------------------------
+// ---- Business / Enterprise approvals (business / admin only) --------------
 app.get('/api/business/approvals', safe((req, res) => {
+  if (!requireRole(req, res, ['business', 'admin'])) return;
   res.json({ approvals: listApprovals(), bookings: adminBookings() });
 }));
 app.post('/api/business/approvals/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['business', 'admin'])) return;
   res.json(decideApproval(req.params.id, (req.body || {}).decision));
 }));
 
-// ---- Supplier Contract Manager --------------------------------------------
+// ---- Supplier Contract Manager (business / admin only) --------------------
 app.get('/api/business/contracts', safe((req, res) => {
+  if (!requireRole(req, res, ['business', 'admin'])) return;
   res.json({ contracts: listContracts() });
 }));
 app.post('/api/business/contracts', safe((req, res) => {
+  if (!requireRole(req, res, ['business', 'admin'])) return;
   const user = currentUser(req);
   res.json({ contract: createContract(user?.id, req.body || {}) });
 }));
@@ -557,9 +584,11 @@ if (process.env.NODE_ENV !== 'test') {
 
 // Start a listener for local dev and Cloud Run / containers. Skip when running
 // under Firebase Functions (FUNCTION_TARGET set) — there the function wrapper
-// owns the lifecycle — and during tests.
+// owns the lifecycle — during tests, and whenever this module is imported rather
+// than run directly (e.g. the Vercel handler or a test importing `app`).
 const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET && !process.env.VERCEL) {
+const isEntry = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isEntry && process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET && !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`\n  3JN Travel OS running → http://localhost:${PORT}\n`);
   });

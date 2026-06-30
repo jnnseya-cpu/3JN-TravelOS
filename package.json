@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node backend/src/server.js",
     "dev": "node --watch backend/src/server.js",
-    "test": "node --test backend/test/*.test.js",
+    "test": "NODE_ENV=test node --test backend/test/*.test.js",
     "serve": "firebase emulators:start --only functions,hosting",
     "deploy:firebase": "firebase deploy --only functions,hosting",
     "deploy:functions": "firebase deploy --only functions"
