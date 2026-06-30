@@ -602,17 +602,30 @@ const CRUISE_LINES = [
   { name: 'Royal Caribbean', rating: 93, verified: true, nightlyUSD: 205, cabin: 'Balcony · full board' },
   { name: 'Costa Cruises', rating: 87, verified: true, nightlyUSD: 125, cabin: 'Ocean view · full board' },
 ];
-export function scanCruise(intent, dest) {
+// Short ferry-cruises (e.g. DFDS Newcastle→Amsterdam) — a cabin + return sailing
+// + meals, far cheaper than an ocean liner.
+const MINI_CRUISE_LINES = [
+  { name: 'DFDS Mini Cruise', rating: 88, nightlyUSD: 60, cabin: 'Sea-view cabin · return sailing + meals' },
+  { name: 'P&O Mini Cruise', rating: 86, nightlyUSD: 70, cabin: 'Inside cabin · return sailing' },
+  { name: 'Fjord Line Mini Cruise', rating: 85, nightlyUSD: 64, cabin: 'Standard cabin · return sailing' },
+];
+export function scanCruise(intent, dest, origin) {
   const rnd = seeded(`crz-${dest.code}-${intent.dates.checkIn}`);
   const nights = intent.nights;
   const people = intent.travellers.total;
-  return CRUISE_LINES.map((c) => ({
+  const route = origin ? `${origin.city} → ${dest.city}` : dest.city;
+  const lines = intent.miniCruise ? MINI_CRUISE_LINES : CRUISE_LINES;
+  return lines.map((c) => ({
     type: 'cruise',
     supplier: c.name,
-    verified: c.verified,
+    verified: true,
     reliabilityScore: c.rating,
-    details: { basis: 'per person · full board', nights, people, cabin: c.cabin, nightlyUSD: c.nightlyUSD, region: dest.city },
-    priceUSD: round(c.nightlyUSD * nights * people * (0.9 + rnd() * 0.25)),
+    details: {
+      basis: intent.miniCruise ? 'per person · return mini cruise' : 'per person · full board',
+      nights, people, cabin: c.cabin, nightlyUSD: c.nightlyUSD,
+      miniCruise: !!intent.miniCruise, region: dest.city, route,
+    },
+    priceUSD: round(c.nightlyUSD * nights * people * (0.9 + rnd() * (intent.miniCruise ? 0.2 : 0.25))),
   }));
 }
 
@@ -633,7 +646,7 @@ export function scanAll(intent, dest, origin, live = null) {
   if (wanted.has('train')) scan.train = scanTrain(intent, dest, origin);
   if (wanted.has('coach')) scan.coach = scanCoach(intent, dest, origin);
   if (wanted.has('ferry')) scan.ferry = scanFerry(intent, dest, origin);
-  if (wanted.has('cruise')) scan.cruise = scanCruise(intent, dest);
+  if (wanted.has('cruise')) scan.cruise = scanCruise(intent, dest, origin);
   if (wanted.has('activities')) scan.activities = scanActivities(intent, dest);
   if (wanted.has('visa')) scan.visa = [scanVisa(intent, dest)];
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);

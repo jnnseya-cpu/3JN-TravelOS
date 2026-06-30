@@ -133,6 +133,7 @@ const CITY_AIRPORTS = {
   leeds: { airport: 'LBA', city: 'Leeds', country: 'GB' },
   liverpool: { airport: 'LPL', city: 'Liverpool', country: 'GB' },
   newcastle: { airport: 'NCL', city: 'Newcastle', country: 'GB' },
+  'new castle': { airport: 'NCL', city: 'Newcastle', country: 'GB' },
   'london gatwick': { airport: 'LGW', city: 'London', country: 'GB' },
   'london stansted': { airport: 'STN', city: 'London', country: 'GB' },
   dublin: { airport: 'DUB', city: 'Dublin', country: 'IE' },
