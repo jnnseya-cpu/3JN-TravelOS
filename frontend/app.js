@@ -144,15 +144,18 @@ const AGENTS = [
 ];
 
 const TIERS = [
-  { save: '£420/yr', name: 'Travel+ Nomad', price: '£4.99', feature: false,
+  { key: 'nomad', save: '£420/yr', name: 'Travel+ Nomad', price: '£4.99', priceNum: 4.99, feature: false,
     benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', '0% Transaction Fees', 'Digital Visa Assistance'] },
-  { save: '£1,100/yr', name: 'Travel+ Family', price: '£12.99', feature: true, badge: 'Most popular for families',
+  { key: 'family', save: '£1,100/yr', name: 'Travel+ Family', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
     benefits: ['All Nomad Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
-  { save: '£2,400/yr', name: 'Travel+ Executive', price: '£24.99', feature: false,
+  { key: 'executive', save: '£2,400/yr', name: 'Travel+ Executive', price: '£24.99', priceNum: 24.99, feature: false,
     benefits: ['All Family Features', 'Fast-Track Security', 'Coworking Intelligence', 'Expense Integration'] },
-  { save: '£5,000/yr+', name: 'Travel+ Elite', price: '£49.99', feature: false,
+  { key: 'elite', save: '£5,000/yr+', name: 'Travel+ Elite', price: '£49.99', priceNum: 49.99, feature: false,
     benefits: ['All Executive Features', 'Private Aviation Access', 'Guaranteed Upgrades', '24/7 Risk Mitigation'] },
 ];
+// 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
+const ACU_PER_GBP = 100;
+const acuAllocation = (priceNum) => Math.round(priceNum * 0.10 * ACU_PER_GBP);
 
 const STEPS = [
   ['01', 'AI CORE', 'Neural Intent Extraction', 'Our proprietary AI agents analyse your natural language requests to identify over 40 distinct travel parameters including destination intent, preferred budget tiers, and service requirements.'],
@@ -180,8 +183,9 @@ function renderStatic() {
       <div class="save-chip">Est. Savings ${t.save}</div>
       <h3>${t.name}</h3>
       <div class="price">${t.price}<span> /month</span></div>
+      <div class="acu-fund">⚡ ${acuAllocation(t.priceNum).toLocaleString()} ACU/mo auto-funded<br><span class="muted">10% of your plan · £1 = 100 ACU · tops up automatically each month</span></div>
       <ul>${t.benefits.map((b) => `<li>${b}</li>`).join('')}</ul>
-      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.name}')">Select ${t.name.split(' ').pop()}</button>
+      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.key}')">Join ${t.name.split(' ').pop()}</button>
     </div>`).join('');
   $('#tierGrid').innerHTML = tierHTML;
   $('#tierGridFull').innerHTML = tierHTML;
@@ -192,7 +196,18 @@ function renderStatic() {
   $('#loyaltyGrid').innerHTML = LOYALTY.map(([name, pts, disc]) => `
     <div class="card agent-card"><div class="ag-ico" style="background:rgba(216,180,106,0.15)">★</div><h4>${name}</h4><p>${pts} · ${disc}</p></div>`).join('');
 }
-window.selectTier = (name) => toast(`✓ ${name} selected — checkout is a prototype step.`);
+window.selectTier = async (key) => {
+  if (!state.user) {
+    toast('Sign in to join a membership plan.');
+    openAuth();
+    return;
+  }
+  let data;
+  try { data = await api('/api/membership/subscribe', { method: 'POST', body: JSON.stringify({ tier: key }) }); }
+  catch { return; }
+  if (data.user) setUser(data.user);
+  toast(`✓ ${data.user?.membership?.name} active — ${data.acuCredited.toLocaleString()} ACU funded (10% of your plan). Renews monthly.`);
+};
 
 // ---- Boot -----------------------------------------------------------------
 // Detect the user's language + country from their DEVICE (more reliable than a
@@ -251,6 +266,15 @@ async function boot() {
   applyRoleVisibility();
   applyDeepLink();
   refreshJourney();
+  // Live AI cost-efficiency badge (guaranteed ≥66% saving).
+  (async () => {
+    try {
+      const s = await api('/api/ai/status');
+      const co = s.gateway?.costOptimization;
+      const badge = $('#aiSaveBadge');
+      if (co && badge) badge.innerHTML = `<span class="dot"></span> AI runs at ${co.savingPct}% lower cost (floor ${co.floorPct}%) — routing + cache + local fallback`;
+    } catch { /* keep static text */ }
+  })();
 }
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
@@ -332,9 +356,38 @@ async function runPlan(overrides = {}) {
   // The search just taught the behaviour model something — rebuild the dashboard.
   refreshJourney();
 
+  if (data.stage === 'topup-required') { renderTopup(data); return; }
   if (data.stage === 'clarify') { renderClarify(data); return; }
+  // A paid tier was funded by ACUs — reflect the new balance.
+  if (typeof data.acuBalance === 'number' && state.user) {
+    setUser({ ...state.user, acuBalance: data.acuBalance });
+  }
   renderOptions(data);
 }
+
+// Hard block when an account has run out of ACUs — prompt a top-up (or a free
+// cached search), never silently proceed.
+function renderTopup(data) {
+  const out = $('#plannerOut');
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+    <div style="font-size:34px">⚡</div>
+    <h3 style="margin:10px 0 6px">You're out of ACUs</h3>
+    <p class="muted" style="font-size:14px">${data.message || `${data.tierName} needs ${data.acuNeeded} ACU.`}</p>
+    <div class="kv" style="max-width:280px;margin:10px auto"><span>Balance</span><span>${(data.balance || 0).toLocaleString()} ACU</span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:8px">
+      <button class="btn btn-gold" onclick="buyAcuFlow()">Top up ACUs</button>
+      ${data.isMember ? '<button class="btn btn-ghost" onclick="renewMembership()">Renew plan (+ACU)</button>' : '<button class="btn btn-ghost" data-nav="membership">Join a plan (10% funds ACU)</button>'}
+      <button class="btn btn-ghost" onclick="runFreeSearch()">Run free cached search</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">£1 = 100 ACU. Members auto-fund ACUs from 10% of their subscription each month.</p>
+  </div>`;
+}
+window.runFreeSearch = () => { const sel = $('#tierSelect'); if (sel) sel.value = 'free'; runPlan(); };
+window.renewMembership = async () => {
+  let d; try { d = await api('/api/membership/renew', { method: 'POST', body: '{}' }); } catch { return; }
+  if (d.user) setUser(d.user);
+  toast(`✓ Renewed — ${d.acuCredited?.toLocaleString()} ACU added. Balance ${d.user?.acuBalance?.toLocaleString()} ACU.`);
+};
 
 function scanAnimation() {
   const lines = ['Understanding intent…', 'Detecting location & currency…', 'Checking cost-protection gate…', 'Scanning verified global suppliers…', 'Filtering for reliability…', 'Building transparent packages…'];
@@ -507,11 +560,21 @@ async function renderConsole() {
       ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${u.bio}</p>` : ''}
       <div class="kv" style="margin-top:12px"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
       <div class="kv"><span>Loyalty points</span><span>${u.points.toLocaleString()}</span></div>
-      <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()}</span></div>
+      <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
+      ${u.membership?.active
+        ? `<div class="kv"><span>Membership</span><span style="color:var(--green)">${u.membership.name}</span></div>
+           <div class="kv"><span>Auto-funds</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU/mo (10%)</span></div>
+           <div class="kv"><span>Renews</span><span>${new Date(u.membership.renewsAt).toLocaleDateString()}</span></div>`
+        : `<div class="kv"><span>Membership</span><span class="muted">None — join to auto-fund ACUs</span></div>`}
       <div class="kv"><span>Referral code</span><span>${u.referralCode}</span></div>
       <div class="kv"><span>Referrals</span><span>${u.referrals}</span></div>
       <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="editProfile()">✎ Edit profile &amp; picture</button>
-      <button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px" onclick="buyAcuFlow()">Buy ACU pack</button>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="buyAcuFlow()">Top up ACUs</button>
+        ${u.membership?.active
+          ? '<button class="btn btn-ghost btn-sm" style="flex:1" onclick="renewMembership()">Renew (+ACU)</button>'
+          : '<button class="btn btn-ghost btn-sm" style="flex:1" data-nav="membership">Join a plan</button>'}
+      </div>
     </div>
     ${loyaltyHub(u)}
     <div class="card pad" style="margin-top:16px" id="intelCard">
@@ -604,26 +667,34 @@ window.shareRef = async (url) => {
   window.copyRef();
 };
 
-// ---- Travel Intelligence (Visa + Risk) ------------------------------------
-window.checkIntel = async () => {
-  const dest = $('#intelDest').value.trim();
+// ---- Travel Intelligence (Visa + Risk) — works for ANY city worldwide ------
+async function runIntel(dest, outEl) {
   if (!dest) { toast('Enter a destination.'); return; }
   const nat = state.country || 'GB';
-  const out = $('#intelOut');
-  out.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Checking…</div>';
+  outEl.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px"><span class="loader"></span> Checking global intelligence…</div>';
   let visa, risk;
-  try { visa = await api(`/api/visa/check?nationality=${nat}&destination=${encodeURIComponent(dest)}`); risk = await api(`/api/risk/${encodeURIComponent(dest)}`); } catch { return; }
-  if (!visa.ok) { out.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Destination not recognised. Try Dubai, Istanbul, Barcelona, New York or Bali.</div>'; return; }
-  const checklist = visa.checklist.map((c) => `<li><span class="cs">${c}</span></li>`).join('');
-  const layers = (risk.ok ? risk.layers : []).map((l) => `<span class="chip">${l.layer}: ${l.note}</span>`).join('');
-  out.innerHTML = `
+  try {
+    visa = await api(`/api/visa/check?nationality=${nat}&destination=${encodeURIComponent(dest)}`);
+    risk = await api(`/api/risk/${encodeURIComponent(dest)}`);
+  } catch { return; }
+  if (!visa.ok) { outEl.innerHTML = '<div class="muted" style="font-size:13px;margin-top:10px">Enter a city or country name.</div>'; return; }
+  const city = visa.destination.city;
+  const est = visa.estimated || risk.estimated;
+  const checklist = visa.checklist.map((c) => `<li><span class="cs">${esc(c)}</span></li>`).join('');
+  const layers = (risk.ok ? risk.layers : []).map((l) => `<span class="chip">${esc(l.layer)}: ${esc(l.note)}</span>`).join('');
+  outEl.innerHTML = `
     <div style="margin-top:14px">
-      <div class="kv"><span>🛂 Visa (${visa.nationality} → ${visa.destination.city})</span><span>${visa.required ? `Required · $${visa.costUSD} · ${visa.processingDays}d` : '<span style="color:var(--green)">Not required</span>'}</span></div>
-      ${visa.required ? `<div class="muted" style="font-size:12px;margin:4px 0">${visa.visaType}</div><ul class="comp-list">${checklist}</ul>` : ''}
-      <div class="muted" style="font-size:12.5px;margin:6px 0 12px">${visa.recommendation}</div>
-      ${risk.ok ? `<div class="kv"><span>🛡 Travel Risk Score</span><span style="color:var(--green)">${risk.riskScore} · ${risk.level}</span></div><div class="chips" style="margin-top:8px">${layers}</div>` : ''}
+      ${est ? '<div class="muted" style="font-size:11.5px;margin-bottom:8px">⚡ Estimated profile for this destination — confirm details on the official portal.</div>' : ''}
+      <div class="kv"><span>🛂 Visa (${esc(visa.nationality)} → ${esc(city)})</span><span>${visa.required ? `Required · $${visa.costUSD} · ${visa.processingDays}d` : '<span style="color:var(--green)">Not required</span>'}</span></div>
+      ${visa.required ? `<div class="muted" style="font-size:12px;margin:4px 0">${esc(visa.visaType)}</div><ul class="comp-list">${checklist}</ul>` : ''}
+      <div class="muted" style="font-size:12.5px;margin:6px 0 12px">${esc(visa.recommendation)}</div>
+      ${risk.ok ? `<div class="kv"><span>🛡 Travel Risk Score · ${esc(city)}</span><span style="color:var(--green)">${risk.riskScore} · ${esc(risk.level)}</span></div><div class="chips" style="margin-top:8px">${layers}</div>` : ''}
+      <button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="planDest('${esc(city).replace(/'/g, '')}')">Build a trip to ${esc(city)} →</button>
     </div>`;
-};
+}
+window.checkIntel = () => runIntel($('#intelDest').value.trim(), $('#intelOut'));
+window.checkIntelHome = () => runIntel($('#intelDestHome').value.trim(), $('#intelOutHome'));
+window.quickIntel = (city) => { const i = $('#intelDestHome'); if (i) i.value = city; runIntel(city, $('#intelOutHome')); };
 
 // Render an avatar — emoji or uploaded image data URL.
 function avatarHTML(u, size = 32) {
@@ -947,7 +1018,10 @@ async function renderAdmin() {
     <div class="kpi-grid">${kpiCards}</div>
     <div class="console-grid" style="margin-top:20px">
       <div>
-        <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}</div>
+        <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}
+          ${g.costOptimization ? `<div class="kv" style="margin-top:8px"><span>AI cost saving <span class="muted">(floor ${g.costOptimization.floorPct}%)</span></span><span style="color:${g.costOptimization.meetsFloor ? 'var(--green)' : '#ff6b6b'}">${g.costOptimization.savingPct}% ${g.costOptimization.meetsFloor ? '✓' : '⚠'}</span></div>
+          <div class="kv"><span>Cache hit rate</span><span>${g.costOptimization.cacheHitRatePct}%</span></div>
+          <div class="muted" style="font-size:11.5px;margin-top:6px">${g.costOptimization.techniques.join(' · ')}</div>` : ''}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Tier mix</span>${mix(o.tierMix)}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Payment rail mix</span>${mix(o.gatewayMix)}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Supplier leaderboard</span>${board}</div>
@@ -1092,6 +1166,10 @@ function renderVisaApply() {
             <select class="in" id="vNat"><option>GB</option><option>US</option><option selected>NG</option><option>IN</option><option>FR</option></select></div>
           <div class="field"><label>Destination</label>
             <select class="in" id="vDest"><option selected>Dubai</option><option>Istanbul</option><option>Barcelona</option><option>New York</option><option>Bali</option></select></div>
+          <div class="field"><label>Visa country</label>
+            <select class="in" id="vCountry">${VISA_COUNTRIES.map((c) => `<option value="${c.code}"${c.code === 'AE' ? ' selected' : ''}>${c.flag} ${c.name}</option>`).join('')}</select></div>
+          <div class="field"><label>Visa type</label>
+            <select class="in" id="vType">${VISA_TYPES_FE.map((t) => `<option value="${t.key}">${t.icon} ${t.name}</option>`).join('')}</select></div>
           <div class="field"><label>Purpose</label>
             <select class="in" id="vPurpose"><option>tourism</option><option>business</option><option>study</option><option>family visit</option><option>medical</option><option>conference</option></select></div>
           <div class="field"><label>Age</label><input class="in" id="vAge" value="34" style="width:70px"></div>
@@ -1111,11 +1189,67 @@ function renderVisaApply() {
         </div>
         <div class="field" style="margin-top:12px"><label>Behaviour: hesitation around employment (0=calm, 100=evasive) — <span id="vBehLbl">10</span></label>
           <input type="range" id="vBeh" min="0" max="100" value="10" oninput="document.getElementById('vBehLbl').textContent=this.value"></div>
-        <button class="btn btn-gold" style="margin-top:14px" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+          <button class="btn btn-ghost" id="vChecklist">📋 Required documents</button>
+          <button class="btn btn-gold" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+        </div>
       </div>
+      <div id="visaChecklistOut" style="margin-top:16px"></div>
       <div id="visaDecision" style="margin-top:20px"></div>
     </div>`;
   $('#vSubmit').addEventListener('click', submitVisa);
+  $('#vChecklist').addEventListener('click', showVisaChecklist);
+}
+
+// Visa framework metadata (mirrors backend visa-framework.js).
+const VISA_COUNTRIES = [
+  { code: 'SCHENGEN', name: 'Schengen / EU', flag: '🇪🇺' }, { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'US', name: 'United States', flag: '🇺🇸' }, { code: 'CA', name: 'Canada', flag: '🇨🇦' },
+  { code: 'AU', name: 'Australia', flag: '🇦🇺' }, { code: 'NZ', name: 'New Zealand', flag: '🇳🇿' },
+  { code: 'AE', name: 'UAE / Dubai', flag: '🇦🇪' }, { code: 'SA', name: 'Saudi Arabia', flag: '🇸🇦' },
+  { code: 'QA', name: 'Qatar', flag: '🇶🇦' }, { code: 'TR', name: 'Turkey', flag: '🇹🇷' },
+  { code: 'CN', name: 'China', flag: '🇨🇳' }, { code: 'JP', name: 'Japan', flag: '🇯🇵' },
+  { code: 'KR', name: 'South Korea', flag: '🇰🇷' }, { code: 'ZA', name: 'South Africa', flag: '🇿🇦' },
+  { code: 'IN', name: 'India', flag: '🇮🇳' }, { code: 'BR', name: 'Brazil', flag: '🇧🇷' },
+];
+const VISA_TYPES_FE = [
+  { key: 'tourist', name: 'Tourist / Visitor', icon: '🏖️' }, { key: 'business', name: 'Business', icon: '💼' },
+  { key: 'student', name: 'Student', icon: '🎓' }, { key: 'work', name: 'Work', icon: '🛠️' },
+  { key: 'family', name: 'Family / Dependant', icon: '👨‍👩‍👧' }, { key: 'medical', name: 'Medical', icon: '🏥' },
+  { key: 'transit', name: 'Transit', icon: '🛫' },
+];
+
+function applicantFromForm() {
+  const sig = {};
+  $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
+  return {
+    fullName: $('#vName').value, name: $('#vName').value,
+    nationality: $('#vNat').value, destination: $('#vDest').value,
+    purpose: $('#vPurpose').value, age: Number($('#vAge').value),
+    occupation: $('#vEmployer').value, employer: $('#vEmployer').value,
+    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
+    maritalStatus: 'Single',
+    behaviourHesitation: Number($('#vBeh').value), ...sig,
+  };
+}
+
+async function showVisaChecklist() {
+  const out = $('#visaChecklistOut');
+  out.innerHTML = '<div class="card pad muted" style="font-size:13px"><span class="loader"></span> Building country-specific checklist…</div>';
+  let d;
+  try {
+    d = await api('/api/visa/checklist', { method: 'POST', body: JSON.stringify({ country: $('#vCountry').value, visaType: $('#vType').value, applicant: applicantFromForm() }) });
+  } catch { return; }
+  const sections = d.sections.map((s) => `
+    <div style="margin-top:12px"><span class="eyebrow">${esc(s.title)} · ${s.items.length}</span>
+      <ul class="comp-list">${s.items.map((i) => `<li><span class="cs">${esc(i)}</span></li>`).join('')}</ul></div>`).join('');
+  out.innerHTML = `<div class="card pad">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+      <strong style="font-family:'Space Grotesk'">${d.country ? d.country.flag + ' ' + esc(d.country.name) : esc($('#vCountry').value)} · ${esc(d.visaType.name)}</strong>
+      <span class="muted" style="font-size:12.5px">${d.totalDocuments} documents required</span>
+    </div>
+    ${d.country?.notes ? `<p class="muted" style="font-size:12px;margin:6px 0 0">${esc(d.country.notes)}</p>` : ''}
+    ${sections}</div>`;
 }
 function signalToggle(key, label, on) {
   return `<span class="chip vsig ${on ? 'on' : ''}" data-key="${key}" data-on="${on}" onclick="toggleSignal(this)">${on ? '✓' : '○'} ${label}</span>`;
@@ -1123,29 +1257,58 @@ function signalToggle(key, label, on) {
 window.toggleSignal = (el) => { const on = el.dataset.on !== 'true'; el.dataset.on = on; el.classList.toggle('on', on); el.textContent = `${on ? '✓' : '○'} ${el.textContent.slice(2)}`; };
 
 async function submitVisa() {
-  const sig = {};
-  $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
-  const body = {
-    name: $('#vName').value, nationality: $('#vNat').value, destination: $('#vDest').value,
-    purpose: $('#vPurpose').value, age: Number($('#vAge').value), employer: $('#vEmployer').value,
-    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
-    behaviourHesitation: Number($('#vBeh').value), ...sig,
-  };
+  const applicant = applicantFromForm();
   const out = $('#visaDecision');
   const agents = ['Document Forensics', 'Financial Authenticity', 'Identity Verification', 'Online Footprint', 'Behavioural Intelligence', 'Overstay Risk', 'Fraud Detection', 'Intent Assessment', 'Border Risk', 'Decision Agent'];
   out.innerHTML = `<div class="card pad scanlog">${agents.map((a, i) => `<div class="ln" style="animation-delay:${i * 60}ms"><span class="ok">●</span> ${a} Agent verifying…</div>`).join('')}</div>`;
   await tick(700);
   let data;
-  try { data = await api('/api/visaos/assess', { method: 'POST', body: JSON.stringify(body) }); } catch { return; }
-  renderVisaDecision(data.assessment);
+  try {
+    data = await api('/api/visa/assess-application', {
+      method: 'POST',
+      body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value }),
+    });
+  } catch { return; }
+  renderVisaFile(data.file);
 }
 
-function renderVisaDecision(a) {
+// Render the full decision-ready file: recommendation + checklist completeness +
+// document verification + fraud battery + the risk decision.
+function renderVisaFile(file) {
+  const recColor = { 'Approve': 'var(--green)', 'Approve with conditions': 'var(--gold)', 'Request more info': 'var(--blue-bright)', 'Escalate to human': 'var(--blue-bright)', 'Refuse': '#ff6b6b' }[file.recommendation] || 'var(--gold)';
+  const dv = file.documentVerification;
+  const fraud = file.fraud;
+  const dvRows = dv.checks.map((c) => `<div class="kv"><span><span class="vstatus ${c.pass ? 'pass' : 'fail'}"></span>${esc(c.check)}</span><span class="muted" style="font-size:12px">${c.pass ? 'clear' : 'FLAG'}</span></div>`).join('');
+  const flagChips = fraud.flags.length
+    ? fraud.flags.map((f) => `<span class="chip" style="color:#ff9b9b;border-color:rgba(255,90,90,0.3)">${esc(f.name)}</span>`).join('')
+    : '<span class="muted" style="font-size:13px">No fraud signals triggered across all 34 checks.</span>';
+
+  $('#visaDecision').innerHTML = `
+    <div class="card pad" style="border-color:${recColor};margin-bottom:16px">
+      <span class="eyebrow">AI Officer Recommendation · decision-ready in ${file.decisionReadyMinutes === 'escalated' ? 'escalation' : file.decisionReadyMinutes + ' min'}</span>
+      <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:${recColor}">${esc(file.recommendation)}</div>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">${file.country ? file.country.flag + ' ' + esc(file.country.name) : ''} · ${esc(file.visaType.name)} · ${esc(file.applicant.name)} (${esc(file.applicant.nationality)})</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px">
+        <div class="verified-tag">📋 Checklist ${file.completeness.supplied}/${file.completeness.required}</div>
+        <div class="verified-tag">🔬 Docs ${dv.verified}/${dv.total} verified</div>
+        <div class="verified-tag" style="${fraud.flagCount ? 'color:#ff9b9b;background:rgba(255,90,90,0.1);border-color:rgba(255,90,90,0.25)' : ''}">🛡 Fraud ${fraud.flagCount}/${fraud.results.length} flags</div>
+        <div class="verified-tag">📊 Risk ${file.risk.totalScore}/1000</div>
+      </div>
+    </div>
+    <div class="console-grid">
+      <div class="card pad"><span class="eyebrow">Document verification</span>${dvRows}</div>
+      <div class="card pad"><span class="eyebrow">Fraud & risk checks (34)</span><div class="chips" style="margin-top:10px">${flagChips}</div></div>
+    </div>
+    <div id="visaRiskOut" style="margin-top:16px"></div>`;
+  renderVisaDecision(file.risk, '#visaRiskOut');
+}
+
+function renderVisaDecision(a, target = '#visaDecision') {
   const decColor = { 'Auto Approval': 'var(--green)', 'Conditional Approval': 'var(--gold)', 'Human Review': 'var(--blue-bright)', 'Auto Rejection': '#ff6b6b' }[a.decision];
   const agentRows = a.agents.map((ag) => `<div class="kv"><span><span class="vstatus ${ag.status}"></span>${ag.agent}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${ag.finding}</span></div>`).join('');
   const dims = Object.entries(a.risk).map(([k, v]) => `<div class="kv"><span style="text-transform:capitalize">${k} risk</span><span><span class="rel-bar" style="display:inline-block;width:90px;vertical-align:middle"><i style="width:${v}%;background:${v >= 60 ? '#ff6b6b' : v >= 35 ? 'var(--gold)' : 'var(--green)'}"></i></span> ${v}</span></div>`).join('');
   const cond = a.conditions.length ? `<div style="margin-top:8px"><span class="eyebrow">Conditions</span>${a.conditions.map((c) => `<div class="ok-line"><span class="ck">✓</span>${c}</div>`).join('')}</div>` : '';
-  $('#visaDecision').innerHTML = `
+  $(target).innerHTML = `
     <div class="card pad" style="border-color:${decColor}">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div><span class="eyebrow">Decision · ${a.slaMinutes === 'escalated' ? 'escalated' : 'in ' + a.slaMinutes + ' min'}</span>
@@ -1263,11 +1426,11 @@ window.decideApproval = async (id, decision) => {
 // ---- ACU / account --------------------------------------------------------
 window.buyAcuFlow = () => {
   modal(`
-    <span class="eyebrow">ACU Packs · fund AI searches</span>
-    <h3 style="margin:6px 0">Buy AI Compute Units</h3>
-    <p class="muted" style="font-size:13px">No costly AI search runs unless it's funded. Packs keep the platform profitable while you get world-minimum prices.</p>
-    ${[['starter', 'Starter', '£5', '500'], ['traveller', 'Smart Traveller', '£15', '1,750'], ['family', 'Family', '£29', '4,000'], ['business', 'Business', '£99', '20,000']]
-      .map(([id, name, gbp, acu]) => `<div class="kv"><span>${name} · ${acu} ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}`);
+    <span class="eyebrow">Top up ACUs · £1 = 100 ACU</span>
+    <h3 style="margin:6px 0">Top up AI Compute Units</h3>
+    <p class="muted" style="font-size:13px">ACUs power your AI searches. Members auto-fund ACUs from 10% of their plan each month; top up any time at a flat £1 = 100 ACU.</p>
+    ${[['topup5', '£5', '500'], ['topup10', '£10', '1,000'], ['topup25', '£25', '2,500'], ['topup50', '£50', '5,000']]
+      .map(([id, gbp, acu]) => `<div class="kv"><span>${acu} ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}`);
 };
 window.buyAcu = async (pack) => {
   if (!state.user) { const u = await api('/api/account', { method: 'POST', body: JSON.stringify({}) }); setUser(u.user); }

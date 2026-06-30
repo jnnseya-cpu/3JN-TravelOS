@@ -220,6 +220,9 @@
           <div class="kv"><span>🛫 Airport Selection</span><span style="color:var(--green)">Saved £91</span></div>
           <div class="kv" style="border:none;padding-top:16px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--gold)">£809</span></div>
         </div>
+        <div class="center" style="margin-top:18px">
+          <span class="pill" id="aiSaveBadge" style="margin:0"><span class="dot"></span> AI runs at ≥66% lower cost — model routing + semantic cache + local fallback</span>
+        </div>
       </section>
 
       <!-- NEGOTIATION ENGINE -->
@@ -249,6 +252,25 @@
           <p>Seven live intelligence layers wrap every destination, so your trip is timed and priced with full context.</p>
         </div>
         <div class="center" style="margin-bottom:26px"><div class="core-orb" style="background:radial-gradient(circle at 35% 30%, #6fb6ff, #1a4fa0 60%, #0a2452)">🌍</div></div>
+
+        <!-- Interactive worldwide intelligence lookup -->
+        <div class="card pad" style="max-width:720px;margin:0 auto 26px" id="intelWidget">
+          <span class="eyebrow">Live lookup · any city worldwide</span>
+          <h3 style="margin:6px 0 10px">Check any destination on Earth</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="in" id="intelDestHome" placeholder="Type any city or country — e.g. Tokyo, Lagos, Lima, Reykjavík" style="flex:1;min-width:220px" />
+            <button class="btn btn-gold" onclick="checkIntelHome()">Get intelligence</button>
+          </div>
+          <div class="chips" style="margin-top:10px">
+            <span class="chip" onclick="quickIntel('Tokyo')">Tokyo</span>
+            <span class="chip" onclick="quickIntel('Lagos')">Lagos</span>
+            <span class="chip" onclick="quickIntel('São Paulo')">São Paulo</span>
+            <span class="chip" onclick="quickIntel('Bangkok')">Bangkok</span>
+            <span class="chip" onclick="quickIntel('Cape Town')">Cape Town</span>
+          </div>
+          <div id="intelOutHome"></div>
+        </div>
+
         <div class="core-wrap" style="max-width:980px">
           <div class="card agent-card"><div class="ag-ico">🌦</div><h4>Weather Intelligence</h4><p>Best-weather windows per destination.</p></div>
           <div class="card agent-card"><div class="ag-ico">🛡</div><h4>Safety Intelligence</h4><p>Live safety & advisory signals.</p></div>

@@ -19,14 +19,6 @@ export const LOYALTY_TIERS = [
 export const POINTS_PER_USD = 0.5;
 export const SIGNUP_BONUS_POINTS = 250;
 
-// ---- Membership plans (blueprint §3.1) ------------------------------------
-export const MEMBERSHIP_TIERS = [
-  { key: 'nomad', name: 'Travel+ Nomad', pricePerMonth: 4.99, acuPerMonth: 1500 },
-  { key: 'family', name: 'Travel+ Family', pricePerMonth: 12.99, acuPerMonth: 4000 },
-  { key: 'executive', name: 'Travel+ Executive', pricePerMonth: 24.99, acuPerMonth: 10000 },
-  { key: 'elite', name: 'Travel+ Elite', pricePerMonth: 49.99, acuPerMonth: 30000 },
-];
-
 // ---- ACU economy (blueprint Appendix B + §12.2) ---------------------------
 export const ACU_ACTIONS = {
   intent: 8,
@@ -40,10 +32,27 @@ export const ACU_ACTIONS = {
   privateAviation: 25,
   coworking: 8,
 };
+// Internal cost basis: what 1 ACU costs 3JN to serve (drives the AI-cost gate).
 export const ACU_GBP = 0.003;
-export const TIER_ACU_ALLOWANCE = {
-  Nomad: 1500, Family: 4000, Executive: 10000, Elite: 30000, Business: 50000,
-};
+// Customer-facing sale/allocation rate: £1 buys 100 ACUs (members + top-ups).
+export const ACU_PER_GBP = 100;
+// Share of every membership subscription that is auto-converted to ACUs each
+// billing period (the "10% of your plan funds your AI" rule).
+export const MEMBERSHIP_ACU_FUND_RATE = 0.10;
+
+// ---- Membership plans (blueprint §3.1) ------------------------------------
+// Each plan auto-funds ACUs every billing period: 10% of the subscription,
+// converted at £1 = 100 ACU. e.g. £12.99 → £1.299 → ~130 ACU / month.
+export const MEMBERSHIP_TIERS = [
+  { key: 'nomad', name: 'Travel+ Nomad', pricePerMonth: 4.99 },
+  { key: 'family', name: 'Travel+ Family', pricePerMonth: 12.99 },
+  { key: 'executive', name: 'Travel+ Executive', pricePerMonth: 24.99 },
+  { key: 'elite', name: 'Travel+ Elite', pricePerMonth: 49.99 },
+].map((t) => ({ ...t, acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP) }));
+
+export const TIER_ACU_ALLOWANCE = Object.fromEntries(
+  MEMBERSHIP_TIERS.map((t) => [t.name.replace('Travel+ ', ''), t.acuPerMonth]),
+);
 
 // ---- Reliability floor for "cheapest *reliable*" --------------------------
 export const RELIABILITY_FLOOR = 70;

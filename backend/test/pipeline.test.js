@@ -21,6 +21,10 @@ import { snapshot, hydrate } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
+import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
+import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
+import { visaFramework, buildChecklist, assessApplication } from '../src/visa-framework.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
@@ -353,6 +357,107 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('visa framework: dynamic checklist adapts to country, type and applicant', () => {
+  const fw = visaFramework();
+  assert.equal(fw.countries.length, 16);
+  assert.equal(fw.visaTypes.length, 7);
+  assert.ok(fw.fraudChecks.length >= 30);
+
+  // A student minor gets student docs + the minor conditionals + UK specifics.
+  const cl = buildChecklist({ country: 'GB', visaType: 'student', applicant: { dob: '2012-01-01', maritalStatus: 'Single' } });
+  assert.equal(cl.country.code, 'GB');
+  const all = cl.sections.flatMap((s) => s.items).join(' | ');
+  assert.match(all, /Birth certificate \(minor\)/);
+  assert.match(all, /Parental consent letter \(minor\)/);
+  assert.match(all, /Admission|acceptance letter/i);
+  assert.ok(cl.totalDocuments > 17);
+
+  // Tourist checklist differs from student.
+  const tourist = buildChecklist({ country: 'AE', visaType: 'tourist', applicant: {} });
+  assert.notEqual(tourist.totalDocuments, cl.totalDocuments);
+});
+
+test('visa framework: clean applicant approved, fraudulent applicant refused', () => {
+  const clean = assessApplication({
+    country: 'AE', visaType: 'tourist',
+    applicant: { fullName: 'Jane Doe', nationality: 'GB', age: 34, monthlyIncome: 4000, purpose: 'tourism', homeTies: 'strong' },
+  });
+  assert.equal(clean.recommendation, 'Approve');
+  assert.equal(clean.fraud.flagCount, 0);
+  assert.equal(clean.documentVerification.allClear, true);
+
+  const bad = assessApplication({
+    country: 'US', visaType: 'work',
+    applicant: { fullName: 'Bad Actor', nationality: 'NG', age: 22, monthlyIncome: 300, documentsAuthentic: false, onWatchlist: true, suddenDeposit: true, priorOverstays: true, homeTies: 'weak' },
+  });
+  assert.equal(bad.recommendation, 'Refuse');
+  assert.ok(bad.fraud.flagCount > 5);
+  assert.equal(bad.risk.decision, 'Auto Rejection');
+});
+
+test('intelligence: visa + risk work for ANY city worldwide, not just the catalogue', () => {
+  for (const city of ['Tokyo', 'Lagos', 'São Paulo', 'Reykjavik', 'Kathmandu', 'Lima']) {
+    const risk = riskFeed(city);
+    assert.equal(risk.ok, true, `risk for ${city}`);
+    assert.ok(risk.riskScore > 0 && risk.layers.length === 7);
+    assert.equal(risk.estimated, true, `${city} is an estimated (non-catalogue) profile`);
+
+    const visa = visaCheck('NG', city);
+    assert.equal(visa.ok, true, `visa for ${city}`);
+    assert.equal(visa.estimated, true);
+    assert.ok(visa.checklist.length > 0);
+  }
+  // Catalogue cities keep their precise (non-estimated) data.
+  const dubai = riskFeed('Dubai');
+  assert.equal(dubai.ok, true);
+  assert.equal(dubai.estimated, false);
+});
+
+test('AI cost optimisation guarantees the 66% minimum saving floor', () => {
+  const c = aiCostOptimization();
+  assert.equal(c.floorPct, Math.round(MIN_AI_COST_SAVING * 100));
+  assert.equal(c.meetsFloor, true);
+  assert.ok(c.savingPct >= 66, `saving ${c.savingPct}% must be >= 66%`);
+  assert.ok(c.optimizedUSD <= c.baselineUSD * (1 - MIN_AI_COST_SAVING) + 1e-9);
+});
+
+test('membership: 10% of the subscription auto-funds ACUs at £1 = 100 ACU', () => {
+  // Allocation rule holds for every tier.
+  for (const t of MEMBERSHIP_TIERS) {
+    assert.equal(t.acuPerMonth, Math.round(t.pricePerMonth * 0.10 * ACU_PER_GBP));
+  }
+  const u = createUser({ name: 'MemTest' });
+  assert.equal(u.acuBalance, 0, 'new users get no free ACUs');
+  assert.equal(u.membership, null);
+
+  const sub = subscribeMembership(u.id, 'family'); // £12.99 -> 130 ACU
+  assert.equal(sub.ok, true);
+  assert.equal(sub.acuCredited, 130);
+  assert.equal(sub.user.acuBalance, 130);
+  assert.equal(sub.user.membership.active, true);
+
+  // Each billing period re-funds the allocation.
+  const ren = renewMembership(u.id);
+  assert.equal(ren.acuCredited, 130);
+  assert.equal(ren.user.acuBalance, 260);
+});
+
+test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU', () => {
+  const u = createUser({ name: 'AcuTest' });
+  // No balance -> spend is refused (must top up before using any ACUs).
+  const blocked = spendAcu(u.id, 15, 'search');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, 'insufficient-acu');
+
+  // Top up £10 -> 1000 ACU, then a spend succeeds and debits.
+  const top = buyAcu(u.id, 'topup10');
+  assert.equal(top.charged, 10);
+  assert.equal(top.balance, 1000);
+  const ok = spendAcu(u.id, 15, 'search');
+  assert.equal(ok.ok, true);
+  assert.equal(ok.balance, 985);
 });
 
 test('RBAC: admin & business areas reject the public and consumers, allow admins', async () => {
