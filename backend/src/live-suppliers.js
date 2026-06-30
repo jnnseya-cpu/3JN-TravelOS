@@ -28,14 +28,19 @@ const AMADEUS_ID = env.AMADEUS_CLIENT_ID || '';
 const AMADEUS_SECRET = env.AMADEUS_CLIENT_SECRET || '';
 const AMADEUS_BASE = env.AMADEUS_BASE_URL || 'https://api.amadeus.com';
 
-const OAG_KEY = env.OAG_SUBSCRIPTION_KEY || env.OAG_API_KEY || '';
+// OAG has two products with separate subscription keys:
+//  - Schedules: forward-looking scheduled services (best for a future trip date)
+//  - Flight Info: operated flight instances (best near-term)
+// Either gives the real carriers/times/non-stops we need; we prefer Schedules
+// for a future departure and fall back to Flight Info. Both are priced by the
+// deterministic estimator (OAG returns no fares).
+const OAG_SCHEDULES_KEY = env.OAG_SCHEDULES_KEY || '';
+const OAG_FLIGHTINFO_KEY = env.OAG_SUBSCRIPTION_KEY || env.OAG_FLIGHTINFO_KEY || env.OAG_API_KEY || '';
 const OAG_BASE = env.OAG_BASE_URL || 'https://api.oag.com';
 
 export function liveFlightsEnabled() { return !!DUFFEL_TOKEN && typeof fetch === 'function'; }
 export function liveHotelsEnabled() { return !!(AMADEUS_ID && AMADEUS_SECRET) && typeof fetch === 'function'; }
-// OAG gives REAL operated schedules (carriers, times, non-stop) but no price —
-// we price its real flights with the deterministic estimator.
-export function oagScheduleEnabled() { return !!OAG_KEY && typeof fetch === 'function'; }
+export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
 export function liveSuppliersConfigured() { return liveFlightsEnabled() || liveHotelsEnabled() || oagScheduleEnabled(); }
 
 // IATA carrier code → display name (extend as needed; falls back to the code).
@@ -293,11 +298,12 @@ export async function fetchLiveHotels(intent, dest) {
 }
 
 // ===========================================================================
-// FLIGHT SCHEDULES — OAG Flight Instances (real operated non-stop services)
+// FLIGHT SCHEDULES — OAG (Schedules API preferred for future dates, Flight Info
+// instances as fallback). Both return real carriers / times / non-stops.
 // ===========================================================================
 
-// OAG times come as { local: "19:00" } / { local: "2025-05-01" } objects or as
-// plain strings depending on plan; read both defensively.
+// OAG times/dates come as { local: "19:00" } / { local: "2025-05-01" } objects
+// or as plain strings depending on product/plan; read both defensively.
 function oagTime(t) {
   if (!t) return '';
   if (typeof t === 'string') { const m = t.match(/(\d{2}:\d{2})/); return m ? m[1] : ''; }
@@ -312,43 +318,79 @@ function minsToLabel(mins) {
   const n = Number(mins) || 0;
   return `${Math.floor(n / 60)}h ${n % 60}m`;
 }
+// Number of stops for a schedule/instance entry. Flight Info instances are
+// single sectors (non-stop); Schedules entries may carry a stop count.
+function oagStops(entry) {
+  const s = entry.stops ?? entry.stopCount ?? entry.numberOfStops;
+  if (typeof s === 'number') return s;
+  if (typeof entry.flightType === 'string' && /nonstop|non-stop|direct/i.test(entry.flightType)) return 0;
+  return 0;
+}
 
-// Build one of our flight legs from a single OAG flight instance. Each instance
-// is a real operated sector → non-stop (stops: 0).
-export function oagInstanceToLeg(inst) {
-  const dep = inst.departure || {};
-  const arr = inst.arrival || {};
+// Build one of our flight legs from a single OAG entry (instance OR schedule).
+// `fallbackDate` is used when a schedule entry carries no explicit date.
+export function oagInstanceToLeg(entry, fallbackDate = '') {
+  const dep = entry.departure || {};
+  const arr = entry.arrival || {};
   const from = dep.airport?.iata || dep.airport?.iataCode || dep.airport || '';
   const to = arr.airport?.iata || arr.airport?.iataCode || arr.airport || '';
-  const date = oagDate(dep.date);
+  const date = oagDate(dep.date) || fallbackDate;
+  const depart = oagTime(dep.time);
+  const arrive = oagTime(arr.time);
+  // Next-day arrival: explicit arrival date differs, an explicit day offset, or
+  // (for schedules without dates) the arrival clock is earlier than departure.
+  const arrDate = oagDate(arr.date);
+  const offset = Number(arr.daysOffset ?? arr.dateOffset ?? arr.dayChange ?? 0) || 0;
+  const arriveNextDay = (arrDate && date && arrDate !== date)
+    || offset > 0
+    || (!arrDate && depart && arrive && arrive < depart);
+  const stops = oagStops(entry);
   return {
     from, fromCity: dep.airport?.city || '', to, toCity: arr.airport?.city || '',
-    date,
-    depart: oagTime(dep.time), arrive: oagTime(arr.time),
-    arriveNextDay: oagDate(arr.date) && oagDate(arr.date) !== date,
-    durationLabel: minsToLabel(inst.elapsedTime || inst.flightDuration),
-    stops: 0, stopLabel: 'Direct',
-    flightNumber: inst.carrier?.iata && inst.flightNumber ? `${inst.carrier.iata}${inst.flightNumber}` : undefined,
-    aircraft: inst.aircraftType?.iata || inst.aircraftType?.icao || undefined,
+    date, depart, arrive, arriveNextDay,
+    durationLabel: minsToLabel(entry.elapsedTime || entry.flightDuration || entry.scheduledDuration),
+    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${stops > 1 ? 's' : ''}`,
+    flightNumber: entry.carrier?.iata && entry.flightNumber ? `${entry.carrier.iata}${entry.flightNumber}` : undefined,
+    aircraft: entry.aircraftType?.iata || entry.aircraftType?.icao || undefined,
   };
 }
 
-// Fetch OAG flight instances for one direction. Returns the raw instance array.
-async function oagInstances(fromAirport, toAirport, date) {
+// Fetch real services for one direction from whichever OAG product is keyed.
+// Returns the raw entry array (schedules or instances share enough shape that
+// oagInstanceToLeg handles both).
+async function oagServices(fromAirport, toAirport, date) {
   if (!fromAirport || !toAirport || !date) return null;
-  const params = new URLSearchParams({
-    version: 'v2',
-    DepartureDateTime: date,
-    ArrivalDateTime: date,
-    DepartureAirport: fromAirport,
-    ArrivalAirport: toAirport,
-    CodeType: 'IATA',
-  });
-  const res = await httpJSON(`${OAG_BASE}/flight-instances/?${params.toString()}`, {
-    headers: { 'Subscription-Key': OAG_KEY, Accept: 'application/json' },
-  });
-  const data = res?.data || res?.flightInstances || null;
-  return Array.isArray(data) ? data : null;
+  if (OAG_SCHEDULES_KEY) {
+    const params = new URLSearchParams({
+      version: 'v2',
+      DepartureAirport: fromAirport,
+      ArrivalAirport: toAirport,
+      StartDate: date,
+      EndDate: date,
+      CodeType: 'IATA',
+    });
+    const res = await httpJSON(`${OAG_BASE}/schedules/?${params.toString()}`, {
+      headers: { 'Subscription-Key': OAG_SCHEDULES_KEY, Accept: 'application/json' },
+    });
+    const data = res?.data || res?.schedules || null;
+    if (Array.isArray(data)) return data;
+  }
+  if (OAG_FLIGHTINFO_KEY) {
+    const params = new URLSearchParams({
+      version: 'v2',
+      DepartureDateTime: date,
+      ArrivalDateTime: date,
+      DepartureAirport: fromAirport,
+      ArrivalAirport: toAirport,
+      CodeType: 'IATA',
+    });
+    const res = await httpJSON(`${OAG_BASE}/flight-instances/?${params.toString()}`, {
+      headers: { 'Subscription-Key': OAG_FLIGHTINFO_KEY, Accept: 'application/json' },
+    });
+    const data = res?.data || res?.flightInstances || null;
+    if (Array.isArray(data)) return data;
+  }
+  return null;
 }
 
 // Real-schedule flights from OAG: which carriers actually fly the route non-stop
@@ -360,8 +402,8 @@ export async function fetchOagFlights(intent, dest, origin) {
   if (!o || !d || !intent?.dates?.checkIn) return null;
 
   const [outbound, inboundRaw] = await Promise.all([
-    oagInstances(o, d, intent.dates.checkIn),
-    intent.dates.checkOut ? oagInstances(d, o, intent.dates.checkOut) : Promise.resolve(null),
+    oagServices(o, d, intent.dates.checkIn),
+    intent.dates.checkOut ? oagServices(d, o, intent.dates.checkOut) : Promise.resolve(null),
   ]);
   if (!outbound || !outbound.length) return null;
 
@@ -380,9 +422,9 @@ export async function fetchOagFlights(intent, dest, origin) {
     seen.add(iata);
     const premium = PREMIUM_CARRIERS.has(iata);
     const fares = estimateFlightFares(dest, premium, false, intent.travellers, `oag-${iata}-${o}-${d}-${intent.dates.checkIn}`);
-    const outLeg = oagInstanceToLeg(inst);
+    const outLeg = oagInstanceToLeg(inst, intent.dates.checkIn);
     const retInst = inboundByCarrier.get(iata);
-    const inLeg = retInst ? oagInstanceToLeg(retInst) : null;
+    const inLeg = retInst ? oagInstanceToLeg(retInst, intent.dates.checkOut) : null;
     offers.push({
       type: 'flight',
       supplier: carrierName(iata),
