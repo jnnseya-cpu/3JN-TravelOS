@@ -104,6 +104,19 @@ export function bookingUrl(partner) {
 // Attach sourcing metadata to a supplier offer and apply the agent net rate
 // where the chosen partner is an agent account. Returns a new offer object.
 export function applySourcing(offer, destCountry) {
+  // Live provider offers (real fares from Duffel, real schedules from OAG, real
+  // hotel rates from Amadeus) keep their own attribution and are never adjusted
+  // by a synthetic agent net-rate — the quoted figure is the source of truth.
+  if (offer.live || offer.scheduleLive) {
+    return {
+      ...offer,
+      publicPriceUSD: offer.publicPriceUSD || offer.priceUSD,
+      sourcedVia: offer.sourcedVia || 'Live provider',
+      sourcedType: offer.sourcedType || 'live',
+      bookingUrl: offer.bookingUrl || null,
+      agent: false,
+    };
+  }
   // If the supplier is itself a bookable brand, link straight to it (no agent
   // net-rate adjustment — that's the retail brand price).
   if (BRAND_URLS[offer.supplier]) {

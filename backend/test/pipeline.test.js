@@ -29,7 +29,8 @@ import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } fr
 import { architecture as commsArchitecture, emit as commsEmit, renderEmail as commsRenderEmail, EVENTS as COMMS_EVENTS } from '../src/comms.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import { flightFareUnits, fareBandForAge } from '../src/suppliers.js';
-import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured } from '../src/live-suppliers.js';
+import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured, oagInstanceToLeg, oagScheduleEnabled } from '../src/live-suppliers.js';
+import { estimateFlightFares } from '../src/suppliers.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
 
@@ -200,6 +201,41 @@ test('live suppliers: disabled without keys, normalisers map provider shapes', (
   assert.equal(nh.details.nightlyUSD, 200);
   assert.equal(nh.details.freeCancellation, true);
   assert.match(nh.details.area, /sheikh zayed road/i);
+});
+
+test('OAG schedule: disabled without key; flight instance normalises to a real non-stop leg', () => {
+  assert.equal(oagScheduleEnabled(), false); // no OAG key in the test env
+
+  // A representative OAG flight-instance (JFK→LHR overnight on BA).
+  const inst = {
+    carrier: { iata: 'BA', icao: 'BAW' },
+    flightNumber: '112',
+    departure: { airport: { iata: 'JFK', city: 'New York' }, date: { local: '2025-05-01' }, time: { local: '19:00' } },
+    arrival: { airport: { iata: 'LHR', city: 'London' }, date: { local: '2025-05-02' }, time: { local: '07:00' } },
+    elapsedTime: 420,
+    aircraftType: { iata: '77W' },
+  };
+  const leg = oagInstanceToLeg(inst);
+  assert.equal(leg.from, 'JFK');
+  assert.equal(leg.to, 'LHR');
+  assert.equal(leg.depart, '19:00');
+  assert.equal(leg.arrive, '07:00');
+  assert.equal(leg.arriveNextDay, true);
+  assert.equal(leg.stops, 0);
+  assert.equal(leg.stopLabel, 'Direct');
+  assert.equal(leg.durationLabel, '7h 0m');
+  assert.equal(leg.flightNumber, 'BA112');
+  assert.equal(leg.aircraft, '77W');
+});
+
+test('estimateFlightFares: shared pricing applies age bands and is deterministic', () => {
+  const dest = { flightBaseUSD: 300, code: 'DXB' };
+  const a = estimateFlightFares(dest, true, false, { adults: 2, children: 1, childAges: [9], total: 3 }, 'seed-x');
+  const b = estimateFlightFares(dest, true, false, { adults: 2, children: 1, childAges: [9], total: 3 }, 'seed-x');
+  assert.deepEqual(a, b); // same seed → identical (reproducible)
+  assert.deepEqual(a.fareCounts, { adult: 2, youth: 0, child: 1, infant: 0 });
+  assert.equal(a.fareUnits, 2.75);
+  assert.ok(Math.abs(a.priceUSD - a.totalPerSeat * 2.75) < 0.02);
 });
 
 test('flight preferences: inferred from free text ("non-stop")', () => {

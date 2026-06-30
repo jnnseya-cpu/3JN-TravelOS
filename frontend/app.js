@@ -498,14 +498,21 @@ function renderOptions(data) {
     ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(216,180,106,0.45)' : 'rgba(70,211,154,0.35)'}">${fpBits.join(' · ')}</div>`
     : '';
 
-  // Price-source transparency: live provider feed vs deterministic estimate.
+  // Provenance transparency: real fares (Duffel/Amadeus), real schedules (OAG,
+  // estimator-priced), or fully indicative estimates.
   const ps = data.priceSource || {};
-  const live = (ps.flights === 'live' ? 1 : 0) + (ps.hotel === 'live' ? 1 : 0);
-  const psNote = ps.flights || ps.hotel
-    ? (live > 0
-      ? `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Live prices · ${ps.flights === 'live' ? 'flights' : ''}${ps.flights === 'live' && ps.hotel === 'live' ? ' + ' : ''}${ps.hotel === 'live' ? 'hotels' : ''} from connected providers</div>`
-      : `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`)
-    : '';
+  const ss = data.scheduleSource || {};
+  const liveBits = [];
+  if (ps.flights === 'live') liveBits.push('flight fares');
+  if (ps.hotel === 'live') liveBits.push('hotel rates');
+  let psNote = '';
+  if (liveBits.length) {
+    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Live prices · ${liveBits.join(' + ')} from connected providers</div>`;
+  } else if (ss.flights === 'live') {
+    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Real flight schedules (OAG) · live carriers, times &amp; non-stops — fares indicative until a fare provider is connected</div>`;
+  } else if (ps.flights || ps.hotel) {
+    psNote = `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`;
+  }
 
   $('#plannerOut').innerHTML = gateBanner + flightPrefNote + psNote + summary + scanCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
@@ -599,7 +606,8 @@ window.showComponentInfo = (tier, idx) => {
     modal(`<span class="eyebrow">Flight details · ${esc(c.supplier)}</span>
       <h3 style="margin:6px 0 2px">${esc(d.outbound?.fromCity || d.outbound?.from)} → ${esc(d.outbound?.toCity || d.outbound?.to)}</h3>
       <div style="margin:6px 0">${direct ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.1)">⭐ Direct flight — privilege selection</span>' : '<span class="verified-tag">↺ Connecting flight (no non-stop on this route)</span>'}</div>
-      <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}</div>
+      <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}${d.flightNumber ? ` · flight ${esc(d.flightNumber)}` : ''}${d.aircraft ? ` · ${esc(d.aircraft)}` : ''}</div>
+      ${c.scheduleLive ? '<div class="muted" style="font-size:11.5px;margin-top:4px">🟢 Real operated schedule (OAG) — fare is indicative</div>' : ''}
       ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
       ${fareSplitHTML(d, toLocal)}
       <div class="kv" style="margin-top:10px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
