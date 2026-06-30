@@ -493,9 +493,14 @@ function optionCard(o, sym, intent) {
   const p = o.pricing;
   const comps = o.components.map((c, i) => {
     const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}" title="${c.agent && c.agentId ? '3JN agent account ' + c.agentId : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}${c.agent && c.agentId ? ' · ' + c.agentId : ''}</span>` : '';
-    const more = ['flight', 'hotel', 'host'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more &amp; images</span>` : '';
+    const more = ['flight', 'hotel', 'host'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more</span>` : '';
+    const flightTag = c.type === 'flight' && c.details?.outbound
+      ? ((c.details.outbound.stops || 0) === 0 && (c.details.inbound?.stops || 0) === 0
+        ? ' <span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">⭐ Direct</span>'
+        : ` <span class="ch-chip">${esc(c.details.outbound.stopLabel || '1 stop')}</span>`)
+      : '';
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span> ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${flightTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">
@@ -541,8 +546,10 @@ window.showComponentInfo = (tier, idx) => {
           <div class="muted" style="flex:1;text-align:center;font-size:12px">✈ ${esc(l.durationLabel)}<div class="rel-bar" style="margin:6px 12px"><i style="width:100%"></i></div>${esc(l.stopLabel)}</div>
           <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</div><div class="muted" style="font-size:12px">${esc(l.to)}${l.toCity ? ' · ' + esc(l.toCity) : ''}</div></div>
         </div></div>` : '';
+    const direct = (d.outbound?.stops || 0) === 0 && (d.inbound?.stops || 0) === 0;
     modal(`<span class="eyebrow">Flight details · ${esc(c.supplier)}</span>
       <h3 style="margin:6px 0 2px">${esc(d.outbound?.fromCity || d.outbound?.from)} → ${esc(d.outbound?.toCity || d.outbound?.to)}</h3>
+      <div style="margin:6px 0">${direct ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.1)">⭐ Direct flight — privilege selection</span>' : '<span class="verified-tag">↺ Connecting flight (no non-stop on this route)</span>'}</div>
       <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}</div>
       ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
       <div class="kv" style="margin-top:12px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
@@ -559,13 +566,39 @@ window.showComponentInfo = (tier, idx) => {
       <div><div style="font-family:'Space Grotesk';font-weight:700;font-size:17px">${esc(c.supplier)}</div>
         <div style="font-size:13px"><span style="color:var(--gold)">${stars}</span> <span class="muted">· ${esc(d.area || '')}</span></div></div>
     </div>
-    <div class="muted" style="font-size:12.5px;margin-top:8px">${d.distanceToCentreKm}km to centre · ${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
+    <div class="muted" style="font-size:12.5px;margin-top:8px">${esc(d.propertyType || '')} · ${d.distanceToCentreKm}km to centre · ${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
+    ${d.verifiedBadge ? `<div class="verified-tag" style="margin-top:8px">✓ ${esc(d.verifiedBadge)}</div>` : ''}
     <p class="muted" style="font-size:13px;margin:10px 0">${esc(d.description || '')}</p>
-    <div class="kv"><span>Room</span><span>${esc(d.roomType || '')}</span></div>
-    <div class="kv"><span>Board</span><span>${esc(d.board || '')}</span></div>
-    <div class="kv"><span>Stay</span><span>${d.nights} nights · ${d.rooms} room${d.rooms > 1 ? 's' : ''}</span></div>
-    <div class="kv"><span>Cancellation</span><span>${d.freeCancellation ? '<span style="color:var(--green)">Free cancellation</span>' : 'Non-refundable'}</span></div>
-    <div style="margin-top:10px"><span class="eyebrow">Amenities</span><div class="chips" style="margin-top:6px">${amen}</div></div>
+
+    <div class="console-grid" style="gap:0 18px">
+      <div>
+        <span class="eyebrow">Room & stay</span>
+        <div class="kv"><span>Room</span><span>${esc(d.roomType || '')}</span></div>
+        <div class="kv"><span>Beds</span><span>${esc(d.bedConfiguration || '—')}</span></div>
+        <div class="kv"><span>Room size</span><span>${d.roomSizeSqm ? d.roomSizeSqm + ' m²' : '—'}</span></div>
+        <div class="kv"><span>Sleeps</span><span>${d.maxOccupancy || d.sleeps || '—'}</span></div>
+        <div class="kv"><span>Board</span><span>${esc(d.board || '')}</span></div>
+        <div class="kv"><span>Breakfast</span><span>${esc(d.breakfastDetail || '—')}</span></div>
+        <div class="kv"><span>Stay</span><span>${d.nights} nights · ${d.rooms} room${d.rooms > 1 ? 's' : ''}</span></div>
+      </div>
+      <div>
+        <span class="eyebrow">Times & policies</span>
+        <div class="kv"><span>Check-in</span><span>${esc(d.checkInTime || '15:00')}</span></div>
+        <div class="kv"><span>Check-out</span><span>${esc(d.checkOutTime || '12:00')}</span></div>
+        <div class="kv"><span>Cancellation</span><span>${d.freeCancellation ? '<span style="color:var(--green)">' + esc(d.cancellationDeadline || 'Free cancellation') + '</span>' : 'Non-refundable'}</span></div>
+        <div class="kv"><span>Deposit</span><span style="font-size:12px">${esc(d.depositPolicy || '—')}</span></div>
+        <div class="kv"><span>Parking</span><span>${esc(d.parking || '—')}</span></div>
+        <div class="kv"><span>Pets</span><span>${esc(d.petsPolicy || '—')}</span></div>
+        <div class="kv"><span>Children</span><span style="font-size:12px">${esc(d.childrenPolicy || '—')}</span></div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px"><span class="eyebrow">Amenities</span><div class="chips" style="margin-top:6px">${amen}</div></div>
+    ${(d.nearbyLandmarks || []).length ? `<div style="margin-top:10px"><span class="eyebrow">What's nearby</span><div class="chips" style="margin-top:6px">${d.nearbyLandmarks.map((l) => `<span class="chip">📍 ${esc(l)}</span>`).join('')}</div></div>` : ''}
+    ${(d.languages || []).length ? `<div class="kv" style="margin-top:10px"><span>Languages</span><span>${d.languages.map(esc).join(' · ')}</span></div>` : ''}
+    ${(d.paymentOptions || []).length ? `<div class="kv"><span>Payment</span><span style="font-size:12px;text-align:right">${d.paymentOptions.map(esc).join(' · ')}</span></div>` : ''}
+    ${d.taxesNote ? `<div class="muted" style="font-size:11.5px;margin-top:6px">${esc(d.taxesNote)}</div>` : ''}
+
     <div class="kv" style="margin-top:12px;font-weight:700"><span>Total stay</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
 };

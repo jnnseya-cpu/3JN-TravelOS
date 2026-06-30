@@ -152,9 +152,11 @@ test('Dubai land products are sourced via the Rayna Tours agent account at net r
   assert.equal(visa.sourcedVia, 'Rayna Tours');
   assert.equal(visa.agent, true);
   assert.ok(visa.priceUSD < visa.publicPriceUSD, 'agent net rate is below public price');
-  // flights route to an affiliate partner, not Direct
+  // Direct flights are a privilege: when a non-stop exists, the package picks it.
   const flight = std.components.find((c) => c.type === 'flight');
-  assert.ok(['Kiwi.com', 'Trip.com', 'Expedia'].includes(flight.sourcedVia));
+  assert.equal(flight.details.outbound.stops, 0, 'prefers a direct outbound when available');
+  assert.equal(flight.details.inbound.stops, 0, 'prefers a direct inbound when available');
+  assert.ok(typeof flight.sourcedVia === 'string' && flight.sourcedVia.length > 0);
 });
 
 test('referral rewards both parties', () => {
