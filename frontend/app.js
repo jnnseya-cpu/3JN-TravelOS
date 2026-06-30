@@ -1297,23 +1297,23 @@ const CONTENT = {
   careers: {
     title: '🚀 Careers — build the operating system for global travel',
     body: `<p class="muted">We're a small team rethinking how the world books travel — AI-native, savings-obsessed, globally diverse. If you want your work in the hands of travellers across 195+ countries, we want to hear from you.</p>
-      <p class="muted">Open areas: supplier integrations, pricing & optimisation, growth, and 24/7 traveller support. Email <strong>careers@3jntravel.com</strong>.</p>`,
+      <p class="muted">Open areas: supplier integrations, pricing & optimisation, growth, and 24/7 traveller support. Email <strong>info@3jntravel.com</strong>.</p>`,
   },
   privacy: {
     title: '🔒 Privacy Policy',
-    body: `<p class="muted">Your trust is the product. We collect only what's needed to plan, book and support your trip — destination, dates, travellers and payment details — and we never sell your personal data. Location/currency is detected to price you fairly. You can request export or deletion at any time via <strong>privacy@3jntravel.com</strong>.</p>
+    body: `<p class="muted">Your trust is the product. We collect only what's needed to plan, book and support your trip — destination, dates, travellers and payment details — and we never sell your personal data. Location/currency is detected to price you fairly. You can request export or deletion at any time via <strong>info@3jntravel.com</strong>.</p>
       <p class="muted" style="font-size:12px">Prototype notice: this demo stores data in memory only and clears on restart.</p>`,
   },
   terms: {
     title: '📜 Terms of Use',
-    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. Prices are guaranteed at the moment of quote and protected by our Price Guard. Deposits and instalments are interest-free; refunds and rebookings are processed where commercially and legally possible. Full terms at <strong>legal@3jntravel.com</strong>.</p>
+    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. Prices are guaranteed at the moment of quote and protected by our Price Guard. Deposits and instalments are interest-free; refunds and rebookings are processed where commercially and legally possible. Full terms at <strong>info@3jntravel.com</strong>.</p>
       <p class="muted" style="font-size:12px">Prototype notice: no real bookings or payments are taken in this demo.</p>`,
   },
   support: {
     title: '🛟 Support — 24/7, in your language',
     body: `<p class="muted">Real help, before, during and after your trip: flight-disruption assistance, document checklists, visa-deadline alerts, rebooking and refund guidance. Reach us any time.</p>
+      <div class="kv"><span>Main contact</span><span><strong style="color:var(--gold)">info@3jntravel.com</strong></span></div>
       <div class="kv"><span>WhatsApp / Chat</span><span>+44 20 0000 0000</span></div>
-      <div class="kv"><span>Email</span><span>support@3jntravel.com</span></div>
       <div class="kv"><span>In-trip emergency line</span><span>24/7</span></div>`,
   },
   cookies: {
@@ -1325,7 +1325,7 @@ const CONTENT = {
         <li><span class="cs">Analytics (anonymised)</span><span class="cp">optional</span></li>
         <li><span class="cs">Marketing</span><span class="cp">opt-in only</span></li>
       </ul>
-      <p class="muted" style="font-size:12px">Manage preferences any time via <strong>privacy@3jntravel.com</strong>. Prototype: this demo sets no third-party cookies.</p>`,
+      <p class="muted" style="font-size:12px">Manage preferences any time via <strong>info@3jntravel.com</strong>. Prototype: this demo sets no third-party cookies.</p>`,
   },
   disclaimer: {
     title: '⚠️ Disclaimer',
@@ -1341,7 +1341,7 @@ const CONTENT = {
         <li><span class="cs">Instalment deposits</span><span class="cp">per plan terms</span></li>
         <li><span class="cs">Price-drop difference</span><span class="cp">auto-refunded</span></li>
       </ul>
-      <p class="muted" style="font-size:12px">Requests: <strong>refunds@3jntravel.com</strong>. ATOL/ABTA financial protection applies to eligible UK package bookings.</p>`,
+      <p class="muted" style="font-size:12px">Requests: <strong>info@3jntravel.com</strong>. ATOL/ABTA financial protection applies to eligible UK package bookings.</p>`,
   },
   acceptable: {
     title: '✅ Acceptable Use Policy',
@@ -1397,6 +1397,26 @@ $('#notifBtn')?.addEventListener('click', async () => {
   try { await api('/api/notifications/read', { method: 'POST', body: '{}' }); } catch {}
   refreshNotifications();
 });
+
+// ---- Contact form ---------------------------------------------------------
+$('#contactLink')?.addEventListener('click', () => {
+  modal(`
+    <span class="eyebrow">Contact 3JN Travel OS</span>
+    <h3 style="margin:6px 0">We'd love to hear from you</h3>
+    <p class="muted" style="font-size:13px">Goes straight to <strong>info@3jntravel.com</strong>. We reply 24/7.</p>
+    <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="ctName"></div>
+    <div class="field" style="margin-top:10px"><label>Your email</label><input class="in" id="ctEmail" placeholder="you@email.com"></div>
+    <div class="field" style="margin-top:10px"><label>Message</label><textarea class="in" id="ctMsg" style="width:100%;min-height:90px"></textarea></div>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="sendContact()">Send message</button>`);
+});
+window.sendContact = async () => {
+  const email = $('#ctEmail').value.trim();
+  const message = $('#ctMsg').value.trim();
+  if (!email || !message) { toast('Enter your email and a message.'); return; }
+  let d; try { d = await api('/api/contact', { method: 'POST', body: JSON.stringify({ name: $('#ctName').value.trim(), email, message }) }); } catch { return; }
+  closeModal();
+  toast(d.sent ? '✓ Message sent to info@3jntravel.com.' : '✓ Message received — we’ll be in touch.');
+};
 
 // ---- Become a Host --------------------------------------------------------
 $('#hostLink')?.addEventListener('click', () => {

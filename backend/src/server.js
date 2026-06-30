@@ -31,6 +31,7 @@ import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
 import { gatewayStatus } from './ai-gateway.js';
 import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
+import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -48,7 +49,7 @@ app.use((req, res, next) => {
 });
 
 // Health check for Cloud Run / Firebase / load balancers.
-app.get('/api/health', (req, res) => res.json({ ok: true, service: '3jn-travel-os', persistence: isEnabled() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: '3jn-travel-os', persistence: isEnabled(), email: isMailerEnabled() }));
 
 // Persist the store to Firebase RTDB shortly after any successful mutation
 // (debounced). No-op when persistence is disabled (offline / no credentials).
@@ -87,6 +88,20 @@ app.get('/api/destinations', safe((req, res) => {
   const cur = ctx.currency;
   const catalog = destinationsCatalog().map((d) => ({ ...d, fromLocal: Math.round(d.fromUSD * cur.rateFromUSD), currency: cur.code, symbol: cur.symbol }));
   res.json({ destinations: catalog, addOns: ['Tours', 'Local drivers', 'Photographers', 'Guides', 'Restaurant bookings', 'Event tickets', 'Airport pickup', 'Translators', 'eSIM data', 'Travel insurance'] });
+}));
+
+// ---- Contact form → emails info@3jntravel.com (reply-to sender) -----------
+app.post('/api/contact', safe(async (req, res) => {
+  const { name, email, message } = req.body || {};
+  if (!email || !message) return res.status(400).json({ error: 'email-and-message-required' });
+  const r = await sendMail({
+    to: MAIN_CONTACT,
+    replyTo: email,
+    subject: `Contact form — ${name || email}`,
+    text: `From: ${name || ''} <${email}>\n\n${message}`,
+    html: `<p><strong>From:</strong> ${name || ''} &lt;${email}&gt;</p><p>${String(message).replace(/</g, '&lt;')}</p>`,
+  });
+  res.json({ sent: r.ok, queued: !r.ok && r.skipped ? 'email-disabled' : undefined });
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------
@@ -217,6 +232,11 @@ app.post('/api/book', safe((req, res) => {
   }
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod });
+  // Fire-and-forget confirmation email (no-op if email disabled or guest email).
+  if (user?.email) {
+    const { subject, html, text } = bookingEmail(quote.option, booking);
+    sendMail({ to: user.email, subject, html, text }).catch(() => {});
+  }
   res.json({ booking, user: user ? getUser(user.id) : null });
 }));
 
@@ -422,6 +442,7 @@ app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/
 // Initialise Firebase RTDB persistence (credential-gated; no-op offline). Load
 // any saved state into the in-memory store, then keep it flushed.
 if (process.env.NODE_ENV !== 'test') {
+  initMailer();
   const p = initPersistence({});
   if (p.enabled) {
     load().then((snap) => {
