@@ -10,7 +10,7 @@
 // brief requires "cheapest *reliable*" and "only verified packages".
 
 import { visaRule, destExperiences } from './destinations.js';
-import { routeFareBaseUSD } from './airports.js';
+import { routeFareBaseUSD, marketFactor, airportCoords, haversineKm } from './airports.js';
 import { applySourcing } from './partners.js';
 import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
 
@@ -50,16 +50,21 @@ function realisticStops(airline, originAirport, originCountry, destAirport, dest
     if (!originCountry) return null;
     return EUROPE.has(originCountry) && EUROPE.has(destCountry) ? 0 : 1;
   }
-  // Network carrier flies non-stop only when the route actually touches its hub:
+  // Network carrier flies non-stop when the route touches its hub:
   //  - flying INTO its home country (a flag carrier serves its hub from many
   //    foreign cities non-stop, e.g. Emirates BHX→DXB), or
-  //  - departing FROM / arriving AT its own hub airport (hub↔anywhere).
-  // It will NOT fly non-stop between two cities that both bypass its hub
-  // (e.g. British Airways Birmingham→Dubai routes via Heathrow → 1 stop).
-  const direct = destCountry === airline.hubCountry
-    || originAirport === airline.hubAirport
-    || destAirport === airline.hubAirport;
-  return direct ? 0 : 1;
+  //  - departing FROM / arriving AT its own hub airport (hub↔anywhere) — but
+  //    NOT to an ultra-thin market or beyond non-stop range, where no real
+  //    non-stop exists (e.g. British Airways LHR→Kinshasa actually connects).
+  if (destCountry === airline.hubCountry) return 0; // into the carrier's home hub
+  const touchesHub = originAirport === airline.hubAirport || destAirport === airline.hubAirport;
+  if (touchesHub) {
+    const thin = marketFactor(destAirport) > 1.15 || marketFactor(originAirport) > 1.15;
+    const a = airportCoords(originAirport); const b = airportCoords(destAirport);
+    const km = a && b ? haversineKm(a, b) : 0;
+    if (!thin && km <= 12000) return 0; // plausible non-stop from the hub
+  }
+  return 1;
 }
 
 const HOTEL_BRANDS = [

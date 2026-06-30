@@ -137,6 +137,20 @@ test('accuracy: only a carrier that truly operates the route flies it non-stop',
   assert.equal(r.flightPrefs.directUnavailable, false);
 });
 
+test('origin: "<City> to <Dest>" without the word "from" sets the departure city', () => {
+  // The user's phrasing "Birmingham to Kinshasa" must depart Birmingham (BHX),
+  // not default to London.
+  const r = plan({ text: 'Birmingham to Kinshasa for 21 days in August, 2 adults and 3 children, flights and hotel', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.origin.airport, 'BHX');
+  assert.equal(r.origin.inferred, false);
+  // A real two-word origin still works.
+  const r2 = plan({ text: 'New York to Dubai in September for 5 nights, 2 adults, flights and hotel', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r2.origin.airport, 'JFK');
+  // And a normal "I want to travel to X" is NOT mistaken for an origin.
+  const r3 = plan({ text: 'I want to travel to Dubai in August for 7 nights, flights and hotel', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r3.origin.inferred, true); // no stated origin → inferred
+});
+
 test('thin-market & known cities: real IATA, country, carrier realism, priced up', () => {
   // Kinshasa resolves to its REAL airport (FIH) + country, prices on distance ×
   // a thin-market premium, and is NOT served non-stop by a European low-cost
