@@ -11,7 +11,7 @@
 // good enough to demonstrate the full pipeline. It returns a normalised intent
 // object the rest of the OS consumes.
 
-import { findDestination, resolveDestinationFromText } from './destinations.js';
+import { findDestination, resolveDestinationFromText, airportForCity } from './destinations.js';
 
 const MONTHS = [
   'january', 'february', 'march', 'april', 'may', 'june',
@@ -191,7 +191,19 @@ function buildDates(monthInfo, nights, today = new Date()) {
 const ORIGIN_STOP = /^(to|in|for|with|on|during|next|this|and|by|the|my|our|a|an|cheapest|cheap|reliable|best|affordable|nights?|days?|weeks?|months?|please|return|one|way|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
 function parseOrigin(text) {
   const m = (text || '').match(/\b(?:from|departing(?:\s+from)?|leaving(?:\s+from)?|fly(?:ing)?\s+(?:from|out\s+of)|out\s+of)\s+(.+)/i);
-  if (!m) return null;
+  if (!m) {
+    // No explicit "from" — handle a leading "<City> to <Dest>" (e.g. the user's
+    // "Birmingham to Kinshasa"), where the first token is a KNOWN city.
+    const lead = (text || '').match(/^\s*([A-Za-zÀ-ÿ'’\- ]{3,30}?)\s+to\s+/i);
+    if (lead) {
+      const cand = lead[1].trim().replace(/\s+/g, ' ');
+      if (airportForCity(cand)) return cand;
+      // Try just the last word of the lead (e.g. "travel Birmingham to ...").
+      const lastWord = cand.split(' ').pop();
+      if (lastWord && airportForCity(lastWord)) return lastWord;
+    }
+    return null;
+  }
   const words = m[1].replace(/[.,!?].*$/, '').split(/\s+/);
   const out = [];
   for (const w of words) {
