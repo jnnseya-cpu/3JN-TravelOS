@@ -58,16 +58,22 @@ function parseTravellers(text) {
   if (childAges.length && !childMatch) children = childAges.length;
 
   if (!adultMatch && !childMatch) {
-    if (/\bfamily\b/.test(lower)) {
+    // "family of 5", "group of 4", "party of 6" — an explicit headcount wins.
+    const groupOf = lower.match(/\b(family|group|party)\s+of\s+(\d+)\b/);
+    const peopleMatch = lower.match(/(\d+)\s*(?:people|persons|pax|travellers|travelers|of us|of you)\b/);
+    if (groupOf) {
+      const n = Math.max(1, parseInt(groupOf[2], 10));
+      if (groupOf[1] === 'family') { adults = Math.min(2, n); children = Math.max(0, n - 2); } // 2 adults + the rest children
+      else { adults = n; }
+    } else if (peopleMatch) {
+      adults = Math.max(1, parseInt(peopleMatch[1], 10));
+    } else if (/\bfamily\b/.test(lower)) {
       adults = 2;
       children = 2;
     } else if (/\bcouple\b|\bwife\b|\bhusband\b|\bpartner\b/.test(lower)) {
       adults = 2;
     } else if (/\bsolo\b|\balone\b|\bmyself\b/.test(lower)) {
       adults = 1;
-    } else {
-      const peopleMatch = lower.match(/(\d+)\s*(people|persons|pax|travellers|travelers|of us)/);
-      if (peopleMatch) adults = parseInt(peopleMatch[1], 10);
     }
   }
 
@@ -236,8 +242,14 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   // Explicit calendar dates the traveller typed take priority over a bare month.
   const explicit = parseExplicitDates(raw, today);
   const monthInfo = parseMonth(raw) || (explicit ? { index: explicit.monthIndex, name: MONTHS[explicit.monthIndex] } : null);
-  // Nights: an explicit range defines them; else the stated "N nights"; else default.
-  const nights = (explicit && explicit.nights) || parseNights(raw);
+  // A "mini cruise" is a short 2-night ferry-cruise (e.g. Newcastle→Amsterdam),
+  // NOT a week-long ocean liner — price and default duration differ.
+  const miniCruise = /\bmini[\s-]?cruise\b/i.test(raw);
+  // Nights: an explicit range defines them; else the stated "N nights"; else
+  // default (2 for a mini cruise when nothing is stated, otherwise 7).
+  const nightsStated = /\d+\s*(?:night|nights|day|days|week|weeks)/i.test(raw);
+  let nights = (explicit && explicit.nights) || parseNights(raw);
+  if (miniCruise && !nightsStated && !(explicit && explicit.nights)) nights = 2;
   const dates = explicit && explicit.checkIn
     ? {
       checkIn: explicit.checkIn,
@@ -279,6 +291,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     priority: wantsCheapestReliable ? 'cheapest-reliable' : 'balanced',
     nationality: ctx.country || 'GB',
     originCity, // the user's stated departure city (null if not given)
+    miniCruise, // short ferry-cruise rather than an ocean liner
     hotelArea, // requested hotel neighbourhood/road (null if not given)
     recommendedDestination: destination?.recommendedFromCountry || null,
     unresolved: destination ? [] : ['destination'],

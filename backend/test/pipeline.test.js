@@ -159,6 +159,30 @@ test('multi-modal: a search shows ONLY the modes asked for — no auto flights/h
   assert.deepEqual([...set].sort(), ['hotel', 'train']);
 });
 
+test('mini cruise: "family of 5", Newcastle, 2 nights, priced as a ferry-cruise', () => {
+  const r = plan({ text: 'travel to Amsterdam from new castle on a mini cruise in September for a family of 5, only 2 nights in total', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  // "new castle" → real Newcastle airport, not a derived "NEW".
+  assert.equal(r.origin.airport, 'NCL');
+  // "family of 5" → 5 people (2 adults + 3 children), not 4.
+  assert.equal(r.intent.travellers.total, 5);
+  assert.equal(r.intent.travellers.adults, 2);
+  assert.equal(r.intent.travellers.children, 3);
+  // 2 nights, cruise only.
+  assert.equal(r.intent.nights, 2);
+  const cruise = r.packages.options[0].components.find((c) => c.type === 'cruise');
+  assert.ok(cruise && cruise.details.miniCruise, 'priced as a mini cruise');
+  assert.match(cruise.supplier, /mini cruise/i);
+  // Far cheaper than a 7-night ocean liner — a family of 5 mini cruise is modest.
+  assert.ok(r.packages.options[0].pricing.local.total < 1200, `mini cruise total ${r.packages.options[0].pricing.local.total} should be modest`);
+});
+
+test('"group of 4" and "party of 6" set the headcount', () => {
+  const g = plan({ text: 'flights to Dubai for a group of 4 for 5 nights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(g.intent.travellers.total, 4);
+  assert.equal(g.intent.travellers.adults, 4);
+});
+
 test('local trip needs no passport/visa; international does', () => {
   // A domestic train (London→Manchester) is local — no passport, no visa.
   const local = plan({ text: 'train from London to Manchester for 2 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
