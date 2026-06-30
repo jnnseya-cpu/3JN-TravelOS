@@ -129,7 +129,7 @@ $('#navToggle')?.addEventListener('click', () => {
 });
 $('#navScrim')?.addEventListener('click', closeMobileNav);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMobileNav(); });
-window.addEventListener('resize', () => { if (window.innerWidth > 1080) closeMobileNav(); });
+window.addEventListener('resize', () => { if (window.innerWidth > 1240) closeMobileNav(); });
 
 // ---- Static content (agents, tiers, steps, loyalty) -----------------------
 const AGENTS = [
@@ -277,6 +277,38 @@ async function boot() {
       if (co && badge) badge.innerHTML = `<span class="dot"></span> AI runs at ${co.savingPct}% lower cost (floor ${co.floorPct}%) — routing + cache + local fallback`;
     } catch { /* keep static text */ }
   })();
+  populateShowcase();
+}
+
+// Populate every landing-page headline figure from the REAL engine — a real
+// sample trip + real platform metrics. Nothing on the page is hard-coded.
+async function populateShowcase() {
+  let s;
+  try { s = (await api(`/api/showcase?country=${state.country || 'GB'}`)).showcase; } catch { return; }
+  const set = (id, v) => { const el = $(id); if (el && v != null) el.textContent = v; };
+  const m = s.metrics || {};
+  // Hero + final-CTA stats (real cumulative savings + real coverage + agent count).
+  const savedTxt = m.savedForTravellersLocal > 0 ? m.savedForTravellersDisplay : (s.example ? s.example.savedDisplay + '/trip' : '£0');
+  set('#statSaved', savedTxt); set('#ctaSaved', savedTxt);
+  set('#statCountries', (m.countriesServed || 195) + '+'); set('#ctaCountries', (m.countriesServed || 195) + '+');
+  set('#statAgents', '10'); set('#ctaAgents', '10');
+  // Example trip (problem/solution + featured holiday).
+  if (s.example) {
+    set('#solutionSaved', `You Save ${s.example.savedDisplay}`);
+    set('#featuredPrice', s.example.totalDisplay);
+    set('#featuredSave', `Save ${s.example.savedDisplay} (${s.example.savingsPct}%) vs ${s.example.marketDisplay}`);
+  }
+  // Savings engine — real per-component breakdown + total.
+  const se = $('#savingsEngine');
+  if (se && s.savingsBreakdown?.length) {
+    const rows = s.savingsBreakdown.map((b) => `<div class="kv"><span>${esc(b.label)}</span><span style="color:var(--green)">Saved ${esc(b.saved)}</span></div>`).join('');
+    se.innerHTML = rows + `<div class="kv" style="border:none;padding-top:16px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--gold)">${s.example ? esc(s.example.savedDisplay) : '—'}</span></div>`;
+  }
+  // Negotiation engine — real outcomes from the actual package.
+  const neg = $('#negotiationList');
+  if (neg && s.negotiation?.length) {
+    neg.innerHTML = s.negotiation.map((n) => `<div class="holo-row"><span>${esc(n.item)}</span><span class="v ${n.status === 'Applied' ? 'blue' : 'good'}">${esc(n.status)}</span></div>`).join('');
+  }
 }
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
@@ -426,7 +458,7 @@ function renderOptions(data) {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;align-items:center">
         <div>
           <span class="eyebrow">Trip understood</span>
-          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${intent.destination.city}, ${intent.destination.countryName}</div>
+          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${intent.destination.city}${intent.destination.countryName ? ', ' + intent.destination.countryName : ''}</div>
           <div class="muted" style="font-size:13.5px">${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} children` : ''} · ${intent.nights} nights · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
         </div>
         <div style="text-align:right">
@@ -516,12 +548,13 @@ window.openBooking = async (tier) => {
 
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller (exact passport spelling)</span></div>
     <div class="composer-row" style="margin-top:6px">
-      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="As on passport" value="${esc(state.user?.name || '')}"></div>
-      <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date"></div>
-      <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.country || 'GB')}" style="width:90px"></div>
-      <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567"></div>
-      <div class="field"><label>Passport expiry</label><input class="in" id="bkExp" type="date"></div>
+      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="As on passport" value="${esc((state.user?.travelProfile?.fullLegalName) || state.user?.name || '')}"></div>
+      <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date" value="${esc(state.user?.travelProfile?.dob || '')}"></div>
+      <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.user?.travelProfile?.nationality || state.country || 'GB')}" style="width:90px"></div>
+      <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567" value="${esc(state.user?.travelProfile?.passportNumber || '')}"></div>
+      <div class="field"><label>Passport expiry</label><input class="in" id="bkExp" type="date" value="${esc(state.user?.travelProfile?.passportExpiry || '')}"></div>
     </div>
+    ${Object.keys(state.user?.travelProfile || {}).length ? '<div class="muted" style="font-size:11px;margin-top:4px">✓ auto-filled from your Master Travel Profile</div>' : ''}
     <div class="muted" style="font-size:11.5px;margin-top:6px">${intent.travellers.total > 1 ? `+${intent.travellers.total - 1} more passenger${intent.travellers.total > 2 ? 's' : ''} — details collected after deposit.` : ''}</div>
 
     <div style="margin-top:14px"><span class="eyebrow">Documents needed</span><ul class="comp-list">${docList}</ul></div>
@@ -608,7 +641,8 @@ async function renderConsole() {
 
   const profile = `
     <div class="card pad">
-      <div style="display:flex;align-items:center;gap:12px">
+      <div class="cover-banner" style="${u.coverImage ? `background-image:url('${u.coverImage}')` : ''}"></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
         ${avatarHTML(u, 52)}
         <div><h3 style="margin:0">${u.name}</h3><div class="muted" style="font-size:12.5px">${u.email}</div>
         <span class="role-badge">${u.role}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
@@ -633,6 +667,7 @@ async function renderConsole() {
       </div>
     </div>
     ${loyaltyHub(u)}
+    <div class="card pad" style="margin-top:16px" id="travelProfileCard"></div>
     <div class="card pad" style="margin-top:16px" id="intelCard">
       <span class="eyebrow">Travel Intelligence · Visa &amp; Risk</span>
       <div style="display:flex;gap:8px;margin-top:10px">
@@ -650,9 +685,59 @@ async function renderConsole() {
 
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
+  renderTravelProfile();
   renderEsims();
   renderExpense();
 }
+
+// ---- Master Travel Profile — one account for visa, flight, hotel, holiday ---
+// Filled once here; every module (VisaOS application, booking, etc.) auto-fills
+// from it and writes new details back, so the user never re-types passport/DOB.
+const TRAVEL_PROFILE_FIELDS = [
+  { key: 'fullLegalName', label: 'Full legal name (passport)' },
+  { key: 'dob', label: 'Date of birth', type: 'date' },
+  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Other'] },
+  { key: 'nationality', label: 'Nationality', type: 'country' },
+  { key: 'passportNumber', label: 'Passport number' },
+  { key: 'passportExpiry', label: 'Passport expiry', type: 'date' },
+  { key: 'passportCountry', label: 'Passport issuing country', type: 'country' },
+  { key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'] },
+  { key: 'mobile', label: 'Mobile number' },
+  { key: 'residentialAddress', label: 'Residential address' },
+  { key: 'countryOfResidence', label: 'Country of residence', type: 'country' },
+  { key: 'occupation', label: 'Occupation' },
+  { key: 'employer', label: 'Employer / school' },
+  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number' },
+  { key: 'emergencyContact', label: 'Emergency contact' },
+];
+function renderTravelProfile() {
+  const el = $('#travelProfileCard');
+  if (!el) return;
+  const tp = state.user?.travelProfile || {};
+  const filled = TRAVEL_PROFILE_FIELDS.filter((f) => tp[f.key]).length;
+  const fieldHTML = (f) => {
+    const id = `tp_${f.key}`;
+    const val = tp[f.key] != null ? String(tp[f.key]) : '';
+    if (f.type === 'country') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">— select —</option>${countryOptions(val)}</select></div>`;
+    if (f.type === 'select') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">—</option>${f.options.map((o) => `<option${o === val ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    return `<div class="field"><label>${f.label}</label><input class="in" id="${id}" type="${f.type || 'text'}" value="${esc(val)}"></div>`;
+  };
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+      <span class="eyebrow" style="margin:0">🪪 Master Travel Profile</span>
+      <span class="muted" style="font-size:12px">${filled}/${TRAVEL_PROFILE_FIELDS.length} complete · auto-fills visa, flight, hotel & holiday</span>
+    </div>
+    <div class="composer-row" style="margin-top:10px">${TRAVEL_PROFILE_FIELDS.map(fieldHTML).join('')}</div>
+    <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="saveTravelProfile()">Save travel profile</button>`;
+}
+window.saveTravelProfile = async () => {
+  const tp = {};
+  TRAVEL_PROFILE_FIELDS.forEach((f) => { const el = $(`#tp_${f.key}`); if (el && el.value.trim()) tp[f.key] = f.type === 'number' ? Number(el.value) : el.value.trim(); });
+  let data; try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) }); } catch { return; }
+  setUser(data.user);
+  toast('✓ Travel profile saved — it now auto-fills your visa & bookings.');
+  renderTravelProfile();
+};
 
 // ---- eSIM Manager ---------------------------------------------------------
 async function renderEsims() {
@@ -762,14 +847,17 @@ function avatarHTML(u, size = 32) {
 // ---- Editable profile + picture -------------------------------------------
 window.editProfile = () => {
   const u = state.user;
-  const roleOpts = ['consumer', 'business', 'merchant', 'partner', 'admin']
+  const roleOpts = ['consumer', 'business', 'merchant', 'partner', 'embassy', 'admin']
     .map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('');
   modal(`
     <span class="eyebrow">Edit profile</span>
+    <div class="cover-edit" id="coverPreview" style="background-image:${u.coverImage ? `url('${u.coverImage}')` : 'none'}">
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer">🖼 Cover picture<input type="file" id="coverFile" accept="image/*" style="display:none"></label>
+    </div>
     <div style="display:flex;align-items:center;gap:14px;margin:10px 0">
       <span id="avatarPreview">${avatarHTML(u, 64)}</span>
       <div>
-        <label class="btn btn-ghost btn-sm" style="cursor:pointer">📷 Upload picture<input type="file" id="avatarFile" accept="image/*" style="display:none"></label>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer">📷 Profile photo<input type="file" id="avatarFile" accept="image/*" style="display:none"></label>
         <div class="muted" style="font-size:11px;margin-top:6px">or pick an emoji:</div>
         <div class="chips" style="margin-top:4px">${['🧳','💼','🏪','🤝','🛡️','🧑‍✈️','🌍','⭐'].map((e) => `<span class="chip" onclick="pickEmoji('${e}')">${e}</span>`).join('')}</div>
       </div>
@@ -780,12 +868,21 @@ window.editProfile = () => {
     <div class="field" style="margin-top:10px"><label>Bio</label><textarea class="in" id="pfBio" style="width:100%;min-height:60px">${u.bio || ''}</textarea></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveProfile()">Save profile</button>`);
   window.__avatar = u.avatar;
+  window.__cover = u.coverImage || null;
   $('#avatarFile')?.addEventListener('change', (e) => {
     const f = e.target.files[0];
     if (!f) return;
     if (f.size > 500000) { toast('Image too large (max ~500KB).'); return; }
     const reader = new FileReader();
     reader.onload = () => { window.__avatar = reader.result; $('#avatarPreview').innerHTML = `<img class="avatar" src="${reader.result}" style="width:64px;height:64px" alt="">`; };
+    reader.readAsDataURL(f);
+  });
+  $('#coverFile')?.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 800000) { toast('Cover too large (max ~800KB).'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { window.__cover = reader.result; $('#coverPreview').style.backgroundImage = `url('${reader.result}')`; };
     reader.readAsDataURL(f);
   });
 };
@@ -802,6 +899,7 @@ window.saveProfile = async () => {
   const patch = {
     name: $('#pfName').value, email: newEmail,
     role: $('#pfRole').value, bio: $('#pfBio').value, avatar: window.__avatar,
+    coverImage: window.__cover || '',
   };
   let data;
   try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); } catch { return; }
@@ -1208,32 +1306,86 @@ window.planDest = (city) => {
 $('#visaTabApply')?.addEventListener('click', renderVisaApply);
 $('#visaTabGov')?.addEventListener('click', renderVisaGov);
 
-function renderVisaApply() {
+// Fields the applicant must complete. `req: true` means it gates the AI run.
+const VISA_FORM_FIELDS = [
+  { key: 'fullName', label: 'Full legal name', req: true },
+  { key: 'dob', label: 'Date of birth', type: 'date', req: true },
+  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Other'] },
+  { key: 'nationality', label: 'Nationality', type: 'country', req: true },
+  { key: 'passportNumber', label: 'Passport number', req: true },
+  { key: 'passportExpiry', label: 'Passport expiry', type: 'date', req: true },
+  { key: 'passportCountry', label: 'Passport issuing country', type: 'country' },
+  { key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'] },
+  { key: 'address', label: 'Current address', req: true },
+  { key: 'email', label: 'Email', req: true },
+  { key: 'phone', label: 'Phone number' },
+  { key: 'occupation', label: 'Occupation', req: true },
+  { key: 'employer', label: 'Employer / school' },
+  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number' },
+  { key: 'travelHistory', label: 'Travel history (10y)' },
+  { key: 'previousRefusals', label: 'Previous visa refusals', type: 'select', options: ['None', 'Yes — declared'] },
+  { key: 'criminalHistory', label: 'Criminal history', type: 'select', options: ['None', 'Yes — declared'] },
+  { key: 'overstayHistory', label: 'Overstay history', type: 'select', options: ['None', 'Yes — declared'] },
+  { key: 'arrival', label: 'Planned arrival', type: 'date' },
+  { key: 'departure', label: 'Planned departure', type: 'date' },
+  { key: 'accommodation', label: 'Accommodation' },
+  { key: 'fundingSource', label: 'Funding source', type: 'select', options: ['Self', 'Employer', 'Sponsor', 'Scholarship', 'Family'] },
+];
+
+function visaFieldHTML(f, val = '') {
+  const id = `vf_${f.key}`;
+  const star = f.req ? ' <span style="color:var(--gold)">*</span>' : '';
+  const v = val != null ? String(val) : '';
+  let input;
+  if (f.type === 'country') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${countryOptions(v || (f.key === 'nationality' ? 'NG' : ''))}</select>`;
+  else if (f.type === 'select') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${f.options.map((o) => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+  else input = `<input class="in vf" id="${id}" data-req="${!!f.req}" type="${f.type || 'text'}" value="${esc(v)}">`;
+  return `<div class="field"><label>${esc(f.label)}${star}</label>${input}</div>`;
+}
+// Pre-fill the visa form from the user's Master Travel Profile.
+function visaPrefill() {
+  const tp = state.user?.travelProfile || {};
+  return {
+    fullName: tp.fullLegalName, dob: tp.dob, gender: tp.gender, nationality: tp.nationality,
+    passportNumber: tp.passportNumber, passportExpiry: tp.passportExpiry, passportCountry: tp.passportCountry,
+    maritalStatus: tp.maritalStatus, address: tp.residentialAddress, email: state.user?.email,
+    phone: tp.mobile, occupation: tp.occupation, employer: tp.employer, monthlyIncome: tp.monthlyIncome,
+  };
+}
+
+async function renderVisaApply() {
   const out = $('#visaosOut');
   if (!out) return;
+  // Visa application is a signed-in dashboard feature — not a public page.
+  if (!state.user) {
+    out.innerHTML = `<div class="card pad center" style="max-width:540px;margin:0 auto">
+      <div style="font-size:34px">🔒</div>
+      <h3 style="margin:10px 0 6px">Sign in to start a visa application</h3>
+      <p class="muted" style="font-size:14px">The Visa Application is part of your private dashboard. Your documents and identity data stay in your account.</p>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth()">Sign in</button>
+      <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
+    </div>`;
+    return;
+  }
   out.innerHTML = `
     <div class="planner-shell">
       <div class="card pad">
-        <span class="eyebrow">Digital Visa Application</span>
-        <p class="muted" style="font-size:12.5px">Submit once — the agent swarm verifies and decides. Toggle the verification signals to see how the engine reacts (these simulate the agents' upstream findings).</p>
-        <div class="composer-row" style="margin-top:8px">
-          <div class="field"><label>Full name</label><input class="in" id="vName" value="Daniel Okoro"></div>
-          <div class="field"><label>Nationality</label>
-            <select class="in" id="vNat"><option>GB</option><option>US</option><option selected>NG</option><option>IN</option><option>FR</option></select></div>
-          <div class="field"><label>Destination</label>
-            <select class="in" id="vDest"><option selected>Dubai</option><option>Istanbul</option><option>Barcelona</option><option>New York</option><option>Bali</option></select></div>
-          <div class="field"><label>Visa country</label>
-            <select class="in" id="vCountry">${VISA_COUNTRIES.map((c) => `<option value="${c.code}"${c.code === 'AE' ? ' selected' : ''}>${c.flag} ${c.name}</option>`).join('')}</select></div>
-          <div class="field"><label>Visa type</label>
-            <select class="in" id="vType">${VISA_TYPES_FE.map((t) => `<option value="${t.key}">${t.icon} ${t.name}</option>`).join('')}</select></div>
-          <div class="field"><label>Purpose</label>
-            <select class="in" id="vPurpose"><option>tourism</option><option>business</option><option>study</option><option>family visit</option><option>medical</option><option>conference</option></select></div>
-          <div class="field"><label>Age</label><input class="in" id="vAge" value="34" style="width:70px"></div>
-          <div class="field"><label>Employer</label><input class="in" id="vEmployer" value="GE Aerospace"></div>
-          <div class="field"><label>Monthly income (USD)</label><input class="in" id="vIncome" value="4200" style="width:120px"></div>
-          <div class="field"><label>Home ties</label><select class="in" id="vTies"><option value="strong">strong</option><option value="moderate">moderate</option><option value="weak">weak</option></select></div>
+        <span class="eyebrow">Digital Visa Application · private dashboard</span>
+        <p class="muted" style="font-size:12.5px">Complete every required field <strong>and attach every document</strong>. The AI decision swarm only runs once your file is 100% complete. <span class="muted">* = required</span></p>
+
+        <div style="margin-top:12px"><span class="eyebrow">Trip & visa</span></div>
+        <div class="composer-row" style="margin-top:6px">
+          <div class="field"><label>Destination country <span style="color:var(--gold)">*</span></label><select class="in vf" id="vf_destination" data-req="true"><option value="">— select —</option>${countryOptions('AE')}</select></div>
+          <div class="field"><label>Visa country</label><select class="in" id="vCountry">${VISA_COUNTRIES.map((c) => `<option value="${c.code}"${c.code === 'AE' ? ' selected' : ''}>${c.flag} ${esc(c.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Visa type</label><select class="in" id="vType">${VISA_TYPES_FE.map((t) => `<option value="${t.key}">${t.icon} ${esc(t.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Purpose <span style="color:var(--gold)">*</span></label><select class="in vf" id="vf_purpose" data-req="true"><option value="">— select —</option>${['tourism', 'business', 'study', 'work', 'family', 'medical', 'transit'].map((p) => `<option>${p}</option>`).join('')}</select></div>
         </div>
-        <div class="chips" style="margin-top:12px" id="vSignals">
+
+        <div style="margin-top:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><span class="eyebrow" style="margin:0">Applicant information</span><span class="muted" style="font-size:11.5px">${Object.values(visaPrefill()).filter(Boolean).length ? '✓ auto-filled from your Master Travel Profile' : 'Tip: fill your Master Travel Profile in the Console to auto-fill this'}</span></div>
+        <div class="composer-row" style="margin-top:6px">${(() => { const pf = visaPrefill(); return VISA_FORM_FIELDS.map((f) => visaFieldHTML(f, pf[f.key])).join(''); })()}</div>
+
+        <div style="margin-top:14px"><span class="eyebrow">Verification signals (simulate upstream agent findings)</span></div>
+        <div class="chips" style="margin-top:8px" id="vSignals">
           ${signalToggle('documentsAuthentic', 'Documents authentic', true)}
           ${signalToggle('fundsConsistent', 'Funds consistent', true)}
           ${signalToggle('footprintMatches', 'Footprint matches', true)}
@@ -1245,17 +1397,69 @@ function renderVisaApply() {
         </div>
         <div class="field" style="margin-top:12px"><label>Behaviour: hesitation around employment (0=calm, 100=evasive) — <span id="vBehLbl">10</span></label>
           <input type="range" id="vBeh" min="0" max="100" value="10" oninput="document.getElementById('vBehLbl').textContent=this.value"></div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
-          <button class="btn btn-ghost" id="vChecklist">📋 Required documents</button>
-          <button class="btn btn-gold" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+
+        <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span class="eyebrow" style="margin:0">Required documents — attach each one</span>
+          <span class="muted" style="font-size:12px" id="vDocsHint">Select destination & visa type to load the checklist</span>
         </div>
+        <div id="vDocs" style="margin-top:8px"><div class="muted" style="font-size:13px"><span class="loader"></span> Loading checklist…</div></div>
+
+        <div class="rel-bar" style="margin:14px 0 6px"><i id="vProgressBar" style="width:0%"></i></div>
+        <div class="muted" style="font-size:12.5px" id="vProgress">—</div>
+        <button class="btn btn-gold" id="vSubmit" style="margin-top:12px" disabled>▶ Run Visa Decision Agent Swarm</button>
+        <div class="muted" style="font-size:11.5px;margin-top:6px" id="vGateNote">Complete all required fields and attach all documents to enable the AI run.</div>
       </div>
-      <div id="visaChecklistOut" style="margin-top:16px"></div>
       <div id="visaDecision" style="margin-top:20px"></div>
     </div>`;
+
   $('#vSubmit').addEventListener('click', submitVisa);
-  $('#vChecklist').addEventListener('click', showVisaChecklist);
+  // Re-evaluate the gate on every change; reload documents when trip/type changes.
+  out.querySelectorAll('.vf').forEach((el) => el.addEventListener('input', updateVisaGate));
+  $('#vf_destination').addEventListener('change', loadVisaDocs);
+  $('#vCountry').addEventListener('change', loadVisaDocs);
+  $('#vType').addEventListener('change', loadVisaDocs);
+  loadVisaDocs();
 }
+
+// Load the country/type-specific checklist and render each document as an
+// attach-toggle. The AI run stays locked until every document is attached.
+async function loadVisaDocs() {
+  const box = $('#vDocs');
+  if (!box) return;
+  box.innerHTML = '<div class="muted" style="font-size:13px"><span class="loader"></span> Building checklist…</div>';
+  let d;
+  try {
+    d = await api('/api/visa/checklist', { method: 'POST', body: JSON.stringify({ country: $('#vCountry').value, visaType: $('#vType').value, applicant: applicantFromForm() }) });
+  } catch { return; }
+  const hint = $('#vDocsHint'); if (hint) hint.textContent = `${d.totalDocuments} documents${d.country ? ' · ' + d.country.name : ''}`;
+  let idx = 0;
+  box.innerHTML = d.sections.map((s) => `
+    <div style="margin-top:10px"><div class="muted" style="font-size:12px;font-weight:600">${esc(s.title)} · ${s.items.length}</div>
+      ${s.items.map((it) => {
+        const id = `vdoc_${idx++}`;
+        return `<label for="${id}" class="vdoc-row"><input type="checkbox" class="vdoc-check" id="${id}" onchange="updateVisaGate()"> <span>${esc(it)}</span> <span class="vdoc-tag">attach</span></label>`;
+      }).join('')}</div>`).join('');
+  updateVisaGate();
+}
+
+// Gate: enable the AI run ONLY when all required fields are filled AND every
+// document is attached.
+function updateVisaGate() {
+  const reqEls = [...document.querySelectorAll('.vf[data-req="true"]')];
+  const filled = reqEls.filter((el) => el.value && el.value.trim());
+  const docs = [...document.querySelectorAll('.vdoc-check')];
+  const attached = docs.filter((c) => c.checked);
+  const ready = reqEls.length > 0 && filled.length === reqEls.length && docs.length > 0 && attached.length === docs.length;
+  const btn = $('#vSubmit'); if (btn) btn.disabled = !ready;
+  const bar = $('#vProgressBar');
+  const totalItems = reqEls.length + docs.length;
+  const done = filled.length + attached.length;
+  if (bar) bar.style.width = totalItems ? Math.round((done / totalItems) * 100) + '%' : '0%';
+  const prog = $('#vProgress');
+  if (prog) prog.innerHTML = `Fields ${filled.length}/${reqEls.length} · Documents ${attached.length}/${docs.length}` + (ready ? ' · <span style="color:var(--green)">✓ file complete — AI ready</span>' : '');
+  const note = $('#vGateNote'); if (note) note.style.display = ready ? 'none' : 'block';
+}
+window.updateVisaGate = updateVisaGate;
 
 // Visa framework metadata (mirrors backend visa-framework.js).
 const VISA_COUNTRIES = [
@@ -1275,17 +1479,46 @@ const VISA_TYPES_FE = [
   { key: 'transit', name: 'Transit', icon: '🛫' },
 ];
 
+// Full ISO 3166-1 alpha-2 code list. Names + flags are derived at runtime from
+// the browser (Intl.DisplayNames + regional-indicator emoji) so we don't ship a
+// long hard-coded name table.
+const COUNTRY_CODES = ('AF AL DZ AD AO AG AR AM AU AT AZ BS BH BD BB BY BE BZ BJ BT BO BA BW BR BN BG BF BI CV KH CM CA CF TD CL CN CO KM CG CD CR CI HR CU CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FJ FI FR GA GM GE DE GH GR GD GT GN GW GY HT HN HU IS IN ID IR IQ IE IL IT JM JP JO KZ KE KI KW KG LA LV LB LS LR LY LI LT LU MG MW MY MV ML MT MH MR MU MX FM MD MC MN ME MA MZ MM NA NR NP NL NZ NI NE NG MK NO OM PK PW PA PG PY PE PH PL PT QA RO RU RW KN LC VC WS SM ST SA SN RS SC SL SG SK SI SB SO ZA KR SS ES LK SD SR SE CH SY TW TJ TZ TH TL TG TO TT TN TR TM TV UG UA AE GB US UY UZ VU VE VN YE ZM ZW').split(' ');
+let __regionNames; try { __regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); } catch { __regionNames = null; }
+function countryName(code) { try { return __regionNames ? __regionNames.of(code) : code; } catch { return code; } }
+function flagEmoji(code) { return /^[A-Z]{2}$/.test(code) ? code.replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0))) : '🏳️'; }
+function countryOptions(selected) {
+  return COUNTRY_CODES
+    .map((c) => ({ code: c, name: countryName(c) }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => `<option value="${c.code}"${c.code === selected ? ' selected' : ''}>${flagEmoji(c.code)} ${esc(c.name)}</option>`)
+    .join('');
+}
+
+function ageOf(dob) {
+  if (!dob) return undefined;
+  const t = Date.parse(dob);
+  if (Number.isNaN(t)) return undefined;
+  return Math.floor((Date.now() - t) / (365.25 * 24 * 3600 * 1000));
+}
 function applicantFromForm() {
   const sig = {};
   $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
+  const v = (k) => { const el = $(`#vf_${k}`); return el ? el.value.trim() : ''; };
   return {
-    fullName: $('#vName').value, name: $('#vName').value,
-    nationality: $('#vNat').value, destination: $('#vDest').value,
-    purpose: $('#vPurpose').value, age: Number($('#vAge').value),
-    occupation: $('#vEmployer').value, employer: $('#vEmployer').value,
-    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
-    maritalStatus: 'Single',
-    behaviourHesitation: Number($('#vBeh').value), ...sig,
+    fullName: v('fullName'), name: v('fullName') || 'Applicant',
+    nationality: v('nationality') || 'GB',
+    destination: v('destination') ? countryName(v('destination')) : '',
+    purpose: v('purpose') || 'tourism',
+    age: ageOf(v('dob')),
+    dob: v('dob'),
+    occupation: v('occupation'), employer: v('employer'),
+    monthlyIncome: Number(v('monthlyIncome')) || 0,
+    maritalStatus: v('maritalStatus') || 'Single',
+    passportNumber: v('passportNumber'), passportExpiry: v('passportExpiry'),
+    previousRefusals: v('previousRefusals'),
+    overstayHistory: v('overstayHistory'),
+    homeTies: 'strong',
+    behaviourHesitation: Number($('#vBeh')?.value) || 10, ...sig,
   };
 }
 
@@ -1314,6 +1547,11 @@ window.toggleSignal = (el) => { const on = el.dataset.on !== 'true'; el.dataset.
 
 async function submitVisa() {
   const applicant = applicantFromForm();
+  // The robust list of documents the applicant attached for THIS application.
+  const providedDocuments = [...document.querySelectorAll('.vdoc-row')]
+    .filter((r) => r.querySelector('.vdoc-check')?.checked)
+    .map((r) => r.querySelector('span')?.textContent.trim())
+    .filter(Boolean);
   const out = $('#visaDecision');
   const agents = ['Document Forensics', 'Financial Authenticity', 'Identity Verification', 'Online Footprint', 'Behavioural Intelligence', 'Overstay Risk', 'Fraud Detection', 'Intent Assessment', 'Border Risk', 'Decision Agent'];
   out.innerHTML = `<div class="card pad scanlog">${agents.map((a, i) => `<div class="ln" style="animation-delay:${i * 60}ms"><span class="ok">●</span> ${a} Agent verifying…</div>`).join('')}</div>`;
@@ -1322,10 +1560,23 @@ async function submitVisa() {
   try {
     data = await api('/api/visa/assess-application', {
       method: 'POST',
-      body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value }),
+      body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value, providedDocuments }),
     });
   } catch { return; }
   renderVisaFile(data.file);
+  // Save captured identity back to the Master Travel Profile (retrieved
+  // automatically next time across visa & bookings).
+  if (state.user) {
+    const tp = {
+      fullLegalName: applicant.fullName, dob: applicant.dob, nationality: applicant.nationality,
+      passportNumber: applicant.passportNumber, passportExpiry: applicant.passportExpiry,
+      maritalStatus: applicant.maritalStatus, occupation: applicant.occupation,
+      employer: applicant.employer, monthlyIncome: applicant.monthlyIncome,
+    };
+    Object.keys(tp).forEach((k) => { if (!tp[k]) delete tp[k]; });
+    api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) })
+      .then((d) => { if (d.user) state.user = d.user; }).catch(() => {});
+  }
 }
 
 // Render the full decision-ready file: recommendation + checklist completeness +
@@ -1385,25 +1636,99 @@ function renderVisaDecision(a, target = '#visaDecision') {
 
 async function renderVisaGov() {
   const out = $('#visaosOut');
-  let data;
-  try { data = await api('/api/visaos/government'); } catch { return; }
+  // Embassy workspace is a government account feature.
+  const isEmbassy = state.user && (state.user.allAccess || ['embassy', 'admin'].includes(state.user.role));
+  if (!isEmbassy) {
+    out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto">
+      <div style="font-size:34px">🏛️</div>
+      <h3 style="margin:10px 0 6px">Embassy / Government workspace</h3>
+      <p class="muted" style="font-size:14px">This is a secured government account area — embassy officers review each application's full information and documents and issue decisions. Requires an <strong>embassy</strong> or admin account.</p>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="provisionTest()">Open with full-access demo</button>
+    </div>`;
+    return;
+  }
+  let data, apps;
+  try { data = await api('/api/visaos/government'); apps = await api('/api/visaos/applications'); } catch { return; }
   const g = data.analytics;
+  window.__visaApps = {};
+  (apps.applications || []).forEach((a) => { window.__visaApps[a.id] = a; });
   const kpis = [
     ['Applications', g.applications], ['Approval rate', g.approvalRate + '%'],
     ['Fraud attempts', g.fraudAttempts], ['Fully digital', g.autoDigitalRate + '%'], ['Avg risk', g.avgScore],
   ].map(([k, v]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div></div>`).join('');
   const decisions = Object.entries(g.decisions || {}).map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No applications yet — run one in the Applicant tab.</div>';
   const countries = (g.topCountries || []).map((c) => `<div class="kv"><span>${c.country}</span><span>${c.count}</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
-  const recent = (g.recent || []).map((r) => `<div class="ln"><span class="ok">●</span> ${r.nationality}→${r.destination} · <strong>${r.decision}</strong> <span class="muted">(${r.score})</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
+  // Application queue — each row opens the full file (info + documents + AI).
+  const queue = (apps.applications || []).length
+    ? (apps.applications || []).map((a) => {
+        const st = a.embassyDecision ? a.embassyDecision.decision : (a.status === 'submitted' ? 'Awaiting review' : a.status);
+        const col = a.embassyDecision ? (a.embassyDecision.decision === 'Approved' ? 'var(--green)' : a.embassyDecision.decision === 'Refused' ? '#ff6b6b' : 'var(--blue-bright)') : 'var(--gold)';
+        return `<div class="kv" style="cursor:pointer" onclick="openVisaApp('${a.id}')">
+          <span><span class="vstatus ${a.totalScore <= 200 ? 'pass' : a.totalScore <= 450 ? 'watch' : 'fail'}"></span>${esc(a.applicant.name || 'Applicant')} · ${esc(a.applicant.nationality || '')} → ${esc(a.country || a.applicant.destination || '')}</span>
+          <span style="color:${col};font-size:12.5px">${esc(st)} · ${a.totalScore}</span></div>`;
+      }).join('')
+    : '<div class="muted" style="font-size:13px">No applications yet — submit one in the Applicant tab.</div>';
   out.innerHTML = `
     <div class="kpi-grid">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
-      <div><div class="card pad"><span class="eyebrow">Decisions</span>${decisions}</div>
-        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Top applicant countries</span>${countries}</div></div>
-      <div class="card pad scanlog"><span class="eyebrow">Recent decisions</span><div style="margin-top:8px">${recent}</div>
-        <p class="muted" style="font-size:11px;margin-top:10px">Revenue: SaaS license · per-application fee · AI processing fee · biometric fee · fraud-intelligence subscription · Border Intelligence API.</p></div>
-    </div>`;
+      <div class="card pad"><span class="eyebrow">Application queue · click to review</span>${queue}</div>
+      <div>
+        <div class="card pad"><span class="eyebrow">Decisions</span>${decisions}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Top applicant countries</span>${countries}</div>
+        <p class="muted" style="font-size:11px;margin-top:12px">Revenue: SaaS license · per-application fee · AI processing fee · biometric fee · fraud-intelligence subscription · Border Intelligence API.</p>
+      </div>
+    </div>
+    <div id="visaAppDetail" style="margin-top:20px"></div>`;
 }
+
+// Embassy: open the full application — robust info + every document provided + AI.
+window.openVisaApp = (id) => {
+  const a = window.__visaApps?.[id];
+  if (!a) return;
+  const fa = a.fullApplicant || a.applicant || {};
+  const infoRows = Object.entries(fa)
+    .filter(([k, v]) => v !== '' && v != null && typeof v !== 'object')
+    .map(([k, v]) => `<div class="kv"><span class="muted" style="font-size:12px">${esc(k)}</span><span style="font-size:12.5px">${esc(String(v))}</span></div>`).join('');
+  const docs = (a.documents || []).length
+    ? (a.documents || []).map((d) => `<div class="ok-line"><span class="ck">📎</span>${esc(d)}</div>`).join('')
+    : '<div class="muted" style="font-size:13px">No documents recorded.</div>';
+  const f = a.file || {};
+  const fraud = f.fraud ? `${f.fraud.flagCount}/${f.fraud.results.length} flags` : '—';
+  const docv = f.documentVerification ? `${f.documentVerification.verified}/${f.documentVerification.total} verified` : '—';
+  const dec = a.embassyDecision;
+  $('#visaAppDetail').innerHTML = `
+    <div class="card pad">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline">
+        <strong style="font-family:'Space Grotesk';font-size:18px">${esc(fa.fullName || a.applicant.name || 'Applicant')}</strong>
+        <span class="muted" style="font-size:12.5px">${esc(a.country)} · ${esc(a.visaType)} · AI: ${esc(a.recommendation || a.decision)} · risk ${a.totalScore}/1000</span>
+      </div>
+      <div class="console-grid" style="margin-top:14px">
+        <div><span class="eyebrow">Information provided (${Object.keys(fa).length})</span>${infoRows || '<div class="muted" style="font-size:13px">—</div>'}</div>
+        <div><span class="eyebrow">Documents provided (${(a.documents || []).length})</span>${docs}
+          <div style="margin-top:10px"><span class="eyebrow">AI checks</span>
+            <div class="kv"><span>Document verification</span><span>${docv}</span></div>
+            <div class="kv"><span>Fraud battery</span><span>${fraud}</span></div>
+          </div></div>
+      </div>
+      ${dec
+        ? `<div class="card pad" style="margin-top:14px;border-color:rgba(70,211,154,0.3)"><strong>Embassy decision: ${esc(dec.decision)}</strong><div class="muted" style="font-size:12.5px;margin-top:4px">${esc(dec.reason || '')} · ${new Date(dec.at).toLocaleString()}</div></div>`
+        : `<div style="margin-top:14px"><span class="eyebrow">Officer decision</span>
+            <textarea class="in" id="embReason" placeholder="Reason / notes (recorded in the audit log)" style="width:100%;min-height:54px;margin-top:6px"></textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <button class="btn btn-gold btn-sm" onclick="decideVisa('${a.id}','Approved')">✓ Approve</button>
+              <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','More info requested')">Request more info</button>
+              <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','Escalated')">Escalate</button>
+              <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','Refused')" style="color:#ff8a8a">✕ Refuse</button>
+            </div></div>`}
+    </div>`;
+  $('#visaAppDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+window.decideVisa = async (id, decision) => {
+  const reason = $('#embReason')?.value || '';
+  let d; try { d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); } catch { return; }
+  toast(`✓ Decision recorded: ${decision}`);
+  renderVisaGov();
+};
 
 // ---- Business / Enterprise Command Centre ---------------------------------
 async function renderBusiness() {

@@ -99,9 +99,9 @@
             </div>
             <p class="muted" style="font-size:13px;margin-top:16px">AI-led managed execution · pay monthly · multilingual · built for the African diaspora & community travel.</p>
             <div class="trust-row">
-              <div><div class="t-stat">£1,200,000+</div><div class="t-label">Saved for travellers</div></div>
-              <div><div class="t-stat">195+</div><div class="t-label">Countries</div></div>
-              <div><div class="t-stat">24/7</div><div class="t-label">AI travel agents</div></div>
+              <div><div class="t-stat" id="statSaved">£0</div><div class="t-label">Saved for travellers</div></div>
+              <div><div class="t-stat" id="statCountries">195+</div><div class="t-label">Countries served</div></div>
+              <div><div class="t-stat" id="statAgents">10</div><div class="t-label">AI travel agents</div></div>
             </div>
             <p class="muted" style="font-size:12.5px;margin-top:14px">Flights • Hotels • Visa • Insurance • Transfers • eSIM</p>
           </div>
@@ -153,7 +153,7 @@
             <div class="ok-line"><span class="ck">✓</span> Continuous price monitoring that never stops working for you.</div>
             <div class="holo-save" style="margin-top:18px">
               <div class="t-label" style="letter-spacing:0.2em">VERIFIED OPTIMAL BOOKING</div>
-              <div class="big">You Saved £427</div>
+              <div class="big" id="solutionSaved">You Save —</div>
             </div>
           </div>
         </div>
@@ -184,7 +184,8 @@
             <div class="holo-row"><span><span class="ico">🛂</span>eVisa ×4 · 🚘 transfers · 📶 eSIM</span><span class="v good">included</span></div>
             <div class="holo-save">
               <div class="t-label" style="letter-spacing:0.2em">FROM, PER FAMILY · INSTALMENTS</div>
-              <div class="big">20% deposit today</div>
+              <div class="big" id="featuredPrice">—</div>
+              <div class="t-label" id="featuredSave" style="margin-top:4px"></div>
             </div>
           </div>
         </div>
@@ -213,12 +214,9 @@
           <h2>The AI Finds Savings Humans Miss.</h2>
           <p>Every booking is decomposed and re-optimised across four dimensions — the gains compound into one number.</p>
         </div>
-        <div class="card pad" style="max-width:760px;margin:0 auto">
-          <div class="kv"><span>✈ Flight Optimisation</span><span style="color:var(--green)">Saved £186</span></div>
-          <div class="kv"><span>🏨 Hotel Negotiation</span><span style="color:var(--green)">Saved £324</span></div>
-          <div class="kv"><span>📅 Date Optimisation</span><span style="color:var(--green)">Saved £208</span></div>
-          <div class="kv"><span>🛫 Airport Selection</span><span style="color:var(--green)">Saved £91</span></div>
-          <div class="kv" style="border:none;padding-top:16px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--gold)">£809</span></div>
+        <div class="card pad" style="max-width:760px;margin:0 auto" id="savingsEngine">
+          <div class="kv"><span>✈ Flight Optimisation</span><span style="color:var(--green)">scanning…</span></div>
+          <div class="kv" style="border:none;padding-top:16px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--gold)" id="savingsTotal">—</span></div>
         </div>
         <div class="center" style="margin-top:18px">
           <span class="pill" id="aiSaveBadge" style="margin:0"><span class="dot"></span> AI runs at ≥66% lower cost — model routing + semantic cache + local fallback</span>
@@ -235,11 +233,10 @@
           </div>
           <div class="holo glass">
             <div class="holo-head"><strong>Negotiation · live</strong><span class="scan">● SUPPLIER DESK</span></div>
-            <div class="holo-row"><span>Room Upgrade</span><span class="v good">Secured</span></div>
-            <div class="holo-row"><span>Late Checkout</span><span class="v good">Confirmed</span></div>
-            <div class="holo-row"><span>Airport Transfer</span><span class="v good">Included</span></div>
-            <div class="holo-row"><span>Breakfast</span><span class="v good">Included</span></div>
-            <div class="holo-row"><span>Special Discount</span><span class="v blue">Applied</span></div>
+            <div id="negotiationList">
+              <div class="holo-row"><span>Room Upgrade</span><span class="v good">Secured</span></div>
+              <div class="holo-row"><span>Airport Transfer</span><span class="v good">Included</span></div>
+            </div>
           </div>
         </div>
       </section>
@@ -350,6 +347,9 @@
           <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"I saved £1,142 on my family trip to Dubai. The AI found better flights and a better hotel."</p><div class="muted" style="font-size:13px">★★★★★ · Daniel O. · London, UK · <span style="color:var(--green)">saved £1,142</span></div></div>
           <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"Better hotel. Lower price. Free upgrade. This is magic!"</p><div class="muted" style="font-size:13px">★★★★★ · Sarah M. · Manchester, UK · <span style="color:var(--green)">saved £783</span></div></div>
           <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"It felt like having a private travel advisor working for me 24/7."</p><div class="muted" style="font-size:13px">★★★★★ · James T. · New York, USA · <span style="color:var(--green)">saved £609</span></div></div>
+          <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"Paid in instalments and still got the cheapest price. The visa help was a lifesaver."</p><div class="muted" style="font-size:13px">★★★★★ · Aïcha D. · Paris, FR · <span style="color:var(--green)">saved £540</span></div></div>
+          <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"Booked Lagos for the whole family in minutes — flights, hotel and eSIM in one package."</p><div class="muted" style="font-size:13px">★★★★★ · Chidi N. · Houston, USA · <span style="color:var(--green)">saved £912</span></div></div>
+          <div class="card pad"><p style="font-size:16px;margin:0 0 14px">"The price guard rebooked me when fares dropped and refunded the difference. Unreal."</p><div class="muted" style="font-size:13px">★★★★★ · Grace M. · Nairobi, KE · <span style="color:var(--green)">saved £368</span></div></div>
         </div>
       </section>
 
@@ -362,9 +362,9 @@
           <button class="btn btn-ghost" data-nav="planner">Plan My Next Trip</button>
         </div>
         <div class="trust-row" style="justify-content:center;border:none;margin-top:34px">
-          <div class="center"><div class="t-stat">£1,200,000+</div><div class="t-label">Saved</div></div>
-          <div class="center"><div class="t-stat">195+</div><div class="t-label">Countries</div></div>
-          <div class="center"><div class="t-stat">24/7</div><div class="t-label">AI Travel Agents</div></div>
+          <div class="center"><div class="t-stat" id="ctaSaved">£0</div><div class="t-label">Saved</div></div>
+          <div class="center"><div class="t-stat" id="ctaCountries">195+</div><div class="t-label">Countries</div></div>
+          <div class="center"><div class="t-stat" id="ctaAgents">10</div><div class="t-label">AI Travel Agents</div></div>
         </div>
       </section>
     </section>

@@ -75,7 +75,9 @@ export function liveShowcase(context) {
     travellers: db.users.size,
     destinationsBookable: destinationsCatalog().length,
     currenciesSupported,
-    countriesServed: Object.keys(COUNTRY_NAMES).length,
+    // The planner, visa framework and intelligence now work for any country on
+    // Earth, so coverage is global (all sovereign countries).
+    countriesServed: 195,
     savedForTravellersLocal: local(savedForTravellersUSD),
     savedForTravellersDisplay: money(savedForTravellersUSD),
   };

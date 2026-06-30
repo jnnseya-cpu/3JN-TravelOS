@@ -126,6 +126,11 @@ const DEST_BLURB = {
   JFK: { tag: 'City · shopping · shows', emoji: '🗽', experiences: ['Broadway show', 'Empire State', 'Central Park'] },
   DPS: { tag: 'Tropical · wellness · surf', emoji: '🌴', experiences: ['Ubud rice terraces', 'Temple tour', 'Surf lesson'] },
 };
+// Curated experiences for a catalogue destination (empty for synthesised ones).
+export function destExperiences(code) {
+  return (DEST_BLURB[code] || {}).experiences || [];
+}
+
 export function destinationsCatalog() {
   return Object.entries(DESTINATIONS).map(([code, d]) => {
     const fromUSD = Math.round((d.flightBaseUSD + d.hotelNightBaseUSD * 7 + d.activityBaseUSD * 2) * 0.92);
@@ -146,4 +151,83 @@ export function findDestination(text) {
 
 export function visaRule(dest, nationality) {
   return dest.visa[nationality] || dest.visa.DEFAULT;
+}
+
+// ---- Worldwide destination engine -----------------------------------------
+// The OS is global: any city/country the user names must yield a real package,
+// not "pick one of five". For destinations outside the curated catalogue we
+// synthesise a deterministic cost basis + estimated visa rule so the full
+// pipeline (suppliers → packages → pricing → visa) runs anywhere on Earth.
+function seedRng(str) {
+  let s = 0;
+  for (let i = 0; i < (str || '').length; i++) s = (s * 31 + str.charCodeAt(i)) % 2147483647;
+  return () => { s = (s * 1103515245 + 12345) % 2147483647; return s / 2147483647; };
+}
+const titleCaseDest = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Pull the destination phrase out of a free-text request when it isn't a
+// catalogue city — e.g. "I want to travel to Kinshasa in August" → "Kinshasa".
+const DEST_STOP = /^(in|for|with|on|during|next|this|the|my|our|a|an|and|over|plus|including|nights?|days?|weeks?|month|months|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
+export function extractDestination(text) {
+  if (!text) return null;
+  const m = text.match(/\b(?:travel(?:ling|ing)?|trip|fly(?:ing)?|going|go|holiday|vacation|getaway|visit(?:ing)?|destination|head(?:ing)?)\s+(?:to\s+|in\s+|for\s+)?(.+)/i);
+  const tail = m ? m[1] : null;
+  if (!tail) return null;
+  const words = tail.replace(/[.,!?].*$/, '').split(/\s+/);
+  const out = [];
+  for (const w of words) {
+    if (!w) continue;
+    if (DEST_STOP.test(w) || /^\d/.test(w) || !/[A-Za-zÀ-ÿ]/.test(w)) break;
+    out.push(w);
+    if (out.length >= 3) break;
+  }
+  // Reject vague descriptors ("somewhere warm", "anywhere cheap") so they still
+  // trigger clarifying questions rather than a fabricated destination.
+  const NON_PLACE = /^(somewhere|anywhere|nowhere|some|any|warm|warmer|hot|sunny|sunshine|sun|cold|cool|tropical|exotic|nice|lovely|cheap|cheapest|affordable|budget|luxury|abroad|overseas|holiday|holidays|vacation|getaway|paradise|beach|destination|place|places|country|countries|city|cities|somewhere)$/i;
+  const placeWords = out.filter((w) => !NON_PLACE.test(w));
+  if (!placeWords.length) return null;
+  const name = placeWords.join(' ').replace(/[^A-Za-zÀ-ÿ'’\- ]/g, '').trim();
+  return name || null;
+}
+
+function estimatedVisaRule(rnd) {
+  const required = rnd() > 0.3;
+  return {
+    required,
+    type: required ? 'eVisa / eTA (tourist) — estimated' : 'Likely visa-free (estimated)',
+    costUSD: required ? Math.round(20 + rnd() * 130) : 0,
+    processingDays: required ? Math.round(2 + rnd() * 13) : 0,
+  };
+}
+
+export function synthesizeDestination(name) {
+  const city = titleCaseDest(name);
+  if (!city) return null;
+  const code = (city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT';
+  const rnd = seedRng('dest-' + city);
+  return {
+    code, city, country: '', countryName: '', airport: code, timezone: '',
+    flightBaseUSD: Math.round(380 + rnd() * 620),
+    hotelNightBaseUSD: Math.round(70 + rnd() * 180),
+    activityBaseUSD: Math.round(35 + rnd() * 70),
+    transferBaseUSD: Math.round(25 + rnd() * 45),
+    carDayBaseUSD: Math.round(30 + rnd() * 55),
+    aliases: [city.toLowerCase()],
+    visa: { DEFAULT: estimatedVisaRule(rnd) },
+    synthetic: true,
+  };
+}
+
+// Resolve a place NAME (already isolated) → catalogue or synthesised destination.
+export function resolveDestination(name) {
+  return findDestination(name) || synthesizeDestination(name);
+}
+
+// Resolve from a free-text REQUEST sentence → catalogue, or synthesised from the
+// extracted destination phrase, or null (ask) when nothing place-like is found.
+export function resolveDestinationFromText(text) {
+  const known = findDestination(text);
+  if (known) return known;
+  const guess = extractDestination(text);
+  return guess ? synthesizeDestination(guess) : null;
 }

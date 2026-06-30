@@ -11,7 +11,7 @@
 // good enough to demonstrate the full pipeline. It returns a normalised intent
 // object the rest of the OS consumes.
 
-import { findDestination } from './destinations.js';
+import { findDestination, resolveDestinationFromText } from './destinations.js';
 
 const MONTHS = [
   'january', 'february', 'march', 'april', 'may', 'june',
@@ -106,7 +106,8 @@ function buildDates(monthInfo, nights, today = new Date()) {
 
 export function parseIntent(text, ctx = {}, today = new Date()) {
   const raw = (text || '').trim();
-  const destination = findDestination(raw);
+  // Worldwide: resolve a catalogue city OR synthesise any destination on Earth.
+  const destination = resolveDestinationFromText(raw);
   const travellers = parseTravellers(raw);
   const nights = parseNights(raw);
   const monthInfo = parseMonth(raw);

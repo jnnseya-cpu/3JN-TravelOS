@@ -20,6 +20,7 @@ import {
   listApprovals, decideApproval,
   listNotifications, markNotificationsRead,
   recordVisaApplication, govAnalytics,
+  recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour,
   subscribeMembership, renewMembership, cancelMembership, spendAcu,
@@ -499,8 +500,37 @@ app.post('/api/visa/checklist', safe((req, res) => {
 app.post('/api/visa/assess-application', safe((req, res) => {
   const { applicant, country, visaType, providedDocuments } = req.body || {};
   const file = assessApplication({ applicant: applicant || {}, country, visaType, providedDocuments });
-  recordVisaApplication(file.risk);
-  res.json({ file });
+  const user = currentUser(req);
+  // Persist the FULL application (information + documents + decision file) so the
+  // applicant and the embassy can both review exactly what was provided.
+  const record = recordVisaFile({ applicant, country, visaType, documents: providedDocuments || [], file, userId: user?.id });
+  res.json({ file, applicationId: record.id });
+}));
+
+// Applicant: my submitted applications (full info + documents I provided).
+app.get('/api/visaos/my-applications', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ applications: listVisaApplicationsForUser(user.id) });
+}));
+
+// ---- Embassy / Government workspace (embassy or admin only) ----------------
+app.get('/api/visaos/applications', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'admin'])) return;
+  res.json({ applications: listVisaApplications() });
+}));
+app.get('/api/visaos/applications/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'admin'])) return;
+  const app = getVisaApplication(req.params.id);
+  if (!app) return res.status(404).json({ error: 'not-found' });
+  res.json({ application: app });
+}));
+app.post('/api/visaos/applications/:id/decide', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'admin'])) return;
+  const { decision, reason } = req.body || {};
+  const result = decideVisaApplication(req.params.id, { decision, reason, officerId: currentUser(req)?.id });
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
 }));
 
 app.get('/api/visaos/probability', safe((req, res) => {
