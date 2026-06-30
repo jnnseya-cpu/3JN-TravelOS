@@ -26,7 +26,32 @@ const db = {
   esims: [], // provisioned eSIM profiles
   contracts: [], // supplier volume agreements
   blog: [], // AI-written blog posts
+  behaviour: [], // behavioural-learning event stream (searches, views, books…)
 };
+
+// ---- Behavioural learning event stream ------------------------------------
+// Every meaningful user action is logged here so the ML/behaviour-learning
+// agents can build a per-user profile and drive a personalised Journey
+// Dashboard. Capped so the in-memory store can't grow unbounded.
+const BEHAVIOUR_CAP = 2000;
+export function recordBehaviour(userId, { event, destination, payload } = {}) {
+  if (!event) return null;
+  const rec = {
+    id: id('beh'),
+    userId: userId || 'guest',
+    event,
+    destination: destination || null,
+    payload: payload || {},
+    at: new Date().toISOString(),
+  };
+  db.behaviour.push(rec);
+  if (db.behaviour.length > BEHAVIOUR_CAP) db.behaviour.splice(0, db.behaviour.length - BEHAVIOUR_CAP);
+  return rec;
+}
+export function listBehaviour(userId, limit = 500) {
+  const all = userId ? db.behaviour.filter((b) => b.userId === userId) : db.behaviour;
+  return all.slice(-limit);
+}
 
 // ---- Supplier Contract Manager (Enterprise) -------------------------------
 // AI-negotiated volume agreements with airlines/hotels/car hire. The negotiated
@@ -614,7 +639,7 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour'];
 
 export function snapshot() {
   const out = { counter };

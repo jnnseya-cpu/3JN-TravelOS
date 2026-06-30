@@ -21,6 +21,7 @@ import { snapshot, hydrate } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
+import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
 
@@ -325,4 +326,36 @@ test('high-value bookings enter the approval queue and can be decided', () => {
   assert.ok(pending.length >= 1);
   const decided = decideApproval(pending[0].id, 'approve');
   assert.equal(decided.approval.status, 'approved');
+});
+
+test('behavioural learning: dashboard is not Dubai-only and learns from activity', () => {
+  const u = createUser({ name: 'Learner' });
+  // Cold start — no history — should personalise to region, not hard-code Dubai.
+  const cold = journeyDashboard(u.id, GB);
+  assert.equal(cold.learned, false);
+  assert.equal(cold.rows.length, 8);
+  assert.ok(Array.isArray(cold.agents) && cold.agents.length >= 4, 'ML agents are attributed');
+
+  // Teach a clear preference: three Bali searches.
+  for (let i = 0; i < 3; i++) {
+    track(u.id, { event: 'search', destination: 'DPS', payload: { nights: 10, party: 2, month: 'september', components: ['flights', 'hotel'] } });
+  }
+  const learned = journeyDashboard(u.id, GB);
+  assert.equal(learned.learned, true);
+  assert.equal(learned.destination.city, 'Bali');
+  assert.match(learned.learnedFrom, /Bali/);
+
+  const profile = learnProfile(u.id);
+  assert.equal(profile.topDestinations[0].code, 'DPS');
+  assert.equal(profile.preferredParty, 'couple');
+  assert.equal(profile.avgNights, 10);
+  assert.equal(profile.preferredMonth, 'september');
+  assert.ok(profile.confidence > 0);
+});
+
+test('behavioural learning: different regions get different default destinations', () => {
+  const a = journeyDashboard(null, { country: 'NG', countryName: 'Nigeria', currency: { code: 'NGN', symbol: '₦', rateFromUSD: 1550 } });
+  const b = journeyDashboard(null, { country: 'IN', countryName: 'India', currency: { code: 'INR', symbol: '₹', rateFromUSD: 83 } });
+  // Region-derived defaults are deterministic; at least one differs from Dubai.
+  assert.ok([a.destination.code, b.destination.code].some((c) => c !== 'DXB'));
 });

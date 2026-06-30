@@ -106,24 +106,23 @@
             <p class="muted" style="font-size:12.5px;margin-top:14px">Flights • Hotels • Visa • Insurance • Transfers • eSIM</p>
           </div>
 
-          <!-- Holographic dashboard -->
+          <!-- Holographic dashboard — personalised by behavioural learning -->
           <div class="holo glass">
             <div class="holo-head">
-              <strong>Journey Dashboard</strong>
-              <span class="scan">● ACTIVE SCAN</span>
+              <strong>Journey Dashboard <span id="journeyDest" class="muted" style="font-weight:400;font-size:12.5px"></span></strong>
+              <span class="scan">● LEARNING</span>
             </div>
-            <div class="holo-row"><span><span class="ico">✈</span>Cheapest Flight Found</span><span class="v good">£842 saved</span></div>
-            <div class="holo-row"><span><span class="ico">🏨</span>AI Negotiating Hotel Upgrade</span><span class="v blue">Suite +£330</span></div>
-            <div class="holo-row"><span><span class="ico">🛂</span>Visa · UAE Tourist</span><span class="v good">Approved</span></div>
-            <div class="holo-row"><span><span class="ico">🚘</span>Airport Transfer · Driver Assigned</span><span class="v good">Confirmed</span></div>
-            <div class="holo-row"><span><span class="ico">📅</span>Best Travel Window · 12–19 May</span><span class="v good">£290 saved</span></div>
-            <div class="holo-row"><span><span class="ico">🛡</span>Travel Risk Score</span><span class="v good">92 · Low</span></div>
-            <div class="holo-row"><span><span class="ico">🌦</span>Weather · destination</span><span class="v blue">24°C Sunny</span></div>
-            <div class="holo-row"><span><span class="ico">💱</span>Currency · GBP→AED</span><span class="v blue">4.67 best</span></div>
+            <div id="journeyRows">
+              <div class="holo-row"><span><span class="ico">✈</span>Cheapest Flight Found</span><span class="v good">scanning…</span></div>
+              <div class="holo-row"><span><span class="ico">🏨</span>AI Negotiating Hotel Upgrade</span><span class="v blue">scanning…</span></div>
+              <div class="holo-row"><span><span class="ico">🛂</span>Visa Check</span><span class="v good">scanning…</span></div>
+              <div class="holo-row"><span><span class="ico">🛡</span>Travel Risk Score</span><span class="v good">scanning…</span></div>
+            </div>
             <div class="holo-save">
-              <div class="t-label" style="letter-spacing:0.2em">OPTIMAL BOOKING FOUND</div>
-              <div class="big">You Saved £427</div>
+              <div class="t-label" id="journeyLearned" style="letter-spacing:0.14em;text-transform:none;font-size:11.5px;line-height:1.5">Personalising to you…</div>
+              <div class="big" id="journeySave">—</div>
             </div>
+            <div class="learn-strip" id="journeyAgents"></div>
           </div>
         </div>
       </div>
