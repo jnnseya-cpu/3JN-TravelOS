@@ -29,6 +29,7 @@ import { track as trackBehaviour, learnProfile, journeyDashboard } from './learn
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication } from './visa-framework.js';
+import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -313,6 +314,23 @@ app.get('/api/learning/profile', safe((req, res) => {
   res.json({ profile: learnProfile(user?.id) });
 }));
 
+// ---- Booking data architecture: requirements + validation -----------------
+// After the AI finds options and the traveller proceeds, the OS collects and
+// validates the data needed to actually book (traveller profile, per-passenger
+// PNR data, documents, entry rules, payment).
+app.get('/api/booking/schema', safe((req, res) => {
+  res.json(bookingSchema());
+}));
+app.post('/api/booking/requirements', safe((req, res) => {
+  const { components, destination, nationality, passengers, holidayType } = req.body || {};
+  res.json(bookingRequirements({ components, destination, nationality, passengers, holidayType }));
+}));
+app.post('/api/booking/validate', safe((req, res) => {
+  const { travellers, travelDate, nationality, destination, fraudSignals } = req.body || {};
+  const validation = validateBooking({ travellers, travelDate, nationality, destination });
+  res.json({ ...validation, risk: bookingRiskScore(fraudSignals || {}) });
+}));
+
 // ---- Quote: persist a chosen option + build instalments -------------------
 app.post('/api/quote', safe((req, res) => {
   const { option, intent, months, depositPct } = req.body || {};
@@ -336,7 +354,7 @@ app.post('/api/quote', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod } = req.body || {};
+  const { quoteId, months, depositPct, paymentMethod, lead } = req.body || {};
   const quote = getQuote(quoteId);
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);

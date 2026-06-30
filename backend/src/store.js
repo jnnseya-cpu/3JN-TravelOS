@@ -521,7 +521,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card' }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null }) {
   const bookingId = id('bkg');
   const gateway = GATEWAY[paymentMethod] || 'stripe';
   const booking = {
@@ -532,6 +532,8 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     instalment,
     paymentMethod,
     gateway,
+    // Lead traveller captured + validated at booking time (passport, DOB, etc).
+    leadTraveller: lead || null,
     status: 'confirmed',
     payments: [],
     priceGuard: { active: true, baselineUSD: option.totalUSD, events: [] },

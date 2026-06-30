@@ -488,21 +488,43 @@ function labelFor(c) {
 window.openBooking = async (tier) => {
   const option = window.__options[tier];
   const intent = window.__intent;
-  let data;
+  let data, reqs;
   try {
     data = await api('/api/quote', { method: 'POST', body: JSON.stringify({ option, intent, months: 3, depositPct: 0.2 }) });
+    reqs = await api('/api/booking/requirements', { method: 'POST', body: JSON.stringify({
+      components: option.components.map((c) => c.category || c.type),
+      destination: intent.destination.city, nationality: state.country || 'GB',
+      passengers: intent.travellers.total,
+    }) });
   } catch { return; }
   state.lastQuote = data.quote;
+  state.lastReqs = reqs;
   const inst = data.quote.instalment;
   const sym = option.pricing.symbol;
 
   const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${s.due}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
+  const docList = reqs.documents.map((d) => `<li><span class="cs">${esc(d)}</span></li>`).join('');
+  const entry = reqs.entryRules.map((r) => `<div class="kv"><span><span class="vstatus ${r.required ? 'watch' : 'pass'}"></span>${esc(r.type)}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${esc(r.note)}</span></div>`).join('');
   modal(`
-    <span class="eyebrow">${tier} package · ${intent.destination.city}</span>
+    <span class="eyebrow">${esc(tier)} package · ${esc(intent.destination.city)}</span>
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
     <p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>
     <div class="kv" style="font-weight:700"><span>Deposit today</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
     ${rows}
+
+    <div style="margin-top:16px"><span class="eyebrow">Lead traveller (exact passport spelling)</span></div>
+    <div class="composer-row" style="margin-top:6px">
+      <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="As on passport" value="${esc(state.user?.name || '')}"></div>
+      <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date"></div>
+      <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.country || 'GB')}" style="width:90px"></div>
+      <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567"></div>
+      <div class="field"><label>Passport expiry</label><input class="in" id="bkExp" type="date"></div>
+    </div>
+    <div class="muted" style="font-size:11.5px;margin-top:6px">${intent.travellers.total > 1 ? `+${intent.travellers.total - 1} more passenger${intent.travellers.total > 2 ? 's' : ''} — details collected after deposit.` : ''}</div>
+
+    <div style="margin-top:14px"><span class="eyebrow">Documents needed</span><ul class="comp-list">${docList}</ul></div>
+    ${entry ? `<div style="margin-top:6px"><span class="eyebrow">Entry requirements</span>${entry}</div>` : ''}
+
     <div class="field" style="margin-top:14px">
       <label>Payment method</label>
       <select id="payMethod" class="in">
@@ -514,25 +536,53 @@ window.openBooking = async (tier) => {
         <option value="africell">📱 Africell Money (CDF)</option>
       </select>
     </div>
-    <button class="btn btn-gold btn-block" style="margin-top:16px" onclick="confirmBooking()">Pay deposit & confirm booking</button>`);
+    <div id="bkValidate"></div>
+    <button class="btn btn-gold btn-block" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
 };
 
 window.confirmBooking = async () => {
   if (!state.lastQuote) return;
+  const intent = window.__intent;
+  const lead = {
+    fullName: $('#bkName')?.value.trim(), dob: $('#bkDob')?.value,
+    nationality: ($('#bkNat')?.value || 'GB').trim().toUpperCase(),
+    passportNumber: $('#bkPass')?.value.trim(), passportExpiry: $('#bkExp')?.value,
+  };
+  // Validate traveller + documents + entry rules BEFORE taking payment.
+  const vbox = $('#bkValidate');
+  if (vbox) vbox.innerHTML = '<div class="muted" style="font-size:12.5px;margin-top:10px"><span class="loader"></span> Validating documents & entry rules…</div>';
+  let val;
+  try {
+    val = await api('/api/booking/validate', { method: 'POST', body: JSON.stringify({
+      travellers: [lead], travelDate: intent?.dates?.checkIn,
+      nationality: lead.nationality, destination: intent?.destination?.city,
+    }) });
+  } catch { return; }
+  if (!val.valid) {
+    if (vbox) vbox.innerHTML = `<div class="card pad" style="margin-top:10px;border-color:rgba(255,90,90,0.4)">
+      <strong style="color:#ff8a8a">Can't book yet</strong>
+      ${val.blocking.map((b) => `<div class="x-line">✕ ${esc(b)}</div>`).join('')}
+    </div>`;
+    return;
+  }
+  if (val.risk && val.risk.decision === 'reject') {
+    if (vbox) vbox.innerHTML = `<div class="card pad" style="margin-top:10px;border-color:rgba(255,90,90,0.4)"><strong style="color:#ff8a8a">Payment held for review (risk ${val.risk.score}).</strong></div>`;
+    return;
+  }
+
   const paymentMethod = $('#payMethod')?.value || 'card';
   if (!state.user) {
-    // auto-create a guest so loyalty & console work
-    const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ name: 'Guest Traveller' }) });
+    const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ name: lead.fullName || 'Guest Traveller' }) });
     setUser(u.user);
   }
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
   const rail = paymentMethod === 'card' ? 'Stripe' : paymentMethod === 'bitripay' ? 'BitriPay Wallet' : 'BitriPay Mobile Money';
-  toast(`✓ Booking confirmed — deposit paid via ${rail}. Opening your console.`);
+  toast(`✓ Documents validated · booking confirmed — deposit paid via ${rail}.`);
   nav('console');
 };
 
