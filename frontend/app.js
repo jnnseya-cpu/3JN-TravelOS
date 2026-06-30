@@ -43,8 +43,10 @@ async function api(path, opts = {}) {
   }
   if (!res.ok) {
     const m = data.message || data.error || `HTTP ${res.status}`;
-    toast(`⚠ ${m}`);
-    throw new Error(m);
+    // Callers can opt out of the toast for expected failures (e.g. a stale
+    // session 404) by passing { silent: true }.
+    if (!opts.silent) toast(`⚠ ${m}`);
+    const err = new Error(m); err.status = res.status; throw err;
   }
   return data;
 }
@@ -596,7 +598,11 @@ async function renderConsole() {
     return;
   }
   let data;
-  try { data = await api(`/api/account/${state.user.id}`); } catch { return; }
+  try { data = await api(`/api/account/${state.user.id}`, { silent: true }); }
+  catch (e) {
+    if (e.status === 404) { try { localStorage.removeItem('3jn_uid'); } catch {} state.user = null; renderConsole(); }
+    return;
+  }
   const u = data.user;
   const bookings = data.bookings || [];
 
@@ -1517,7 +1523,14 @@ function setUser(u) {
 async function restoreSession() {
   let uid; try { uid = localStorage.getItem('3jn_uid'); } catch {}
   if (!uid) return;
-  try { const d = await api(`/api/account/${uid}`); if (d.user) setUser(d.user); } catch {}
+  try {
+    const d = await api(`/api/account/${uid}`, { silent: true });
+    if (d.user) setUser(d.user);
+  } catch (e) {
+    // Stale session (e.g. the server's store reset on redeploy) — clear it
+    // quietly instead of popping a "not-found" toast on every load.
+    if (e.status === 404) { try { localStorage.removeItem('3jn_uid'); } catch {} state.user = null; }
+  }
 }
 window.signOut = () => {
   try { localStorage.removeItem('3jn_uid'); } catch {}

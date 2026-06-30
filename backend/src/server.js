@@ -30,6 +30,8 @@ import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication } from './visa-framework.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
+import { liveShowcase } from './showcase.js';
+import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -109,6 +111,60 @@ app.get('/api/context', safe((req, res) => {
     acu: { perGbp: ACU_PER_GBP, fundRate: MEMBERSHIP_ACU_FUND_RATE },
   });
 }));
+
+// ---- Live showcase: real engine-computed numbers for the landing page ------
+app.get('/api/showcase', safe((req, res) => {
+  const context = detectContext(req, { country: req.query.country, currencyCountry: req.query.country });
+  res.json({ showcase: liveShowcase(context), liveData: liveDataEnabled() });
+}));
+
+// Overlay live weather + travel advisory onto a deterministic risk feed.
+async function enrichRiskLive(feed, destinationText) {
+  if (!feed?.ok) return feed;
+  try {
+    const geo = await geocode(feed.destination.city || destinationText);
+    if (geo) {
+      const [wx, adv] = await Promise.all([weather(geo.lat, geo.lon), advisory(geo.countryCode)]);
+      if (wx) {
+        const wl = feed.layers.find((l) => l.layer === 'Weather');
+        if (wl) wl.note = `${wx.tempC}°C, ${wx.condition.toLowerCase()}`;
+        feed.weatherSource = 'live';
+      }
+      if (adv) {
+        feed.riskScore = Math.round((5 - adv.score) / 5 * 100); // higher = safer
+        feed.level = adv.level === 'Low' ? 'Low' : adv.level === 'Moderate' ? 'Moderate' : 'Elevated';
+        feed.advisory = adv.message;
+        feed.riskSource = 'live';
+        feed.estimated = false;
+      }
+      if (geo.country) feed.destination.country = geo.country;
+    }
+  } catch { /* keep deterministic feed */ }
+  if (!feed.riskSource) feed.riskSource = 'estimated';
+  return feed;
+}
+
+// Overlay live weather + FX onto the personalised Journey Dashboard.
+async function enrichJourneyLive(dash, fromCode) {
+  try {
+    const city = dash?.destination?.city;
+    const geo = city ? await geocode(city) : null;
+    if (geo) {
+      const wx = await weather(geo.lat, geo.lon);
+      if (wx) {
+        const row = dash.rows.find((r) => /Weather/.test(r.label));
+        if (row) { row.value = `${wx.tempC}°C, ${wx.condition.toLowerCase()}`; row.live = true; }
+      }
+      const curRow = dash.rows.find((r) => /Currency/.test(r.label));
+      const m = curRow && curRow.label.match(/([A-Z]{3})→([A-Z]{3})/);
+      if (m) {
+        const rate = await fxRate(m[1], m[2]);
+        if (rate) { curRow.value = `${rate.toFixed(2)} live`; curRow.live = true; }
+      }
+    }
+  } catch { /* keep deterministic dashboard */ }
+  return dash;
+}
 
 // ---- Destination Marketplace ----------------------------------------------
 app.get('/api/destinations', safe((req, res) => {
@@ -302,10 +358,12 @@ app.post('/api/track', safe((req, res) => {
 
 // The personalised Journey Dashboard that powers the hero panel — driven by the
 // user's learned behaviour, not a hard-coded example.
-app.get('/api/journey', safe((req, res) => {
+app.get('/api/journey', safe(async (req, res) => {
   const context = detectContext(req, { country: req.query.country, currencyCountry: req.query.country });
   const user = currentUser(req);
-  res.json(journeyDashboard(user?.id, context));
+  const dash = journeyDashboard(user?.id, context);
+  await enrichJourneyLive(dash, context.currency.code);
+  res.json(dash);
 }));
 
 // The learned profile + ML agent tracks (insight / debugging view).
@@ -415,8 +473,10 @@ app.post('/api/notifications/read', safe((req, res) => {
 app.get('/api/visa/check', safe((req, res) => {
   res.json(visaCheck(req.query.nationality, req.query.destination));
 }));
-app.get('/api/risk/:destination', safe((req, res) => {
-  res.json(riskFeed(req.params.destination));
+app.get('/api/risk/:destination', safe(async (req, res) => {
+  const feed = riskFeed(req.params.destination);
+  await enrichRiskLive(feed, req.params.destination);
+  res.json(feed);
 }));
 
 // ---- 3JN VisaOS — AI visa decision engine ---------------------------------
