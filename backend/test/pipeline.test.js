@@ -28,6 +28,8 @@ import { visaFramework, buildChecklist, assessApplication } from '../src/visa-fr
 import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } from '../src/booking-schema.js';
 import { architecture as commsArchitecture, emit as commsEmit, renderEmail as commsRenderEmail, EVENTS as COMMS_EVENTS } from '../src/comms.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
+import { flightFareUnits, fareBandForAge } from '../src/suppliers.js';
+import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured } from '../src/live-suppliers.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
 
@@ -131,6 +133,73 @@ test('accuracy: only a carrier that truly operates the route flies it non-stop',
   const flight = r.packages.options[0].components.find((c) => c.type === 'flight');
   assert.equal(flight.details.outbound.stops, 0, 'recommended flight is non-stop');
   assert.equal(r.flightPrefs.directUnavailable, false);
+});
+
+test('fare bands: 12+ pay adult fare, 2–11 pay 75%, under-2 pay 10%', () => {
+  assert.equal(fareBandForAge(16), 'adult');
+  assert.equal(fareBandForAge(12), 'adult');
+  assert.equal(fareBandForAge(11), 'child');
+  assert.equal(fareBandForAge(1), 'infant');
+  // 2 adults + children 16, 13, 9 → 4 full fares + one 75% child = 4.75 units.
+  const u = flightFareUnits({ adults: 2, children: 3, childAges: [16, 13, 9], total: 5 });
+  assert.equal(u.units, 4.75);
+  assert.deepEqual(u.counts, { adult: 2, youth: 2, child: 1, infant: 0 });
+  // Children with no stated ages default to the child band.
+  const v = flightFareUnits({ adults: 2, children: 2, childAges: [], total: 4 });
+  assert.equal(v.units, 3.5); // 2 + 2×0.75
+});
+
+test('fare bands change the flight total in a real plan', () => {
+  const r = plan({
+    text: 'Dubai from london on 17/08 to 24/08, 2 adults and 1 child aged 9, flights and hotel',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  const f = r.packages.options[0].components.find((c) => c.type === 'flight');
+  assert.deepEqual(f.details.fareBreakdown, { adult: 2, youth: 0, child: 1, infant: 0 });
+  assert.equal(f.details.fareUnits, 2.75);
+  // Total equals the per-seat return fare × banded units (not × headcount).
+  assert.ok(Math.abs(f.priceUSD - f.details.adultFareUSD * 2.75) < 0.02);
+  assert.ok(f.details.childFareUSD < f.details.adultFareUSD);
+});
+
+test('live suppliers: disabled without keys, normalisers map provider shapes', () => {
+  // No provider keys in the test env → live overlay is inert (estimates used).
+  assert.equal(liveSuppliersConfigured(), false);
+
+  // Duffel passenger mapping: 2 adults + ages 16, 9, 1.
+  const pax = duffelPassengers({ adults: 2, children: 3, childAges: [16, 9, 1] });
+  assert.deepEqual(pax, [{ type: 'adult' }, { type: 'adult' }, { age: 16 }, { age: 9 }, { type: 'infant_without_seat' }]);
+
+  assert.equal(durationLabel('PT7H30M'), '7h 30m');
+
+  // Normalise a Duffel offer → our flight shape.
+  const offer = {
+    id: 'off_1', owner: { name: 'Emirates' }, total_amount: '900.00', total_currency: 'USD',
+    slices: [
+      { duration: 'PT7H', segments: [{ origin: { iata_code: 'LHR', city_name: 'London' }, destination: { iata_code: 'DXB', city_name: 'Dubai' }, departing_at: '2026-08-17T20:05:00', arriving_at: '2026-08-18T06:00:00' }] },
+      { duration: 'PT8H', segments: [{ origin: { iata_code: 'DXB' }, destination: { iata_code: 'LHR' }, departing_at: '2026-08-24T03:00:00', arriving_at: '2026-08-24T07:30:00' }] },
+    ],
+  };
+  const nf = normalizeDuffelOffer(offer, 900, { total: 3 });
+  assert.equal(nf.supplier, 'Emirates');
+  assert.equal(nf.live, true);
+  assert.equal(nf.priceUSD, 900);
+  assert.equal(nf.details.outbound.stops, 0);
+  assert.equal(nf.details.outbound.depart, '20:05');
+  assert.equal(nf.details.inbound.depart, '03:00');
+
+  // Normalise an Amadeus hotel entry → our hotel shape.
+  const entry = {
+    hotel: { name: 'Address Downtown', rating: '5', address: { lines: ['Sheikh Zayed Road'] }, hotelId: 'DXBADR' },
+    offers: [{ price: { total: '1400.00', currency: 'USD' }, room: { typeEstimated: { category: 'DELUXE' } }, boardType: 'BREAKFAST', policies: { cancellations: [{ deadline: 'x' }] } }],
+  };
+  const nh = normalizeAmadeusHotel(entry, 1400, 7, 2);
+  assert.equal(nh.supplier, 'Address Downtown');
+  assert.equal(nh.stars, 5);
+  assert.equal(nh.live, true);
+  assert.equal(nh.details.nightlyUSD, 200);
+  assert.equal(nh.details.freeCancellation, true);
+  assert.match(nh.details.area, /sheikh zayed road/i);
 });
 
 test('flight preferences: inferred from free text ("non-stop")', () => {

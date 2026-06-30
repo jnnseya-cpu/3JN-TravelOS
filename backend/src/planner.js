@@ -14,7 +14,7 @@ import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
 import { approvalProbability } from './visaos.js';
 
-export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {} }) {
+export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {}, live = null }) {
   const intent = parseIntent(text, context, new Date(Date.UTC(2026, 5, 30)));
 
   // Flight preferences: explicit toggles win, else inferred from the request text.
@@ -42,8 +42,14 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Departure: the user's stated city if given, else inferred from nationality.
   const origin = (intent.originCity && resolveOrigin(intent.originCity)) || originForCountry(intent.nationality);
   origin.inferred = !intent.originCity;
-  const scan = scanAll(intent, intent.destination, origin);
+  const scan = scanAll(intent, intent.destination, origin, live);
   const expectedBookingUSD = roughTotal(scan);
+
+  // Which components came from a live provider vs the deterministic estimator.
+  const priceSource = {
+    flights: live && live.flights && live.flights.length ? 'live' : 'estimated',
+    hotel: live && live.hotels && live.hotels.length ? 'live' : 'estimated',
+  };
 
   // Cost-protection gate (ACPE).
   const gate = costProtectionGate({
@@ -70,6 +76,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred, approxCode: !!origin.approxCode },
     recommendedDestination: intent.recommendedDestination || null,
     flightPrefs: { ...intent.flightPrefs, directUnavailable: intent.flightPrefs.directOnly && !chosenDirect },
+    priceSource,
     context,
     gate: {
       requestedTier: searchTier,

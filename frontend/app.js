@@ -498,7 +498,16 @@ function renderOptions(data) {
     ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(216,180,106,0.45)' : 'rgba(70,211,154,0.35)'}">${fpBits.join(' · ')}</div>`
     : '';
 
-  $('#plannerOut').innerHTML = gateBanner + flightPrefNote + summary + scanCard +
+  // Price-source transparency: live provider feed vs deterministic estimate.
+  const ps = data.priceSource || {};
+  const live = (ps.flights === 'live' ? 1 : 0) + (ps.hotel === 'live' ? 1 : 0);
+  const psNote = ps.flights || ps.hotel
+    ? (live > 0
+      ? `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Live prices · ${ps.flights === 'live' ? 'flights' : ''}${ps.flights === 'live' && ps.hotel === 'live' ? ' + ' : ''}${ps.hotel === 'live' ? 'hotels' : ''} from connected providers</div>`
+      : `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`)
+    : '';
+
+  $('#plannerOut').innerHTML = gateBanner + flightPrefNote + psNote + summary + scanCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. 3JN's 10% fee is shown openly in every breakdown.</p></div>
     <div class="opt-grid">${opts}</div>`;
@@ -519,8 +528,12 @@ function optionCard(o, sym, intent) {
         ? ' <span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">⭐ Direct</span>'
         : ` <span class="ch-chip">${esc(c.details.outbound.stopLabel || '1 stop')}</span>`)
       : '';
+    // Hotel/host rating chip: star class + guest score out of 10 with review count.
+    const ratingTag = (c.type === 'hotel' || c.type === 'host')
+      ? `${c.stars ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">${'★'.repeat(c.stars)}</span>` : ''}${c.details?.guestRating ? ` <span class="ch-chip" title="${(c.details.reviews || 0).toLocaleString()} verified reviews">${c.details.guestRating}/10</span>` : ''}`
+      : '';
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${flightTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${flightTag}${ratingTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">
@@ -548,6 +561,22 @@ function labelFor(c) {
   return map[c.type] || esc(c.type);
 }
 
+// Per-passenger fare split (OTA-style): adults & 12–17 youths at full fare,
+// 2–11 children at 75%, under-2 infants at 10%. Shown when a party has children.
+function fareSplitHTML(d, toLocal) {
+  const b = d.fareBreakdown;
+  if (!b || (!b.youth && !b.child && !b.infant)) return '';
+  const rows = [];
+  if (b.adult) rows.push(`<div class="kv"><span>${b.adult} adult${b.adult > 1 ? 's' : ''} (full fare)</span><span>${toLocal(d.adultFareUSD)} ea</span></div>`);
+  if (b.youth) rows.push(`<div class="kv"><span>${b.youth} youth 12–17 (adult fare)</span><span>${toLocal(d.adultFareUSD)} ea</span></div>`);
+  if (b.child) rows.push(`<div class="kv"><span>${b.child} child 2–11 (75%)</span><span>${toLocal(d.childFareUSD)} ea</span></div>`);
+  if (b.infant) rows.push(`<div class="kv"><span>${b.infant} infant under 2 (10%)</span><span>${toLocal(d.infantFareUSD)} ea</span></div>`);
+  return `<div class="card pad" style="margin-top:10px">
+    <span class="eyebrow">Fare split by passenger</span>${rows.join('')}
+    <div class="muted" style="font-size:11.5px;margin-top:6px">Airlines charge 12+ as adults; 2–11 at a child fare; under-2 infants travel on a lap. Return fare shown per seat.</div>
+  </div>`;
+}
+
 // Detailed info + images for a selected flight or hotel.
 window.showComponentInfo = (tier, idx) => {
   const o = window.__options?.[tier];
@@ -572,7 +601,8 @@ window.showComponentInfo = (tier, idx) => {
       <div style="margin:6px 0">${direct ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.1)">⭐ Direct flight — privilege selection</span>' : '<span class="verified-tag">↺ Connecting flight (no non-stop on this route)</span>'}</div>
       <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}</div>
       ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
-      <div class="kv" style="margin-top:12px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
+      ${fareSplitHTML(d, toLocal)}
+      <div class="kv" style="margin-top:10px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
     return;
   }

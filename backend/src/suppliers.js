@@ -105,10 +105,42 @@ function round(n) {
   return Math.round(n * 100) / 100;
 }
 
+// Airline fare bands by passenger age — the same split an OTA applies:
+//   infant (under 2): travels on an adult's lap, ~10% of the adult fare
+//   child  (2–11):    ~75% of the adult fare
+//   adult  (12+):     full fare (airlines treat 12+ as an adult)
+const FARE_BANDS = { infant: 0.10, child: 0.75, adult: 1.0 };
+export function fareBandForAge(age) {
+  if (age == null || Number.isNaN(age)) return 'child';
+  if (age < 2) return 'infant';
+  if (age <= 11) return 'child';
+  return 'adult';
+}
+// Turn a traveller party into priced fare units + a breakdown the UI can show.
+// A 16- and 13-year-old pay the adult fare; a 9-year-old pays the child fare.
+export function flightFareUnits(travellers) {
+  const ages = Array.isArray(travellers.childAges) ? travellers.childAges : [];
+  const counts = { adult: travellers.adults || 1, youth: 0, child: 0, infant: 0 };
+  for (const a of ages) {
+    const band = fareBandForAge(a);
+    if (band === 'adult') counts.youth += 1; // 12–17, charged as an adult
+    else counts[band] += 1;
+  }
+  // Children whose ages weren't given default to the child band.
+  const unpriced = Math.max(0, (travellers.children || 0) - ages.length);
+  counts.child += unpriced;
+  const units = counts.adult * FARE_BANDS.adult
+    + counts.youth * FARE_BANDS.adult
+    + counts.child * FARE_BANDS.child
+    + counts.infant * FARE_BANDS.infant;
+  return { units: Math.round(units * 100) / 100, counts, bands: FARE_BANDS };
+}
+
 // --- Flights (inbound + outbound, as the brief and the session require) ----
 export function scanFlights(intent, dest, origin) {
   const rnd = seeded(`flt-${dest.code}-${origin.airport}-${intent.dates.checkIn}`);
   const pax = intent.travellers.total;
+  const fare = flightFareUnits(intent.travellers); // age-banded fare units
   const distanceFactor = 1 + rnd() * 0.4;
 
   return AIRLINES.map((a) => {
@@ -140,8 +172,15 @@ export function scanFlights(intent, dest, origin) {
         passengers: pax,
         cabin: a.premium ? 'Economy (upgradable)' : 'Economy',
         baggage: a.premium ? '2 x 30kg checked + cabin' : '1 x 23kg checked + cabin',
+        // OTA-style passenger split: adults, 12–17 youths (adult fare), 2–11
+        // children (75%), under-2 infants (10%). `fareUnits` is what we price on.
+        fareBreakdown: fare.counts,
+        fareUnits: fare.units,
+        adultFareUSD: totalPerSeat,
+        childFareUSD: round(totalPerSeat * FARE_BANDS.child),
+        infantFareUSD: round(totalPerSeat * FARE_BANDS.infant),
       },
-      priceUSD: round(totalPerSeat * pax),
+      priceUSD: round(totalPerSeat * fare.units),
     };
   });
 }
@@ -446,12 +485,18 @@ export function scanBoat(intent) {
 
 // Run a full scan across every requested component. Returns a map of
 // component -> array of supplier offers (or a single offer for visa).
-export function scanAll(intent, dest, origin) {
+export function scanAll(intent, dest, origin, live = null) {
   const scan = {};
   const wanted = new Set(intent.components);
 
-  if (wanted.has('flights')) scan.flights = scanFlights(intent, dest, origin);
-  if (wanted.has('hotel')) scan.hotel = scanHotels(intent, dest);
+  // Live provider offers (when configured + reachable) replace the synthetic
+  // ones for that component; everything else keeps the deterministic engine.
+  if (wanted.has('flights')) {
+    scan.flights = (live && live.flights && live.flights.length) ? live.flights : scanFlights(intent, dest, origin);
+  }
+  if (wanted.has('hotel')) {
+    scan.hotel = (live && live.hotels && live.hotels.length) ? live.hotels : scanHotels(intent, dest);
+  }
   if (wanted.has('activities')) scan.activities = scanActivities(intent, dest);
   if (wanted.has('visa')) scan.visa = [scanVisa(intent, dest)];
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);
