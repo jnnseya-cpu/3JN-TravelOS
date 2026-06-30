@@ -22,7 +22,41 @@ const db = {
   paymentLinks: [], // BitriPay payment links / QR
   approvals: [], // business travel approval queue
   notifications: [], // per-user notification feed
+  visaApps: [], // VisaOS applications + decisions
 };
+
+// ---- 3JN VisaOS: applications + government analytics ----------------------
+export function recordVisaApplication(assessment) {
+  const rec = { id: id('visa'), ...assessment, at: nowISO() };
+  db.visaApps.push(rec);
+  recordAudit({ actor: 'visaos', role: 'agent', action: `visa.${assessment.decision.replace(/\s+/g, '-').toLowerCase()}`, entity: 'visa_application', entityId: rec.id, summary: `${assessment.applicant.nationality}→${assessment.applicant.destination} score ${assessment.totalScore}` });
+  return rec;
+}
+export function govAnalytics() {
+  const apps = db.visaApps;
+  const by = (pred) => apps.filter(pred).length;
+  const decisions = {};
+  const byCountry = {};
+  let fraudAttempts = 0, totalScore = 0;
+  for (const a of apps) {
+    decisions[a.decision] = (decisions[a.decision] || 0) + 1;
+    byCountry[a.applicant.nationality] = (byCountry[a.applicant.nationality] || 0) + 1;
+    if (a.risk?.fraud >= 60 || a.band === 'Reject') fraudAttempts++;
+    totalScore += a.totalScore || 0;
+  }
+  const approved = by((a) => a.decision === 'Auto Approval' || a.decision === 'Conditional Approval');
+  return {
+    applications: apps.length,
+    approved,
+    approvalRate: apps.length ? Math.round((approved / apps.length) * 100) : 0,
+    decisions,
+    fraudAttempts,
+    autoDigitalRate: apps.length ? Math.round((by((a) => a.decision !== 'Human Review') / apps.length) * 100) : 0,
+    avgScore: apps.length ? Math.round(totalScore / apps.length) : 0,
+    topCountries: Object.entries(byCountry).sort((x, y) => y[1] - x[1]).slice(0, 6).map(([k, v]) => ({ country: k, count: v })),
+    recent: apps.slice(-8).reverse().map((a) => ({ id: a.id, nationality: a.applicant.nationality, destination: a.applicant.destination, decision: a.decision, score: a.totalScore, band: a.band })),
+  };
+}
 
 // ---- Notifications engine -------------------------------------------------
 // Agents and workflows push notifications here; the console renders a bell with

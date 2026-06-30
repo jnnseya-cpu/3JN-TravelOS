@@ -18,8 +18,10 @@ import {
   createPaymentLink, listPaymentLinks, settlePaymentLink, merchantSettlement,
   listApprovals, decideApproval,
   listNotifications, markNotificationsRead,
+  recordVisaApplication, govAnalytics,
 } from './store.js';
 import { visaCheck, riskFeed } from './intelligence.js';
+import { assessVisa, approvalProbability } from './visaos.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -169,6 +171,19 @@ app.get('/api/risk/:destination', safe((req, res) => {
   res.json(riskFeed(req.params.destination));
 }));
 
+// ---- 3JN VisaOS — AI visa decision engine ---------------------------------
+app.post('/api/visaos/assess', safe((req, res) => {
+  const assessment = assessVisa(req.body || {});
+  recordVisaApplication(assessment);
+  res.json({ assessment });
+}));
+app.get('/api/visaos/probability', safe((req, res) => {
+  res.json(approvalProbability(req.query.nationality, req.query.destination));
+}));
+app.get('/api/visaos/government', safe((req, res) => {
+  res.json({ analytics: govAnalytics() });
+}));
+
 // ---- Price guard ----------------------------------------------------------
 app.post('/api/book/:id/price-guard', safe((req, res) => {
   const { drift } = req.body || {};
@@ -308,7 +323,7 @@ app.use(express.static(FRONTEND_DIR));
 app.use('/shared', express.static(SHARED_DIR));
 
 // SPA-ish fallback for the page routes.
-app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business'], (req, res) => {
+app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 

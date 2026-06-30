@@ -62,6 +62,7 @@ function nav(view) {
   if (view === 'console') renderConsole();
   if (view === 'admin') renderAdmin();
   if (view === 'business') renderBusiness();
+  if (view === 'visaos') renderVisaApply();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -134,14 +135,36 @@ function renderStatic() {
 window.selectTier = (name) => toast(`✓ ${name} selected — checkout is a prototype step.`);
 
 // ---- Boot -----------------------------------------------------------------
+// Detect the user's language + country from their DEVICE (more reliable than a
+// proxied header): navigator.languages + Intl timezone/region.
+function detectDevice() {
+  const langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'en-GB'];
+  const primary = langs[0] || 'en-GB';
+  const langCode = primary.split('-')[0].toLowerCase();
+  let region = (primary.split('-')[1] || '').toUpperCase();
+  // Fall back to timezone → region heuristic when the locale has no region.
+  if (!region) {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      const TZ = { 'Europe/London': 'GB', 'Asia/Dubai': 'AE', 'America/New_York': 'US', 'Europe/Paris': 'FR', 'Africa/Lagos': 'NG', 'Africa/Kinshasa': 'CD', 'Africa/Nairobi': 'KE', 'Asia/Kolkata': 'IN' };
+      region = TZ[tz] || '';
+    } catch { /* ignore */ }
+  }
+  const supportedLang = ['en', 'fr', 'sw', 'ln', 'ar'].includes(langCode) ? langCode : null;
+  return { lang: supportedLang, region };
+}
+
 async function boot() {
   renderStatic();
+  const device = detectDevice();
   try {
     state.context = await api('/api/context');
     const sel = $('#countrySelect');
     sel.innerHTML = state.context.currencies
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
-    sel.value = state.context.context.country;
+    // Prefer the device region for currency if we support it, else server detection.
+    const supportedCountry = state.context.currencies.some((c) => c.country === device.region);
+    sel.value = supportedCountry ? device.region : state.context.context.country;
     state.country = sel.value;
     sel.addEventListener('change', () => { state.country = sel.value; syncCurrency(sel.value); });
 
@@ -150,13 +173,16 @@ async function boot() {
     if (fc) {
       fc.innerHTML = state.context.currencies
         .map((c) => `<option value="${c.country}">${c.code} ${c.symbol}</option>`).join('');
-      fc.value = state.context.context.country;
+      fc.value = state.country;
       fc.addEventListener('change', () => { state.country = fc.value; sel.value = fc.value; toast(`Currency set to ${fc.options[fc.selectedIndex].text.trim()}.`); });
     }
+
     const lang = $('#langSelect');
     if (lang) {
-      lang.value = state.context.context.language && I18N[state.context.context.language] ? state.context.context.language : 'en';
-      applyLanguage(lang.value);
+      // Device language wins, then server-detected, then English.
+      const chosen = device.lang || (I18N[state.context.context.language] ? state.context.context.language : 'en');
+      lang.value = chosen;
+      applyLanguage(chosen);
       lang.addEventListener('change', () => { applyLanguage(lang.value); toast(`Language: ${lang.options[lang.selectedIndex].text}`); });
     }
   } catch { /* toast already shown */ }
@@ -273,6 +299,7 @@ function renderOptions(data) {
           <div style="font-size:13px">${intent.components.join(' · ')}</div>
         </div>
       </div>
+      ${data.visa?.ok ? `<div class="pill" style="margin:14px 0 0;cursor:pointer" onclick="nav('visaos')"><span class="dot" style="background:${data.visa.approvalProbability >= 85 ? 'var(--green)' : 'var(--gold)'}"></span> 3JN VisaOS · approval probability <strong style="margin:0 4px">${data.visa.approvalProbability}%</strong> · ${data.visa.visaRequired ? 'visa required' : 'visa-free'} · decision in ~${data.visa.typicalDecisionMinutes} min</div>` : ''}
     </div>`;
 
   const scanRows = Object.entries(data.scanSummary).map(([k, s]) =>
@@ -791,6 +818,118 @@ async function renderAdmin() {
       </div>
     </div>
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
+}
+
+// ---- 3JN VisaOS -----------------------------------------------------------
+$('#visaTabApply')?.addEventListener('click', renderVisaApply);
+$('#visaTabGov')?.addEventListener('click', renderVisaGov);
+
+function renderVisaApply() {
+  const out = $('#visaosOut');
+  if (!out) return;
+  out.innerHTML = `
+    <div class="planner-shell">
+      <div class="card pad">
+        <span class="eyebrow">Digital Visa Application</span>
+        <p class="muted" style="font-size:12.5px">Submit once — the agent swarm verifies and decides. Toggle the verification signals to see how the engine reacts (these simulate the agents' upstream findings).</p>
+        <div class="composer-row" style="margin-top:8px">
+          <div class="field"><label>Full name</label><input class="in" id="vName" value="Daniel Okoro"></div>
+          <div class="field"><label>Nationality</label>
+            <select class="in" id="vNat"><option>GB</option><option>US</option><option selected>NG</option><option>IN</option><option>FR</option></select></div>
+          <div class="field"><label>Destination</label>
+            <select class="in" id="vDest"><option selected>Dubai</option><option>Istanbul</option><option>Barcelona</option><option>New York</option><option>Bali</option></select></div>
+          <div class="field"><label>Purpose</label>
+            <select class="in" id="vPurpose"><option>tourism</option><option>business</option><option>study</option><option>family visit</option><option>medical</option><option>conference</option></select></div>
+          <div class="field"><label>Age</label><input class="in" id="vAge" value="34" style="width:70px"></div>
+          <div class="field"><label>Employer</label><input class="in" id="vEmployer" value="GE Aerospace"></div>
+          <div class="field"><label>Monthly income (USD)</label><input class="in" id="vIncome" value="4200" style="width:120px"></div>
+          <div class="field"><label>Home ties</label><select class="in" id="vTies"><option value="strong">strong</option><option value="moderate">moderate</option><option value="weak">weak</option></select></div>
+        </div>
+        <div class="chips" style="margin-top:12px" id="vSignals">
+          ${signalToggle('documentsAuthentic', 'Documents authentic', true)}
+          ${signalToggle('fundsConsistent', 'Funds consistent', true)}
+          ${signalToggle('footprintMatches', 'Footprint matches', true)}
+          ${signalToggle('purposeCredible', 'Purpose credible', true)}
+          ${signalToggle('priorOverstays', 'Prior overstay', false)}
+          ${signalToggle('onWatchlist', 'On watchlist', false)}
+          ${signalToggle('knownFraudNetwork', 'Fraud network', false)}
+          ${signalToggle('suddenDeposit', 'Sudden deposit', false)}
+        </div>
+        <div class="field" style="margin-top:12px"><label>Behaviour: hesitation around employment (0=calm, 100=evasive) — <span id="vBehLbl">10</span></label>
+          <input type="range" id="vBeh" min="0" max="100" value="10" oninput="document.getElementById('vBehLbl').textContent=this.value"></div>
+        <button class="btn btn-gold" style="margin-top:14px" id="vSubmit">▶ Run Visa Decision Agent Swarm</button>
+      </div>
+      <div id="visaDecision" style="margin-top:20px"></div>
+    </div>`;
+  $('#vSubmit').addEventListener('click', submitVisa);
+}
+function signalToggle(key, label, on) {
+  return `<span class="chip vsig ${on ? 'on' : ''}" data-key="${key}" data-on="${on}" onclick="toggleSignal(this)">${on ? '✓' : '○'} ${label}</span>`;
+}
+window.toggleSignal = (el) => { const on = el.dataset.on !== 'true'; el.dataset.on = on; el.classList.toggle('on', on); el.textContent = `${on ? '✓' : '○'} ${el.textContent.slice(2)}`; };
+
+async function submitVisa() {
+  const sig = {};
+  $$('.vsig').forEach((el) => { sig[el.dataset.key] = el.dataset.on === 'true'; });
+  const body = {
+    name: $('#vName').value, nationality: $('#vNat').value, destination: $('#vDest').value,
+    purpose: $('#vPurpose').value, age: Number($('#vAge').value), employer: $('#vEmployer').value,
+    monthlyIncome: Number($('#vIncome').value), homeTies: $('#vTies').value,
+    behaviourHesitation: Number($('#vBeh').value), ...sig,
+  };
+  const out = $('#visaDecision');
+  const agents = ['Document Forensics', 'Financial Authenticity', 'Identity Verification', 'Online Footprint', 'Behavioural Intelligence', 'Overstay Risk', 'Fraud Detection', 'Intent Assessment', 'Border Risk', 'Decision Agent'];
+  out.innerHTML = `<div class="card pad scanlog">${agents.map((a, i) => `<div class="ln" style="animation-delay:${i * 60}ms"><span class="ok">●</span> ${a} Agent verifying…</div>`).join('')}</div>`;
+  await tick(700);
+  let data;
+  try { data = await api('/api/visaos/assess', { method: 'POST', body: JSON.stringify(body) }); } catch { return; }
+  renderVisaDecision(data.assessment);
+}
+
+function renderVisaDecision(a) {
+  const decColor = { 'Auto Approval': 'var(--green)', 'Conditional Approval': 'var(--gold)', 'Human Review': 'var(--blue-bright)', 'Auto Rejection': '#ff6b6b' }[a.decision];
+  const agentRows = a.agents.map((ag) => `<div class="kv"><span><span class="vstatus ${ag.status}"></span>${ag.agent}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${ag.finding}</span></div>`).join('');
+  const dims = Object.entries(a.risk).map(([k, v]) => `<div class="kv"><span style="text-transform:capitalize">${k} risk</span><span><span class="rel-bar" style="display:inline-block;width:90px;vertical-align:middle"><i style="width:${v}%;background:${v >= 60 ? '#ff6b6b' : v >= 35 ? 'var(--gold)' : 'var(--green)'}"></i></span> ${v}</span></div>`).join('');
+  const cond = a.conditions.length ? `<div style="margin-top:8px"><span class="eyebrow">Conditions</span>${a.conditions.map((c) => `<div class="ok-line"><span class="ck">✓</span>${c}</div>`).join('')}</div>` : '';
+  $('#visaDecision').innerHTML = `
+    <div class="card pad" style="border-color:${decColor}">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div><span class="eyebrow">Decision · ${a.slaMinutes === 'escalated' ? 'escalated' : 'in ' + a.slaMinutes + ' min'}</span>
+          <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:${decColor}">${a.decision}</div>
+          <div class="muted" style="font-size:13px">${a.applicant.name} · ${a.applicant.nationality} → ${a.applicant.destination} · ${a.applicant.purpose}</div></div>
+        <div style="text-align:right"><div class="t-label">Unified risk (0–1000)</div>
+          <div style="font-family:'Space Grotesk';font-weight:700;font-size:32px;color:${decColor}">${a.totalScore}</div>
+          <div class="muted" style="font-size:12px">${a.band} · ${a.confidence}% confidence</div></div>
+      </div>
+      ${cond}
+    </div>
+    <div class="console-grid" style="margin-top:16px">
+      <div class="card pad"><span class="eyebrow">Agent swarm findings</span>${agentRows}</div>
+      <div class="card pad"><span class="eyebrow">Risk scoring engine</span>${dims}
+        <p class="muted" style="font-size:11px;margin-top:10px">Zero-trust · biometric liveness · device fingerprint · metadata analysis · immutable blockchain audit trail. Anti-corruption: every human override requires reason + approval chain + audit log.</p></div>
+    </div>`;
+}
+
+async function renderVisaGov() {
+  const out = $('#visaosOut');
+  let data;
+  try { data = await api('/api/visaos/government'); } catch { return; }
+  const g = data.analytics;
+  const kpis = [
+    ['Applications', g.applications], ['Approval rate', g.approvalRate + '%'],
+    ['Fraud attempts', g.fraudAttempts], ['Fully digital', g.autoDigitalRate + '%'], ['Avg risk', g.avgScore],
+  ].map(([k, v]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div></div>`).join('');
+  const decisions = Object.entries(g.decisions || {}).map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No applications yet — run one in the Applicant tab.</div>';
+  const countries = (g.topCountries || []).map((c) => `<div class="kv"><span>${c.country}</span><span>${c.count}</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
+  const recent = (g.recent || []).map((r) => `<div class="ln"><span class="ok">●</span> ${r.nationality}→${r.destination} · <strong>${r.decision}</strong> <span class="muted">(${r.score})</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
+  out.innerHTML = `
+    <div class="kpi-grid">${kpis}</div>
+    <div class="console-grid" style="margin-top:20px">
+      <div><div class="card pad"><span class="eyebrow">Decisions</span>${decisions}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Top applicant countries</span>${countries}</div></div>
+      <div class="card pad scanlog"><span class="eyebrow">Recent decisions</span><div style="margin-top:8px">${recent}</div>
+        <p class="muted" style="font-size:11px;margin-top:10px">Revenue: SaaS license · per-application fee · AI processing fee · biometric fee · fraud-intelligence subscription · Border Intelligence API.</p></div>
+    </div>`;
 }
 
 // ---- Business / Enterprise Command Centre ---------------------------------

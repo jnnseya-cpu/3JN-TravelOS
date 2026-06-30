@@ -16,7 +16,8 @@ import {
 } from '../src/store.js';
 import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
-import { listNotifications, pushNotification } from '../src/store.js';
+import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
+import { assessVisa, approvalProbability } from '../src/visaos.js';
 
 const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
 
@@ -227,6 +228,33 @@ test('risk feed returns a score and the seven intelligence layers', () => {
   assert.equal(r.ok, true);
   assert.ok(r.riskScore >= 70 && r.riskScore <= 100);
   assert.equal(r.layers.length, 7);
+});
+
+test('VisaOS: clean low-risk application is auto-approved', () => {
+  const a = assessVisa({ name: 'Clean Applicant', nationality: 'GB', destination: 'Dubai', purpose: 'tourism', homeTies: 'strong', behaviourHesitation: 5 });
+  assert.equal(a.risk && Object.keys(a.risk).length, 7);
+  assert.ok(a.totalScore <= 200);
+  assert.equal(a.decision, 'Auto Approval');
+});
+
+test('VisaOS: forged docs + no footprint + watchlist escalates or rejects', () => {
+  const a = assessVisa({
+    name: 'Risky Applicant', nationality: 'NG', destination: 'New York', purpose: 'business',
+    documentsAuthentic: false, footprintMatches: false, fundsConsistent: false,
+    onWatchlist: true, knownFraudNetwork: true, priorOverstays: true, homeTies: 'weak', behaviourHesitation: 85,
+  });
+  assert.ok(a.totalScore > 450, `expected high score, got ${a.totalScore}`);
+  assert.ok(['Human Review', 'Auto Rejection'].includes(a.decision));
+  assert.equal(a.agents.length, 10);
+});
+
+test('VisaOS: approval probability + government analytics', () => {
+  const p = approvalProbability('GB', 'Dubai');
+  assert.equal(p.ok, true);
+  assert.ok(p.approvalProbability > 0 && p.approvalProbability <= 99);
+  recordVisaApplication(assessVisa({ name: 'A', nationality: 'GB', destination: 'Dubai' }));
+  const g = govAnalytics();
+  assert.ok(g.applications >= 1 && 'approvalRate' in g && 'decisions' in g);
 });
 
 test('notifications: a booking notifies its owner', () => {

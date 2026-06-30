@@ -325,6 +325,15 @@ select, input.in {
   background: rgba(78,161,255,0.08); border: 1px solid var(--line); color: var(--text);
 }
 
+/* VisaOS */
+.vsig { transition: 150ms ease; }
+.vsig.on { color: var(--green); border-color: rgba(70,211,154,0.4); background: rgba(70,211,154,0.08); }
+.vstatus { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+.vstatus.pass { background: var(--green); }
+.vstatus.watch { background: var(--gold); }
+.vstatus.fail { background: #ff6b6b; }
+.vstatus.info { background: var(--blue); }
+
 /* notifications bell */
 .bell { position: relative; background: rgba(255,255,255,0.04); border: 1px solid var(--line-strong); color: var(--text); width: 36px; height: 34px; border-radius: 9px; cursor: pointer; font-size: 15px; }
 .bell:hover { background: rgba(255,255,255,0.09); }
