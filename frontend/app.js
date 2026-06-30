@@ -78,7 +78,7 @@ $('#modalBg').addEventListener('click', (e) => { if (e.target.id === 'modalBg') 
 
 // ---- View routing ---------------------------------------------------------
 // Which roles may open each restricted view (mirrors the backend role guard).
-const VIEW_ROLES = { admin: ['admin'], business: ['business', 'admin'] };
+const VIEW_ROLES = { admin: ['admin'], business: ['business', 'admin'], comms: ['admin'] };
 function canAccessView(view) {
   const roles = VIEW_ROLES[view];
   if (!roles) return true;
@@ -101,6 +101,7 @@ function nav(view) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'console') renderConsole();
   if (view === 'admin') renderAdmin();
+  if (view === 'comms') renderComms();
   if (view === 'business') renderBusiness();
   if (view === 'visaos') renderVisaApply();
   if (view === 'marketplace') renderMarketplace();
@@ -548,14 +549,17 @@ window.showComponentInfo = (tier, idx) => {
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
     return;
   }
-  // Hotel / host
-  const imgs = (d.images || []).map((src, i) => `<img class="hotel-img" src="${esc(src)}" alt="${esc(c.supplier)}" loading="lazy" onerror="this.classList.add('img-fallback');this.removeAttribute('src')">`).join('');
+  // Hotel / host — we don't show stock photos we can't verify (that would be
+  // misleading); a clean branded property header represents the stay honestly.
   const stars = '★'.repeat(c.stars || 0);
   const amen = (d.amenities || []).map((a) => `<span class="chip">${esc(a)}</span>`).join('');
   modal(`<span class="eyebrow">${c.type === 'host' ? 'Private host' : 'Hotel'} details</span>
-    <h3 style="margin:6px 0 2px">${esc(c.supplier)}</h3>
-    <div class="muted" style="font-size:12.5px"><span style="color:var(--gold)">${stars}</span> · ${esc(d.area || '')} · ${d.distanceToCentreKm}km to centre · ${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' reviews)' : ''}</div>
-    ${imgs ? `<div class="hotel-gallery">${imgs}</div>` : ''}
+    <div class="property-banner">
+      <span class="property-icon">${c.type === 'host' ? '🏡' : '🏨'}</span>
+      <div><div style="font-family:'Space Grotesk';font-weight:700;font-size:17px">${esc(c.supplier)}</div>
+        <div style="font-size:13px"><span style="color:var(--gold)">${stars}</span> <span class="muted">· ${esc(d.area || '')}</span></div></div>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-top:8px">${d.distanceToCentreKm}km to centre · ${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
     <p class="muted" style="font-size:13px;margin:10px 0">${esc(d.description || '')}</p>
     <div class="kv"><span>Room</span><span>${esc(d.roomType || '')}</span></div>
     <div class="kv"><span>Board</span><span>${esc(d.board || '')}</span></div>
@@ -1217,6 +1221,10 @@ async function renderAdmin() {
     : '<div class="muted" style="font-size:13px">no activity yet — make a booking to populate the feed</div>';
 
   out.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
+      <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
+    </div>
     <div class="kpi-grid">${kpiCards}</div>
     <div class="console-grid" style="margin-top:20px">
       <div>
@@ -1776,6 +1784,82 @@ window.decideVisa = async (id, decision) => {
   let d; try { d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); } catch { return; }
   toast(`✓ Decision recorded: ${decision}`);
   renderVisaGov();
+};
+
+// ---- Communication Event Architecture (admin) -----------------------------
+async function renderComms() {
+  const out = $('#commsOut');
+  if (!out) return;
+  if (!canAccessView('comms')) { accessGate(out, 'Communications', 'admin'); return; }
+  let d;
+  try { d = (await api('/api/comms/architecture')).architecture; } catch { accessGate(out, 'Communications', 'admin'); return; }
+  window.__comms = d;
+  const sevColor = { info: 'var(--blue-bright)', success: 'var(--green)', warning: 'var(--gold)', critical: '#ff6b6b' };
+
+  const kpis = [
+    ['Catalogue events', d.totalEvents, `${d.categories} categories`],
+    ['Mandatory notices', d.mandatory, 'bypass user opt-outs'],
+    ['Messages delivered', `${d.deliveredCount}`, `of ${d.attemptedCount} attempted`],
+    ['Channels wired', d.channelsWired, d.channels.join(' · ')],
+  ].map(([k, v, sub]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div><div class="muted" style="font-size:10.5px;margin-top:4px">${esc(sub)}</div></div>`).join('');
+
+  const coverage = d.channels.map((ch) => {
+    const total = d.channelCoverage[ch] || 0; const sent = d.sentByChannel[ch] || 0;
+    return `<div class="kv"><span style="text-transform:capitalize">${esc(ch)}</span><span>${total} events${sent ? ` · ${sent} sent` : ''}</span></div>`;
+  }).join('');
+
+  const eventOpts = d.catalogue.flatMap((c) => c.events.map((e) => `<option value="${e.key}">${esc(c.name)} · ${esc(e.name)} (${e.key})</option>`)).join('');
+  const companyOpts = (d.companies || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+
+  const recent = (d.recent || []).length
+    ? d.recent.map((r) => `<div class="kv"><span><span class="vstatus ${r.status === 'sent' ? 'pass' : 'info'}"></span>${esc(r.channel)} · <strong>${esc(r.event)}</strong></span><span class="muted" style="font-size:12px">${esc(r.status)} · ${esc(r.provider)} · ${new Date(r.at).toLocaleTimeString()}</span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">No deliveries yet — fire a test below.</div>';
+
+  const catalogue = d.catalogue.map((cat) => `
+    <div class="card pad" style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><strong style="font-family:'Space Grotesk'">${esc(cat.name)}</strong><span class="muted" style="font-size:12px">${cat.count} events</span></div>
+      <div style="margin-top:8px">${cat.events.map((e) => `
+        <div class="comms-row">
+          <div><div style="font-size:13.5px">${esc(e.name)} ${e.mandatory ? '<span class="role-badge" style="margin:0;color:#ff9b9b;border-color:rgba(255,90,90,0.3)">mandatory</span>' : ''}</div>
+            <div class="muted" style="font-size:11.5px"><code>${esc(e.key)}</code> · ${esc(e.subject)}</div></div>
+          <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
+            <span class="sev-dot" style="background:${sevColor[e.severity]}" title="${e.severity}"></span>
+            ${e.channels.map((ch) => `<span class="ch-chip">${esc(ch === 'inapp' ? 'in-app' : ch)}</span>`).join('')}
+          </div>
+        </div>`).join('')}</div>
+    </div>`).join('');
+
+  out.innerHTML = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpis}</div>
+    <div class="console-grid" style="margin-top:20px">
+      <div class="card pad"><span class="eyebrow">Channel coverage</span><p class="muted" style="font-size:12px;margin:6px 0 8px">How many catalogue events fire on each channel by default</p>${coverage}</div>
+      <div class="card pad"><span class="eyebrow">Template QA</span>
+        <p class="muted" style="font-size:12px;margin:6px 0 8px">Preview the branded email or fire any event to yourself across its channels.</p>
+        <div class="field"><label>Event</label><select class="in" id="commsEvent">${eventOpts}</select></div>
+        <div class="field" style="margin-top:8px"><label>Company brand</label><select class="in" id="commsCompany">${companyOpts}</select></div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="commsPreview()">Preview email</button>
+          <button class="btn btn-gold btn-sm" onclick="commsTest()">Send test to me</button>
+        </div>
+        <div id="commsPreviewOut"></div>
+      </div>
+    </div>
+    <div class="card pad scanlog" style="margin-top:16px"><span class="eyebrow">Recent deliveries</span><div style="margin-top:8px" id="commsRecent">${recent}</div></div>
+    <div class="section-head left" style="margin:24px 0 6px"><h2 style="font-size:20px">Event catalogue · ${d.totalEvents} events · ${d.categories} categories</h2></div>
+    ${catalogue}`;
+}
+window.commsPreview = async () => {
+  const event = $('#commsEvent').value, company = $('#commsCompany').value;
+  let d; try { d = await api('/api/comms/preview', { method: 'POST', body: JSON.stringify({ event, company }) }); } catch { return; }
+  modal(`<span class="eyebrow">Email preview · ${esc(event)}</span>
+    <p class="muted" style="font-size:12px">Exactly what a recipient receives — ${esc(d.company.name)} logo, brand colour and details.</p>
+    <iframe style="width:100%;height:420px;border:1px solid var(--line);border-radius:10px;margin-top:10px;background:#fff" srcdoc="${esc(d.html).replace(/&quot;/g, '&quot;')}"></iframe>`);
+};
+window.commsTest = async () => {
+  const event = $('#commsEvent').value;
+  let d; try { d = await api('/api/comms/test', { method: 'POST', body: JSON.stringify({ event }) }); } catch { return; }
+  toast(`✓ Fired ${event} across ${d.deliveries.length} channel${d.deliveries.length > 1 ? 's' : ''}`);
+  renderComms();
 };
 
 // ---- Business / Enterprise Command Centre ---------------------------------

@@ -28,7 +28,21 @@ const db = {
   contracts: [], // supplier volume agreements
   blog: [], // AI-written blog posts
   behaviour: [], // behavioural-learning event stream (searches, views, books…)
+  commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
 };
+
+// ---- Communication event delivery log -------------------------------------
+const COMMS_CAP = 2000;
+export function recordCommsDelivery({ event, name, channel, recipient, status, provider, severity } = {}) {
+  const rec = { id: id('msg'), event, name, channel, recipient, status, provider, severity, at: new Date().toISOString() };
+  db.commsDeliveries.push(rec);
+  if (db.commsDeliveries.length > COMMS_CAP) db.commsDeliveries.splice(0, db.commsDeliveries.length - COMMS_CAP);
+  return rec;
+}
+export function listCommsDeliveries(limit = 50) {
+  const all = [...db.commsDeliveries].reverse();
+  return limit > 0 ? all.slice(0, limit) : all;
+}
 
 // ---- Behavioural learning event stream ------------------------------------
 // Every meaningful user action is logged here so the ML/behaviour-learning
@@ -759,7 +773,7 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries'];
 
 export function snapshot() {
   const out = { counter };

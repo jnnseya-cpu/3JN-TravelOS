@@ -26,6 +26,7 @@ import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
 import { visaFramework, buildChecklist, assessApplication } from '../src/visa-framework.js';
 import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } from '../src/booking-schema.js';
+import { architecture as commsArchitecture, emit as commsEmit, renderEmail as commsRenderEmail, EVENTS as COMMS_EVENTS } from '../src/comms.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
@@ -358,6 +359,33 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('comms: 177-event catalogue, channel coverage, mandatory fan-out', () => {
+  const a = commsArchitecture();
+  assert.equal(a.totalEvents, 177);
+  assert.equal(a.categories, 15);
+  assert.equal(a.mandatory, 27);
+  assert.equal(a.channelCoverage.inapp, 177);
+  assert.equal(a.channelCoverage.email, 130);
+  assert.equal(a.channelCoverage.sms, 18);
+  assert.equal(a.channelCoverage.push, 27);
+
+  // Mandatory events bypass user opt-outs.
+  const u = createUser({ name: 'Comms' });
+  const r = commsEmit('security.alert', { userId: u.id, recipient: u.email, optOuts: ['email', 'sms', 'inapp'] });
+  assert.equal(r.ok, true);
+  assert.ok(r.deliveries.length >= 3, 'mandatory notice still fired on all its channels');
+
+  // Non-mandatory respects opt-outs.
+  const r2 = commsEmit('subscription.renewed', { userId: u.id, recipient: u.email, optOuts: ['email'] });
+  assert.ok(!r2.deliveries.some((d) => d.channel === 'email'));
+
+  // Branded email renders the company logo + colour.
+  const mail = commsRenderEmail('account.registration.requested', { company: 'groupe-nseya' });
+  assert.match(mail.html, /logo\.png/);
+  assert.match(mail.subject, /3JN Travel OS/);
+  assert.ok(COMMS_EVENTS['security.alert'].mandatory);
 });
 
 test('booking engine: dynamic requirements, document validation and fraud score', () => {

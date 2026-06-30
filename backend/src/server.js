@@ -32,6 +32,7 @@ import { assessVisa, approvalProbability } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication } from './visa-framework.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { liveShowcase } from './showcase.js';
+import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -111,6 +112,28 @@ app.get('/api/context', safe((req, res) => {
     membershipTiers: MEMBERSHIP_TIERS,
     acu: { perGbp: ACU_PER_GBP, fundRate: MEMBERSHIP_ACU_FUND_RATE },
   });
+}));
+
+// ---- Communication Event Architecture (admin only) ------------------------
+// One event engine: 177 events × 15 categories fan out over email/in-app/sms/
+// push/whatsapp; mandatory notices bypass opt-outs.
+app.get('/api/comms/architecture', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ architecture: commsArchitecture() });
+}));
+app.post('/api/comms/preview', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { event, company, vars } = req.body || {};
+  if (!COMMS_EVENTS[event]) return res.status(400).json({ error: 'unknown-event' });
+  res.json(commsRenderEmail(event, { company, vars: vars || {} }));
+}));
+app.post('/api/comms/test', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const user = currentUser(req);
+  const { event, vars } = req.body || {};
+  const result = commsEmit(event, { userId: user?.id, recipient: user?.email, vars: vars || { enterprise: 'Groupe Nseya', item: 'Sample', name: user?.name, actor: '3JN AI', amount: '£420', number: 'INV-1042', plan: 'Travel+ Family', project: 'Dubai 2026', task: 'Confirm visa', date: '12 Aug' } });
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
 }));
 
 // ---- Live showcase: real engine-computed numbers for the landing page ------
