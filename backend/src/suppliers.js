@@ -15,7 +15,7 @@ import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
 
 // Deterministic pseudo-random so results are stable for a given seed (no
 // Math.random — keeps runs reproducible and testable).
-function seeded(seed) {
+export function seeded(seed) {
   let s = 0;
   for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) % 2147483647;
   return () => {
@@ -134,6 +134,28 @@ export function flightFareUnits(travellers) {
     + counts.child * FARE_BANDS.child
     + counts.infant * FARE_BANDS.infant;
   return { units: Math.round(units * 100) / 100, counts, bands: FARE_BANDS };
+}
+
+// Deterministic indicative fare for one carrier on a route — shared by the
+// synthetic engine and the OAG real-schedule builder so both price identically.
+// Returns per-seat figures + the age-banded party total in USD.
+export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey) {
+  const rnd = seeded(`fare-${seedKey}`);
+  const distanceFactor = 1 + rnd() * 0.4;
+  const seatBase = (dest.flightBaseUSD || 220) * distanceFactor * (premium ? 1.35 : 1);
+  const noise = 0.85 + rnd() * 0.4;
+  const perSeat = seatBase * noise * (lowRated ? 0.7 : 1);
+  const outboundPerSeat = round(perSeat);
+  const inboundPerSeat = round(perSeat * (0.95 + rnd() * 0.2));
+  const totalPerSeat = outboundPerSeat + inboundPerSeat;
+  const fare = flightFareUnits(travellers);
+  return {
+    outboundPerSeat, inboundPerSeat, totalPerSeat,
+    fareUnits: fare.units, fareCounts: fare.counts,
+    childFareUSD: round(totalPerSeat * FARE_BANDS.child),
+    infantFareUSD: round(totalPerSeat * FARE_BANDS.infant),
+    priceUSD: round(totalPerSeat * fare.units),
+  };
 }
 
 // --- Flights (inbound + outbound, as the brief and the session require) ----

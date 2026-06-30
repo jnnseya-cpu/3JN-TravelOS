@@ -34,7 +34,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled } from './live-suppliers.js';
+import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled } from './live-suppliers.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -63,6 +63,7 @@ app.use((req, res, next) => {
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', persistence: isEnabled(), email: isMailerEnabled(),
   liveData: liveDataEnabled(), liveFlights: liveFlightsEnabled(), liveHotels: liveHotelsEnabled(),
+  liveSchedules: oagScheduleEnabled(),
 }));
 
 // Persist the store to Firebase RTDB shortly after any successful mutation

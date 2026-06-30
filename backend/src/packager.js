@@ -155,6 +155,8 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
       bookingUrl: s.bookingUrl,
       agent: s.agent,
       agentId: s.agentId,
+      live: !!s.live,
+      scheduleLive: !!s.scheduleLive,
     })),
     pricing: breakdown,
     totalUSD: breakdown.lines.totalUSD,

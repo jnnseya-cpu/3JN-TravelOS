@@ -45,10 +45,17 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const scan = scanAll(intent, intent.destination, origin, live);
   const expectedBookingUSD = roughTotal(scan);
 
-  // Which components came from a live provider vs the deterministic estimator.
+  // Provenance, read from the actual offers used. Price-live = a real fare
+  // (Duffel/Amadeus); schedule-live = a real operated schedule (OAG) priced by
+  // the estimator. Flights can be schedule-live but price-estimated.
+  const flightOffers = scan.flights || [];
+  const hotelOffers = scan.hotel || [];
   const priceSource = {
-    flights: live && live.flights && live.flights.length ? 'live' : 'estimated',
-    hotel: live && live.hotels && live.hotels.length ? 'live' : 'estimated',
+    flights: flightOffers.some((f) => f.live) ? 'live' : 'estimated',
+    hotel: hotelOffers.some((h) => h.live) ? 'live' : 'estimated',
+  };
+  const scheduleSource = {
+    flights: flightOffers.some((f) => f.live || f.scheduleLive) ? 'live' : 'estimated',
   };
 
   // Cost-protection gate (ACPE).
@@ -77,6 +84,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     recommendedDestination: intent.recommendedDestination || null,
     flightPrefs: { ...intent.flightPrefs, directUnavailable: intent.flightPrefs.directOnly && !chosenDirect },
     priceSource,
+    scheduleSource,
     context,
     gate: {
       requestedTier: searchTier,
