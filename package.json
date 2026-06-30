@@ -3,11 +3,17 @@
   "version": "0.1.0",
   "description": "3JN Global Travel Operating System — say what you want, get a complete, transparently-priced travel package.",
   "type": "module",
-  "main": "backend/src/server.js",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
   "scripts": {
     "start": "node backend/src/server.js",
     "dev": "node --watch backend/src/server.js",
-    "test": "node --test backend/test/*.test.js"
+    "test": "node --test backend/test/*.test.js",
+    "serve": "firebase emulators:start --only functions,hosting",
+    "deploy:firebase": "firebase deploy --only functions,hosting",
+    "deploy:functions": "firebase deploy --only functions"
   },
   "keywords": [
     "travel",
@@ -21,6 +27,7 @@
   "author": "3JN Travel",
   "license": "UNLICENSED",
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "firebase-functions": "^5.1.1"
   }
 }

@@ -32,7 +32,21 @@ import { gatewayStatus } from './ai-gateway.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(express.json());
+// Avatar/data-URL payloads can be ~600KB — lift the JSON limit accordingly.
+app.use(express.json({ limit: '1mb' }));
+
+// CORS — allows the Vercel-hosted frontend to call this API directly (or via a
+// rewrite proxy). Lock CORS_ORIGIN to your domain in production.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-country, x-partner-key');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// Health check for Cloud Run / Firebase / load balancers.
+app.get('/api/health', (req, res) => res.json({ ok: true, service: '3jn-travel-os' }));
 
 // Resolve the active user from a header (prototype "auth").
 function currentUser(req) {
@@ -381,11 +395,15 @@ app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 
+// Start a listener for local dev and Cloud Run / containers. Skip when running
+// under Firebase Functions (FUNCTION_TARGET set) — there the function wrapper
+// owns the lifecycle — and during tests.
 const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET) {
   app.listen(PORT, () => {
     console.log(`\n  3JN Travel OS running → http://localhost:${PORT}\n`);
   });
 }
 
 export { app };
+export default app;

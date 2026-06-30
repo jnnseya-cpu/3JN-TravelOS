@@ -10,6 +10,10 @@
     { "source": "/how-it-works", "destination": "/index.html" },
     { "source": "/api-portal", "destination": "/index.html" },
     { "source": "/membership", "destination": "/index.html" },
-    { "source": "/console", "destination": "/index.html" }
+    { "source": "/console", "destination": "/index.html" },
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/business", "destination": "/index.html" },
+    { "source": "/visaos", "destination": "/index.html" },
+    { "source": "/marketplace", "destination": "/index.html" }
   ]
 }

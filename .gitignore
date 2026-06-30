@@ -5,3 +5,10 @@ npm-debug.log*
 .env.*
 *.log
 /tmp/
+
+# Firebase / Vercel build artifacts
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+.vercel/

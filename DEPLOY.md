@@ -59,40 +59,55 @@ Config files included: `vercel.json`, `Dockerfile`, `render.yaml`, `firebase.jso
 
 ---
 
-## 1. Backend — pick ONE host
+## 1. Backend — Firebase Functions (recommended)
 
-### Option A (recommended): Google Cloud Run
+The Express app is wrapped as a single 2nd-gen HTTPS function named **`api`**
+(`index.js` → `onRequest(app)`). `app.listen` is skipped automatically under
+Functions; CORS + `/api/health` are built in.
+
 ```bash
-gcloud run deploy 3jn-travel-os-api \
-  --source . --region europe-west1 --allow-unauthenticated \
-  --set-env-vars NODE_ENV=production
-# set secrets (never commit them):
-gcloud run services update 3jn-travel-os-api --region europe-west1 \
-  --update-secrets RAYNA_AGENT_PASSWORD=rayna-pw:latest,ANTHROPIC_API_KEY=claude:latest
+npm install                     # installs express + firebase-functions
+npm install -g firebase-tools   # one-time, the CLI
+firebase login
+# set your project id in .firebaserc (replace "3jn-travel-os"), then:
+firebase use --add              # pick/confirm the project
+
+# (optional) secrets — never commit these:
+firebase functions:secrets:set RAYNA_AGENT_PASSWORD
+firebase functions:secrets:set ANTHROPIC_API_KEY   # OPENAI/GEMINI as needed
+# (then add them to index.js `secrets: [...]` and redeploy)
+
+firebase deploy --only functions          # backend only
+# or deploy backend + Firebase Hosting (serves the frontend too):
+firebase deploy --only functions,hosting
 ```
-Note the service URL it prints, e.g. `https://3jn-travel-os-api-xxxx.run.app`.
 
-### Option B: Render (simplest)
-Push to GitHub, then in Render → **New → Blueprint** and point it at the repo.
-`render.yaml` provisions the service. Add secrets in the dashboard. You get
-`https://3jn-travel-os-api.onrender.com`.
+The function URL is printed, e.g.
+`https://api-<hash>-ew.a.run.app` (2nd-gen functions run on Cloud Run) and is
+also reachable at `https://<region>-<project>.cloudfunctions.net/api`.
 
-### Option C: Firebase Hosting + Cloud Run
-Deploy the backend to Cloud Run (Option A), then `firebase deploy --only hosting`
-— `firebase.json` rewrites `/api/**` and `/shared/**` to the Cloud Run service.
+> **Alternatives** (same code, both work): **Cloud Run** —
+> `gcloud run deploy 3jn-travel-os-api --source . --region europe-west1 --allow-unauthenticated`;
+> **Render** — *New → Blueprint* on the repo (`render.yaml`). The `Dockerfile`
+> works on any container host and also serves the frontend from Express.
 
 ---
 
 ## 2. Frontend — Vercel
-1. Import the repo at vercel.com → it detects `vercel.json`
-   (`outputDirectory: frontend`, no build step).
-2. Edit `vercel.json` → replace `https://api.3jntravel.com` in the two `/api` and
-   `/shared` rewrites with your **real backend URL** from step 1 (or keep
-   `api.3jntravel.com` and point that subdomain at the backend in step 3).
-3. Deploy. You get `https://3jn-travel-os.vercel.app`.
 
-> The frontend calls the API with **relative paths** (`/api/...`), so the Vercel
-> rewrites transparently proxy them to the backend — no CORS, no code change.
+1. Import the repo at vercel.com → it auto-detects `vercel.json`
+   (`outputDirectory: frontend`, **no build step**).
+2. Point the API at your backend. Two options:
+   - **Recommended (no CORS):** keep `vercel.json`'s rewrites and map
+     `api.3jntravel.com` to your backend (step 3). The frontend calls relative
+     `/api/...`, Vercel proxies to `https://api.3jntravel.com/api/...`.
+   - **Or direct:** set `window.API_BASE` in `frontend/config.js` to the
+     function URL (e.g. `https://api-<hash>-ew.a.run.app`). CORS is already
+     enabled server-side (`CORS_ORIGIN`, default `*` — lock it to your domain).
+3. Deploy → `https://3jn-travel-os.vercel.app`.
+
+> All static assets (`index.html`, `app.js`, `styles.css`, `config.js`) are
+> self-contained in `frontend/` — Vercel needs no backend to serve the UI.
 
 ---
 

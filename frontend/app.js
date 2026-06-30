@@ -12,13 +12,18 @@ const state = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+// API base — empty for same-origin (Vercel rewrite or Firebase Hosting). Set
+// window.API_BASE (see frontend/config.js) to call a Firebase Functions / Cloud
+// Run URL directly when the frontend and backend are on different origins.
+const API_BASE = (typeof window !== 'undefined' && window.API_BASE) ? String(window.API_BASE).replace(/\/$/, '') : '';
+
 // ---- API helper (never lets an error surface as an empty object) ----------
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.user) headers['x-user-id'] = state.user.id;
   if (state.country) headers['x-country'] = state.country;
   try {
-    const res = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+    const res = await fetch(API_BASE + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
     return data;
