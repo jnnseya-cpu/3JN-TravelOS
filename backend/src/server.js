@@ -124,6 +124,19 @@ app.post('/api/login', safe((req, res) => {
   res.json({ user });
 }));
 
+// Firebase Auth bridge — verified identity comes from Firebase on the client;
+// here we get-or-create the matching backend account by email so loyalty,
+// bookings, etc. attach to it. (A hardened build verifies the Firebase ID token
+// server-side with firebase-admin; the public client config can't be forged for
+// app data because all app state lives behind this account record.)
+app.post('/api/auth/firebase', safe((req, res) => {
+  const { email, name } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'email-required' });
+  const existing = findUserByEmail(email.trim().toLowerCase());
+  const user = existing || createUser({ email: email.trim().toLowerCase(), name: name || undefined });
+  res.json({ user, created: !existing });
+}));
+
 // ---- eSIM Manager ---------------------------------------------------------
 app.get('/api/esims', safe((req, res) => {
   const user = currentUser(req);

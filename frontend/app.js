@@ -1117,13 +1117,39 @@ async function restoreSession() {
   if (!uid) return;
   try { const d = await api(`/api/account/${uid}`); if (d.user) setUser(d.user); } catch {}
 }
-window.signOut = () => { try { localStorage.removeItem('3jn_uid'); } catch {} state.user = null; $('#userChip').classList.add('hidden'); $('#signBtn').textContent = 'Sign in'; toast('Signed out.'); };
+window.signOut = () => {
+  try { localStorage.removeItem('3jn_uid'); } catch {}
+  if (window.firebaseAuth?.available) { try { window.firebaseAuth.signOut(); } catch {} }
+  state.user = null; $('#userChip').classList.add('hidden'); $('#signBtn').textContent = 'Sign in'; toast('Signed out.');
+};
 
 // ---- Login / Signup -------------------------------------------------------
 $('#signBtn')?.addEventListener('click', () => { if (state.user) return window.signOut(); openAuth(); });
+
+// Bridge a Firebase identity to a backend account (get-or-create by email).
+let firebaseBridging = false;
+window.addEventListener('firebase-auth', async (e) => {
+  if (firebaseBridging) return;
+  firebaseBridging = true;
+  try {
+    const d = await api('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ email: e.detail.email, name: e.detail.name }) });
+    setUser(d.user); closeModal();
+    toast(`✓ Signed in as ${d.user.name}`);
+    if (!$('#view-console').classList.contains('active')) nav('console');
+  } catch {} finally { firebaseBridging = false; }
+});
+window.addEventListener('firebase-signout', () => { /* handled by signOut() */ });
+window.googleSignIn = async () => {
+  if (!window.firebaseAuth?.available) { toast('Google sign-in unavailable — use email.'); return; }
+  try { await window.firebaseAuth.google(); } catch (err) { toast('Google sign-in cancelled.'); }
+};
+
 function openAuth() {
+  const fb = window.firebaseAuth?.available;
+  const googleBtn = fb ? '<button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="googleSignIn()">🇬 Continue with Google</button><div class="muted center" style="font-size:11px;margin-bottom:8px">or with email</div>' : '';
   modal(`
     <span class="eyebrow">Welcome to 3JN Travel OS</span>
+    ${googleBtn}
     <div class="chips" style="margin:10px 0">
       <span class="chip on" id="authTabSignup" onclick="authTab('signup')">Sign up</span>
       <span class="chip" id="authTabLogin" onclick="authTab('login')">Log in</span>
@@ -1131,14 +1157,16 @@ function openAuth() {
     <div id="authSignup">
       <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="auName" placeholder="Your name"></div>
       <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="auEmail" placeholder="you@email.com"></div>
+      ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="auPass" placeholder="••••••••"></div>' : ''}
       <div class="field" style="margin-top:10px"><label>I am a…</label><select class="in" id="auRole"><option value="consumer">Traveller</option><option value="business">Business</option><option value="merchant">Merchant</option><option value="partner">Agency partner</option></select></div>
       <div class="field" style="margin-top:10px"><label>Referral code (optional)</label><input class="in" id="auRef" placeholder="3JN-XXXX"></div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doSignup()">Create account · 250 pts bonus</button>
     </div>
     <div id="authLogin" style="display:none">
       <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@email.com"></div>
+      ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••"></div>' : ''}
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
-      <p class="muted" style="font-size:12px;margin-top:10px">Try the seeded accounts: admin@3jntravel.com, business@3jntravel.com, merchant@3jntravel.com.</p>
+      ${fb ? '' : '<p class="muted" style="font-size:12px;margin-top:10px">Try the seeded accounts: admin@3jntravel.com, business@3jntravel.com, merchant@3jntravel.com.</p>'}
     </div>`);
 }
 window.authTab = (t) => {
@@ -1148,14 +1176,29 @@ window.authTab = (t) => {
   $('#authLogin').style.display = t === 'login' ? 'block' : 'none';
 };
 window.doSignup = async () => {
-  const body = { name: $('#auName').value.trim(), email: $('#auEmail').value.trim(), role: $('#auRole').value, referredByCode: $('#auRef').value.trim() || undefined };
-  if (!body.name) { toast('Enter your name.'); return; }
+  const name = $('#auName').value.trim();
+  const email = $('#auEmail').value.trim();
+  if (!name) { toast('Enter your name.'); return; }
+  // With Firebase available, create the credential there; the firebase-auth
+  // event then bridges to a backend account. (Role/referral applied on bridge.)
+  if (window.firebaseAuth?.available) {
+    const pass = $('#auPass')?.value || '';
+    if (pass.length < 6) { toast('Password must be 6+ characters.'); return; }
+    try { await window.firebaseAuth.signUp(email, pass, name); } catch (e) { toast(e.message || 'Sign-up failed.'); }
+    return;
+  }
+  const body = { name, email, role: $('#auRole').value, referredByCode: $('#auRef').value.trim() || undefined };
   let d; try { d = await api('/api/account', { method: 'POST', body: JSON.stringify(body) }); } catch { return; }
   setUser(d.user); closeModal(); toast(`✓ Welcome, ${d.user.name}!`); nav('console');
 };
 window.doLogin = async () => {
   const email = $('#liEmail').value.trim();
   if (!email) { toast('Enter your email.'); return; }
+  if (window.firebaseAuth?.available) {
+    const pass = $('#liPass')?.value || '';
+    try { await window.firebaseAuth.signIn(email, pass); } catch (e) { toast(e.message || 'Login failed.'); }
+    return;
+  }
   let d; try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email }) }); } catch { return; }
   setUser(d.user); closeModal(); toast(`✓ Welcome back, ${d.user.name}!`); nav('console');
 };
