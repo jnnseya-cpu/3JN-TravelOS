@@ -16,6 +16,7 @@
 
 import { fxRate } from './live-data.js';
 import { estimateFlightFares } from './suppliers.js';
+import { routeFareBaseUSD } from './airports.js';
 
 const env = process.env;
 const TIMEOUT_MS = Number(env.LIVE_SUPPLIERS_TIMEOUT_MS) || 6000;
@@ -414,6 +415,7 @@ export async function fetchOagFlights(intent, dest, origin) {
     if (c && !inboundByCarrier.has(c)) inboundByCarrier.set(c, inst);
   }
 
+  const routeBase = routeFareBaseUSD(o, d); // distance-derived base (origin-aware)
   const seen = new Set();
   const offers = [];
   for (const inst of outbound) {
@@ -421,7 +423,7 @@ export async function fetchOagFlights(intent, dest, origin) {
     if (!iata || seen.has(iata)) continue; // one offer per carrier
     seen.add(iata);
     const premium = PREMIUM_CARRIERS.has(iata);
-    const fares = estimateFlightFares(dest, premium, false, intent.travellers, `oag-${iata}-${o}-${d}-${intent.dates.checkIn}`);
+    const fares = estimateFlightFares(dest, premium, false, intent.travellers, `oag-${iata}-${o}-${d}-${intent.dates.checkIn}`, routeBase);
     const outLeg = oagInstanceToLeg(inst, intent.dates.checkIn);
     const retInst = inboundByCarrier.get(iata);
     const inLeg = retInst ? oagInstanceToLeg(retInst, intent.dates.checkOut) : null;

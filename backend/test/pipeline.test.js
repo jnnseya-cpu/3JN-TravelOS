@@ -31,6 +31,7 @@ import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import { flightFareUnits, fareBandForAge } from '../src/suppliers.js';
 import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured, oagInstanceToLeg, oagScheduleEnabled } from '../src/live-suppliers.js';
 import { estimateFlightFares } from '../src/suppliers.js';
+import { haversineKm, distanceFareUSD, routeFareBaseUSD, airportCoords } from '../src/airports.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
 
@@ -134,6 +135,27 @@ test('accuracy: only a carrier that truly operates the route flies it non-stop',
   const flight = r.packages.options[0].components.find((c) => c.type === 'flight');
   assert.equal(flight.details.outbound.stops, 0, 'recommended flight is non-stop');
   assert.equal(r.flightPrefs.directUnavailable, false);
+});
+
+test('distance-based fares: realistic, monotonic with distance, origin-aware', () => {
+  // Great-circle distance is sane (BHX→DXB ≈ 5,500 km).
+  const km = haversineKm(airportCoords('BHX'), airportCoords('DXB'));
+  assert.ok(km > 5000 && km < 6000, `BHX→DXB ≈ ${Math.round(km)}km`);
+
+  // Fare grows with distance and lands in real bands.
+  const bcn = distanceFareUSD(haversineKm(airportCoords('LHR'), airportCoords('BCN')));
+  const dxb = distanceFareUSD(haversineKm(airportCoords('LHR'), airportCoords('DXB')));
+  const dps = distanceFareUSD(haversineKm(airportCoords('LHR'), airportCoords('DPS')));
+  assert.ok(bcn < dxb && dxb < dps, 'farther route costs more');
+  assert.ok(bcn > 120 && bcn < 280, `Barcelona RT ${bcn} USD realistic`);
+  assert.ok(dxb > 500 && dxb < 850, `Dubai RT ${dxb} USD realistic`);
+  assert.ok(dps > 900 && dps < 1500, `Bali RT ${dps} USD realistic`);
+
+  // Origin-aware: same destination, farther origin is not cheaper.
+  assert.ok(routeFareBaseUSD('LOS', 'DXB') >= routeFareBaseUSD('DOH', 'DXB'));
+
+  // Unknown airport → null so the caller falls back to the catalogue base.
+  assert.equal(routeFareBaseUSD('ZZZ', 'DXB'), null);
 });
 
 test('price sanity: a family Dubai package stays competitive, not 2x the market', () => {

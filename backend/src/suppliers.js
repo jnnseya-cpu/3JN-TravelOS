@@ -10,6 +10,7 @@
 // brief requires "cheapest *reliable*" and "only verified packages".
 
 import { visaRule, destExperiences } from './destinations.js';
+import { routeFareBaseUSD } from './airports.js';
 import { applySourcing } from './partners.js';
 import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
 
@@ -145,9 +146,11 @@ export function flightFareUnits(travellers) {
 // is ~12% dearer (not 35%), a low-rated carrier undercuts ~20%, and a small
 // seeded spread gives per-carrier variation. Over-stacking multipliers here is
 // what made earlier prices ~2x the market.
-export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey) {
+export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey, routeBaseUSD = null) {
   const rnd = seeded(`fare-${seedKey}`);
-  const base = dest.flightBaseUSD || 520; // realistic round-trip economy fare/seat
+  // Prefer the distance-derived base (origin-aware, worldwide) when available,
+  // else the destination's catalogue/synthesised base.
+  const base = routeBaseUSD || dest.flightBaseUSD || 520; // realistic round-trip economy fare/seat
   const spread = 0.9 + rnd() * 0.22; // 0.90–1.12 carrier/seasonal variation
   const premiumMult = premium ? 1.12 : 1;
   const lowMult = lowRated ? 0.8 : 1;
@@ -171,11 +174,13 @@ export function scanFlights(intent, dest, origin) {
   const pax = intent.travellers.total;
   const fare = flightFareUnits(intent.travellers); // age-banded fare units
   const distanceFactor = 1 + rnd() * 0.4;
+  // Distance-derived, origin-aware fare base (null when coords unknown).
+  const routeBase = routeFareBaseUSD(origin.airport, dest.code || dest.airport);
 
   return AIRLINES.map((a) => {
     // Price via the SHARED estimator so the synthetic engine and OAG-schedule
     // flights are calibrated identically (and only here).
-    const fares = estimateFlightFares(dest, a.premium, a.rating < 75, intent.travellers, `${dest.code}-${origin.airport}-${a.name}-${intent.dates.checkIn}`);
+    const fares = estimateFlightFares(dest, a.premium, a.rating < 75, intent.travellers, `${dest.code}-${origin.airport}-${a.name}-${intent.dates.checkIn}`, routeBase);
     const outboundPerSeat = fares.outboundPerSeat;
     const inboundPerSeat = fares.inboundPerSeat;
     const totalPerSeat = fares.totalPerSeat;
