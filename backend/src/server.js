@@ -34,6 +34,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
+import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled } from './live-suppliers.js';
 import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -59,7 +60,10 @@ app.use((req, res, next) => {
 });
 
 // Health check for Cloud Run / Firebase / load balancers.
-app.get('/api/health', (req, res) => res.json({ ok: true, service: '3jn-travel-os', persistence: isEnabled(), email: isMailerEnabled() }));
+app.get('/api/health', (req, res) => res.json({
+  ok: true, service: '3jn-travel-os', persistence: isEnabled(), email: isMailerEnabled(),
+  liveData: liveDataEnabled(), liveFlights: liveFlightsEnabled(), liveHotels: liveHotelsEnabled(),
+}));
 
 // Persist the store to Firebase RTDB shortly after any successful mutation
 // (debounced). No-op when persistence is disabled (offline / no credentials).
@@ -322,11 +326,24 @@ app.get('/api/expense', safe((req, res) => {
 }));
 
 // ---- Plan: the core pipeline ---------------------------------------------
-app.post('/api/plan', safe((req, res) => {
+app.post('/api/plan', safe(async (req, res) => {
   const { text, searchTier, overrides, country, currencyCountry, preferences } = req.body || {};
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
-  const result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {} });
+  let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {} });
+
+  // Live provider pricing overlay: when flight/hotel provider keys are present
+  // and reachable, fetch real offers and rebuild the packages from them. Any
+  // failure (no keys, outbound disabled, provider down) silently keeps the
+  // deterministic estimate — we never present an unconverted or invented price.
+  if (result.stage === 'options' && liveSuppliersConfigured()) {
+    try {
+      const live = await fetchLiveOffers(result.intent, result.intent.destination, result.origin);
+      if ((live.flights && live.flights.length) || (live.hotels && live.hotels.length)) {
+        result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live });
+      }
+    } catch { /* keep the estimated result */ }
+  }
 
   // ACU enforcement: paid search tiers are funded by ACUs. A signed-in account
   // must hold enough ACU before a paid tier runs — members fund this from the
