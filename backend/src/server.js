@@ -29,6 +29,8 @@ import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
 import { gatewayStatus } from './ai-gateway.js';
+import { snapshot, hydrate } from './store.js';
+import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -46,7 +48,16 @@ app.use((req, res, next) => {
 });
 
 // Health check for Cloud Run / Firebase / load balancers.
-app.get('/api/health', (req, res) => res.json({ ok: true, service: '3jn-travel-os' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: '3jn-travel-os', persistence: isEnabled() }));
+
+// Persist the store to Firebase RTDB shortly after any successful mutation
+// (debounced). No-op when persistence is disabled (offline / no credentials).
+app.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => { if (res.statusCode < 400) scheduleSave(snapshot); });
+  }
+  next();
+});
 
 // Resolve the active user from a header (prototype "auth").
 function currentUser(req) {
@@ -407,6 +418,23 @@ app.use('/shared', express.static(SHARED_DIR));
 app.get(['/how-it-works', '/api-portal', '/membership', '/console', '/admin', '/business', '/visaos', '/marketplace'], (req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
+
+// Initialise Firebase RTDB persistence (credential-gated; no-op offline). Load
+// any saved state into the in-memory store, then keep it flushed.
+if (process.env.NODE_ENV !== 'test') {
+  const p = initPersistence({});
+  if (p.enabled) {
+    load().then((snap) => {
+      if (snap && hydrate(snap)) console.log('[persist] restored store from Firebase RTDB');
+    });
+    // Belt-and-braces periodic flush (covers long-lived Cloud Run instances).
+    const flushEvery = setInterval(() => save(snapshot()), 15000);
+    if (flushEvery.unref) flushEvery.unref();
+    const flush = () => { save(snapshot()).finally(() => process.exit(0)); };
+    process.on('SIGTERM', flush);
+    process.on('SIGINT', flush);
+  }
+}
 
 // Start a listener for local dev and Cloud Run / containers. Skip when running
 // under Firebase Functions (FUNCTION_TARGET set) — there the function wrapper

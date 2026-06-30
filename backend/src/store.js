@@ -608,4 +608,26 @@ function nowISO() {
 }
 function round2(n) { return Math.round(n * 100) / 100; }
 
+// ---- Persistence snapshot / hydrate (for Firebase RTDB / Firestore) -------
+// Serialise the whole store to a plain JSON-safe object, and restore it. Maps
+// become objects; arrays pass through. Lets a persistence layer survive
+// restarts without rewriting every accessor to be async.
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts'];
+
+export function snapshot() {
+  const out = { counter };
+  for (const k of MAP_KEYS) out[k] = Object.fromEntries(db[k]);
+  for (const k of ARRAY_KEYS) out[k] = db[k];
+  return out;
+}
+
+export function hydrate(s) {
+  if (!s || typeof s !== 'object') return false;
+  if (typeof s.counter === 'number') counter = Math.max(counter, s.counter);
+  for (const k of MAP_KEYS) if (s[k]) db[k] = new Map(Object.entries(s[k]));
+  for (const k of ARRAY_KEYS) if (Array.isArray(s[k])) db[k] = s[k];
+  return true;
+}
+
 export { db };

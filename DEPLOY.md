@@ -141,9 +141,19 @@ add them to enable live Rayna booking and live AI providers.
 
 ---
 
-## 5. Note on data persistence
+## 5. Data persistence (Firebase Realtime Database)
 
-The prototype stores bookings/users in memory (`backend/src/store.js`) — fine for
-a demo, but it resets on restart and won't share state across instances. For
-production, swap `store.js` for PostgreSQL/Firestore (the blueprint's target) and
-run a single instance or add a shared DB before scaling horizontally.
+Persistence is **built in and credential-gated** (`backend/src/persistence.js`):
+
+- On **Firebase Functions / Cloud Run**, Application Default Credentials are
+  present automatically, so the store **loads from RTDB on boot** and **flushes
+  on every mutation (debounced) + every 15 s**. State survives restarts.
+- **Locally**, set `GOOGLE_APPLICATION_CREDENTIALS` to a service-account JSON to
+  enable it; otherwise it stays in-memory (the offline prototype/tests are
+  unaffected). `GET /api/health` reports `"persistence": true|false`.
+- DB URL defaults to the project's RTDB; override with `FIREBASE_DATABASE_URL`.
+
+**Enable RTDB once** in the Firebase console (Build → Realtime Database → Create)
+and set rules. The whole store is written under `/3jnos`. For heavy scale, move
+hot records to **per-document Firestore + Cloud SQL** (docs/AI-OS-ARCHITECTURE.md
+§9–10) — `snapshot()`/`hydrate()` keep that swap localised.
