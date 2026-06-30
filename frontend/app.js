@@ -591,8 +591,16 @@ window.editProfile = () => {
 };
 window.pickEmoji = (e) => { window.__avatar = e; $('#avatarPreview').innerHTML = `<span class="avatar avatar-emoji" style="width:64px;height:64px;font-size:32px">${e}</span>`; };
 window.saveProfile = async () => {
+  const newEmail = $('#pfEmail').value.trim();
+  // If signed in via Firebase and the email changed, use the secure verify-
+  // before-update flow (sends a review email to the old address) instead of
+  // silently changing it in the backend.
+  if (window.firebaseAuth?.available && state.user?.email && newEmail && newEmail !== state.user.email) {
+    try { await window.firebaseAuth.changeEmail(newEmail); toast('📧 Confirm the change via the email sent to your current address.'); }
+    catch (e) { toast(e.message || 'Could not start email change.'); return; }
+  }
   const patch = {
-    name: $('#pfName').value, email: $('#pfEmail').value,
+    name: $('#pfName').value, email: newEmail,
     role: $('#pfRole').value, bio: $('#pfBio').value, avatar: window.__avatar,
   };
   let data;
@@ -1135,6 +1143,9 @@ window.addEventListener('firebase-auth', async (e) => {
     const d = await api('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ email: e.detail.email, name: e.detail.name }) });
     setUser(d.user); closeModal();
     toast(`✓ Signed in as ${d.user.name}`);
+    if (e.detail && e.detail.emailVerified === false) {
+      setTimeout(() => toast('📧 Please verify your email — check your inbox.'), 1600);
+    }
     if (!$('#view-console').classList.contains('active')) nav('console');
   } catch {} finally { firebaseBridging = false; }
 });
@@ -1142,6 +1153,12 @@ window.addEventListener('firebase-signout', () => { /* handled by signOut() */ }
 window.googleSignIn = async () => {
   if (!window.firebaseAuth?.available) { toast('Google sign-in unavailable — use email.'); return; }
   try { await window.firebaseAuth.google(); } catch (err) { toast('Google sign-in cancelled.'); }
+};
+window.forgotPassword = async () => {
+  const email = ($('#liEmail')?.value || '').trim();
+  if (!email) { toast('Enter your email first, then tap “Forgot password?”.'); return; }
+  try { await window.firebaseAuth.resetPassword(email); toast(`📧 Password reset link sent to ${email}.`); }
+  catch (e) { toast(e.message || 'Could not send reset email.'); }
 };
 
 function openAuth() {
@@ -1166,7 +1183,7 @@ function openAuth() {
       <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@email.com"></div>
       ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••"></div>' : ''}
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
-      ${fb ? '' : '<p class="muted" style="font-size:12px;margin-top:10px">Try the seeded accounts: admin@3jntravel.com, business@3jntravel.com, merchant@3jntravel.com.</p>'}
+      ${fb ? '<p class="muted center" style="font-size:12px;margin-top:10px"><a onclick="forgotPassword()" style="color:var(--gold);cursor:pointer">Forgot password?</a></p>' : '<p class="muted" style="font-size:12px;margin-top:10px">Try the seeded accounts: admin@3jntravel.com, business@3jntravel.com, merchant@3jntravel.com.</p>'}
     </div>`);
 }
 window.authTab = (t) => {

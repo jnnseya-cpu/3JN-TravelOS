@@ -19,6 +19,8 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
       getAuth, GoogleAuthProvider, signInWithPopup,
       createUserWithEmailAndPassword, signInWithEmailAndPassword,
       signOut, onAuthStateChanged, setPersistence, browserLocalPersistence,
+      sendEmailVerification, updateProfile, sendPasswordResetEmail,
+      verifyBeforeUpdateEmail,
     } = await import(`${SDK}/firebase-auth.js`);
 
     const app = initializeApp(cfg);
@@ -26,18 +28,26 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
     try { await setPersistence(auth, browserLocalPersistence); } catch {}
 
     const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }));
-    const toUser = (u) => ({ uid: u.uid, email: u.email, name: u.displayName || (u.email || '').split('@')[0] });
+    const toUser = (u) => ({ uid: u.uid, email: u.email, name: u.displayName || (u.email || '').split('@')[0], emailVerified: !!u.emailVerified });
 
     window.firebaseAuth = {
       available: true,
       async google() { const { user } = await signInWithPopup(auth, new GoogleAuthProvider()); return toUser(user); },
       async signUp(email, password, name) {
         const { user } = await createUserWithEmailAndPassword(auth, email, password);
-        if (name && user) { try { const { updateProfile } = await import(`${SDK}/firebase-auth.js`); await updateProfile(user, { displayName: name }); } catch {} }
-        return toUser(user);
+        if (name && user) { try { await updateProfile(user, { displayName: name }); } catch {} }
+        // Send the verification email (uses your console template).
+        try { await sendEmailVerification(user); } catch {}
+        return { ...toUser(user), verificationSent: true };
       },
       async signIn(email, password) { const { user } = await signInWithEmailAndPassword(auth, email, password); return toUser(user); },
+      async resetPassword(email) { await sendPasswordResetEmail(auth, email); return true; },
+      async resendVerification() { if (auth.currentUser) { await sendEmailVerification(auth.currentUser); return true; } return false; },
+      // Secure email change — sends a "review the change" email to the OLD
+      // address and only applies the new email after the user confirms.
+      async changeEmail(newEmail) { if (!auth.currentUser) return false; await verifyBeforeUpdateEmail(auth.currentUser, newEmail); return true; },
       async signOut() { await signOut(auth); },
+      currentEmailVerified() { return !!auth.currentUser?.emailVerified; },
     };
 
     // Auto-bridge: when Firebase auth state changes, tell the app.
