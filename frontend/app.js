@@ -89,8 +89,28 @@ function nav(view) {
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
-  if (navEl) { e.preventDefault(); nav(navEl.dataset.nav); }
+  if (navEl) { e.preventDefault(); nav(navEl.dataset.nav); closeMobileNav(); }
 });
+
+// ---- Mobile navigation (hamburger) ----------------------------------------
+function openMobileNav() {
+  document.body.classList.add('nav-open');
+  const t = $('#navToggle'); const s = $('#navScrim');
+  if (t) { t.classList.add('on'); t.setAttribute('aria-expanded', 'true'); t.setAttribute('aria-label', 'Close menu'); }
+  if (s) s.hidden = false;
+}
+function closeMobileNav() {
+  document.body.classList.remove('nav-open');
+  const t = $('#navToggle'); const s = $('#navScrim');
+  if (t) { t.classList.remove('on'); t.setAttribute('aria-expanded', 'false'); t.setAttribute('aria-label', 'Open menu'); }
+  if (s) s.hidden = true;
+}
+$('#navToggle')?.addEventListener('click', () => {
+  if (document.body.classList.contains('nav-open')) closeMobileNav(); else openMobileNav();
+});
+$('#navScrim')?.addEventListener('click', closeMobileNav);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMobileNav(); });
+window.addEventListener('resize', () => { if (window.innerWidth > 1080) closeMobileNav(); });
 
 // ---- Static content (agents, tiers, steps, loyalty) -----------------------
 const AGENTS = [
@@ -211,6 +231,21 @@ async function boot() {
   } catch { /* toast already shown */ }
   refreshNotifications();
   restoreSession();
+  applyDeepLink();
+}
+// Open the right view from the URL — supports PWA shortcuts (/?view=planner)
+// and direct/shared paths (/console, /visaos, /how-it-works, …).
+function applyDeepLink() {
+  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'api', 'console', 'business', 'admin']);
+  const pathMap = { '': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
+  let target = '';
+  const qv = new URLSearchParams(location.search).get('view');
+  if (qv && views.has(qv)) target = qv;
+  else {
+    const seg = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0];
+    target = pathMap[seg] !== undefined ? pathMap[seg] : (views.has(seg) ? seg : '');
+  }
+  if (target && target !== 'home') nav(target);
 }
 function syncCurrency(country) {
   const fc = $('#footerCurrency');
@@ -1470,12 +1505,15 @@ function applyLanguage(lang) {
 async function refreshNotifications() {
   let data;
   try { data = await api('/api/notifications'); } catch { return; }
-  const badge = $('#notifBadge');
-  if (data.unread > 0) { badge.textContent = data.unread; badge.classList.remove('hidden'); }
-  else badge.classList.add('hidden');
+  ['#notifBadge', '#notifBadgeMobile'].forEach((sel) => {
+    const badge = $(sel);
+    if (!badge) return;
+    if (data.unread > 0) { badge.textContent = data.unread; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  });
   window.__notifs = data.notifications || [];
 }
-$('#notifBtn')?.addEventListener('click', async () => {
+async function openNotifications() {
   const items = window.__notifs || [];
   const rows = items.length ? items.map((n) => `
     <div class="notif ${n.read ? '' : 'unread'}"><span class="notif-ico">${n.icon}</span>
@@ -1484,7 +1522,9 @@ $('#notifBtn')?.addEventListener('click', async () => {
   modal(`<span class="eyebrow">Notifications</span><h3 style="margin:6px 0 10px">Your alerts</h3>${rows}`);
   try { await api('/api/notifications/read', { method: 'POST', body: '{}' }); } catch {}
   refreshNotifications();
-});
+}
+$('#notifBtn')?.addEventListener('click', openNotifications);
+$('#notifBtnMobile')?.addEventListener('click', () => { closeMobileNav(); openNotifications(); });
 
 // ---- Contact form ---------------------------------------------------------
 $('#contactLink')?.addEventListener('click', () => {
@@ -1526,3 +1566,46 @@ window.submitHost = () => {
 
 boot();
 updateCalc();
+
+// ---- PWA: service-worker registration -------------------------------------
+// Registers the offline/installable shell. Network-first for app code keeps it
+// from ever serving stale builds (see sw.js). Auto-applies updates on next load.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          // A new SW has taken control while an old one was running — refresh once.
+          if (sw.state === 'activated' && navigator.serviceWorker.controller) {
+            if (!window.__reloadedForSW) { window.__reloadedForSW = true; }
+          }
+        });
+      });
+    }).catch(() => { /* SW optional — app works without it */ });
+  });
+}
+
+// ---- PWA: install prompt --------------------------------------------------
+let __deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  __deferredPrompt = e;
+  const btn = $('#installBtn');
+  if (btn) btn.classList.remove('hidden');
+});
+window.promptInstall = async () => {
+  if (!__deferredPrompt) { toast('Use your browser menu › "Add to Home Screen" to install.'); return; }
+  __deferredPrompt.prompt();
+  try { await __deferredPrompt.userChoice; } catch {}
+  __deferredPrompt = null;
+  const btn = $('#installBtn');
+  if (btn) btn.classList.add('hidden');
+};
+window.addEventListener('appinstalled', () => {
+  __deferredPrompt = null;
+  const btn = $('#installBtn');
+  if (btn) btn.classList.add('hidden');
+  toast('✓ 3JN Travel OS installed. Launch it from your home screen.');
+});

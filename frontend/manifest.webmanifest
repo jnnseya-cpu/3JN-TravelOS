@@ -1,0 +1,44 @@
+{
+  "name": "3JN Travel OS — Stop Searching. Start Saving.",
+  "short_name": "3JN Travel OS",
+  "description": "AI-powered global travel operating system: cheapest reliable packages, pay monthly, AI visa decisions, eSIM and 24/7 travel agents.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#060912",
+  "theme_color": "#060912",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["travel", "lifestyle", "finance", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Plan a Trip",
+      "short_name": "Plan",
+      "description": "Describe your trip in one sentence and get the cheapest reliable package.",
+      "url": "/?view=planner",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "My Console",
+      "short_name": "Console",
+      "description": "View bookings, price monitoring and instalments.",
+      "url": "/console",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "VisaOS",
+      "short_name": "VisaOS",
+      "description": "AI visa approval-probability decision engine.",
+      "url": "/visaos",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
