@@ -12,6 +12,8 @@
     { "source": "/admin", "destination": "/index.html" },
     { "source": "/business", "destination": "/index.html" },
     { "source": "/visaos", "destination": "/index.html" },
-    { "source": "/marketplace", "destination": "/index.html" }
+    { "source": "/marketplace", "destination": "/index.html" },
+    { "source": "/blog", "destination": "/index.html" },
+    { "source": "/blog/(.*)", "destination": "/index.html" }
   ]
 }

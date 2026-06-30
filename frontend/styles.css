@@ -325,6 +325,16 @@ select, input.in {
   background: rgba(78,161,255,0.08); border: 1px solid var(--line); color: var(--text);
 }
 
+/* blog */
+.blog-card { transition: transform 150ms ease, border-color 150ms ease; }
+.blog-card:hover { transform: translateY(-4px); border-color: var(--line-strong); }
+.blog-body { font-size: 14.5px; line-height: 1.65; color: var(--muted); }
+.blog-body h3 { color: var(--text); font-size: 17px; margin: 16px 0 6px; }
+.blog-body a { color: var(--gold); text-decoration: underline; cursor: pointer; }
+.blog-body p { margin: 0 0 10px; }
+.share { width: 30px; height: 30px; border-radius: 8px; display: inline-grid; place-items: center; border: 1px solid var(--line-strong); color: var(--muted); font-size: 13px; cursor: pointer; text-decoration: none; }
+.share:hover { color: var(--text); border-color: var(--gold); }
+
 /* destination marketplace */
 .dest-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .dest-card { cursor: pointer; transition: transform 150ms ease, border-color 150ms ease; }
