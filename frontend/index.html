@@ -391,6 +391,19 @@
                 <option value="concierge">Concierge Search</option>
               </select>
             </div>
+            <div class="field">
+              <label>Departure time</label>
+              <select id="departWindow">
+                <option value="">Any time</option>
+                <option value="morning">Morning (05:00–12:00)</option>
+                <option value="afternoon">Afternoon (12:00–17:00)</option>
+                <option value="evening">Evening (17:00–24:00)</option>
+                <option value="night">Night (00:00–05:00)</option>
+              </select>
+            </div>
+            <label class="field-check" for="directOnly" title="Prefer non-stop flights when available">
+              <input type="checkbox" id="directOnly"> Direct flights only
+            </label>
             <div style="flex:1"></div>
             <span id="autosaveStatus" class="autosave"></span>
             <button class="btn btn-gold" id="planBtn">⚡ Scan & Build Package</button>

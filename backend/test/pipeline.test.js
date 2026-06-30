@@ -76,6 +76,38 @@ test('plan returns tiered, verified options with a recommendation', () => {
   assert.ok(result.packages.recommendedTier, 'a tier is recommended');
 });
 
+test('flight preferences: "direct only" toggle filters to non-stop when available', () => {
+  const base = 'London to Dubai in August for 5 nights, flights and hotel';
+  const off = plan({ text: base, context: GB, user: null, searchTier: 'smart', preferences: { directOnly: false } });
+  const on = plan({ text: base, context: GB, user: null, searchTier: 'smart', preferences: { directOnly: true } });
+  assert.equal(on.flightPrefs.directOnly, true);
+  // When the toggle is honoured, the recommended flight is non-stop both legs.
+  const flight = on.packages.options[0].components.find((c) => c.type === 'flight');
+  if (!on.flightPrefs.directUnavailable) {
+    assert.equal(flight.details.outbound.stops, 0, 'outbound is non-stop');
+    assert.equal((flight.details.inbound.stops || 0), 0, 'inbound is non-stop');
+  }
+  // The off-case still returns valid options (stops allowed).
+  assert.equal(off.stage, 'options');
+});
+
+test('flight preferences: departure-window preference is captured', () => {
+  const result = plan({
+    text: 'London to Istanbul in September for 4 nights, flights and hotel',
+    context: GB, user: null, searchTier: 'smart',
+    preferences: { departureWindow: 'morning' },
+  });
+  assert.equal(result.flightPrefs.departureWindow, 'morning');
+});
+
+test('flight preferences: inferred from free text ("non-stop")', () => {
+  const result = plan({
+    text: 'London to Dubai non-stop in August for 5 nights, flights and hotel',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  assert.equal(result.flightPrefs.directOnly, true);
+});
+
 test('unresolved destination asks clarifying questions instead of crashing', () => {
   const result = plan({ text: 'I want a cheap holiday somewhere warm', context: GB, user: null });
   assert.equal(result.stage, 'clarify');

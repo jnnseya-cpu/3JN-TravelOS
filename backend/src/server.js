@@ -323,10 +323,10 @@ app.get('/api/expense', safe((req, res) => {
 
 // ---- Plan: the core pipeline ---------------------------------------------
 app.post('/api/plan', safe((req, res) => {
-  const { text, searchTier, overrides, country, currencyCountry } = req.body || {};
+  const { text, searchTier, overrides, country, currencyCountry, preferences } = req.body || {};
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
-  const result = plan({ text, context, user, searchTier, overrides });
+  const result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {} });
 
   // ACU enforcement: paid search tiers are funded by ACUs. A signed-in account
   // must hold enough ACU before a paid tier runs — members fund this from the

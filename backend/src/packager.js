@@ -57,6 +57,29 @@ function preferDirect(list, picker) {
   const direct = list.filter(isDirect);
   return picker(direct.length ? direct : list);
 }
+
+// Departure-time windows (local outbound departure hour).
+const DEPART_WINDOWS = { morning: [5, 12], afternoon: [12, 17], evening: [17, 24], night: [0, 5] };
+function departHour(f) {
+  const t = f.details?.outbound?.depart || '';
+  const h = parseInt(t.split(':')[0], 10);
+  return Number.isNaN(h) ? 12 : h;
+}
+// Apply traveller flight preferences: "direct only" is a hard filter (kept only
+// when at least one non-stop exists), departure window is a soft preference.
+function applyFlightPrefs(pool, prefs) {
+  let list = pool;
+  if (prefs?.directOnly) {
+    const direct = list.filter(isDirect);
+    if (direct.length) list = direct; // honour the toggle when possible
+  }
+  const win = prefs?.departureWindow && DEPART_WINDOWS[prefs.departureWindow];
+  if (win) {
+    const inWin = list.filter((f) => { const h = departHour(f); return h >= win[0] && h < win[1]; });
+    if (inWin.length) list = inWin;
+  }
+  return list;
+}
 // Value = reliability per unit cost — rewards reliable suppliers that aren't the
 // most expensive.
 function bestValue(list) {
@@ -93,7 +116,7 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
     if (!pool.length) continue;
 
     let pick;
-    if (key === 'flights') pick = tier.pickFlight(pool);
+    if (key === 'flights') pick = tier.pickFlight(applyFlightPrefs(pool, intent.flightPrefs));
     else if (key === 'hotel') pick = tier.pickHotel(pool);
     else pick = tier.pickPerSupplier(pool);
 

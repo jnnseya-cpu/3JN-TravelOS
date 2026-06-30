@@ -267,6 +267,8 @@ section { padding: 84px 0; }
 .composer-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 11px; color: var(--muted-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+.field-check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); cursor: pointer; user-select: none; align-self: flex-end; padding-bottom: 9px; white-space: nowrap; }
+.field-check input { accent-color: var(--gold); width: 16px; height: 16px; cursor: pointer; }
 select, input.in {
   background: var(--navy-800); border: 1px solid var(--line-strong); color: var(--text);
   padding: 9px 12px; border-radius: 9px; font-family: inherit; font-size: 14px;
@@ -558,6 +560,7 @@ header.nav { padding-top: env(safe-area-inset-top); }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .composer-row { align-items: stretch; }
   .composer-row .field, .composer-row select, .composer-row .autosave { width: 100%; }
+  .composer-row .field-check { align-self: flex-start; padding-bottom: 0; }
   .ft-bottom { flex-direction: column; align-items: flex-start; }
   .ft-selectors { flex-wrap: wrap; }
   .timeline { flex-direction: column; align-items: stretch; }
