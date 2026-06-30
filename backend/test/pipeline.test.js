@@ -159,6 +159,23 @@ test('multi-modal: a search shows ONLY the modes asked for — no auto flights/h
   assert.deepEqual([...set].sort(), ['hotel', 'train']);
 });
 
+test('plain-English: an unspecified need asks rather than assuming components', () => {
+  // Just a place, no need stated → clarify (don't invent flights/hotel).
+  const bare = plan({ text: 'Dubai', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(bare.stage, 'clarify');
+  assert.equal(bare.questions[0].id, 'need');
+  assert.ok(bare.questions[0].options.includes('Train'));
+
+  // Answering the question delivers exactly that and nothing else.
+  const answered = plan({ text: 'Dubai', context: GB, user: null, searchTier: 'smart', overrides: { need: 'Train' } });
+  assert.equal(answered.stage, 'options');
+  assert.deepEqual([...new Set(answered.packages.options[0].components.map((c) => c.type))], ['train']);
+
+  // A clear "travel + stay" phrasing is understood without asking.
+  const stay = plan({ text: 'I want to go to Paris for 4 nights, 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(stay.stage, 'options');
+});
+
 test('multi-modal: bare destination = essentials; "holiday" = full package', () => {
   const types = (r) => (r.packages.options[0].components || []).map((c) => (c.type === 'host' ? 'hotel' : c.type));
 
