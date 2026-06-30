@@ -251,14 +251,18 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   const wantsInstalments = /instal?ment|instalments|monthly|pay later|split/i.test(raw);
   const wantsCheapestReliable = /cheapest|reliable|best price|value|affordable/i.test(raw);
 
-  // Respect exactly what the traveller asked for. Only fill in components when
-  // they named NONE — and even then, a full package is added solely when they
-  // signalled they want a holiday/package; otherwise just the essentials.
-  // A search for "train to Paris" must never sprout flights, hotel or activities.
+  // Deliver exactly what the traveller asked for — the plain-English promise.
+  // We NEVER invent components they didn't express. When they name none, we
+  // infer only the obvious: an explicit holiday/package → the full bundle; a
+  // clear "travel + stay" phrasing (nights/week/trip/visit) → flights + hotel;
+  // anything genuinely unspecified → ask what they need (handled in plan()).
   const wantsFullPackage = /\b(holiday|holidays|package|all.?inclusive|getaway|vacation|honeymoon|full package|complete trip|everything)\b/i.test(raw);
+  const travelStaySignal = /\b(\d+\s*(?:night|nights|day|days|week|weeks)|weekend|trip|travel|travelling|traveling|visit|visiting|staying|go to|going to|getaway)\b/i.test(raw);
+  let needComponents = false;
   if (requested.size === 0 && destination) {
     if (wantsFullPackage) ['flights', 'hotel', 'activities', 'transfer', 'esim'].forEach((c) => requested.add(c));
-    else ['flights', 'hotel'].forEach((c) => requested.add(c)); // minimal "get there + stay"
+    else if (travelStaySignal) ['flights', 'hotel'].forEach((c) => requested.add(c)); // implied "get there + stay"
+    else needComponents = true; // truly unspecified — ask rather than assume
   }
 
   return {
@@ -269,6 +273,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     month: monthInfo ? monthInfo.name : null,
     dates,
     components: [...requested],
+    needComponents, // true → user named a place but no need; ask what they want
     wantsInstalments,
     wantsCheapestReliable,
     priority: wantsCheapestReliable ? 'cheapest-reliable' : 'balanced',

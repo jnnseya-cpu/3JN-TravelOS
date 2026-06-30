@@ -14,6 +14,18 @@ import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
 import { approvalProbability } from './visaos.js';
 
+// Maps a "what do you need?" answer to the components we'll actually search.
+const NEED_MAP = {
+  'Flights + hotel': ['flights', 'hotel'],
+  'Flights only': ['flights'],
+  'Hotel only': ['hotel'],
+  Train: ['train'],
+  Coach: ['coach'],
+  Cruise: ['cruise'],
+  Ferry: ['ferry'],
+  'Full holiday package': ['flights', 'hotel', 'activities', 'transfer', 'esim'],
+};
+
 export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {}, live = null }) {
   const intent = parseIntent(text, context, new Date(Date.UTC(2026, 5, 30)));
 
@@ -30,11 +42,31 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     if (intent.destination) intent.unresolved = intent.unresolved.filter((u) => u !== 'destination');
   }
   if (overrides.month) intent.month = overrides.month;
+  // Answer to the "what do you need?" question (plain-English → components).
+  if (overrides.need && NEED_MAP[overrides.need]) {
+    intent.components = [...NEED_MAP[overrides.need]];
+    intent.needComponents = false;
+  }
 
   // If we still can't resolve the destination, ask rather than fail.
   const questions = clarifyingQuestions(intent);
   if (!intent.destination) {
     return { stage: 'clarify', intent, questions, context };
+  }
+
+  // Destination is known but the traveller didn't say WHAT they want. Honour the
+  // plain-English promise: ask, don't assume flights/hotel.
+  if ((!intent.components || intent.components.length === 0) && intent.needComponents) {
+    return {
+      stage: 'clarify',
+      intent,
+      questions: [{
+        id: 'need',
+        question: `What would you like for ${intent.destination.city}?`,
+        options: ['Flights + hotel', 'Flights only', 'Hotel only', 'Train', 'Coach', 'Cruise', 'Full holiday package'],
+      }],
+      context,
+    };
   }
 
   // Estimate expected booking value (for the cost-protection gate) from a rough
