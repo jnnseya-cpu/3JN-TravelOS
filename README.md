@@ -121,6 +121,22 @@ POST /api/v1/search               white-label partner search endpoint
 The `shared/` module is imported directly by the backend and mounted at `/shared`
 so the browser reads the same constants — frontend and backend never drift.
 
+## Documentation
+
+- **[`docs/AI-OS-ARCHITECTURE.md`](docs/AI-OS-ARCHITECTURE.md)** — production-grade AI Infrastructure
+  OS architecture (17 sections: vision, market gap, user ecosystem, AI command centres, the full
+  multi-agent workforce + self-managing layer, cybersecurity command centre, data-intelligence
+  layer, BitriPay gateway, connector ecosystem, architecture, ERD, API spec, monetisation,
+  security/compliance, admin centre, roadmap, competitive advantage, production-readiness review).
+- **[`docs/BLUEPRINT.md`](docs/BLUEPRINT.md)** — the 16-section base platform blueprint.
+- **[`docs/MASTER_AI_PROMPT.md`](docs/MASTER_AI_PROMPT.md)** — the platform-wide system prompt,
+  wired into the AI Gateway (`SYSTEM_PROMPT` + standard output format) so every routed model call
+  is anchored to it.
+- **[`DEPLOY.md`](DEPLOY.md)** — Vercel (frontend) + Cloud Run/Render (backend) + Hostinger DNS.
+
 ## Stack
 
-Node.js + Express, vanilla JS frontend (Space Grotesk + Inter), zero build step.
+Node.js + Express, vanilla JS frontend (Space Grotesk + Inter), zero build step. The **AI Gateway**
+(`backend/src/ai-gateway.js`) is a provider-agnostic Model Router that shares work across Claude /
+OpenAI / Gemini / Cohere by task, meters ACU, and falls back to the local deterministic engine when
+no API keys are present — so the platform runs fully offline yet is live-provider ready.

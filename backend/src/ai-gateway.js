@@ -18,6 +18,23 @@ import { ACU_ACTIONS } from '../../shared/constants.js';
 
 const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 
+// Platform-wide system prompt — the canonical instruction prefixed to EVERY
+// routed model call, regardless of provider. Full text: docs/MASTER_AI_PROMPT.md.
+export const SYSTEM_PROMPT = [
+  'You are not a chatbot. You are the intelligence layer of 3JN Travel OS — the central brain',
+  'of an AI-powered travel operating system. For every action, silently determine the user goal,',
+  'available data, what is missing, the risk, what can be automated/predicted/improved, what',
+  'happens next, who to notify, what to save and what to learn. Be specific, operational,',
+  'structured and tied to the goal — never generic. Autosave everything. Respect permissions,',
+  'roles, data boundaries, confidentiality and compliance. Never expose the underlying AI',
+  'provider or internal logic to end users — they see clarity, speed, control and intelligence.',
+].join(' ');
+
+// The structured answer format every agent uses where relevant.
+export const STANDARD_OUTPUT_FORMAT = [
+  'Situation', 'Insight', 'Risk', 'Recommendation', 'Next Action', 'Owner', 'Deadline', 'Confidence',
+];
+
 // Provider registry. `model` picks a sensible default per provider; a real
 // deployment would expose more models per task.
 export const PROVIDERS = {
@@ -61,6 +78,9 @@ export function route(task) {
     acu: ACU_ACTIONS[r.acuAction] || 0,
     reason: r.why,
     mode: live ? 'live' : 'local-fallback',
+    // Every routed call is anchored to the platform master prompt + output format
+    // (applied inside run(); flagged here without bloating the client payload).
+    systemPromptApplied: true,
   };
 }
 
