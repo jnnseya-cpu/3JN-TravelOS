@@ -60,12 +60,28 @@ export function distanceFareUSD(km) {
   return Math.round(base);
 }
 
-// Convenience: round-trip economy fare base for an origin airport → destination.
-// Returns null when either airport's coordinates are unknown (caller falls back
-// to the destination's catalogue/synthesised base).
+// Market premium for thin / low-competition routes where real fares run well
+// above what distance alone implies (few carriers, high demand, limited
+// capacity). Keyed by destination airport. 1.0 = priced on distance only.
+const MARKET_FACTOR = {
+  FIH: 1.45, // Kinshasa — very thin, expensive market
+  LOS: 1.30, ABV: 1.30, // Nigeria
+  ACC: 1.22, // Accra
+  ADD: 1.12, NBO: 1.12, // East Africa
+  CMN: 1.08,
+  GRU: 1.10, EZE: 1.12, // South America long-haul
+  AKL: 1.10, // New Zealand
+};
+export function marketFactor(destCode) {
+  return MARKET_FACTOR[(destCode || '').toUpperCase()] || 1.0;
+}
+
+// Convenience: round-trip economy fare base for an origin airport → destination,
+// adjusted for thin-market premiums. Returns null when either airport's
+// coordinates are unknown (caller falls back to the catalogue/synthesised base).
 export function routeFareBaseUSD(originCode, destCode) {
   const a = airportCoords(originCode);
   const b = airportCoords(destCode);
   if (!a || !b) return null;
-  return distanceFareUSD(haversineKm(a, b));
+  return Math.round(distanceFareUSD(haversineKm(a, b)) * marketFactor(destCode));
 }

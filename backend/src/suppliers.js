@@ -177,7 +177,11 @@ export function scanFlights(intent, dest, origin) {
   // Distance-derived, origin-aware fare base (null when coords unknown).
   const routeBase = routeFareBaseUSD(origin.airport, dest.code || dest.airport);
 
-  return AIRLINES.map((a) => {
+  // Low-cost carriers only operate intra-Europe — don't offer Wizz to Kinshasa.
+  const intraEurope = EUROPE.has(origin.country) && EUROPE.has(dest.country);
+  const carriers = AIRLINES.filter((a) => !a.lcc || intraEurope);
+
+  return carriers.map((a) => {
     // Price via the SHARED estimator so the synthetic engine and OAG-schedule
     // flights are calibrated identically (and only here).
     const fares = estimateFlightFares(dest, a.premium, a.rating < 75, intent.travellers, `${dest.code}-${origin.airport}-${a.name}-${intent.dates.checkIn}`, routeBase);

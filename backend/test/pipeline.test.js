@@ -137,6 +137,26 @@ test('accuracy: only a carrier that truly operates the route flies it non-stop',
   assert.equal(r.flightPrefs.directUnavailable, false);
 });
 
+test('thin-market & known cities: real IATA, country, carrier realism, priced up', () => {
+  // Kinshasa resolves to its REAL airport (FIH) + country, prices on distance ×
+  // a thin-market premium, and is NOT served non-stop by a European low-cost
+  // carrier (Wizz). Earlier it mis-resolved to "KIN" with a random ~£280 fare.
+  const k = plan({ text: 'birmingham to kinshasa for 21 days in august, 2 adults and 3 children, flights and hotel', context: GB, user: null, searchTier: 'deep' });
+  assert.equal(k.intent.destination.code, 'FIH');
+  assert.ok(k.intent.destination.countryName && /congo/i.test(k.intent.destination.countryName));
+  const kf = k.packages.options[0].components.find((c) => c.type === 'flight');
+  assert.ok(!/wizz|easyjet|ryanair/i.test(kf.supplier), 'no LCC long-haul to Kinshasa');
+  assert.ok(kf.details.adultFareUSD > 700, `Kinshasa fare ${kf.details.adultFareUSD} reflects a thin market`);
+
+  // Doha resolves to DOH/Qatar and is flown non-stop by its hub carrier, not by
+  // a carrier that doesn't serve it.
+  const d = plan({ text: 'birmingham to doha qatar for 7 nights in august, 2 adults and 3 children, flights and hotel', context: GB, user: null, searchTier: 'deep' });
+  assert.equal(d.intent.destination.code, 'DOH');
+  assert.equal(d.intent.destination.countryName, 'Qatar');
+  const df = d.packages.options.find((o) => o.recommended).components.find((c) => c.type === 'flight');
+  assert.equal(df.details.outbound.stops, 0, 'Doha is non-stop from its hub carrier');
+});
+
 test('distance-based fares: realistic, monotonic with distance, origin-aware', () => {
   // Great-circle distance is sane (BHX→DXB ≈ 5,500 km).
   const km = haversineKm(airportCoords('BHX'), airportCoords('DXB'));
