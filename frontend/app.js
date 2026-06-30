@@ -154,7 +154,11 @@ async function boot() {
       fc.addEventListener('change', () => { state.country = fc.value; sel.value = fc.value; toast(`Currency set to ${fc.options[fc.selectedIndex].text.trim()}.`); });
     }
     const lang = $('#langSelect');
-    if (lang) lang.addEventListener('change', () => toast(`Language: ${lang.options[lang.selectedIndex].text}. (Full i18n in roadmap — EN/FR/SW/LN/AR.)`));
+    if (lang) {
+      lang.value = state.context.context.language && I18N[state.context.context.language] ? state.context.context.language : 'en';
+      applyLanguage(lang.value);
+      lang.addEventListener('change', () => { applyLanguage(lang.value); toast(`Language: ${lang.options[lang.selectedIndex].text}`); });
+    }
   } catch { /* toast already shown */ }
   refreshNotifications();
 }
@@ -637,10 +641,50 @@ function bookingCard(b) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">▶ Run Price Guard</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
+        <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
       </div>
       ${pgEvents ? `<div style="margin-top:10px"><span class="eyebrow">Neural Price Guard</span>${pgEvents}</div>` : ''}
     </div>`;
 }
+
+// ---- Document Vault -------------------------------------------------------
+window.openDocs = async (bookingId) => {
+  let data;
+  try { data = await api(`/api/book/${bookingId}`); } catch { return; }
+  const b = data.booking;
+  const o = b.option;
+  const sym = o.pricing.symbol;
+  const lines = o.components.map((c) => `  • ${labelFor(c).replace(/<[^>]+>/g, '')} — ${c.supplier}${c.agentId ? ` [agent ${c.agentId}]` : ''}`).join('\n');
+  const doc = `3JN TRAVEL OS — BOOKING CONFIRMATION
+=====================================
+Booking ref : ${b.id}
+Package     : ${o.tier}
+Status      : ${b.status}
+Paid via    : ${b.gateway}
+Total       : ${sym}${o.pricing.local.total}
+
+INCLUDED
+${lines}
+
+Powered by Artificial Intelligence • Built for Better Travel`;
+  modal(`
+    <span class="eyebrow">Document Vault · ${b.id}</span>
+    <h3 style="margin:6px 0">Your travel documents</h3>
+    <div class="kv"><span>✈ e-Ticket</span><span class="muted">issued</span></div>
+    <div class="kv"><span>🏨 Hotel voucher</span><span class="muted">issued</span></div>
+    <div class="kv"><span>🛡 Insurance certificate</span><span class="muted">issued</span></div>
+    <div class="kv"><span>🛂 Visa approval</span><span class="muted">where applicable</span></div>
+    <pre class="card pad" style="margin-top:12px;font-size:11px;white-space:pre-wrap;font-family:monospace">${doc.replace(/</g, '&lt;')}</pre>
+    <button class="btn btn-gold btn-block" style="margin-top:12px" onclick='downloadDoc(${JSON.stringify(b.id)}, ${JSON.stringify(doc)})'>⬇ Download confirmation</button>`);
+};
+window.downloadDoc = (id, text) => {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `3JN-${id}.txt`; a.click();
+  URL.revokeObjectURL(url);
+  toast('✓ Confirmation downloaded.');
+};
 
 window.payInstalment = async (id, index, amount) => {
   try { await api(`/api/book/${id}/pay`, { method: 'POST', body: JSON.stringify({ index, amount }) }); } catch { return; }
@@ -969,6 +1013,25 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-content]');
   if (el) { e.preventDefault(); window.openContent(el.dataset.content); }
 });
+
+// ---- Internationalisation (EN / FR / SW / LN / AR) ------------------------
+const I18N = {
+  en: { 'nav.home': 'Home', 'nav.plan': 'Plan a Trip', 'nav.how': 'How it Works', 'nav.membership': 'Membership', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Business', 'nav.admin': 'Admin', 'hero.line1': 'Stop Searching.', 'hero.line2': 'Start Saving.', 'hero.lede': '3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.', 'hero.cta1': 'Get My Best Trip', 'hero.cta2': 'See How It Works', 'hero.whatsapp': '💬 Book on WhatsApp' },
+  fr: { 'nav.home': 'Accueil', 'nav.plan': 'Planifier', 'nav.how': 'Comment ça marche', 'nav.membership': 'Abonnement', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Entreprise', 'nav.admin': 'Admin', 'hero.line1': 'Arrêtez de chercher.', 'hero.line2': 'Commencez à économiser.', 'hero.lede': "3JN Travel OS trouve, optimise, négocie, réserve et gère tout votre voyage tout en réduisant continuellement les coûts grâce à l'intelligence artificielle.", 'hero.cta1': 'Mon meilleur voyage', 'hero.cta2': 'Comment ça marche', 'hero.whatsapp': '💬 Réserver sur WhatsApp' },
+  sw: { 'nav.home': 'Nyumbani', 'nav.plan': 'Panga Safari', 'nav.how': 'Jinsi Inavyofanya', 'nav.membership': 'Uanachama', 'nav.api': 'API', 'nav.console': 'Konsoli', 'nav.business': 'Biashara', 'nav.admin': 'Msimamizi', 'hero.line1': 'Acha Kutafuta.', 'hero.line2': 'Anza Kuokoa.', 'hero.lede': '3JN Travel OS hupata, huboresha, hujadiliana, huweka nafasi na kusimamia safari yako yote huku ikipunguza gharama kwa akili bandia.', 'hero.cta1': 'Pata Safari Bora', 'hero.cta2': 'Jinsi Inavyofanya', 'hero.whatsapp': '💬 Weka kwa WhatsApp' },
+  ln: { 'nav.home': 'Ndako', 'nav.plan': 'Bongisa Mobembo', 'nav.how': 'Ndenge Esalaka', 'nav.membership': 'Bosangani', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Mombongo', 'nav.admin': 'Admin', 'hero.line1': 'Tika Koluka.', 'hero.line2': 'Banda Kobomba.', 'hero.lede': '3JN Travel OS ekolukaka, ekobongisaka, ekosololaka, ekosalaka mpe ekobatelaka mobembo na yo mobimba na kokitisáká motúya na nzelá ya mayele ya masini.', 'hero.cta1': 'Zwá Mobembo Malamu', 'hero.cta2': 'Ndenge Esalaka', 'hero.whatsapp': '💬 Réserver na WhatsApp' },
+  ar: { 'nav.home': 'الرئيسية', 'nav.plan': 'خطط رحلة', 'nav.how': 'كيف يعمل', 'nav.membership': 'العضوية', 'nav.api': 'API', 'nav.console': 'لوحة التحكم', 'nav.business': 'الأعمال', 'nav.admin': 'المشرف', 'hero.line1': 'توقف عن البحث.', 'hero.line2': 'ابدأ التوفير.', 'hero.lede': 'يبحث 3JN Travel OS ويحسّن ويتفاوض ويحجز ويدير رحلتك بالكامل مع خفض التكاليف باستمرار عبر الذكاء الاصطناعي.', 'hero.cta1': 'احصل على أفضل رحلة', 'hero.cta2': 'كيف يعمل', 'hero.whatsapp': '💬 احجز عبر واتساب' },
+};
+function applyLanguage(lang) {
+  const dict = I18N[lang] || I18N.en;
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const k = el.dataset.i18n;
+    if (dict[k]) el.textContent = dict[k];
+  });
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  state.lang = lang;
+}
 
 // ---- Notifications engine -------------------------------------------------
 async function refreshNotifications() {
