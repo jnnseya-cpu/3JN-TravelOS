@@ -67,7 +67,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   return {
     stage: 'options',
     intent: publicIntent(intent),
-    origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred },
+    origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred, approxCode: !!origin.approxCode },
     recommendedDestination: intent.recommendedDestination || null,
     flightPrefs: { ...intent.flightPrefs, directUnavailable: intent.flightPrefs.directOnly && !chosenDirect },
     context,
@@ -128,5 +128,6 @@ function publicIntent(intent) {
     wantsInstalments: intent.wantsInstalments,
     priority: intent.priority,
     nationality: intent.nationality,
+    hotelArea: intent.hotelArea || null,
   };
 }

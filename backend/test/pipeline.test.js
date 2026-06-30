@@ -100,6 +100,39 @@ test('flight preferences: departure-window preference is captured', () => {
   assert.equal(result.flightPrefs.departureWindow, 'morning');
 });
 
+test('accuracy: real airport codes, UK date range, child ages and hotel area are captured', () => {
+  const text = 'I want to travel to Dubai from birmingham on 17/08 to 24/08 with my family ( 2 adults , and 3 children 16,13 and 9 years old) on a direct flight . I want direct flights and hotel in sheikh zayed road dubai , instalments and the cheapest reliable price.';
+  const r = plan({ text, context: GB, user: null, searchTier: 'deep', preferences: { directOnly: true } });
+  assert.equal(r.stage, 'options');
+  // Birmingham must be BHX (not the first-three-letters "BIR" = Biratnagar, Nepal).
+  assert.equal(r.origin.airport, 'BHX');
+  assert.equal(r.origin.city, 'Birmingham');
+  // Explicit UK-style 17/08–24/08 range, not the bare-month default.
+  assert.equal(r.intent.dates.checkIn, '2026-08-17');
+  assert.equal(r.intent.dates.checkOut, '2026-08-24');
+  assert.equal(r.intent.month, 'august');
+  // Travellers + child ages.
+  assert.equal(r.intent.travellers.adults, 2);
+  assert.equal(r.intent.travellers.children, 3);
+  assert.deepEqual(r.intent.travellers.childAges, [16, 13, 9]);
+  // Requested neighbourhood honoured.
+  assert.match(r.intent.hotelArea || '', /sheikh zayed road/i);
+  const hotel = r.packages.options[0].components.find((c) => c.type === 'hotel' || c.type === 'host');
+  assert.match(hotel.details.area, /sheikh zayed road/i);
+});
+
+test('accuracy: only a carrier that truly operates the route flies it non-stop', () => {
+  // Birmingham→Dubai: Emirates is the only real non-stop operator; BA/Lufthansa
+  // route via their own hubs. The direct-only pick must be a genuine non-stop.
+  const r = plan({
+    text: 'Dubai from birmingham in August for 7 nights, flights and hotel, direct flights only',
+    context: GB, user: null, searchTier: 'deep', preferences: { directOnly: true },
+  });
+  const flight = r.packages.options[0].components.find((c) => c.type === 'flight');
+  assert.equal(flight.details.outbound.stops, 0, 'recommended flight is non-stop');
+  assert.equal(r.flightPrefs.directUnavailable, false);
+});
+
 test('flight preferences: inferred from free text ("non-stop")', () => {
   const result = plan({
     text: 'London to Dubai non-stop in August for 5 nights, flights and hotel',

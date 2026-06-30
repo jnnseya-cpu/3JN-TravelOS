@@ -24,15 +24,42 @@ function seeded(seed) {
   };
 }
 
+// Carrier hubs drive realistic non-stop service: a network carrier flies a
+// route non-stop only when one end is its home country or its hub airport — so
+// Emirates is non-stop Birmingham→Dubai, but Lufthansa connects via Frankfurt.
 const AIRLINES = [
-  { name: 'Emirates', rating: 96, verified: true, premium: true },
-  { name: 'Qatar Airways', rating: 95, verified: true, premium: true },
-  { name: 'British Airways', rating: 88, verified: true, premium: false },
-  { name: 'Turkish Airlines', rating: 90, verified: true, premium: false },
-  { name: 'Lufthansa', rating: 89, verified: true, premium: false },
-  { name: 'Wizz Air', rating: 74, verified: true, premium: false },
-  { name: 'SkyValue Air', rating: 61, verified: false, premium: false }, // unreliable — filtered out
+  { name: 'Emirates', rating: 96, verified: true, premium: true, hubCountry: 'AE', hubAirport: 'DXB' },
+  { name: 'Qatar Airways', rating: 95, verified: true, premium: true, hubCountry: 'QA', hubAirport: 'DOH' },
+  { name: 'British Airways', rating: 88, verified: true, premium: false, hubCountry: 'GB', hubAirport: 'LHR' },
+  { name: 'Turkish Airlines', rating: 90, verified: true, premium: false, hubCountry: 'TR', hubAirport: 'IST' },
+  { name: 'Lufthansa', rating: 89, verified: true, premium: false, hubCountry: 'DE', hubAirport: 'FRA' },
+  { name: 'Wizz Air', rating: 74, verified: true, premium: false, lcc: true }, // intra-Europe point-to-point
+  { name: 'SkyValue Air', rating: 61, verified: false, premium: false, lcc: true }, // unreliable — filtered out
 ];
+
+// Countries Wizz-style low-cost carriers serve point-to-point (short-haul).
+const EUROPE = new Set(['GB', 'IE', 'FR', 'DE', 'NL', 'ES', 'PT', 'IT', 'CH', 'AT', 'BE', 'DK', 'SE', 'NO', 'FI', 'GR', 'TR', 'PL', 'HU', 'CZ', 'RO']);
+
+// How many stops this carrier needs on origin→dest, realistically. Returns null
+// when we can't tell (unknown/synthesised country) so the caller keeps its
+// deterministic fallback.
+function realisticStops(airline, originAirport, originCountry, destAirport, destCountry) {
+  if (!destCountry) return null; // synthesised destination — no realism signal
+  if (airline.lcc) {
+    if (!originCountry) return null;
+    return EUROPE.has(originCountry) && EUROPE.has(destCountry) ? 0 : 1;
+  }
+  // Network carrier flies non-stop only when the route actually touches its hub:
+  //  - flying INTO its home country (a flag carrier serves its hub from many
+  //    foreign cities non-stop, e.g. Emirates BHX→DXB), or
+  //  - departing FROM / arriving AT its own hub airport (hub↔anywhere).
+  // It will NOT fly non-stop between two cities that both bypass its hub
+  // (e.g. British Airways Birmingham→Dubai routes via Heathrow → 1 stop).
+  const direct = destCountry === airline.hubCountry
+    || originAirport === airline.hubAirport
+    || destAirport === airline.hubAirport;
+  return direct ? 0 : 1;
+}
 
 const HOTEL_BRANDS = [
   { name: 'Atlantis The Royal', stars: 5, rating: 97, verified: true },
@@ -94,8 +121,11 @@ export function scanFlights(intent, dest, origin) {
     // Deterministic but varied schedule: a flight duration derived from the
     // route distance, with each leg getting its own departure time.
     const durationMins = Math.round((120 + distanceFactor * 360) * (1 + (a.premium ? 0 : rnd() * 0.25)));
-    const outStops = a.premium ? 0 : (rnd() > 0.55 ? 1 : 0);
-    const inStops = a.premium ? 0 : (rnd() > 0.55 ? 1 : 0);
+    // Stops: realistic hub-based routing when we know both countries, else fall
+    // back to the deterministic premium/noise model.
+    const realistic = realisticStops(a, origin.airport, origin.country, dest.airport, dest.country);
+    const outStops = realistic != null ? realistic : (a.premium ? 0 : (rnd() > 0.55 ? 1 : 0));
+    const inStops = realistic != null ? realistic : (a.premium ? 0 : (rnd() > 0.55 ? 1 : 0));
     const outDepartMin = (5 + Math.floor(rnd() * 16)) * 60 + Math.floor(rnd() * 12) * 5; // 05:00–21:55
     const inDepartMin = (6 + Math.floor(rnd() * 15)) * 60 + Math.floor(rnd() * 12) * 5;
     return {
@@ -137,9 +167,14 @@ export function scanHotels(intent, dest) {
   const rnd = seeded(`htl-${dest.code}-${intent.dates.checkIn}`);
   const nights = intent.nights;
   const rooms = Math.max(1, Math.ceil(intent.travellers.total / 2));
+  // When the traveller named a neighbourhood ("hotel in Sheikh Zayed Road"),
+  // search that area specifically rather than a random one.
+  const reqArea = intent.hotelArea || null;
+  const areaFor = () => reqArea || pick(AREAS, rnd, dest.city);
 
   const hotels = HOTEL_BRANDS.map((h) => {
     const nightly = dest.hotelNightBaseUSD * (h.stars / 3) * (0.85 + rnd() * 0.5);
+    const area = areaFor();
     return {
       type: 'hotel',
       supplier: h.name,
@@ -153,12 +188,12 @@ export function scanHotels(intent, dest) {
         board: h.stars >= 4 ? 'Breakfast included' : 'Room only',
         freeCancellation: h.stars >= 3,
         roomType: h.stars >= 5 ? 'Deluxe Room, City View' : h.stars >= 4 ? 'Superior Double Room' : 'Standard Double Room',
-        area: pick(AREAS, rnd, dest.city),
+        area,
         distanceToCentreKm: Math.round((0.4 + rnd() * 5) * 10) / 10,
         guestRating: Math.round((78 + rnd() * 20)) / 10, // /10 scale e.g. 8.6
         reviews: 200 + Math.floor(rnd() * 4800),
         amenities: amenitiesFor(rnd, h.stars),
-        description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${pick(AREAS, rnd, dest.city)}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
+        description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${area}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
         ...hotelExtras(rnd, dest, intent, h.stars, 'hotel'),
       },
       priceUSD: round(nightly * nights * rooms),
@@ -181,7 +216,7 @@ export function scanHotels(intent, dest) {
       freeCancellation: true,
       sleeps: intent.travellers.total + 1,
       roomType: `Entire apartment · sleeps ${intent.travellers.total + 1}`,
-      area: pick(AREAS, rnd, dest.city),
+      area: areaFor(),
       distanceToCentreKm: Math.round((0.3 + rnd() * 3) * 10) / 10,
       guestRating: Math.round((86 + rnd() * 12)) / 10,
       reviews: 60 + Math.floor(rnd() * 900),

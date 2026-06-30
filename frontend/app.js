@@ -464,9 +464,11 @@ function renderOptions(data) {
         <div>
           <span class="eyebrow">Trip understood</span>
           <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${data.origin ? esc(data.origin.city) + ' → ' : ''}${esc(intent.destination.city)}${intent.destination.countryName ? ', ' + esc(intent.destination.countryName) : ''}</div>
-          <div class="muted" style="font-size:13.5px">${data.origin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} children` : ''} · ${intent.nights} nights · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
+          <div class="muted" style="font-size:13.5px">${data.origin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} child${intent.travellers.children > 1 ? 'ren' : ''}${intent.travellers.childAges && intent.travellers.childAges.length ? ` (aged ${intent.travellers.childAges.join(', ')})` : ''}` : ''} · ${intent.nights} nights · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
+          ${intent.hotelArea ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 Searching hotels in <strong>${esc(intent.hotelArea)}</strong> as requested.</div>` : ''}
           ${data.recommendedDestination ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 You named ${esc(data.recommendedDestination)} — we recommend <strong>${esc(intent.destination.city)}</strong> as the gateway city. Name a specific city to change it.</div>` : ''}
           ${data.origin && data.origin.inferred ? `<div class="muted" style="font-size:12px;margin-top:4px">🛫 Departure assumed <strong>${esc(data.origin.city)}</strong> — add "from &lt;your city&gt;" to your request for exact flights.</div>` : ''}
+          ${data.origin && data.origin.approxCode ? `<div class="muted" style="font-size:12px;margin-top:4px">ℹ️ We used an approximate airport code for <strong>${esc(data.origin.city)}</strong> — name a major nearby city for an exact match.</div>` : ''}
         </div>
         <div style="text-align:right">
           <div class="t-label">Components</div>
