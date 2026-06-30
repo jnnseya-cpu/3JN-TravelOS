@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>3JN Travel OS — Stop Searching. Start Saving.</title>
   <meta name="description" content="3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence." />
   <meta name="keywords" content="AI travel planner, cheapest reliable flights and hotel, pay monthly holidays, visa approval probability, eSIM travel, African diaspora travel, instalment travel booking" />
@@ -24,6 +24,18 @@
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"Organization","name":"3JN Travel OS","url":"https://3jntravel.com","description":"AI-powered global travel operating system.","sameAs":["https://www.facebook.com/","https://www.instagram.com/","https://www.linkedin.com/"],"contactPoint":{"@type":"ContactPoint","email":"info@3jntravel.com","contactType":"customer support"}}
   </script>
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#060912" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="3JN Travel OS" />
+  <meta name="application-name" content="3JN Travel OS" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="mask-icon" href="/favicon.png" color="#d8b46a" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -39,27 +51,34 @@
       <div class="brand" data-nav="home">
         <span class="logo">3JN</span> Travel<span style="color:var(--gold)">OS</span>
       </div>
-      <nav class="nav-links">
-        <a data-nav="home" data-i18n="nav.home">Home</a>
-        <a data-nav="planner" data-i18n="nav.plan">Plan a Trip</a>
-        <a data-nav="how" data-i18n="nav.how">How it Works</a>
-        <a data-nav="marketplace">Destinations</a>
-        <a data-nav="blog">Blog</a>
-        <a data-nav="visaos">VisaOS</a>
-        <a data-nav="membership" data-i18n="nav.membership">Membership</a>
-        <a data-nav="api" data-i18n="nav.api">API</a>
-        <a data-nav="console" data-i18n="nav.console">Console</a>
-        <a data-nav="business" data-i18n="nav.business">Business</a>
-        <a data-nav="admin" data-i18n="nav.admin">Admin</a>
-      </nav>
-      <div class="nav-cta">
-        <span id="userChip" class="pill hidden" style="margin:0"></span>
-        <button class="bell" id="notifBtn" title="Notifications">🔔<span class="bell-badge hidden" id="notifBadge">0</span></button>
-        <button class="btn btn-ghost btn-sm" id="signBtn">Sign in</button>
-        <button class="btn btn-ghost btn-sm" id="testAccountBtn" title="One account, every section unlocked">Full Access</button>
-        <button class="btn btn-gold btn-sm" data-nav="planner">Get My Best Trip</button>
+      <button class="bell bell-mobile" id="notifBtnMobile" title="Notifications" aria-label="Notifications">🔔<span class="bell-badge hidden" id="notifBadgeMobile">0</span></button>
+      <button class="nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="nav-menu" id="navMenu">
+        <nav class="nav-links">
+          <a data-nav="home" data-i18n="nav.home">Home</a>
+          <a data-nav="planner" data-i18n="nav.plan">Plan a Trip</a>
+          <a data-nav="how" data-i18n="nav.how">How it Works</a>
+          <a data-nav="marketplace">Destinations</a>
+          <a data-nav="blog">Blog</a>
+          <a data-nav="visaos">VisaOS</a>
+          <a data-nav="membership" data-i18n="nav.membership">Membership</a>
+          <a data-nav="api" data-i18n="nav.api">API</a>
+          <a data-nav="console" data-i18n="nav.console">Console</a>
+          <a data-nav="business" data-i18n="nav.business">Business</a>
+          <a data-nav="admin" data-i18n="nav.admin">Admin</a>
+        </nav>
+        <div class="nav-cta">
+          <span id="userChip" class="pill hidden" style="margin:0"></span>
+          <button class="bell bell-desktop" id="notifBtn" title="Notifications" aria-label="Notifications">🔔<span class="bell-badge hidden" id="notifBadge">0</span></button>
+          <button class="btn btn-ghost btn-sm" id="signBtn">Sign in</button>
+          <button class="btn btn-ghost btn-sm" id="testAccountBtn" title="One account, every section unlocked">Full Access</button>
+          <button class="btn btn-gold btn-sm" data-nav="planner">Get My Best Trip</button>
+        </div>
       </div>
     </div>
+    <div class="nav-scrim" id="navScrim" hidden></div>
   </header>
 
   <main class="wrap">
@@ -596,6 +615,7 @@
       <div class="ft-bottom">
         <span>© 2026 3JN Travel OS. All Rights Reserved.</span>
         <div class="ft-selectors">
+          <button class="btn btn-ghost btn-sm hidden" id="installBtn" onclick="promptInstall()">⤓ Install App</button>
           <select id="langSelect" class="in" title="Language">
             <option value="en">🇬🇧 English</option>
             <option value="fr">🇫🇷 Français</option>

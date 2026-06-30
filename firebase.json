@@ -28,7 +28,37 @@
       { "source": "/admin", "destination": "/index.html" },
       { "source": "/business", "destination": "/index.html" },
       { "source": "/visaos", "destination": "/index.html" },
-      { "source": "/marketplace", "destination": "/index.html" }
+      { "source": "/marketplace", "destination": "/index.html" },
+      { "source": "/blog", "destination": "/index.html" },
+      { "source": "/blog/**", "destination": "/index.html" }
+    ],
+    "headers": [
+      {
+        "source": "/sw.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+          { "key": "Service-Worker-Allowed", "value": "/" }
+        ]
+      },
+      {
+        "source": "/manifest.webmanifest",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, must-revalidate" },
+          { "key": "Content-Type", "value": "application/manifest+json" }
+        ]
+      },
+      {
+        "source": "**/*.@(js|css|html)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
+        ]
+      },
+      {
+        "source": "/icons/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=2592000" }
+        ]
+      }
     ]
   }
 }
