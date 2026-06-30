@@ -144,15 +144,18 @@ const AGENTS = [
 ];
 
 const TIERS = [
-  { save: '£420/yr', name: 'Travel+ Nomad', price: '£4.99', feature: false,
+  { key: 'nomad', save: '£420/yr', name: 'Travel+ Nomad', price: '£4.99', priceNum: 4.99, feature: false,
     benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', '0% Transaction Fees', 'Digital Visa Assistance'] },
-  { save: '£1,100/yr', name: 'Travel+ Family', price: '£12.99', feature: true, badge: 'Most popular for families',
+  { key: 'family', save: '£1,100/yr', name: 'Travel+ Family', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
     benefits: ['All Nomad Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
-  { save: '£2,400/yr', name: 'Travel+ Executive', price: '£24.99', feature: false,
+  { key: 'executive', save: '£2,400/yr', name: 'Travel+ Executive', price: '£24.99', priceNum: 24.99, feature: false,
     benefits: ['All Family Features', 'Fast-Track Security', 'Coworking Intelligence', 'Expense Integration'] },
-  { save: '£5,000/yr+', name: 'Travel+ Elite', price: '£49.99', feature: false,
+  { key: 'elite', save: '£5,000/yr+', name: 'Travel+ Elite', price: '£49.99', priceNum: 49.99, feature: false,
     benefits: ['All Executive Features', 'Private Aviation Access', 'Guaranteed Upgrades', '24/7 Risk Mitigation'] },
 ];
+// 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
+const ACU_PER_GBP = 100;
+const acuAllocation = (priceNum) => Math.round(priceNum * 0.10 * ACU_PER_GBP);
 
 const STEPS = [
   ['01', 'AI CORE', 'Neural Intent Extraction', 'Our proprietary AI agents analyse your natural language requests to identify over 40 distinct travel parameters including destination intent, preferred budget tiers, and service requirements.'],
@@ -180,8 +183,9 @@ function renderStatic() {
       <div class="save-chip">Est. Savings ${t.save}</div>
       <h3>${t.name}</h3>
       <div class="price">${t.price}<span> /month</span></div>
+      <div class="acu-fund">⚡ ${acuAllocation(t.priceNum).toLocaleString()} ACU/mo auto-funded<br><span class="muted">10% of your plan · £1 = 100 ACU · tops up automatically each month</span></div>
       <ul>${t.benefits.map((b) => `<li>${b}</li>`).join('')}</ul>
-      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.name}')">Select ${t.name.split(' ').pop()}</button>
+      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.key}')">Join ${t.name.split(' ').pop()}</button>
     </div>`).join('');
   $('#tierGrid').innerHTML = tierHTML;
   $('#tierGridFull').innerHTML = tierHTML;
@@ -192,7 +196,18 @@ function renderStatic() {
   $('#loyaltyGrid').innerHTML = LOYALTY.map(([name, pts, disc]) => `
     <div class="card agent-card"><div class="ag-ico" style="background:rgba(216,180,106,0.15)">★</div><h4>${name}</h4><p>${pts} · ${disc}</p></div>`).join('');
 }
-window.selectTier = (name) => toast(`✓ ${name} selected — checkout is a prototype step.`);
+window.selectTier = async (key) => {
+  if (!state.user) {
+    toast('Sign in to join a membership plan.');
+    openAuth();
+    return;
+  }
+  let data;
+  try { data = await api('/api/membership/subscribe', { method: 'POST', body: JSON.stringify({ tier: key }) }); }
+  catch { return; }
+  if (data.user) setUser(data.user);
+  toast(`✓ ${data.user?.membership?.name} active — ${data.acuCredited.toLocaleString()} ACU funded (10% of your plan). Renews monthly.`);
+};
 
 // ---- Boot -----------------------------------------------------------------
 // Detect the user's language + country from their DEVICE (more reliable than a
@@ -332,9 +347,38 @@ async function runPlan(overrides = {}) {
   // The search just taught the behaviour model something — rebuild the dashboard.
   refreshJourney();
 
+  if (data.stage === 'topup-required') { renderTopup(data); return; }
   if (data.stage === 'clarify') { renderClarify(data); return; }
+  // A paid tier was funded by ACUs — reflect the new balance.
+  if (typeof data.acuBalance === 'number' && state.user) {
+    setUser({ ...state.user, acuBalance: data.acuBalance });
+  }
   renderOptions(data);
 }
+
+// Hard block when an account has run out of ACUs — prompt a top-up (or a free
+// cached search), never silently proceed.
+function renderTopup(data) {
+  const out = $('#plannerOut');
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+    <div style="font-size:34px">⚡</div>
+    <h3 style="margin:10px 0 6px">You're out of ACUs</h3>
+    <p class="muted" style="font-size:14px">${data.message || `${data.tierName} needs ${data.acuNeeded} ACU.`}</p>
+    <div class="kv" style="max-width:280px;margin:10px auto"><span>Balance</span><span>${(data.balance || 0).toLocaleString()} ACU</span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:8px">
+      <button class="btn btn-gold" onclick="buyAcuFlow()">Top up ACUs</button>
+      ${data.isMember ? '<button class="btn btn-ghost" onclick="renewMembership()">Renew plan (+ACU)</button>' : '<button class="btn btn-ghost" data-nav="membership">Join a plan (10% funds ACU)</button>'}
+      <button class="btn btn-ghost" onclick="runFreeSearch()">Run free cached search</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">£1 = 100 ACU. Members auto-fund ACUs from 10% of their subscription each month.</p>
+  </div>`;
+}
+window.runFreeSearch = () => { const sel = $('#tierSelect'); if (sel) sel.value = 'free'; runPlan(); };
+window.renewMembership = async () => {
+  let d; try { d = await api('/api/membership/renew', { method: 'POST', body: '{}' }); } catch { return; }
+  if (d.user) setUser(d.user);
+  toast(`✓ Renewed — ${d.acuCredited?.toLocaleString()} ACU added. Balance ${d.user?.acuBalance?.toLocaleString()} ACU.`);
+};
 
 function scanAnimation() {
   const lines = ['Understanding intent…', 'Detecting location & currency…', 'Checking cost-protection gate…', 'Scanning verified global suppliers…', 'Filtering for reliability…', 'Building transparent packages…'];
@@ -507,11 +551,21 @@ async function renderConsole() {
       ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${u.bio}</p>` : ''}
       <div class="kv" style="margin-top:12px"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
       <div class="kv"><span>Loyalty points</span><span>${u.points.toLocaleString()}</span></div>
-      <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()}</span></div>
+      <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
+      ${u.membership?.active
+        ? `<div class="kv"><span>Membership</span><span style="color:var(--green)">${u.membership.name}</span></div>
+           <div class="kv"><span>Auto-funds</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU/mo (10%)</span></div>
+           <div class="kv"><span>Renews</span><span>${new Date(u.membership.renewsAt).toLocaleDateString()}</span></div>`
+        : `<div class="kv"><span>Membership</span><span class="muted">None — join to auto-fund ACUs</span></div>`}
       <div class="kv"><span>Referral code</span><span>${u.referralCode}</span></div>
       <div class="kv"><span>Referrals</span><span>${u.referrals}</span></div>
       <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="editProfile()">✎ Edit profile &amp; picture</button>
-      <button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px" onclick="buyAcuFlow()">Buy ACU pack</button>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="buyAcuFlow()">Top up ACUs</button>
+        ${u.membership?.active
+          ? '<button class="btn btn-ghost btn-sm" style="flex:1" onclick="renewMembership()">Renew (+ACU)</button>'
+          : '<button class="btn btn-ghost btn-sm" style="flex:1" data-nav="membership">Join a plan</button>'}
+      </div>
     </div>
     ${loyaltyHub(u)}
     <div class="card pad" style="margin-top:16px" id="intelCard">
@@ -1263,11 +1317,11 @@ window.decideApproval = async (id, decision) => {
 // ---- ACU / account --------------------------------------------------------
 window.buyAcuFlow = () => {
   modal(`
-    <span class="eyebrow">ACU Packs · fund AI searches</span>
-    <h3 style="margin:6px 0">Buy AI Compute Units</h3>
-    <p class="muted" style="font-size:13px">No costly AI search runs unless it's funded. Packs keep the platform profitable while you get world-minimum prices.</p>
-    ${[['starter', 'Starter', '£5', '500'], ['traveller', 'Smart Traveller', '£15', '1,750'], ['family', 'Family', '£29', '4,000'], ['business', 'Business', '£99', '20,000']]
-      .map(([id, name, gbp, acu]) => `<div class="kv"><span>${name} · ${acu} ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}`);
+    <span class="eyebrow">Top up ACUs · £1 = 100 ACU</span>
+    <h3 style="margin:6px 0">Top up AI Compute Units</h3>
+    <p class="muted" style="font-size:13px">ACUs power your AI searches. Members auto-fund ACUs from 10% of their plan each month; top up any time at a flat £1 = 100 ACU.</p>
+    ${[['topup5', '£5', '500'], ['topup10', '£10', '1,000'], ['topup25', '£25', '2,500'], ['topup50', '£50', '5,000']]
+      .map(([id, gbp, acu]) => `<div class="kv"><span>${acu} ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}`);
 };
 window.buyAcu = async (pack) => {
   if (!state.user) { const u = await api('/api/account', { method: 'POST', body: JSON.stringify({}) }); setUser(u.user); }

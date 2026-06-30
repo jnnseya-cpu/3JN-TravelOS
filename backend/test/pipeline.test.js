@@ -21,6 +21,8 @@ import { snapshot, hydrate } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
+import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import http from 'node:http';
 import { app } from '../src/server.js';
@@ -353,6 +355,43 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.equal(profile.avgNights, 10);
   assert.equal(profile.preferredMonth, 'september');
   assert.ok(profile.confidence > 0);
+});
+
+test('membership: 10% of the subscription auto-funds ACUs at £1 = 100 ACU', () => {
+  // Allocation rule holds for every tier.
+  for (const t of MEMBERSHIP_TIERS) {
+    assert.equal(t.acuPerMonth, Math.round(t.pricePerMonth * 0.10 * ACU_PER_GBP));
+  }
+  const u = createUser({ name: 'MemTest' });
+  assert.equal(u.acuBalance, 0, 'new users get no free ACUs');
+  assert.equal(u.membership, null);
+
+  const sub = subscribeMembership(u.id, 'family'); // £12.99 -> 130 ACU
+  assert.equal(sub.ok, true);
+  assert.equal(sub.acuCredited, 130);
+  assert.equal(sub.user.acuBalance, 130);
+  assert.equal(sub.user.membership.active, true);
+
+  // Each billing period re-funds the allocation.
+  const ren = renewMembership(u.id);
+  assert.equal(ren.acuCredited, 130);
+  assert.equal(ren.user.acuBalance, 260);
+});
+
+test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU', () => {
+  const u = createUser({ name: 'AcuTest' });
+  // No balance -> spend is refused (must top up before using any ACUs).
+  const blocked = spendAcu(u.id, 15, 'search');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, 'insufficient-acu');
+
+  // Top up £10 -> 1000 ACU, then a spend succeeds and debits.
+  const top = buyAcu(u.id, 'topup10');
+  assert.equal(top.charged, 10);
+  assert.equal(top.balance, 1000);
+  const ok = spendAcu(u.id, 15, 'search');
+  assert.equal(ok.ok, true);
+  assert.equal(ok.balance, 985);
 });
 
 test('RBAC: admin & business areas reject the public and consumers, allow admins', async () => {

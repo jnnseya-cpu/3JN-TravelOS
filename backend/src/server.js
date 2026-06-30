@@ -22,7 +22,9 @@ import {
   recordVisaApplication, govAnalytics,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour,
+  subscribeMembership, renewMembership, cancelMembership, spendAcu,
 } from './store.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
@@ -97,7 +99,13 @@ const safe = (fn) => async (req, res) => {
 
 // ---- Context / config -----------------------------------------------------
 app.get('/api/context', safe((req, res) => {
-  res.json({ context: detectContext(req), currencies: listCurrencies(), searchTiers: SEARCH_TIERS });
+  res.json({
+    context: detectContext(req),
+    currencies: listCurrencies(),
+    searchTiers: SEARCH_TIERS,
+    membershipTiers: MEMBERSHIP_TIERS,
+    acu: { perGbp: ACU_PER_GBP, fundRate: MEMBERSHIP_ACU_FUND_RATE },
+  });
 }));
 
 // ---- Destination Marketplace ----------------------------------------------
@@ -168,6 +176,31 @@ app.post('/api/login', safe((req, res) => {
   res.json({ user });
 }));
 
+// ---- Membership Programme: subscribe / renew / cancel --------------------
+// Joining a plan auto-funds the period's ACUs (10% of the subscription at
+// £1 = 100 ACU). Requires a signed-in account.
+app.post('/api/membership/subscribe', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to join a membership plan.' });
+  const result = subscribeMembership(user.id, (req.body || {}).tier);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+app.post('/api/membership/renew', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const result = renewMembership(user.id);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+app.post('/api/membership/cancel', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const result = cancelMembership(user.id);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+
 // Firebase Auth bridge — verified identity comes from Firebase on the client;
 // here we get-or-create the matching backend account by email so loyalty,
 // bookings, etc. attach to it. (A hardened build verifies the Firebase ID token
@@ -211,6 +244,32 @@ app.post('/api/plan', safe((req, res) => {
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
   const result = plan({ text, context, user, searchTier, overrides });
+
+  // ACU enforcement: paid search tiers are funded by ACUs. A signed-in account
+  // must hold enough ACU before a paid tier runs — members fund this from the
+  // 10% of their subscription, everyone else tops up. The free/cached tier is
+  // always allowed. Guests keep the demo via the cost-protection gate.
+  if (result.stage === 'options' && user) {
+    const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
+    const cost = reqTier.acu || 0;
+    if (cost > 0) {
+      const spend = spendAcu(user.id, cost, `search:${reqTier.name}`);
+      if (!spend.ok) {
+        return res.json({
+          stage: 'topup-required',
+          reason: 'insufficient-acu',
+          tierName: reqTier.name,
+          acuNeeded: cost,
+          balance: typeof spend.balance === 'number' ? spend.balance : user.acuBalance,
+          isMember: !!user.membership?.active,
+          message: `${reqTier.name} costs ${cost} ACU. Your balance is ${typeof spend.balance === 'number' ? spend.balance : user.acuBalance} ACU. Top up to continue, or run a free cached search.`,
+        });
+      }
+      result.acuCharged = cost;
+      result.acuBalance = spend.balance;
+    }
+  }
+
   // Behavioural learning: log the search so the Journey Dashboard + ML agents
   // learn from what this user actually looks for (guests included).
   const i = result.intent;

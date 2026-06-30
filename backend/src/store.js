@@ -3,6 +3,7 @@
 // could be swapped out. All state lives for the lifetime of the process.
 
 import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -216,7 +217,10 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
     avatar: avatar || ROLE_AVATAR[safeRole], // emoji or image data URL
     bio: bio || '',
     points: SIGNUP_BONUS_POINTS,
-    acuBalance: 100, // small free allowance
+    // No free ACUs: members fund ACUs from 10% of their subscription, everyone
+    // else buys them. Balance must be positive before any ACU-metered action.
+    acuBalance: 0,
+    membership: null, // { tier, name, pricePerMonth, acuPerMonth, active, startedAt, renewsAt }
     referralCode,
     referredByCode: referredByCode || null,
     referrals: 0,
@@ -267,19 +271,71 @@ export function spendAcu(userId, amount, reason) {
   return { ok: true, balance: u.acuBalance };
 }
 
+// Top-up ACU packs — all priced at the customer rate of £1 = 100 ACU.
+export const ACU_PACKS = {
+  topup5: { gbp: 5, acu: 5 * ACU_PER_GBP },
+  topup10: { gbp: 10, acu: 10 * ACU_PER_GBP },
+  topup25: { gbp: 25, acu: 25 * ACU_PER_GBP },
+  topup50: { gbp: 50, acu: 50 * ACU_PER_GBP },
+};
 export function buyAcu(userId, pack) {
-  const PACKS = {
-    starter: { acu: 500, gbp: 5 },
-    traveller: { acu: 1750, gbp: 15 },
-    family: { acu: 4000, gbp: 29 },
-    business: { acu: 20000, gbp: 99 },
-  };
-  const p = PACKS[pack];
+  const p = ACU_PACKS[pack];
   const u = db.users.get(userId);
   if (!u || !p) return { ok: false, error: 'invalid' };
   u.acuBalance += p.acu;
   db.acuTxns.push({ id: id('acu'), userId, type: 'PURCHASE', amount: p.acu, reason: `pack:${pack}`, at: nowISO() });
+  recordAudit({ actor: userId, role: u.role, action: 'acu.topup', entity: 'acu', entityId: userId, summary: `+${p.acu} ACU (£${p.gbp})` });
   return { ok: true, balance: u.acuBalance, charged: p.gbp };
+}
+
+// Credit ACU to a user (membership allocation, refund, bonus…). Never negative.
+export function creditAcu(userId, amount, reason = 'credit') {
+  const u = db.users.get(userId);
+  if (!u || !(amount > 0)) return { ok: false, error: 'invalid' };
+  u.acuBalance += Math.round(amount);
+  db.acuTxns.push({ id: id('acu'), userId, type: 'ALLOCATION', amount: Math.round(amount), reason, at: nowISO() });
+  return { ok: true, balance: u.acuBalance };
+}
+
+// ---- Membership Programme (subscription → 10% auto-funds ACUs) -------------
+// Joining a plan immediately funds the first billing period's ACUs (10% of the
+// subscription at £1 = 100 ACU). renewMembership() repeats it each period.
+const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
+export function subscribeMembership(userId, tierKey) {
+  const u = db.users.get(userId);
+  const plan = MEMBERSHIP_TIERS.find((t) => t.key === tierKey);
+  if (!u || !plan) return { ok: false, error: 'invalid-tier' };
+  const now = Date.now();
+  u.membership = {
+    tier: plan.key,
+    name: plan.name,
+    pricePerMonth: plan.pricePerMonth,
+    acuPerMonth: plan.acuPerMonth,
+    active: true,
+    startedAt: new Date(now).toISOString(),
+    renewsAt: new Date(now + PERIOD_MS).toISOString(),
+  };
+  creditAcu(userId, plan.acuPerMonth, `membership:${plan.key}:initial`);
+  recordAudit({ actor: userId, role: u.role, action: 'membership.subscribed', entity: 'membership', entityId: userId, summary: `${plan.name} · +${plan.acuPerMonth} ACU/period` });
+  return { ok: true, user: publicUser(u), acuCredited: plan.acuPerMonth };
+}
+
+// Simulate a billing-period renewal: re-fund the period's ACU allocation.
+export function renewMembership(userId) {
+  const u = db.users.get(userId);
+  if (!u || !u.membership?.active) return { ok: false, error: 'no-active-membership' };
+  const credited = u.membership.acuPerMonth;
+  creditAcu(userId, credited, `membership:${u.membership.tier}:renewal`);
+  u.membership.renewsAt = new Date(Date.now() + PERIOD_MS).toISOString();
+  recordAudit({ actor: userId, role: u.role, action: 'membership.renewed', entity: 'membership', entityId: userId, summary: `${u.membership.name} · +${credited} ACU` });
+  return { ok: true, user: publicUser(u), acuCredited: credited };
+}
+
+export function cancelMembership(userId) {
+  const u = db.users.get(userId);
+  if (!u || !u.membership) return { ok: false, error: 'no-membership' };
+  u.membership.active = false;
+  return { ok: true, user: publicUser(u) };
 }
 
 function publicUser(u) {
@@ -296,6 +352,7 @@ function publicUser(u) {
     tier: tier.name,
     tierDiscount: tier.discount,
     acuBalance: u.acuBalance,
+    membership: u.membership || null,
     referralCode: u.referralCode,
     referrals: u.referrals,
   };
