@@ -138,16 +138,23 @@ export function flightFareUnits(travellers) {
 
 // Deterministic indicative fare for one carrier on a route — shared by the
 // synthetic engine and the OAG real-schedule builder so both price identically.
-// Returns per-seat figures + the age-banded party total in USD.
+//
+// IMPORTANT calibration note: `dest.flightBaseUSD` is the realistic ROUND-TRIP
+// economy fare per seat for that route (advance, off-peak). We apply only modest
+// adjustments on top so totals stay in line with real OTAs — a premium carrier
+// is ~12% dearer (not 35%), a low-rated carrier undercuts ~20%, and a small
+// seeded spread gives per-carrier variation. Over-stacking multipliers here is
+// what made earlier prices ~2x the market.
 export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey) {
   const rnd = seeded(`fare-${seedKey}`);
-  const distanceFactor = 1 + rnd() * 0.4;
-  const seatBase = (dest.flightBaseUSD || 220) * distanceFactor * (premium ? 1.35 : 1);
-  const noise = 0.85 + rnd() * 0.4;
-  const perSeat = seatBase * noise * (lowRated ? 0.7 : 1);
-  const outboundPerSeat = round(perSeat);
-  const inboundPerSeat = round(perSeat * (0.95 + rnd() * 0.2));
-  const totalPerSeat = outboundPerSeat + inboundPerSeat;
+  const base = dest.flightBaseUSD || 520; // realistic round-trip economy fare/seat
+  const spread = 0.9 + rnd() * 0.22; // 0.90–1.12 carrier/seasonal variation
+  const premiumMult = premium ? 1.12 : 1;
+  const lowMult = lowRated ? 0.8 : 1;
+  const totalPerSeat = round(base * spread * premiumMult * lowMult);
+  // Split the round trip across the two legs (outbound a touch dearer).
+  const outboundPerSeat = round(totalPerSeat * 0.52);
+  const inboundPerSeat = round(totalPerSeat - outboundPerSeat);
   const fare = flightFareUnits(travellers);
   return {
     outboundPerSeat, inboundPerSeat, totalPerSeat,
@@ -166,12 +173,12 @@ export function scanFlights(intent, dest, origin) {
   const distanceFactor = 1 + rnd() * 0.4;
 
   return AIRLINES.map((a) => {
-    const seatBase = dest.flightBaseUSD * distanceFactor * (a.premium ? 1.35 : 1);
-    const noise = 0.85 + rnd() * 0.4;
-    const perSeat = seatBase * noise * (a.rating < 75 ? 0.7 : 1); // cheap-but-risky carriers undercut
-    const outboundPerSeat = round(perSeat);
-    const inboundPerSeat = round(perSeat * (0.95 + rnd() * 0.2));
-    const totalPerSeat = outboundPerSeat + inboundPerSeat;
+    // Price via the SHARED estimator so the synthetic engine and OAG-schedule
+    // flights are calibrated identically (and only here).
+    const fares = estimateFlightFares(dest, a.premium, a.rating < 75, intent.travellers, `${dest.code}-${origin.airport}-${a.name}-${intent.dates.checkIn}`);
+    const outboundPerSeat = fares.outboundPerSeat;
+    const inboundPerSeat = fares.inboundPerSeat;
+    const totalPerSeat = fares.totalPerSeat;
     // Deterministic but varied schedule: a flight duration derived from the
     // route distance, with each leg getting its own departure time.
     const durationMins = Math.round((120 + distanceFactor * 360) * (1 + (a.premium ? 0 : rnd() * 0.25)));
@@ -227,7 +234,9 @@ function leg(fromAirport, fromCity, toAirport, toCity, date, departMin, duration
 export function scanHotels(intent, dest) {
   const rnd = seeded(`htl-${dest.code}-${intent.dates.checkIn}`);
   const nights = intent.nights;
-  const rooms = Math.max(1, Math.ceil(intent.travellers.total / 2));
+  // Families share rooms the way an OTA books them — up to ~3 per room (a triple
+  // or a family room), not one room per two people. A party of 5 → 2 rooms.
+  const rooms = Math.max(1, Math.ceil(intent.travellers.total / 3));
   // When the traveller named a neighbourhood ("hotel in Sheikh Zayed Road"),
   // search that area specifically rather than a random one.
   const reqArea = intent.hotelArea || null;
