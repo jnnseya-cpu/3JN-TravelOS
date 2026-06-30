@@ -304,13 +304,35 @@ function estimatedVisaRule(rnd) {
   };
 }
 
+// ISO country code → English name (e.g. 'CD' → 'Democratic Republic of the
+// Congo'). Uses Intl; falls back to the raw code if unavailable.
+let REGION_NAMES = null;
+function regionName(iso) {
+  if (!iso) return '';
+  try {
+    REGION_NAMES = REGION_NAMES || new Intl.DisplayNames(['en'], { type: 'region' });
+    return REGION_NAMES.of(iso.toUpperCase()) || iso;
+  } catch { return iso; }
+}
+
 export function synthesizeDestination(name) {
-  const city = titleCaseDest(name);
+  // Resolve a known city to its REAL airport + country (so distance pricing and
+  // carrier-hub realism work), incl. a "City Country" form like "Doha Qatar".
+  let known = airportForCity(name);
+  if (!known) {
+    const parts = (name || '').trim().split(/\s+/);
+    if (parts.length > 1) known = airportForCity(parts.slice(0, -1).join(' ')) || airportForCity(parts[0]);
+  }
+  const city = titleCaseDest(known ? known.city : name);
   if (!city) return null;
-  const code = (city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT';
+  const code = known ? known.airport : ((city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT');
+  const country = known ? known.country : '';
   const rnd = seedRng('dest-' + city);
   return {
-    code, city, country: '', countryName: '', airport: code, timezone: '',
+    code, city, country, countryName: country ? regionName(country) : '',
+    airport: code, timezone: '',
+    // Fallback only — the distance model overrides this when both airports'
+    // coordinates are known (which they are for any real, resolved city).
     flightBaseUSD: Math.round(300 + rnd() * 750),
     hotelNightBaseUSD: Math.round(70 + rnd() * 150),
     activityBaseUSD: Math.round(35 + rnd() * 70),
