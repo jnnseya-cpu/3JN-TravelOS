@@ -96,7 +96,7 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   const tier = TIERS[tierName];
   const selections = [];
   let componentsUSD = 0;
-  const componentOrder = ['flights', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
+  const componentOrder = ['flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
 
   for (const key of componentOrder) {
     const offers = scan[key];

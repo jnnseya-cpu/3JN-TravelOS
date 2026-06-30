@@ -613,7 +613,7 @@ function optionCard(o, sym, intent) {
 
 function labelFor(c) {
   const s = esc(c.supplier);
-  const map = { flight: '✈ Flights', hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
+  const map = { flight: '✈ Flights', train: '🚆 ' + s, coach: '🚌 ' + s, ferry: '⛴ ' + s, cruise: '🛳 ' + s, hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
   return map[c.type] || esc(c.type);
 }
 
