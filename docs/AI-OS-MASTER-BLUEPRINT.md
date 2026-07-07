@@ -1,5 +1,59 @@
-# 3JN Travel OS — AI Infrastructure Operating System
-## Master Blueprint v2 · Forensic Upgrade & Production Build Specification
+# 3JN TRAVEL OS
+## AI INFRASTRUCTURE OPERATING SYSTEM BLUEPRINT
+### *An Intelligent Way To Traverse The Globe*
+**Production-Grade Developer Blueprint · Investor-Grade Architecture · Agentic AI Platform**
+
+| | |
+|---|---|
+| **Document Type** | AI-OS Master Blueprint — Developer & Investor Grade |
+| **Platform** | 3JN Travel OS (3JN Travel Operating System) |
+| **Parent Entity** | Groupe Nseya Digital / JNN Global Ltd |
+| **Version** | v1.0 — Production Specification |
+| **Classification** | CONFIDENTIAL — Proprietary |
+| **Author** | Chief Product & Technology Office, Groupe Nseya Digital |
+| **Target Markets** | UK, EU, Pan-Africa, DRC/Kinshasa, Global Diaspora Corridors |
+| **Primary Currency** | GBP (Secondary: USD, EUR, CDF) |
+| **Payment Rail** | BitriPay (Primary African Rail) + Stripe + Adyen |
+| **Architecture** | AI-Native · Event-Driven · Microservices · Zero-Trust |
+| **Build Stack** | NestJS · Next.js · PostgreSQL · Firestore · GCP · LangGraph |
+
+---
+
+# SECTION 01 — EXECUTIVE PRODUCT VISION
+*Why 3JN Travel OS is not a booking site — it is an AI Infrastructure Platform*
+
+## 1. Executive Product Vision
+
+3JN Travel OS is a purpose-engineered **AI Infrastructure Operating System** that eliminates travel complexity and minimises total trip cost through autonomous neural intelligence. It is architecturally distinct from every OTA, metasearch engine, and travel management platform currently in operation. Where legacy platforms present options, **3JN Travel OS delivers decisions.**
+
+### 1.1 The Core Problem This Platform Solves
+
+The global travel industry processes over **USD 9 trillion annually**. Yet the primary consumer experience has barely changed since the 1990s: fragmented interfaces, retail-priced inventory, hidden fees, disjointed post-booking management, and no continuous optimisation. The modern traveller is forced to operate as their own travel analyst, logistics coordinator, compliance officer, and risk manager simultaneously.
+
+- **42+ browser tabs** opened for a typical international booking
+- Average retail markup of **18–35%** over true wholesale rates
+- **Zero post-booking intelligence** — platforms abandon users after payment
+- Visa, transfer, and eSIM management remain entirely manual
+- No real-time price monitoring or dynamic rebooking capability
+- Risk alerts, disruption management, and FCO guidance are unintegrated
+
+*(Engine answers, all live: `decision`/`travelCFO` deliver decisions not options; partner net rates + `deepPriceDive` attack the retail markup; `runPriceGuard`/`runDisruptionGuard` are the post-booking intelligence; VisaOS + transfers + eSIM are in-basket; the 7-layer risk feed integrates advisories.)*
+
+### 1.2 The 3JN Travel OS Proposition
+
+3JN Travel OS operates as a **seven-layer autonomous intelligence stack**: intent extraction, wholesale negotiation, integrity verification, loyalty injection, logistics synchronisation, continuous monitoring, and self-optimising rebooking. Every layer is powered by proprietary AI agents operating within a unified orchestration mesh.
+
+| Layer | Intelligence Function | Commercial Outcome | Live symbol |
+|---|---|---|---|
+| **01 Neural Intent** | NLP extraction of 40+ travel parameters from natural language | Zero-friction search; 100% intent accuracy | `parseIntent` + `INTENT_PARAMETERS` (46 registered) |
+| **02 Wholesale Engine** | Direct GDS + wholesaler API negotiation bypass | 18–35% cost reduction at booking | `partners.js` net rates + `negotiation` |
+| **03 Integrity Shield** | 50-point verification against supplier database | 100% verified inventory only | `INTEGRITY_CHECKS` (50) + reliability floor |
+| **04 Loyalty Injection** | Membership tier discount auto-application | Additional 2–15% member savings | `LOYALTY_TIERS` in `priceBreakdown` |
+| **05 Universal Console** | Centralised visa, transfer, eSIM, and document management | Single-pane journey command centre | Console view + VisaOS + esims |
+| **06 Continuous Monitor** | 24/7 price monitoring and disruption detection | Post-booking savings + zero surprises | `runPriceGuard` (Neural Price Guard) |
+| **07 Autonomous Reoptimise** | AI-triggered rebooking on price drops or disruptions | Lifetime trip cost reduction | `runDisruptionGuard` (cost-neutral rebooking) |
+
+---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
