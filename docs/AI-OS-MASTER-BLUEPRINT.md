@@ -53,6 +53,145 @@ The global travel industry processes over **USD 9 trillion annually**. Yet the p
 | **06 Continuous Monitor** | 24/7 price monitoring and disruption detection | Post-booking savings + zero surprises | `runPriceGuard` (Neural Price Guard) |
 | **07 Autonomous Reoptimise** | AI-triggered rebooking on price drops or disruptions | Lifetime trip cost reduction | `runDisruptionGuard` (cost-neutral rebooking) |
 
+### 1.3 Strategic Market Position
+
+3JN Travel OS occupies a **category of one**. It is not competing with Booking.com, Expedia, or Skyscanner at the search layer. It is competing with the entire concept of manual travel management. The closest analogy is a **fully autonomous CFO for every journey** — always negotiating, always monitoring, always optimising.
+
+| Competitor | What They Do | What 3JN Does Instead |
+|---|---|---|
+| Booking.com / Expedia | Retail inventory aggregation with UI | Direct-to-wholesale + AI negotiation |
+| Skyscanner / Google Flights | Price comparison metasearch | Intent extraction + minimum price delivery |
+| TravelPerk / Navan | Corporate travel management | AI-OS for both consumer and enterprise |
+| Traditional TMC | Human travel manager + GDS | Autonomous AI agents + GDS + wholesalers |
+| Hopper | Price prediction for flights | Full-stack ongoing optimisation + booking + management |
+
+---
+
+# SECTION 02 — MARKET GAP DEEP REVIEW
+*Forensic analysis of competitor weaknesses and underserved demand*
+
+## 2. Market Gap Analysis
+
+### 2.1 Gaps in Current Travel Platforms
+
+| Gap Category | Market Failure | 3JN Solution |
+|---|---|---|
+| Pricing Intelligence | All OTAs serve retail-marked inventory; GDS rates invisible to consumers | Direct wholesale integration + AI negotiation engine |
+| Intent Understanding | Keyword search only; no natural language understanding | Neural Intent Extraction — 40+ parameter NLP model |
+| Post-Booking Intelligence | Platforms stop working after confirmation email is sent | Continuous 24/7 price + disruption monitoring |
+| Unified Management | Visa, transfers, eSIM, insurance all managed in separate apps/portals | Universal Console — single operational command centre |
+| African Market Access | No major platform offers direct GDS coverage for Sub-Saharan Africa | BitriPay + pan-African operator integrations + CDF support |
+| Loyalty Intelligence | Loyalty points are tracked by airlines/hotels, not aggregated | Cross-platform loyalty aggregation + automatic injection |
+| Risk Intelligence | FCO/travel advisories require manual checking | AI Risk Intelligence Agent — real-time push alerts |
+| Corporate + SME Travel | TravelPerk/Navan are expensive and manual | AI-OS at consumer price point with enterprise capability |
+| Family Travel Complexity | No platform addresses multi-traveller, multi-age logistics | Family tier with child safety intelligence + sync-mesh itinerary |
+| Private Aviation | Fractional jet access requires separate brokers | Elite tier private aviation access within the same OS |
+
+### 2.2 Addressable Market Sizing
+
+| Segment | TAM | SAM (3JN Accessible) | 3-Year SOM Target |
+|---|---|---|---|
+| Global OTA Market | USD 1.06T (2025) | USD 180B (AI-adjacent) | GBP 85M ARR |
+| Corporate Travel Tech | USD 47B | USD 12B (SME/startup) | GBP 22M ARR |
+| African Travel (DRC + SSA) | USD 38B | USD 8B (digital-first) | GBP 14M ARR |
+| UK/EU Diaspora Corridors | USD 22B | USD 6B | GBP 9M ARR |
+| AI Travel Assistants (emerging) | USD 3.2B (2025, growing 41% CAGR) | Full market | GBP 18M ARR |
+
+---
+
+# SECTION 03 — COMPLETE USER ECOSYSTEM
+*Every actor, persona, and interaction surface within the 3JN Travel OS*
+
+## 3. User Ecosystem
+
+### 3.1 Primary Consumer Tiers
+
+| Tier | Plan | Price/Month | Primary Use Case | Key AI Features |
+|---|---|---|---|---|
+| Explorer | Travel+ Nomad *(now marketed as Travel+ Smart Traveller)* | £4.99 | Solo traveller, digital nomad | AI Negotiation Engine, Savings Alerts, 0% Transaction Fees |
+| Family | Travel+ Family *(now Travel+ Family Saver)* | £12.99 | Families, 2–6 travellers | Child Safety Intelligence, Sync-Mesh Itinerary, Lounge Access |
+| Executive | Travel+ Executive *(now Travel+ Frequent Flyer)* | £24.99 | Business travellers, SME owners | Coworking Intelligence, Expense Integration, Fast-Track Security |
+| Elite | Travel+ Elite *(now Travel+ Concierge Elite)* | £49.99 | HNWI, frequent fliers, C-Suite | Private Aviation, Guaranteed Upgrades, 24/7 Risk Mitigation |
+
+> Per the platform rule ("do not change if any new requirement is lower than the previous"), the richer Revenue-Source-8 plan names remain canonical in the engine (`MEMBERSHIP_TIERS`); the tier keys (`nomad`/`family`/`executive`/`elite`), prices and features are identical.
+
+### 3.2 Business & Enterprise Users
+
+| User Type | Description | Access Level | Primary Module |
+|---|---|---|---|
+| SME Travel Manager | Business managing team travel under 50 employees | Business Portal | Multi-traveller booking, expense sync, policy controls |
+| Enterprise Admin | Corporate travel programme administrator | Enterprise Command Centre | Policy enforcement, approval workflows, analytics |
+| Travel Agency Partner | Agency reselling 3JN OS under white-label | Partner Portal | White-label interface, commission tracking, client management |
+| API Developer Partner | Third-party building on 3JN API | Developer Centre | API keys, webhooks, sandbox, documentation |
+| BitriPay Merchant | Travel supplier accepting BitriPay via 3JN | Merchant Portal | Payment links, QR codes, settlement dashboard |
+
+### 3.3 Platform Operations Users
+
+| Role | Permissions | Command Centre Access |
+|---|---|---|
+| Super Admin | Full platform control, all data, all agents, system config | Admin Super Control Centre |
+| Operations Manager | User management, dispute resolution, compliance monitoring | Ops Command Centre |
+| Finance Admin | Revenue, settlements, commission, billing | Finance Control Centre |
+| Compliance Officer | KYC/AML review, audit logs, regulatory reporting | Compliance Command Centre |
+| AI Governance Admin | Agent configuration, model parameters, policy enforcement | AI Governance Centre |
+
+---
+
+# SECTION 04 — AI COMMAND CENTRES
+*Dedicated AI-powered intelligence interfaces for every user type*
+
+## 4. AI Command Centres
+
+Every user class within the 3JN Travel OS receives a dedicated AI Command Centre — an intelligent, adaptive, role-specific interface that aggregates real-time data, surfaces AI-driven recommendations, and provides direct control over all relevant agents and automation workflows.
+
+### 4.1 Traveller AI Command Centre (Universal Console)
+
+The Universal Console is the primary interface for all consumer tiers. It is not a dashboard — it is an **active intelligence surface** that continuously works on behalf of the traveller.
+
+- **Journey Status Panel**: live trip health score, alerts, savings accumulated
+- **AI Chief of Staff**: natural language travel planning, scheduling, priority recommendations
+- **Price Watch Engine**: real-time monitoring against booked rates with automatic rebooking triggers
+- **Visa Automation Centre**: AI-driven visa eligibility check, auto-application, status tracking
+- **Transfer Intelligence**: ground transport optimisation with live traffic, flight status sync
+- **eSIM Manager**: global connectivity pre-provisioning with coverage maps
+- **Savings Ledger**: total savings vs retail price, accumulated across all trips
+- **Risk Intelligence Feed**: FCO advisories, weather alerts, civil disruption, health advisories
+- **Loyalty Aggregator**: cross-airline and cross-hotel points consolidated view
+- **Document Vault**: e-ticket, hotel vouchers, travel insurance, visa approval — all in one place
+
+### 4.2 Executive Traveller Command Centre (additional layer)
+
+- **Expense Intelligence**: real-time categorisation and export to Xero, QuickBooks, SAP
+- **Coworking Finder**: AI-selected workspace options at destination with availability
+- **Meeting Logistics Agent**: auto-sync with Google Calendar / Outlook for in-destination scheduling
+- **Fast-Track Intelligence**: pre-clearance, TSA Pre/Global Entry status, lounge access maps
+
+### 4.3 Elite Traveller Command Centre (additional layer)
+
+- **Private Aviation Agent**: live charter quotes, fractional jet, helicopter transfers
+- **Concierge Intelligence**: AI-driven luxury experience curation at destination
+- **Security Briefing Agent**: geopolitical, personal safety, and asset protection briefing per destination
+- **Guaranteed Upgrade Engine**: automated upgrade request and confirmation system
+
+### 4.4 Business / Enterprise Command Centre
+
+- **Policy Enforcement Engine**: travel policy rules auto-applied at booking stage
+- **Approval Workflow Manager**: multi-level approval chains with mobile notifications
+- **Budget Intelligence**: real-time spend vs budget with predictive overspend alerts
+- **Team Itinerary Mesh**: all employee journeys synchronised in one operational view
+- **Supplier Negotiation Agent**: AI tracks most-used suppliers and triggers volume discount negotiations
+- **Duty of Care Intelligence**: real-time employee location tracking + emergency escalation
+
+### 4.5 Admin Super Control Centre
+
+- **Platform Health Monitor**: uptime, latency, agent performance, error rates
+- **Revenue Intelligence**: ARR, MRR, churn, LTV, ACU consumption — real-time
+- **User Lifecycle Manager**: onboarding funnels, activation rates, retention curves
+- **AI Governance Panel**: agent configuration, model selection, instruction management, policy enforcement
+- **Compliance Command Centre**: KYC queue, AML flags, sanctions screening, audit trail
+- **Dispute Resolution Centre**: chargeback management, supplier disputes, user complaints
+- **Fraud Intelligence Dashboard**: transaction scoring, suspicious pattern alerts, account lockdown
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
