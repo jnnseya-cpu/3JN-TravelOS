@@ -8,6 +8,10 @@
 // ---- Commission & savings (3JN's headline economics) ----------------------
 export const COMMISSION_RATE = 0.10;      // 10% final-payment fee
 export const SAVINGS_SHARE_RATE = 0.10;   // 10% of value created vs market
+// The savings-share only triggers when the AI creates REAL value: savings must
+// exceed £100 (≈ $127 at the platform's 0.79 GBP anchor) before the 10% share
+// is charged. Below that, the customer keeps 100% of the saving.
+export const SAVINGS_SHARE_MIN_USD = 127;
 
 // ---- Loyalty (1 point per $2 spent; 250-point signup bonus) ---------------
 export const LOYALTY_TIERS = [

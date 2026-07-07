@@ -6,7 +6,7 @@
 // Canonical economic constants live in shared/ so the frontend and backend
 // share one source of truth. Re-exported here for existing call sites.
 import {
-  COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
+  COMMISSION_RATE, SAVINGS_SHARE_RATE, SAVINGS_SHARE_MIN_USD, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
 } from '../../shared/constants.js';
 
 export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS };
@@ -41,7 +41,12 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   const totalUSD = netComponentsUSD + commissionUSD;
 
   const savingsVsMarketUSD = Math.max(0, marketRefUSD - totalUSD);
-  const savingsShareUSD = savingsVsMarketUSD * SAVINGS_SHARE_RATE;
+  // Savings-share model: "save more than £100 and we charge 10% of the saving"
+  // — charged ONLY above the threshold; smaller savings are entirely the
+  // customer's. Booking commission applies regardless.
+  const savingsShareUSD = savingsVsMarketUSD > SAVINGS_SHARE_MIN_USD
+    ? savingsVsMarketUSD * SAVINGS_SHARE_RATE
+    : 0;
 
   const conv = (usd) => usdToLocal(usd, currency);
 
