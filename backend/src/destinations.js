@@ -272,11 +272,35 @@ export function extractDestination(text) {
   // Strip a "from <origin>" clause so the origin is never mistaken for the
   // destination ("fly from Manchester to Lisbon" → destination is Lisbon).
   t = t.replace(/\sfrom\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\- ]*?(?=\s+(?:to|in|for|with|on|and|by|next|this|during)\s|\s\d|\s*$)/ig, ' ');
-  // The destination follows the LAST " to " ("I want to travel to Lisbon").
+  // The destination follows a " to " — but a sentence can contain many
+  // ("need TO BE there", "TO SPEND 10 days", "want TO TRAVEL"). Infinitive
+  // verbs and stop words after "to" are NOT destinations, so we scan every
+  // "to <words>" candidate and pick the first that yields a real place.
+  const INFINITIVE = /^(be|get|go|stay|spend|leave|travel|travelling|traveling|visit|fly|flying|see|do|have|make|made|find|book|come|arrive|return|returning|explore|relax|enjoy|meet|work|study|live|start|begin|reach|depart|check|pay|save)$/i;
+  const placeFrom = (chunk) => {
+    const ws = String(chunk).trim().split(/\s+/);
+    const acc = [];
+    for (const w of ws) {
+      if (!w) continue;
+      if (DEST_STOP.test(w) || /^\d/.test(w) || !/[A-Za-zÀ-ÿ]/.test(w)) break;
+      acc.push(w);
+      if (acc.length >= 3) break;
+    }
+    if (!acc.length || INFINITIVE.test(acc[0])) return null;
+    return acc.join(' ');
+  };
   let tail = null;
-  const parts = t.split(/\sto\s/i);
-  if (parts.length > 1) tail = parts[parts.length - 1];
-  else {
+  // Split into the segments that FOLLOW each " to ", left to right.
+  const segs = t.split(/\sto\s/i).slice(1);
+  for (const seg of segs) {
+    const cand = placeFrom(seg);
+    if (!cand) continue;
+    // A candidate that resolves to a KNOWN city wins immediately; otherwise the
+    // first non-infinitive, capitalised-looking place is taken.
+    if (findDestination(cand)) { tail = cand + ' '; break; }
+    if (!tail) tail = cand + ' ';
+  }
+  if (!tail) {
     // Leading "<Destination> from <origin>" / "<Destination> by ferry" — the
     // sentence opens with the place itself ("Amsterdam from Newcastle by
     // ferry"). Only a capitalised opener counts, never a sentence starter.

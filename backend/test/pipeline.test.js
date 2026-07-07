@@ -2771,3 +2771,27 @@ test('every travel mode carries a real supplier booking route (bookingUrl)', () 
     }
   }
 });
+
+// ================= Regression: multi-clause group sentence (Ottawa bug) ========
+test('parses "travelling to Ottawa on 03/october/2026" without grabbing "be" or wrong dates', () => {
+  const t = 'We are a group of 10 people travelling to Ottawa on 03/october/2026 and all of us are male adults, but 2 will travel from London, 2 from Birmingham, 2 from Manchester, 2 from Glasgow, and 2 from Liverpool. We need to be in the same day, leave on the same day, but spend 10 days on that trip. We need a flight and a hotel';
+  const i = parseIntent(t, { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
+  // Destination must be Ottawa — never "be" from "need to be".
+  assert.equal(i.destination.city, 'Ottawa');
+  assert.notEqual(i.destination.code, 'BE');
+  // The explicit day/month-name/year date must be honoured.
+  assert.equal(i.dates.checkIn, '2026-10-03');
+  assert.equal(i.month, 'october');
+  // All five multi-origin parties (2 each) survive.
+  assert.equal(i.groupOrigins.parties.length, 5);
+  assert.equal(i.groupOrigins.parties.reduce((s, p) => s + p.count, 0), 10);
+  assert.ok(i.components.includes('flights') && i.components.includes('hotel'));
+});
+
+test('month-name single dates: 03/october/2026, 3 October 2026, October 3 2026', () => {
+  const base = new Date(Date.UTC(2026, 0, 1));
+  for (const phrase of ['depart 03/october/2026', 'depart 3 October 2026', 'depart October 3 2026', 'depart 3rd of October 2026']) {
+    const i = parseIntent(`Trip to Rome, ${phrase}, flights and hotel for 2`, { country: 'GB' }, base);
+    assert.equal(i.dates.checkIn, '2026-10-03', `${phrase} → 2026-10-03`);
+  }
+});

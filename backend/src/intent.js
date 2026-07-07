@@ -147,6 +147,26 @@ function parseExplicitDates(text, today = new Date()) {
     return { checkIn: iso(y1, mo1 - 1, d1), checkOut: null, nights: null, monthIndex: mo1 - 1 };
   }
 
+  // 2b) Single date with a MONTH NAME: "03/october/2026", "3 October 2026",
+  // "October 3 2026", "3rd of October 2026" → check-in date.
+  const mnAll = MONTHS.join('|');
+  let mnSingle = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:of\\s+)?[\\/.\\-\\s]\\s*(${mnAll})[a-z]*[\\/.\\-\\s]\\s*(\\d{4})\\b`, 'i'));
+  let dSingle, moSingle, ySingle;
+  if (mnSingle) { dSingle = +mnSingle[1]; moSingle = MONTHS.findIndex((x) => x.startsWith(mnSingle[2].toLowerCase().slice(0, 3))); ySingle = +mnSingle[3]; }
+  if (!mnSingle) {
+    // "October 3 2026" / "October 3rd, 2026"
+    mnSingle = text.match(new RegExp(`\\b(${mnAll})[a-z]*\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s*(\\d{4}))?\\b`, 'i'));
+    if (mnSingle) { dSingle = +mnSingle[2]; moSingle = MONTHS.findIndex((x) => x.startsWith(mnSingle[1].toLowerCase().slice(0, 3))); ySingle = mnSingle[3] ? +mnSingle[3] : rollYear(moSingle); }
+  }
+  if (!mnSingle) {
+    // "3 October" / "3rd October" (no year) — day BEFORE month.
+    mnSingle = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${mnAll})[a-z]*(?:\\s+(\\d{4}))?\\b`, 'i'));
+    if (mnSingle) { dSingle = +mnSingle[1]; moSingle = MONTHS.findIndex((x) => x.startsWith(mnSingle[2].toLowerCase().slice(0, 3))); ySingle = mnSingle[3] ? +mnSingle[3] : rollYear(moSingle); }
+  }
+  if (mnSingle && moSingle >= 0 && dSingle >= 1 && dSingle <= 31) {
+    return { checkIn: iso(ySingle, moSingle, dSingle), checkOut: null, nights: null, monthIndex: moSingle };
+  }
+
   // 3) Day range with a month name: "17-24 August" or "August 17 to 24".
   const mn = MONTHS.map((x) => x.slice(0, 3)).join('|');
   let dm = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|until|[\\-–—])\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(${mn})`, 'i'));
