@@ -46,12 +46,35 @@ export function aiCostCap(expectedProfitUSD) {
   };
 }
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0 }) {
+// Free users get 3–5 basic searches per day, cached prices only beyond that —
+// no deep agent comparison, negotiation, booking hold or custom itineraries.
+export const FREE_DAILY_SEARCH_LIMIT = 5;
+
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0 }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
   if (t.aiCostUSD === 0) {
     return { allowed: true, tier, reason: 'cached-free', aiCostUSD: 0, acu: 0 };
+  }
+
+  // Free-tier daily cap: without ACUs, a deposit or a subscription, paid
+  // depth stops after the daily allowance — cached prices continue free.
+  const isFreeUser = !subscriptionActive && !hasDeposit && !(user && user.acuBalance > 0);
+  if (isFreeUser && searchesToday >= FREE_DAILY_SEARCH_LIMIT) {
+    return {
+      allowed: false, downgradeTo: 'free', tier, reason: 'free-daily-limit', aiCostUSD: t.aiCostUSD,
+      requirement: { message: `Free plan: ${FREE_DAILY_SEARCH_LIMIT} searches/day. Cached prices stay free — buy ACUs, pay a refundable deposit or subscribe for unlimited deep search.` },
+    };
+  }
+
+  // Abuse throttle: heavy searching with zero booking history downgrades to
+  // cached regardless of funding — the system is not a free AI search machine.
+  if (recentSearches > 20 && priorBookings === 0) {
+    return {
+      allowed: false, downgradeTo: 'free', tier, reason: 'abuse-throttle', aiCostUSD: t.aiCostUSD,
+      requirement: { message: 'Unusual search volume detected — showing cached results. Book a trip or buy ACUs to restore deep search.' },
+    };
   }
 
   // Expected 3JN revenue from a booking at this value = 10% commission.
@@ -66,6 +89,12 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   if (revenueCovers) fundingReasons.push('expected-booking-revenue');
   if (advertisingCreditUSD >= t.aiCostUSD) fundingReasons.push('advertising-revenue');
 
+  // Strong booking intent (explicit dates + multiple components) lets the
+  // expected-revenue path count at a friendlier threshold (x5 instead of x10).
+  if (!fundingReasons.length && intentStrong && expectedRevenueUSD >= t.aiCostUSD * 5) {
+    fundingReasons.push('strong-booking-intent');
+  }
+
   if (fundingReasons.length > 0) {
     return {
       allowed: true,
@@ -74,6 +103,8 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
       aiCostUSD: t.aiCostUSD,
       acu: acuCovers ? t.acu : 0, // only debit ACU if that's the funding source
       chargeAcu: acuCovers && !subscriptionActive && !hasDeposit,
+      // The 8-question gate checklist (spec part 16), answered.
+      checklist: gateChecklist({ acuCovers, hasDeposit, subscriptionActive, revenueCovers, recentSearches, priorBookings, intentStrong }),
     };
   }
 
@@ -91,6 +122,20 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
       message: `This ${t.name} needs funding. Buy ${t.acu} ACUs, pay a refundable search deposit, or upgrade your plan. Showing cached results instead.`,
     },
   };
+}
+
+// Priority search fees — speed is a product: standard runs on ACU economics,
+// priority and urgent same-day searches carry a cash fee.
+export const PRIORITY_SEARCH_FEES = {
+  standard: { feeGBP: 0, note: 'Free / low ACU' },
+  priority: { minGBP: 3, maxGBP: 10, note: 'Jump the queue — results first' },
+  urgent: { minGBP: 15, maxGBP: 50, note: 'Same-day travel — dedicated scan + human check' },
+};
+export function prioritySearchFee(level = 'standard', tripValueGBP = 0) {
+  const t = PRIORITY_SEARCH_FEES[level] || PRIORITY_SEARCH_FEES.standard;
+  if (!t.minGBP) return { level: 'standard', feeGBP: 0 };
+  const fee = Math.max(t.minGBP, Math.min(t.maxGBP, Math.round(tripValueGBP * 0.01)));
+  return { level, feeGBP: fee, note: t.note };
 }
 
 // Revenue streams summary for the white-label / API partner calculator.
@@ -125,3 +170,64 @@ export const REVENUE_STREAMS = [
 ];
 
 function round2(n) { return Math.round(n * 100) / 100; }
+
+// ---- Group travel revenue (high-profit segment) ------------------------------
+// Churches, schools, football teams, wedding groups, conferences, family
+// reunions, diaspora trips — four stacked earners per group.
+export const GROUP_SEGMENTS = ['Churches', 'Schools', 'Football teams', 'Wedding groups', 'Conferences', 'Family reunions', 'Diaspora trips to Africa'];
+export function groupTravelFees(headcount = 10, tripValueGBP = 0) {
+  const planningFeeGBP = headcount >= 25 ? 149 : headcount >= 10 ? 99 : 49;
+  const groupBookingFeeGBP = Math.round(headcount * 5); // £5/head coordination fee
+  return {
+    segments: GROUP_SEGMENTS,
+    planningFeeGBP,
+    groupBookingFeeGBP,
+    finalPaymentPct: 0.10,                    // the standard 10% fee still applies
+    supplierCommission: 'per SUPPLIER_COMMISSIONS schedule',
+    totalUpfrontGBP: planningFeeGBP + groupBookingFeeGBP,
+  };
+}
+
+// ---- White-label pricing ------------------------------------------------------
+// Agencies run 3JN Travel OS under their own brand; five stacked charges.
+export const WHITE_LABEL_PRICING = {
+  setupFeeGBP: 1500,
+  monthlySaasGBP: 199,
+  acuUsage: 'metered at £1 = 100 ACU (standard rate)',
+  bookingCommissionPct: 0.10, // 3JN keeps 10% of partner-generated commission
+  premiumSupportGBPMonth: 99,
+};
+
+// The Cost Protection Gate's eight questions, answered per search.
+function gateChecklist({ acuCovers, hasDeposit, subscriptionActive, revenueCovers, recentSearches, priorBookings, intentStrong }) {
+  return [
+    { q: 'Is the user paying ACUs?', a: !!acuCovers },
+    { q: 'Is there a deposit?', a: !!hasDeposit },
+    { q: 'Is there subscription coverage?', a: !!subscriptionActive },
+    { q: 'Is there supplier commission?', a: true }, // every booked component earns per SUPPLIER_COMMISSIONS
+    { q: 'Is expected 10% revenue enough?', a: !!revenueCovers },
+    { q: 'Is cached data available?', a: true }, // the downgrade path always exists
+    { q: 'Is the user abusing the system?', a: recentSearches > 20 && priorBookings === 0 },
+    { q: 'Is booking intent strong?', a: !!intentStrong },
+  ];
+}
+
+// ---- API revenue: productised endpoints sold to travel businesses ------------
+export const API_PRODUCTS = [
+  { key: 'search', endpoint: '/api/v1/search', name: 'Cheapest price search API', pricePerCallGBP: 0.05 },
+  { key: 'itinerary', endpoint: '/api/v1/itinerary', name: 'Itinerary AI API', pricePerCallGBP: 0.04 },
+  { key: 'visa', endpoint: '/api/v1/visa-checklist', name: 'Visa checklist API', pricePerCallGBP: 0.03 },
+  { key: 'group', endpoint: '/api/v1/group-quote', name: 'Group travel quote API', pricePerCallGBP: 0.08 },
+  { key: 'savings', endpoint: '/api/v1/savings', name: 'Travel savings API', pricePerCallGBP: 0.05 },
+  { key: 'hotels', endpoint: '/api/v1/hotels', name: 'Hotel comparison API', pricePerCallGBP: 0.04 },
+];
+
+// ---- Finance revenue: products + processing fees ------------------------------
+export const FINANCE_PRODUCTS = [
+  { key: 'instalments', name: 'Pay-monthly holidays', fee: '0% to traveller · 3JN earns processing spread' },
+  { key: 'wallet', name: 'Travel savings wallet', fee: 'Free · float + partner interest' },
+  { key: 'deposit', name: 'Deposit plans (20% + schedule)', fee: 'Included in 10% commission' },
+  { key: 'pot', name: 'Group contribution pots', fee: '1.5% processing on contributions' },
+  { key: 'invoicing', name: 'Corporate invoicing', fee: 'Included in corporate plan' },
+  { key: 'layaway', name: 'Family travel layaway', fee: '£1/month account fee' },
+];

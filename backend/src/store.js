@@ -28,6 +28,8 @@ const db = {
   contracts: [], // supplier volume agreements
   blog: [], // AI-written blog posts
   hostListings: [], // 3JN Host Marketplace properties (community-hosted, 3JN-verified)
+  travelPots: [], // group contribution pots (finance)
+  searchCache: new Map(), // popular routes/packages served before any paid AI call
   behaviour: [], // behavioural-learning event stream (searches, views, books…)
   commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
 };
@@ -609,7 +611,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null }) {
   const bookingId = id('bkg');
   const gateway = GATEWAY[paymentMethod] || 'stripe';
   const booking = {
@@ -626,6 +628,10 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     fulfilment: buildFulfilment(bookingId, option),
     // Structured cancellation/refund policy — support never guesses.
     refundPolicy: buildRefundPolicyLocal(option),
+    // Supply-side earnings: 3JN earns from suppliers even on the cheapest deal.
+    supplierEarnings: bookingSupplierCommissionLocal(option),
+    // Optional Booking Protection (£5–£50 by trip value) — six benefits.
+    protection: protection || null,
     option,
     instalment,
     paymentMethod,
@@ -796,7 +802,7 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots'];
 
 export function snapshot() {
   const out = { counter };
@@ -1104,3 +1110,41 @@ export function osIntegrationMap() {
 
 // Local import indirection (avoids a static cycle with booking-schema.js).
 import { buildRefundPolicy as buildRefundPolicyLocal } from './booking-schema.js';
+import { bookingSupplierCommission as bookingSupplierCommissionLocal } from './partners.js';
+
+// ---- Finance: group contribution pots ----------------------------------------
+// Churches/families/teams save towards a trip together; contributions carry a
+// 1.5% processing fee (FINANCE_PRODUCTS) and the pot converts to booking credit.
+export function createTravelPot(userId, { name, targetUSD }) {
+  const u = userId ? db.users.get(userId) : null;
+  if (!u) return { ok: false, error: 'auth-required' };
+  const pot = { id: `pot_${db.travelPots.length + 1}_${Date.now().toString(36)}`, ownerId: u.id, name: String(name || 'Trip pot').slice(0, 60), targetUSD: Math.max(1, Math.round(Number(targetUSD) || 0)), balanceUSD: 0, feePct: 0.015, feesCollectedUSD: 0, contributions: [], createdAt: new Date().toISOString() };
+  db.travelPots.push(pot);
+  return { ok: true, pot };
+}
+export function contributeToPot(potId, { name, amountUSD }) {
+  const pot = db.travelPots.find((p) => p.id === potId);
+  if (!pot) return { ok: false, error: 'pot-not-found' };
+  const amt = Math.round(Number(amountUSD) * 100) / 100;
+  if (!(amt > 0)) return { ok: false, error: 'invalid-amount' };
+  const fee = Math.round(amt * pot.feePct * 100) / 100;
+  pot.balanceUSD = Math.round((pot.balanceUSD + amt - fee) * 100) / 100;
+  pot.feesCollectedUSD = Math.round((pot.feesCollectedUSD + fee) * 100) / 100;
+  pot.contributions.push({ name: String(name || 'Anonymous').slice(0, 60), amountUSD: amt, feeUSD: fee, at: new Date().toISOString() });
+  if (pot.balanceUSD >= pot.targetUSD) pushNotification(pot.ownerId, { type: 'success', icon: '🎯', title: 'Pot target reached!', body: `${pot.name} hit $${pot.targetUSD} — convert it to a booking credit in the planner.` });
+  return { ok: true, pot };
+}
+
+// ---- Search cache: the database answers before paid AI ------------------------
+// Popular routes, destination packages, visa rules and previous AI answers are
+// cached; free/downgraded searches serve from here at zero cost.
+export function cacheSearch(key, result) {
+  db.searchCache.set(key, { result, cachedAt: new Date().toISOString() });
+  if (db.searchCache.size > 500) db.searchCache.delete(db.searchCache.keys().next().value);
+}
+export function getCachedSearch(key) {
+  return db.searchCache.get(key) || null;
+}
+export function searchCacheStats() {
+  return { entries: db.searchCache.size };
+}

@@ -806,3 +806,30 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
 
   return scan;
 }
+
+// ---- Destination Marketplace add-ons ------------------------------------------
+// Every trip becomes a marketplace basket: local services sold alongside the
+// core package, priced per destination and verified like any supplier.
+export const MARKETPLACE_ADDONS = [
+  { key: 'tours', name: 'Guided tours', baseUSD: 45, per: 'person' },
+  { key: 'driver', name: 'Local driver (day)', baseUSD: 60, per: 'day' },
+  { key: 'translator', name: 'Translator / interpreter', baseUSD: 70, per: 'day' },
+  { key: 'security', name: 'Security support', baseUSD: 120, per: 'day' },
+  { key: 'photographer', name: 'Trip photographer', baseUSD: 90, per: 'session' },
+  { key: 'pickup', name: 'Airport pickup', baseUSD: 35, per: 'trip' },
+  { key: 'restaurants', name: 'Restaurant bookings', baseUSD: 8, per: 'booking' },
+  { key: 'tickets', name: 'Event tickets', baseUSD: 55, per: 'ticket' },
+  { key: 'esim', name: 'Local SIM / eSIM', baseUSD: 12, per: 'plan' },
+  { key: 'guide', name: 'Digital travel guide', baseUSD: 6, per: 'trip' },
+];
+export function scanMarketplaceAddons(dest) {
+  const rnd = seeded(`addons-${dest.code || dest.city}`);
+  const factor = (dest.activityBaseUSD || 50) / 50;
+  return MARKETPLACE_ADDONS.map((a) => ({
+    ...a,
+    destination: dest.city,
+    priceUSD: Math.round(a.baseUSD * factor * (0.9 + rnd() * 0.25)),
+    verified: true,
+    reliabilityScore: 80 + Math.round(rnd() * 15),
+  }));
+}

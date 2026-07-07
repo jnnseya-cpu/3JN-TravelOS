@@ -1633,3 +1633,148 @@ test('master rule: AI cost capped at 5-10% of expected profit; advertising funds
   assert.equal(un.downgradeTo, 'free');
   assert.ok(un.requirement.orDepositGBP >= 5, 'refundable search deposit path (£5–£20)');
 });
+
+// ---- Supplier commissions: 3JN earns even on the cheapest deal --------------
+import { SUPPLIER_COMMISSIONS, bookingSupplierCommission } from '../src/partners.js';
+
+test('supplier commissions: schedule covers all 12 categories; bookings earn supply-side', () => {
+  for (const cat of ['flights', 'hotel', 'activities', 'carhire', 'transfer', 'esim', 'insurance', 'visa', 'luggage', 'cruise', 'tickets', 'host']) {
+    assert.ok(SUPPLIER_COMMISSIONS[cat] > 0, `${cat} earns commission`);
+  }
+  const guest = createUser({ name: 'Comm Guest', email: 'comm@example.com' });
+  const r = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults, cheapest reliable', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options.find((o) => o.tier === 'Standard'); // the CHEAPEST deal
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id });
+  assert.ok(b.supplierEarnings.totalUSD > 0, '3JN earns from suppliers on the cheapest deal');
+  assert.equal(b.supplierEarnings.rows.length, opt.components.length, 'every component attributed');
+});
+
+// ---- Booking Protection fee (£5–£50 by trip value) --------------------------
+import { protectionFee, PROTECTION_BENEFITS } from '../src/pricing.js';
+
+test('protection: fee scales £5–£50 with six benefits; stored on booking when chosen', () => {
+  assert.equal(protectionFee(100).fee, 5, 'floor £5');
+  assert.equal(protectionFee(1500).fee, 30, '~2% of trip');
+  assert.equal(protectionFee(9000).fee, 50, 'cap £50');
+  assert.equal(PROTECTION_BENEFITS.length, 6);
+  const guest = createUser({ name: 'Prot Guest', email: 'prot@example.com' });
+  const r = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options[0];
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const withP = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id, protection: protectionFee(opt.pricing.local.total) });
+  assert.ok(withP.protection.fee >= 5 && withP.protection.fee <= 50);
+  const withoutP = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id });
+  assert.equal(withoutP.protection, null, 'strictly optional');
+});
+
+// ---- Monetisation parts 8–10 -------------------------------------------------
+import { prioritySearchFee, PRIORITY_SEARCH_FEES } from '../src/revenue.js';
+import { addSponsoredPlacement, sponsoredFor, PLACEMENT_SECTIONS, placementRevenueGBP } from '../src/partners.js';
+import { CORPORATE_PLANS } from '../../shared/constants.js';
+
+test('priority search fees: standard free, priority £3–£10, urgent £15–£50', () => {
+  assert.equal(prioritySearchFee('standard').feeGBP, 0);
+  const p = prioritySearchFee('priority', 500);
+  assert.ok(p.feeGBP >= 3 && p.feeGBP <= 10);
+  const u = prioritySearchFee('urgent', 400);
+  assert.ok(u.feeGBP >= 15 && u.feeGBP <= 50);
+  assert.equal(prioritySearchFee('urgent', 99999).feeGBP, 50, 'capped');
+});
+
+test('sponsored placements: labelled slots across the six sections', () => {
+  assert.equal(PLACEMENT_SECTIONS.length, 6);
+  const r = addSponsoredPlacement({ partner: 'Rove Hotels', section: 'destination pages', destination: 'Dubai', feeGBPMonth: 400 });
+  assert.equal(r.ok, true);
+  assert.equal(r.placement.labelled, true, 'sponsored is ALWAYS labelled');
+  assert.ok(sponsoredFor('destination pages', 'Dubai').length === 1);
+  assert.ok(placementRevenueGBP() >= 400);
+  assert.equal(addSponsoredPlacement({ partner: 'X', section: 'homepage takeover' }).ok, false, 'only approved sections');
+});
+
+test('corporate plans: monthly recurring with the seven capabilities', () => {
+  assert.equal(CORPORATE_PLANS.length, 2);
+  for (const plan of CORPORATE_PLANS) {
+    assert.ok(plan.pricePerMonth >= 99);
+    assert.equal(plan.features.length, 7);
+    assert.ok(plan.features.includes('Cheapest compliant fare search'));
+  }
+});
+
+// ---- Monetisation parts 11–13 -------------------------------------------------
+import { groupTravelFees, GROUP_SEGMENTS, WHITE_LABEL_PRICING } from '../src/revenue.js';
+import { scanMarketplaceAddons, MARKETPLACE_ADDONS } from '../src/suppliers.js';
+
+test('group travel: four stacked earners across the seven segments', () => {
+  assert.equal(GROUP_SEGMENTS.length, 7);
+  const f = groupTravelFees(30, 15000);
+  assert.equal(f.planningFeeGBP, 149);
+  assert.equal(f.groupBookingFeeGBP, 150, '£5/head × 30');
+  assert.equal(f.finalPaymentPct, 0.10);
+  assert.equal(f.totalUpfrontGBP, 299);
+});
+
+test('destination marketplace: ten add-on categories priced per destination', () => {
+  assert.equal(MARKETPLACE_ADDONS.length, 10);
+  const dubai = scanMarketplaceAddons({ city: 'Dubai', code: 'DXB', activityBaseUSD: 65 });
+  assert.equal(dubai.length, 10);
+  for (const a of dubai) assert.ok(a.priceUSD > 0 && a.verified);
+  const keys = dubai.map((a) => a.key);
+  for (const k of ['driver', 'translator', 'security', 'photographer', 'restaurants', 'guide']) assert.ok(keys.includes(k));
+});
+
+test('white-label: five stacked charges', () => {
+  assert.ok(WHITE_LABEL_PRICING.setupFeeGBP > 0);
+  assert.ok(WHITE_LABEL_PRICING.monthlySaasGBP > 0);
+  assert.ok(WHITE_LABEL_PRICING.bookingCommissionPct === 0.10);
+  assert.ok(WHITE_LABEL_PRICING.premiumSupportGBPMonth > 0);
+  assert.ok(/ACU/.test(WHITE_LABEL_PRICING.acuUsage));
+});
+
+// ---- Parts 14–16 + free-tier limit -------------------------------------------
+import { API_PRODUCTS, FINANCE_PRODUCTS, FREE_DAILY_SEARCH_LIMIT } from '../src/revenue.js';
+import { createTravelPot, contributeToPot } from '../src/store.js';
+
+test('gate part 16: 8-question checklist, abuse throttle, free daily cap, intent assist', () => {
+  const funded = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 10000, intentStrong: true });
+  assert.equal(funded.checklist.length, 8);
+  const abuse = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 10000, recentSearches: 25, priorBookings: 0 });
+  assert.equal(abuse.reason, 'abuse-throttle');
+  const capped = costProtectionGate({ tier: 'smart', user: null, expectedBookingUSD: 10000, searchesToday: FREE_DAILY_SEARCH_LIMIT });
+  assert.equal(capped.reason, 'free-daily-limit');
+  // Strong intent unlocks at x5 where x10 would fail (booking value in the
+  // narrow band between the two thresholds).
+  const weak = costProtectionGate({ tier: 'smart', user: null, expectedBookingUSD: 7, intentStrong: false });
+  assert.equal(weak.allowed, false, 'x10 fails at this value');
+  const assist = costProtectionGate({ tier: 'smart', user: null, expectedBookingUSD: 7, intentStrong: true });
+  assert.ok(assist.allowed && assist.reason.includes('strong-booking-intent'));
+});
+
+test('API revenue: six productised endpoints catalogued and priced', () => {
+  assert.equal(API_PRODUCTS.length, 6);
+  for (const p of API_PRODUCTS) assert.ok(p.endpoint.startsWith('/api/v1/') && p.pricePerCallGBP > 0);
+});
+
+test('finance: six products; group pots collect 1.5% and notify at target', () => {
+  assert.equal(FINANCE_PRODUCTS.length, 6);
+  const owner = createUser({ name: 'Pot Owner', email: 'pot@example.com' });
+  const { pot } = createTravelPot(owner.id, { name: 'Kinshasa reunion', targetUSD: 100 });
+  contributeToPot(pot.id, { name: 'Aunt M', amountUSD: 60 });
+  const r = contributeToPot(pot.id, { name: 'Uncle J', amountUSD: 45 });
+  assert.ok(r.pot.balanceUSD >= 100, 'target reached net of fees');
+  assert.ok(Math.abs(r.pot.feesCollectedUSD - 1.58) < 0.02, '1.5% processing collected');
+  assert.ok(listNotifications(owner.id).some((n) => /target reached/i.test(n.title)));
+});
+
+// ---- Cache everything: the database answers before paid AI -------------------
+import { searchCacheStats } from '../src/store.js';
+
+test('search cache: fresh results cached; free tier serves from the database', () => {
+  const text = 'Barcelona from London in September for 4 nights, flights and hotel for 2 adults';
+  const fresh = plan({ text, context: GB, user: null, searchTier: 'smart' });
+  assert.equal(fresh.stage, 'options');
+  assert.ok(searchCacheStats().entries > 0, 'result written to cache');
+  const cached = plan({ text, context: GB, user: null, searchTier: 'free' });
+  assert.equal(cached.cached, true, 'free tier answered from the database');
+  assert.equal(cached.packages.options.length, fresh.packages.options.length);
+});
