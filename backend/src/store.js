@@ -264,7 +264,19 @@ export function getDraft(userId, key) {
 }
 
 // Recognised account roles and their default avatar.
-export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'embassy', 'admin'];
+export const ROLES = ['consumer', 'business', 'merchant', 'partner', 'embassy', 'consulate', 'admin'];
+
+// Access levels — what each account type can reach. Exposed on every account
+// (publicUser.accessLevel) and enforced by the route-level role gates.
+export const ACCESS_LEVELS = {
+  consumer: ['planner', 'bookings', 'console', 'loyalty', 'host-dashboard', 'visa-applications (own)'],
+  business: ['everything consumer has', 'business centre', 'approvals', 'policy', 'contracts', 'expense export', 'reporting'],
+  merchant: ['everything consumer has', 'merchant portal', 'API keys', 'BitriPay links/QR', 'settlement'],
+  partner: ['everything consumer has', 'white-label API', '90/10 revenue share', 'partner keys'],
+  embassy: ['VisaOS government dashboard', 'application review', 'eVisa decisions (approve/refuse/escalate)'],
+  consulate: ['VisaOS government dashboard', 'application review', 'eVisa decisions (approve/refuse/escalate)', 'consular caseload for their country'],
+  admin: ['everything', 'admin control centre', 'comp-Elite grants', 'audit', 'integration map'],
+};
 const ROLE_AVATAR = { consumer: '🧳', business: '💼', merchant: '🏪', partner: '🤝', admin: '🛡️' };
 
 // ---- Users / loyalty / ACU wallet ----------------------------------------
@@ -421,6 +433,7 @@ function publicUser(u) {
     membership: u.membership || null,
     coverImage: u.coverImage || null,
     travelProfile: u.travelProfile || {},
+    accessLevel: ACCESS_LEVELS[u.role] || ACCESS_LEVELS.consumer,
     referralCode: u.referralCode,
     referrals: u.referrals,
   };
@@ -465,6 +478,16 @@ export function updateUser(userId, patch = {}) {
 }
 
 // Provision one account per role for testing/admin (idempotent-ish by email).
+// Tiny deterministic SVG avatar + cover per role (data URLs, no assets).
+function roleArt(role, name) {
+  const palette = { admin: ['#d8b46a', '#1a1304'], business: ['#4ea1ff', '#04101f'], merchant: ['#46d39a', '#04140d'], partner: ['#b48cff', '#140a24'], consumer: ['#ff9d6a', '#241004'], embassy: ['#6ad3d3', '#0a1f1f'], consulate: ['#7cc0ff', '#0a1224'] };
+  const [fg, bg] = palette[role] || ['#d8b46a', '#1a1304'];
+  const initials = name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const avatar = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="18" fill="${bg}"/><text x="48" y="60" font-family="Arial" font-size="36" font-weight="bold" fill="${fg}" text-anchor="middle">${initials}</text></svg>`)}`;
+  const cover = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${bg}"/><stop offset="1" stop-color="${fg}"/></linearGradient></defs><rect width="800" height="200" fill="url(#g)"/><text x="24" y="170" font-family="Arial" font-size="20" fill="#ffffff" opacity="0.85">3JN Travel OS · ${role.toUpperCase()}</text></svg>`)}`;
+  return { avatar, cover };
+}
+
 export function seedAllRoles() {
   const specs = [
     { role: 'admin', name: 'Platform Admin', email: 'admin@3jntravel.com' },
@@ -472,11 +495,34 @@ export function seedAllRoles() {
     { role: 'merchant', name: 'BitriPay Merchant', email: 'merchant@3jntravel.com' },
     { role: 'partner', name: 'Agency Partner', email: 'partner@3jntravel.com' },
     { role: 'consumer', name: 'Test Traveller', email: 'tester@3jntravel.com' },
+    { role: 'embassy', name: 'Embassy Officer', email: 'embassy@3jntravel.com' },
+    { role: 'consulate', name: 'Consulate eVisa Officer', email: 'consulate@3jntravel.com' },
   ];
-  return specs.map((s) => {
-    const existing = [...db.users.values()].find((u) => u.email === s.email);
-    if (existing) return publicUser(existing);
-    return createUser(s);
+  return specs.map((sp, i) => {
+    let u = [...db.users.values()].find((x) => x.email === sp.email);
+    if (!u) { createUser(sp); u = [...db.users.values()].find((x) => x.email === sp.email); }
+    // Every account type ships fully dressed: profile picture, cover picture,
+    // the required Master Travel Profile details, and its access level.
+    const art = roleArt(sp.role, sp.name);
+    if (!u.avatar) u.avatar = art.avatar;
+    if (!u.coverImage) u.coverImage = art.cover;
+    u.role = sp.role;
+    if (!u.travelProfile || !u.travelProfile.fullLegalName) {
+      u.travelProfile = {
+        title: 'Mx', firstName: sp.name.split(' ')[0], lastName: sp.name.split(' ').slice(-1)[0],
+        fullLegalName: sp.name, preferredName: sp.name.split(' ')[0],
+        gender: 'Other', dob: `198${i}-0${(i % 9) + 1}-15`, placeOfBirth: 'London, GB',
+        nationality: 'GB', maritalStatus: 'Single',
+        passportNumber: `GB${1000000 + i}`, passportIssue: '2021-01-01', passportExpiry: '2031-01-01', passportCountry: 'GB',
+        nationalId: `NID-${9000 + i}`, residencyStatus: 'Citizen', visaStatus: 'N/A',
+        mobile: `+4470000000${i}`, contactEmail: sp.email,
+        emergencyContact: 'Ops Desk +44 20 0000 0000', emergencyContactRelation: 'Colleague',
+        residentialAddress: `${10 + i} Test Street, London`, billingAddress: `${10 + i} Test Street, London`,
+        countryOfResidence: 'GB', postalCode: 'E1 6AN',
+        occupation: sp.name, employer: '3JN Travel OS', monthlyIncome: 3000,
+      };
+    }
+    return publicUser(u);
   });
 }
 
