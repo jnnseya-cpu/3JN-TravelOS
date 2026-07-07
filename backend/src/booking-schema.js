@@ -131,7 +131,7 @@ function entryRequirements(nationality, destination, visa) {
 }
 
 // ---- Engine: validate the captured data before booking --------------------
-export function validateBooking({ travellers = [], travelDate, nationality = 'GB', destination, international = true } = {}) {
+export function validateBooking({ travellers = [], travelDate, nationality = 'GB', destination, international = true, hasReturnTicket = null, transitCountry = null } = {}) {
   const checks = [];
   const blocking = [];
   const today = Date.now();
@@ -157,7 +157,39 @@ export function validateBooking({ travellers = [], travelDate, nationality = 'GB
       checks.push({ check: `${who}: passport valid 6+ months after travel`, pass: ok });
       if (!ok) blocking.push(`${who}: passport must be valid 6+ months beyond travel`);
     }
+    // Blank visa pages (most regimes want 2+). Only checked when declared.
+    if (international && t.passportBlankPages != null) {
+      const ok = Number(t.passportBlankPages) >= 2;
+      checks.push({ check: `${who}: 2+ blank visa pages`, pass: ok });
+      if (!ok) blocking.push(`${who}: passport needs at least 2 blank visa pages`);
+    }
+    // Damaged passports are refused at check-in — hard stop.
+    if (international && t.passportDamaged === true) {
+      checks.push({ check: `${who}: passport undamaged`, pass: false });
+      blocking.push(`${who}: a damaged passport will be refused — renew before travel`);
+    }
   });
+
+  // Return / onward permission — airlines verify it at check-in for most
+  // visa-required destinations.
+  if (international) {
+    if (hasReturnTicket === false) {
+      checks.push({ check: 'Proof of return / onward travel', pass: false });
+      blocking.push('Return or onward ticket proof is required for entry');
+    } else if (hasReturnTicket === true) {
+      checks.push({ check: 'Return / onward travel confirmed', pass: true });
+    }
+  }
+
+  // Transit visa — when the journey connects through a third country.
+  if (international && transitCountry) {
+    const tv = visaCheck(nationality, transitCountry);
+    if (tv.ok && tv.required) {
+      checks.push({ check: `Transit via ${tv.destination.city}: ${tv.visaType} required`, pass: true, advisory: true });
+    } else if (tv.ok) {
+      checks.push({ check: `Transit via ${tv.destination.city}: no visa needed`, pass: true });
+    }
+  }
 
   // Visa / entry rule — only relevant when crossing a border.
   let visa;
@@ -168,6 +200,12 @@ export function validateBooking({ travellers = [], travelDate, nationality = 'GB
     } else if (visa.ok) {
       checks.push({ check: `No visa required for ${visa.destination.city}`, pass: true });
     }
+    // Country entry rules beyond the visa itself: vaccination + customs.
+    const YELLOW_FEVER = /lagos|abuja|accra|nairobi|kinshasa|addis/i;
+    if (YELLOW_FEVER.test(String(destination || ''))) {
+      checks.push({ check: `Yellow-fever vaccination certificate required for ${destination}`, pass: true, advisory: true });
+    }
+    checks.push({ check: 'Customs: declare cash over ~$10,000 and restricted goods on arrival', pass: true, advisory: true });
   } else {
     visa = { ok: true, required: false, domestic: true };
     checks.push({ check: 'Local trip — no passport or visa required', pass: true });

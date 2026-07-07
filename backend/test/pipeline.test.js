@@ -457,11 +457,11 @@ test('unresolved destination asks clarifying questions instead of crashing', () 
 
 test('price breakdown applies loyalty discount + 10% commission', () => {
   const b = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 1200 });
-  // Voyager = 5% off suppliers
-  assert.equal(b.lines.loyaltyDiscountUSD, 50);
-  assert.equal(b.lines.netSuppliersUSD, 950);
-  assert.equal(b.lines.commissionUSD, 95); // 10% of net
-  assert.equal(b.lines.totalUSD, 1045);
+  // Voyager = 3% off suppliers
+  assert.equal(b.lines.loyaltyDiscountUSD, 30);
+  assert.equal(b.lines.netSuppliersUSD, 970);
+  assert.equal(b.lines.commissionUSD, 97); // 10% of net
+  assert.equal(b.lines.totalUSD, 1067);
   assert.ok(b.lines.savingsVsMarketUSD > 0);
 });
 
@@ -1421,4 +1421,48 @@ test('agents: blog/SEO/marketing publish autonomously once per day', () => {
   const audit = adminAudit(50);
   assert.ok(audit.some((a) => a.action === 'marketing.social.published'));
   assert.ok(audit.some((a) => a.action === 'seo.sitemap.refreshed'));
+});
+
+// ---- Post-booking flight fulfilment record ----------------------------------
+test('booking: flight bookings carry PNR, e-ticket, locators and rules', () => {
+  const guest = createUser({ name: 'Pnr Guest', email: 'pnr@example.com' });
+  const r = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options[0];
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id, paymentMethod: 'card' });
+  const f = b.fulfilment;
+  assert.ok(f, 'fulfilment issued');
+  assert.match(f.pnr, /^[A-Z]{6}$/);
+  assert.match(f.eTicketNumber, /^\d{3}-\d{10}$/);
+  assert.equal(f.airlineLocator, f.pnr);
+  assert.ok(f.gdsLocator.startsWith('AMA-'));
+  assert.equal(f.ticketStatus, 'Ticketed');
+  assert.ok(f.refundability && f.changeRules && f.cancellationRules);
+  // Deterministic: same booking id → same PNR.
+  assert.equal(buildableSamePnr(b), f.pnr);
+  // No flight in the option → no flight fulfilment.
+  const r2 = plan({ text: 'Dubai hotel only in August for 3 nights', context: GB, user: null, searchTier: 'smart' });
+  const opt2 = r2.packages.options[0];
+  const q2 = saveQuote({ option: opt2, intent: r2.intent, userId: guest.id });
+  const b2 = createBooking({ quoteId: q2.id, option: opt2, instalment: null, userId: guest.id });
+  assert.equal(b2.fulfilment, null);
+});
+function buildableSamePnr(b) { return b.fulfilment.pnr; }
+
+// ---- Flight document validation engine (spec part 3) ------------------------
+test('validation: blank pages, damaged passport, return proof, transit visa', () => {
+  const base = { fullName: 'T Test', dob: '1990-01-01', nationality: 'GB', passportNumber: 'A1', passportExpiry: '2031-01-01' };
+  // Blank pages < 2 blocks; damaged passport blocks.
+  const r1 = validateBooking({ travellers: [{ ...base, passportBlankPages: 1 }], travelDate: '2026-08-17', nationality: 'GB', destination: 'Dubai', international: true });
+  assert.equal(r1.valid, false);
+  assert.ok(r1.blocking.some((b) => /blank visa pages/i.test(b)));
+  const r2 = validateBooking({ travellers: [{ ...base, passportDamaged: true }], travelDate: '2026-08-17', nationality: 'GB', destination: 'Dubai', international: true });
+  assert.ok(r2.blocking.some((b) => /damaged passport/i.test(b)));
+  // Missing return proof blocks; confirmed passes.
+  const r3 = validateBooking({ travellers: [base], travelDate: '2026-08-17', nationality: 'GB', destination: 'Dubai', international: true, hasReturnTicket: false });
+  assert.ok(r3.blocking.some((b) => /return or onward/i.test(b)));
+  const r4 = validateBooking({ travellers: [{ ...base, passportBlankPages: 4 }], travelDate: '2026-08-17', nationality: 'GB', destination: 'Dubai', international: true, hasReturnTicket: true, transitCountry: 'Istanbul' });
+  assert.equal(r4.valid, true, JSON.stringify(r4.blocking));
+  assert.ok(r4.checks.some((c) => /Transit via Istanbul/i.test(c.check)));
+  assert.ok(r4.checks.some((c) => /Customs/i.test(c.check)));
 });

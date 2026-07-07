@@ -11,10 +11,10 @@ export const SAVINGS_SHARE_RATE = 0.10;   // 10% of value created vs market
 
 // ---- Loyalty (1 point per $2 spent; 250-point signup bonus) ---------------
 export const LOYALTY_TIERS = [
-  { name: 'Explorer', minPoints: 0, discount: 0.02 },
-  { name: 'Voyager', minPoints: 1000, discount: 0.05 },
-  { name: 'Nomad', minPoints: 5000, discount: 0.08 },
-  { name: 'Elite', minPoints: 15000, discount: 0.12 },
+  { name: 'Explorer', minPoints: 0, discount: 0 },
+  { name: 'Voyager', minPoints: 1000, discount: 0.03 },
+  { name: 'Nomad', minPoints: 5000, discount: 0.06 },
+  { name: 'Elite', minPoints: 15000, discount: 0.10 },
 ];
 // 1 loyalty point per £2 spent — the engine prices in USD, so at the platform's
 // 0.79 GBP/USD anchor £2 ≈ $2.53 → 0.4 points per USD (was 0.5/USD, which
