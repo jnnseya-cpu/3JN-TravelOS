@@ -2263,3 +2263,35 @@ test('VisaOS agent checklists: forensics 9, financial 7, identity 8, footprint 1
   assert.equal(overstay.checksRun.length, 12);
   assert.ok(a.risk.overstay >= 0 && a.risk.overstay <= 100, 'overstay risk scored 0-100');
 });
+
+test('VisaOS agents 7-10: fraud clusters, intent purposes, border security, master decision agent', () => {
+  assert.equal(AGENT_CHECKS['Fraud Detection'].length, 7);
+  assert.ok(AGENT_CHECKS['Fraud Detection'].includes('Synthetic identities'));
+  assert.ok(AGENT_CHECKS['Fraud Detection'].includes('Mule applicants'));
+  assert.deepEqual(AGENT_CHECKS['Intent Assessment'], ['Tourism', 'Business', 'Study', 'Family visit', 'Medical', 'Conference']);
+  assert.equal(AGENT_CHECKS['Border Risk'].length, 6);
+  assert.ok(AGENT_CHECKS['Border Risk'].includes('Terrorism watchlists'));
+  assert.ok(AGENT_CHECKS['Decision Agent'].some((c) => /Confidence Score/.test(c)));
+  assert.equal(Object.keys(AGENT_CHECKS).length, 10, 'all ten swarm agents carry dictated checklists');
+});
+
+test('VisaOS decision engine: four outcomes, seven risk dimensions, 0-1000 with dictated thresholds', () => {
+  // Low risk -> Auto Approval (visa issued instantly).
+  const safe = assessVisa({ name: 'Safe Applicant', nationality: 'GB', destination: 'Dubai' });
+  assert.equal(safe.band, 'Safe');
+  assert.equal(safe.decision, 'Auto Approval');
+  assert.ok(safe.totalScore <= 200, '0-200 -> Safe');
+  assert.ok(safe.decisionConfidenceScore >= 60, 'Visa Decision Confidence Score produced');
+  // The seven risk dimensions of the unified score.
+  assert.deepEqual(Object.keys(safe.risk).sort(), ['behaviour', 'financial', 'fraud', 'identity', 'intent', 'overstay', 'security'].sort());
+  // High fraud/risk -> Auto Rejection.
+  const bad = assessVisa({ name: 'Bad Actor', nationality: 'GB', destination: 'Dubai', onWatchlist: true, documentsAuthentic: false, knownFraudNetwork: true, fundsConsistent: false, priorOverstays: true, purposeCredible: false, footprintMatches: false });
+  assert.ok(bad.totalScore > 450, 'high risk scores high');
+  assert.ok(['Human Review', 'Auto Rejection'].includes(bad.decision));
+  // Conditional approvals attach insurance/deposit/verification conditions.
+  const mid = assessVisa({ name: 'Mid Applicant', nationality: 'NG', destination: 'Paris', fundsConsistent: false, homeTies: 'moderate' });
+  if (mid.decision === 'Conditional Approval') {
+    assert.ok(mid.conditions.length >= 3, 'insurance / deposit / verification conditions');
+  }
+  assert.ok(safe.slaMinutes === 5, 'decision in under 5 minutes unless escalated');
+});

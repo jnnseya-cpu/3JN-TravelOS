@@ -68,6 +68,26 @@ export const AGENT_CHECKS = {
     'Job stability', 'Property ownership', 'Income consistency', 'Age', 'Dependents',
     'Migration patterns', 'Return probability', 'Historical country overstay data',
   ],
+  // Identifies fraud CLUSTERS, not just individual bad documents.
+  'Fraud Detection': [
+    'Fake sponsors', 'Visa agents fraud', 'Organised fraud rings', 'Synthetic identities',
+    'Repeat fraud patterns', 'Mule applicants', 'Network fraud',
+  ],
+  // Is the declared story credible for the declared purpose?
+  'Intent Assessment': [
+    'Tourism', 'Business', 'Study', 'Family visit', 'Medical', 'Conference',
+  ],
+  // The national security layer.
+  'Border Risk': [
+    'Criminal databases', 'Terrorism watchlists', 'Sanctions', 'Extremist networks',
+    'Trafficking indicators', 'Smuggling signals',
+  ],
+  // The master AI: aggregates all intelligence into the unified 0–1000 risk
+  // score and the Visa Decision Confidence Score.
+  'Decision Agent': [
+    'Aggregate all agent findings', 'Weight seven risk dimensions', 'Produce unified 0–1000 risk score',
+    'Produce Visa Decision Confidence Score', 'Route: approve / conditional / human review / reject',
+  ],
 };
 
 function seed(str) {
@@ -123,6 +143,7 @@ export function assessVisa(app = {}) {
     band,
     decision,
     confidence,
+    decisionConfidenceScore: confidence, // the Decision Agent's headline output
     conditions,
     slaMinutes: decision === 'Human Review' ? 'escalated' : 5,
   };

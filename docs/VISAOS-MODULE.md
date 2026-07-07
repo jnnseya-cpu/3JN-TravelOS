@@ -32,10 +32,10 @@ Ten specialised agents run simultaneously (`assessVisa` → `agents[]`, each wit
 | 4 | **Online Footprint Intelligence** — *the moat*: does the declared identity match real life? ("Senior Engineer at GE" with no footprint → risk rises) | LinkedIn consistency · employment history · professional presence · business registrations · social media footprint · travel history · education consistency · address consistency · public records · reputation signals · fraud signals |
 | 5 | **Behavioural Intelligence** — *elite*: deception shows in HOW the form is completed (high hesitation around employment history → risk rises) | typing speed · hesitation patterns · correction frequency · unusual pauses · navigation behaviour · evasive answer patterns · document upload stress signals · contradiction signals |
 | 6 | **Overstay Risk** — critical for governments; outputs a 0–100 overstay risk score | travel history · previous visa compliance · home country economics · family ties · job stability · property ownership · income consistency · age · dependents · migration patterns · return probability · historical country overstay data |
-| 7 | Fraud Detection | fraud-ring / synthetic-identity / organised-cluster linkage |
-| 8 | Intent Assessment | declared purpose vs application story consistency |
-| 9 | Border Risk | criminal / terrorism / trafficking database screening |
-| 10 | Decision Agent | aggregates all signals into the unified 0–1000 risk score |
+| 7 | **Fraud Detection** — identifies fraud clusters, not just bad documents | fake sponsors · visa agents fraud · organised fraud rings · synthetic identities · repeat fraud patterns · mule applicants · network fraud |
+| 8 | **Intent Assessment** — is the story credible for the declared purpose? | tourism · business · study · family visit · medical · conference |
+| 9 | **Border Risk** — the national security layer | criminal databases · terrorism watchlists · sanctions · extremist networks · trafficking indicators · smuggling signals |
+| 10 | **Decision Agent** — the master AI | aggregates all intelligence · weights the seven risk dimensions · unified 0–1000 risk score · **Visa Decision Confidence Score** · routes approve / conditional / human review / reject |
 
 ## Where it lives
 
