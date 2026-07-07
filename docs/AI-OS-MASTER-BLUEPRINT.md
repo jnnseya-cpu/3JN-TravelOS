@@ -260,6 +260,28 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 
 ---
 
+# SECTION 06 — PLATFORM MODULES
+*Every module, dashboard, and portal within the 3JN Travel OS*
+
+## 6. Platform Modules
+
+### 6.1 Consumer Modules
+
+| Module | Key Features | Agent Integration | Tech Layer |
+|---|---|---|---|
+| **Onboarding Flow** | Natural language preference intake, KYC, plan selection, loyalty account linking | KYC Agent, Chief of Staff Agent | Next.js + Sumsub + Firestore |
+| **Search & Discovery** | NLP intent box, AI-parsed parameters, real-time wholesale search | Flight Agent, Hotel Agent | LangGraph + Amadeus GDS + Hotelbeds |
+| **Booking Engine** | Price comparison view, verification badges, one-click booking, BitriPay checkout | Savings Guard, Fraud Agent | NestJS + BitriPay + Stripe |
+| **Universal Console** | Trip hub, document vault, visa status, eSIM, transfers, alerts | All 10 core agents | Next.js + Firebase Realtime + GCP |
+| **Price Monitor Dashboard** | Active scans, savings history, alert configuration | Savings Guard Agent | React + WebSocket + PostgreSQL |
+| **Visa Centre** | Eligibility matrix, document checklist, status tracker, consulate links | Visa Automation Agent | NestJS + VisaHQ API + Sumsub |
+| **Loyalty Hub** | Multi-programme overview, earning tracker, redemption recommendations | Loyalty Aggregation Agent | Next.js + Points.com API |
+| **Risk Intelligence Feed** | Destination risk cards, FCO feed, health advisories, live alerts | Risk Intelligence Agent | NestJS + FCO API + WHO feed |
+| **Document Vault** | E-ticket, vouchers, insurance certificates, visa approvals — encrypted storage | Chief of Staff Agent | GCP Cloud Storage + AES-256 |
+| **Referral & Rewards** | Referral tracking, reward crediting, social sharing engine | Revenue Agent | NestJS + custom referral engine |
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
