@@ -46,6 +46,16 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     if (intent.destination) intent.unresolved = intent.unresolved.filter((u) => u !== 'destination');
   }
   if (overrides.month) intent.month = overrides.month;
+  // Deep Price Dive "Apply & re-search": shift the parsed dates by N days so the
+  // alternative-date lever produces a REAL live fare for those exact dates.
+  if (overrides.shiftDays && intent.dates?.checkIn) {
+    const shift = (iso) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + Number(overrides.shiftDays)); return d.toISOString().slice(0, 10); };
+    intent.dates = {
+      checkIn: shift(intent.dates.checkIn),
+      checkOut: intent.dates.checkOut ? shift(intent.dates.checkOut) : intent.dates.checkOut,
+    };
+    intent.appliedDiveLever = { type: 'date', shiftDays: Number(overrides.shiftDays), checkIn: intent.dates.checkIn };
+  }
   // Answer to the "what do you need?" question (plain-English → components).
   if (overrides.need && NEED_MAP[overrides.need]) {
     intent.components = [...NEED_MAP[overrides.need]];
@@ -78,6 +88,13 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Departure: the user's stated city if given, else inferred from nationality.
   const origin = (intent.originCity && resolveOrigin(intent.originCity)) || originForCountry(intent.nationality);
   origin.inferred = !intent.originCity;
+  // Deep Price Dive "Apply & re-search": fly from the alternative airport the
+  // dive found cheaper — re-searched live so the shown fare is real & bookable.
+  if (overrides.originAirport && /^[A-Z]{3}$/.test(String(overrides.originAirport))) {
+    origin.airport = String(overrides.originAirport);
+    origin.inferred = false;
+    intent.appliedDiveLever = { ...(intent.appliedDiveLever || {}), airport: origin.airport };
+  }
   // Mixed-mode / split-origin legs: resolve each direction's own departure /
   // arrival point (airport, station or port city). Outbound defaults to the
   // stated origin; the return may come back into a different place entirely.
@@ -173,6 +190,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Key on the EXACT request (raw text captures every parsed nuance) plus the
   // out-of-text inputs that change results: toggles, loyalty, live host supply.
   const cacheKey = [intent.raw.toLowerCase(), origin.airport,
+    intent.dates?.checkIn || '-',
     intent.flightPrefs.directOnly ? 'D1' : 'D0', intent.flightPrefs.departureWindow || '-',
     user ? (user.points || 0) : 0, communityHosts.length].join('|');
   // CHECK CACHE FIRST — before spending ACUs, at EVERY tier (Cache-First
@@ -229,6 +247,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
 
   const response = {
     stage: 'options',
+    appliedDiveLever: intent.appliedDiveLever || null,
     intent: publicIntent(intent),
     origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred, approxCode: !!origin.approxCode },
     recommendedDestination: intent.recommendedDestination || null,

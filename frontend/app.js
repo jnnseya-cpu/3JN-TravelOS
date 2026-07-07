@@ -365,6 +365,19 @@ $('#intentInput')?.addEventListener('input', autosaveIntent);
   } catch { /* none */ }
 })();
 
+// Deep Price Dive → one-tap "Apply & re-search": re-run the search live with the
+// lever's dates/airport applied, so the customer sees a REAL bookable fare.
+window.applyDiveLever = (i) => {
+  const apply = (window.__diveApply || {})[i];
+  if (!apply) return;
+  const ov = {};
+  if (apply.shiftDays) ov.shiftDays = apply.shiftDays;
+  if (apply.airport) ov.originAirport = apply.airport;
+  const label = apply.airport ? `flying from ${apply.airport}` : `departing ${apply.shiftDays > 0 ? '+' : ''}${apply.shiftDays} day(s)`;
+  toast(`🔎 Re-searching live — ${label}…`);
+  runPlan(ov);
+};
+
 async function runPlan(overrides = {}) {
   const { approveAcu, ...restOverrides } = overrides;
   const text = $('#intentInput').value.trim();
@@ -395,6 +408,13 @@ async function runPlan(overrides = {}) {
   } catch { out.innerHTML = ''; return; }
 
   state.lastPlan = data;
+  if (data.appliedDiveLever) {
+    const al = data.appliedDiveLever;
+    const bits = [];
+    if (al.shiftDays) bits.push(`dates shifted ${al.shiftDays > 0 ? '+' : ''}${al.shiftDays} day(s)`);
+    if (al.airport) bits.push(`departing ${al.airport}`);
+    setTimeout(() => toast(`✓ Live fare for your saving option — ${bits.join(' · ')}. This price is real & bookable.`), 700);
+  }
   // The search just taught the behaviour model something — rebuild the dashboard.
   refreshJourney();
 
@@ -523,10 +543,17 @@ function renderOptions(data) {
   const diveCard = dive ? `
     <div class="card pad" style="margin-bottom:20px">
       <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers</span>
-      ${dive.savings.length ? dive.savings.map((sv) => {
+      ${dive.savings.length ? dive.savings.map((sv, i) => {
+        const indicative = sv.basis === 'indicative' || sv.basis === 'estimated';
         const tag = sv.basis === 'verified' ? '<span class="chip" style="font-size:9px;border-color:rgba(121,217,155,.4);color:#79d99b">verified</span>'
-          : (sv.basis === 'indicative' || sv.basis === 'estimated') ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
-        return `<div class="ln"><span class="ok" style="color:var(--gold)">◆</span> <strong>${esc(sv.lever)}</strong> ${tag} — ${esc(sv.how)} <span style="color:var(--green);font-weight:700">save ${money(sv.savingUSD * (data.context?.currency?.rateFromUSD || 1), sym)}</span></div>`;
+          : indicative ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
+        let applyBtn = '';
+        if (sv.apply && (sv.apply.shiftDays || sv.apply.airport)) {
+          window.__diveApply = window.__diveApply || {};
+          window.__diveApply[i] = sv.apply;
+          applyBtn = `<button class="btn btn-ghost btn-sm" style="padding:4px 12px;margin-left:8px;font-size:11px" onclick="applyDiveLever(${i})">Apply &amp; re-search →</button>`;
+        }
+        return `<div class="ln"><span class="ok" style="color:var(--gold)">◆</span> <strong>${esc(sv.lever)}</strong> ${tag} — ${esc(sv.how)} <span style="color:var(--green);font-weight:700">save ${money(sv.savingUSD * (data.context?.currency?.rateFromUSD || 1), sym)}</span>${applyBtn}</div>`;
       }).join('')
         : '<div class="ln"><span class="ok">●</span> No cheaper reliable combination exists on your exact dates and airports.</div>'}
       ${dive.indicativeNote ? `<p class="muted" style="font-size:11.5px;margin-top:8px">ℹ ${esc(dive.indicativeNote)}</p>` : ''}

@@ -2730,3 +2730,26 @@ test('deep price dive: alternative-date/airport savings are INDICATIVE under liv
   const intent = parseIntent('Dubai from London in August, flights only for 2 adults, 7 nights', { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
   intent.flightPrefs = { directOnly: false, departureWindow: null };
 });
+
+// ================= Deep Price Dive: Apply & re-search (seamless) ===============
+test('apply & re-search: shiftDays and originAirport re-run the search for real fares', () => {
+  const base = plan({ text: 'Dubai from London in August, flights only for 2 adults, 7 nights', context: GB });
+  assert.equal(base.stage, 'options');
+  const baseCheckIn = base.intent.dates.checkIn;
+
+  // Date lever: +2 days shifts BOTH dates and reports the applied lever.
+  const shifted = plan({ text: 'Dubai from London in August, flights only for 2 adults, 7 nights', context: GB, overrides: { shiftDays: 2 } });
+  assert.equal(shifted.stage, 'options');
+  assert.ok(shifted.appliedDiveLever && shifted.appliedDiveLever.shiftDays === 2);
+  assert.notEqual(shifted.intent.dates.checkIn, baseCheckIn, 'dates actually moved');
+
+  // Airport lever: force an alternative departure airport.
+  const alt = plan({ text: 'Dubai from London in August, flights only for 2 adults, 7 nights', context: GB, overrides: { originAirport: 'LGW' } });
+  assert.equal(alt.stage, 'options');
+  assert.equal(alt.origin.airport, 'LGW', 'departs from the alternative airport');
+  assert.equal(alt.appliedDiveLever.airport, 'LGW');
+
+  // A malformed airport override is ignored (safety).
+  const bad = plan({ text: 'Dubai from London in August, flights only for 2 adults, 7 nights', context: GB, overrides: { originAirport: 'not-a-code' } });
+  assert.notEqual(bad.origin.airport, 'not-a-code');
+});
