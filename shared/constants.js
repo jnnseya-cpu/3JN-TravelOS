@@ -16,7 +16,10 @@ export const LOYALTY_TIERS = [
   { name: 'Nomad', minPoints: 5000, discount: 0.08 },
   { name: 'Elite', minPoints: 15000, discount: 0.12 },
 ];
-export const POINTS_PER_USD = 0.5;
+// 1 loyalty point per £2 spent — the engine prices in USD, so at the platform's
+// 0.79 GBP/USD anchor £2 ≈ $2.53 → 0.4 points per USD (was 0.5/USD, which
+// under-delivered the "£2" promise shown on the site).
+export const POINTS_PER_USD = 0.4;
 export const SIGNUP_BONUS_POINTS = 250;
 
 // ---- ACU economy (blueprint Appendix B + §12.2) ---------------------------

@@ -148,7 +148,7 @@ const AGENTS = [
 
 const TIERS = [
   { key: 'nomad', save: '£420/yr', name: 'Travel+ Nomad', price: '£4.99', priceNum: 4.99, feature: false,
-    benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', '0% Transaction Fees', 'Digital Visa Assistance'] },
+    benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', '0% instalment processing fees', 'Digital Visa Assistance'] },
   { key: 'family', save: '£1,100/yr', name: 'Travel+ Family', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
     benefits: ['All Nomad Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
   { key: 'executive', save: '£2,400/yr', name: 'Travel+ Executive', price: '£24.99', priceNum: 24.99, feature: false,
@@ -482,6 +482,18 @@ function renderOptions(data) {
     `<div class="ln"><span class="ok">●</span> ${k}: scanned ${s.scanned}, ${s.verified} verified, ${s.reliable} reliable</div>`).join('');
   const scanCard = `<div class="card pad scanlog" style="margin-bottom:20px"><span class="eyebrow">Supplier scan</span>${scanRows}</div>`;
 
+  // Deep Price Dive — the deep-thinking pass behind every funded search:
+  // quantified savings levers + the unbeatable-price verdict.
+  const dive = data.priceDive;
+  const diveCard = dive ? `
+    <div class="card pad" style="margin-bottom:20px">
+      <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers</span>
+      ${dive.savings.length ? dive.savings.map((sv) => `
+        <div class="ln"><span class="ok" style="color:var(--gold)">◆</span> <strong>${esc(sv.lever)}</strong> — ${esc(sv.how)} <span style="color:var(--green);font-weight:700">save ${money(sv.savingUSD * (data.context?.currency?.rateFromUSD || 1), sym)}</span></div>`).join('')
+        : '<div class="ln"><span class="ok">●</span> No cheaper reliable combination exists on your exact dates and airports.</div>'}
+      <div class="pill" style="margin-top:12px;border-color:rgba(70,211,154,0.4)"><span class="dot" style="background:var(--green)"></span> ${esc(dive.unbeatable.verdict)}</div>
+    </div>` : '';
+
   const opts = data.packages.options.map((o) => optionCard(o, sym, intent)).join('');
 
   // Flight-preference feedback: confirm direct/departure-window honoured, or
@@ -514,7 +526,7 @@ function renderOptions(data) {
     psNote = `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`;
   }
 
-  $('#plannerOut').innerHTML = gateBanner + flightPrefNote + psNote + summary + scanCard +
+  $('#plannerOut').innerHTML = gateBanner + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. 3JN's 10% fee is shown openly in every breakdown.</p></div>
     <div class="opt-grid">${opts}</div>` + compareCard(data, sym);
