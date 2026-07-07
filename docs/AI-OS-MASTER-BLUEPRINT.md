@@ -659,6 +659,17 @@ Every AI-powered action within 3JN Travel OS is metered in **ACU (AI Credits Uni
 3. **Tier 3 (Ongoing Monitoring):** Transaction monitoring against behavioural baseline. AML Agent continuous screening. Periodic re-verification every 12 months.
 4. **SAR Process:** AML Agent generates draft SAR. MLRO reviews and submits to National Crime Agency (UK) / FIU (DRC) within 24 hours of confirmation.
 
+### 13.3 Fraud Prevention Framework
+
+- Every transaction scored **0–100** by the Fraud Detection Agent using **40+ signals**
+- Signals include: device fingerprint, IP geolocation, velocity, card BIN, booking pattern, account age
+- **Score < 30**: auto-allow. **Score 30–70**: step-up authentication. **Score > 70**: manual review or auto-decline
+- **Account Takeover Protection**: impossible travel detection, new device MFA challenge, session invalidation
+- **3D Secure 2.0** enforced on all card payments above £150
+- BitriPay transaction monitoring overlaid with 3JN fraud intelligence for African market protection
+
+*(Prototype anchors: `bookingRiskScore` already scores transactions 0–100 across the fraud categories with approve/hold/manual-review/reject verdicts, and `searchAbuseScore` runs the search-side equivalent with Normal/Monitor/Restrict/Block bands.)*
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
