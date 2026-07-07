@@ -45,6 +45,7 @@ const db = {
   influencerProfiles: new Map(), // userId -> influencer/partner profile (tier, followers, standing)
   revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
   rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
+  supportTickets: [], // AI Support Concierge escalations to a human { id, userId, intent, message, reason, status, transcript }
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -1267,6 +1268,43 @@ export function requestWithdrawal(userId, { amountGbp, method = 'bank' } = {}) {
   return { ok: true, withdrawal: w, availableGbp: Math.round((available - amt) * 100) / 100 };
 }
 
+// ---- AI Support Concierge: human-escalation tickets -----------------------
+// The chatbot resolves most requests; when it must hand off, it opens a ticket
+// and notifies the customer. Admins work the queue and resolve.
+export function createSupportTicket({ userId, intent, message, reason, transcript = [] } = {}) {
+  const ticket = {
+    id: id('tkt'), userId: userId || null, intent: intent || 'unknown',
+    message: String(message || '').slice(0, 2000), reason: reason || 'Requires human assistance',
+    status: 'open', transcript, createdAt: nowISO(), resolvedAt: null,
+  };
+  db.supportTickets.push(ticket);
+  recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'support.escalated', entity: 'ticket', entityId: ticket.id, summary: `${ticket.intent}: ${ticket.reason}` });
+  if (userId) pushNotification(userId, { type: 'info', icon: '🎧', title: 'Connected to our team', body: 'Your request needs a human touch — a 3JN travel specialist will pick this up and reply shortly.' });
+  return ticket;
+}
+export function listSupportTickets(status) {
+  const rows = status ? db.supportTickets.filter((t) => t.status === status) : db.supportTickets;
+  return [...rows].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+export function supportTicketsForUser(userId) {
+  return db.supportTickets.filter((t) => t.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+export function resolveSupportTicket(ticketId, { note, agent } = {}) {
+  const t = db.supportTickets.find((x) => x.id === ticketId);
+  if (!t) return { ok: false, error: 'not-found' };
+  t.status = 'resolved';
+  t.resolvedAt = nowISO();
+  t.resolutionNote = note || '';
+  recordAudit({ actor: agent || 'admin', role: 'admin', action: 'support.resolved', entity: 'ticket', entityId: t.id, summary: note || 'resolved' });
+  if (t.userId) pushNotification(t.userId, { type: 'success', icon: '✅', title: 'Support update', body: note || 'Your request has been resolved by our team.' });
+  return { ok: true, ticket: t };
+}
+// Latest booking for a user (context for the support bot's answers).
+export function latestBookingForUser(userId) {
+  const mine = [...db.bookings.values()].filter((b) => b.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return mine[0] || null;
+}
+
 // Admin / profitability snapshot.
 export function revenueSnapshot() {
   const bookings = [...db.bookings.values()];
@@ -1474,7 +1512,7 @@ export function searchToBookStats() {
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets'];
 
 export function snapshot() {
   const out = { counter };

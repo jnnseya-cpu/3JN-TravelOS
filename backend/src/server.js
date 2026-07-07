@@ -36,8 +36,10 @@ import {
   searchToBookStats,
   earnAcu, getPartnerProfile, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
+  createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, latestBookingForUser,
 } from './store.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
+import { supportRespond } from './chatbot.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
@@ -1152,6 +1154,45 @@ app.post('/api/admin/rewards/influencer/:userId/decide', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const { approve, tier, standing } = req.body || {};
   res.json(decideInfluencer(req.params.userId, { approve, tier, standing }));
+}));
+
+// ---- AI Support Concierge (chatbot + human escalation) --------------------
+// Answers customer requests; escalates to a human ONLY when required (explicit
+// request, refund/dispute, complaint/safety, or low confidence). Uses the
+// signed-in user's latest booking as context when available.
+app.post('/api/support/chat', safe((req, res) => {
+  const { message } = req.body || {};
+  const user = currentUser(req);
+  const booking = user ? latestBookingForUser(user.id) : null;
+  const out = supportRespond(message, { name: user?.name, booking });
+  let ticket = null;
+  if (out.escalate) {
+    ticket = createSupportTicket({ userId: user?.id, intent: out.intent, message, reason: out.reason });
+  }
+  res.json({
+    reply: out.reply,
+    intent: out.intent,
+    escalated: out.escalate,
+    reason: out.reason,
+    ticketId: ticket?.id || null,
+    handoff: out.escalate ? 'A 3JN travel specialist will follow up shortly.' : null,
+  });
+}));
+// My support tickets (customer view).
+app.get('/api/support/tickets', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ tickets: supportTicketsForUser(user.id) });
+}));
+// Admin queue: open escalations + resolve.
+app.get('/api/admin/support/tickets', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ tickets: listSupportTickets(req.query.status) });
+}));
+app.post('/api/admin/support/tickets/:id/resolve', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const user = currentUser(req);
+  res.json(resolveSupportTicket(req.params.id, { note: req.body?.note, agent: user?.name || 'admin' }));
 }));
 
 // ---- Visa Centre + Risk Intelligence Feed ---------------------------------

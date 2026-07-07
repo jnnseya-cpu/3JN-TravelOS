@@ -20,6 +20,8 @@ import { destinationsCatalog } from '../src/destinations.js';
 import { snapshot, hydrate } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
+import { createSupportTicket, supportTicketsForUser, resolveSupportTicket } from '../src/store.js';
+import { supportRespond } from '../src/chatbot.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
@@ -2911,3 +2913,28 @@ function getUserRefCode(userId) {
   const dash = partnerDashboard(userId);
   return dash.referralCode;
 }
+
+// ---- AI Support Concierge (chatbot + escalation) --------------------------
+test('support bot answers common requests and escalates only when required', () => {
+  const bot = (m) => supportRespond(m);
+  // Resolved by the bot (no human needed):
+  for (const m of ['hi there', 'where is my e-ticket', 'do I need a visa for Dubai', 'how do I refer a friend', 'I want to book a holiday']) {
+    assert.equal(bot(m).escalate, false, `bot handles: ${m}`);
+    assert.ok(bot(m).reply.length > 0);
+  }
+  // Escalated to a human:
+  assert.equal(bot('can I speak to a human please').escalate, true);
+  assert.equal(bot('I want a refund, I was charged twice').escalate, true);
+  assert.equal(bot('this is a scam, I will sue you').escalate, true);
+  assert.equal(bot('qwertyuiop zxcvbnm').escalate, true); // unknown → human
+  assert.equal(bot('refund me now').intent, 'refund');
+});
+
+test('support escalation opens a ticket and notifies the customer', () => {
+  const u = createUser({ email: 'sup@x.co', name: 'Support Tester' });
+  const t = createSupportTicket({ userId: u.id, intent: 'refund', message: 'charged twice', reason: 'Refund dispute' });
+  assert.equal(t.status, 'open');
+  assert.ok(supportTicketsForUser(u.id).some((x) => x.id === t.id));
+  const r = resolveSupportTicket(t.id, { note: 'Refund processed', agent: 'Amara' });
+  assert.ok(r.ok && r.ticket.status === 'resolved');
+});
