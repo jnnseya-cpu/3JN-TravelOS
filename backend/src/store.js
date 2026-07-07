@@ -1142,8 +1142,10 @@ export function applyInfluencer(userId, { followers = 0, handles = [] } = {}) {
 
 // §3/§6 — admin approves an influencer to a tier (or rejects / suspends).
 export function decideInfluencer(userId, { approve, tier, standing } = {}) {
-  const p = db.influencerProfiles.get(userId);
-  if (!p) return { ok: false, error: 'not-found' };
+  if (!db.users.get(userId)) return { ok: false, error: 'not-found' };
+  // Create the partner profile if the admin is promoting someone who hasn't
+  // formally applied yet — approval should never silently no-op.
+  const p = ensurePartner(userId);
   if (standing) p.standing = standing; // 'good' | 'suspended' (§6 fraud/forfeiture)
   if (approve) {
     const t = PARTNER_TIERS[tier] || tierForFollowers(p.followers);

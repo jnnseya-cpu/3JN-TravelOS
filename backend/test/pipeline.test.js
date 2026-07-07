@@ -20,7 +20,7 @@ import { destinationsCatalog } from '../src/destinations.js';
 import { snapshot, hydrate } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
-import { createSupportTicket, supportTicketsForUser, resolveSupportTicket } from '../src/store.js';
+import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
 import { assist } from '../src/assistant.js';
 import { getUserRaw } from '../src/store.js';
@@ -2966,4 +2966,16 @@ test('assistant resolves with the user\'s real system data before escalating', (
   const refund = assist('I want a refund', u.id);
   assert.equal(refund.escalate, true);
   assert.ok(refund.diagnostic && refund.diagnostic.id === b.id, 'escalation carries the booking diagnostic');
+});
+
+test('admin can approve an influencer who has not formally applied yet', () => {
+  // Regression: decideInfluencer used to no-op if no profile existed, so an
+  // admin promotion silently failed and revenue share never accrued.
+  const ref = createUser({ email: 'promote@x.co', name: 'Promote Pat' });
+  const decided = decideInfluencer(ref.id, { approve: true, tier: 'ambassador' });
+  assert.ok(decided.ok && decided.profile.tier === 'ambassador', 'promotion sets the tier even with no prior profile');
+  const friend = createUser({ email: 'promo-friend@x.co', name: 'F', referredByCode: partnerDashboard(ref.id).referralCode });
+  const b = createBooking({ option: { tier: 'Premium', pricing: { symbol: '£', local: { total: 1000 }, revenue: { commissionUSD: 127 } }, totalUSD: 1270, components: [{ type: 'flight', supplier: 'Emirates', live: true }], travellers: { total: 1 } }, userId: friend.id, instalment: { deposit: 250, schedule: [{ due: '2026-08-01', amount: 250, status: 'pending' }] } });
+  recordPayment(b.id, { type: 'deposit', amount: 250 });
+  assert.ok(Math.abs(partnerDashboard(ref.id).lifetimeEarningsGbp - 1) < 0.01, '1% revenue share accrues (£1 of £100 net)');
 });
