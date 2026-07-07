@@ -203,6 +203,21 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 
 *(Prototype anchors: the agent roster and per-agent ACU budgets live in `backend/src/ai-gateway.js` (`TASK_ROUTES`, `AGENT_BUDGETS`); the deterministic worker implementations live in `planner.js`, `price-dive.js`, `visaos.js`, `monitor.js`, `agents.js`; the production mesh promotes these to LangGraph workers per the Gap Register (§0.3 G6).)*
 
+### 5.1 Travel Intelligence Mesh — Core 10 Agents
+
+| Agent | Core Capability | Inputs | Outputs | Trigger |
+|---|---|---|---|---|
+| **Flight Intelligence Agent** | Real-time fare negotiation + route optimisation across 500+ GDS feeds + wholesalers | Itinerary intent, dates, budget tier, member level | Optimal fare, route options, price forecast, reoptimisation triggers | Booking request, price drop event, disruption alert |
+| **Hotel Negotiation Agent** | Direct wholesale rate discovery + upgrade logic + loyalty injection | Destination, dates, room requirements, tier, loyalty accounts | Verified hotel options at global minimum price + upgrade status | Search intent, check-in T-24h, availability change |
+| **Visa Automation Agent** | Eligibility check, form pre-fill, document checklist, status tracking | Passport nationality, destination, trip purpose, duration | Visa requirements, application status, approval notification | Destination confirmed, T-72h before trip, renewal alert |
+| **Transfer Logistics Agent** | Ground transport optimisation: airport-hotel, inter-destination | Flight arrival time, destination address, traveller tier | Pre-booked transfer confirmation, live driver tracking | Flight status change, booking confirmed, T-2h before arrival |
+| **Savings Guard Agent** | Continuous post-booking price monitoring with auto-rebooking | Booked fare/rate, live market pricing, cancellation policy | Price drop alert, rebooking recommendation, confirmed saving | Every 4 hours continuous + disruption event |
+| **Risk Intelligence Agent** | FCO advisories, weather, health, civil disruption monitoring | Destination, travel dates, traveller nationality, tier | Risk score per destination, push alert, advisory summary | Booking confirmed, 72h pre-trip, real-time event |
+| **Loyalty Aggregation Agent** | Cross-platform points consolidation + earning + redemption intelligence | Connected airline/hotel loyalty accounts, upcoming trips | Points balance, earning estimate, redemption opportunity | Pre-booking, post-booking, monthly digest |
+| **eSIM Intelligence Agent** | Global connectivity pre-provisioning at optimal data rate | Destination, trip duration, data usage profile, device type | eSIM profile recommendation, instant activation, coverage map | Booking confirmed, 48h pre-departure |
+| **Compliance & KYC Agent** | User identity verification, AML screening, ongoing monitoring | User identity documents, transaction history, device data | Verification status, risk flag, escalation to compliance team | Onboarding, high-value transaction, suspicious pattern |
+| **AI Chief of Staff** | Central orchestrator coordinating all agents for each traveller | User profile, all journey data, preferences, history | Daily briefings, priority alerts, natural language Q&A | Continuous + user query + agent event trigger |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
