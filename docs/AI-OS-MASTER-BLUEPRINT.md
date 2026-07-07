@@ -399,6 +399,48 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 | **Authentication** | Auth0 / Firebase Auth | MFA, social login, device fingerprinting, JWT |
 | **Biometric Auth** | Sumsub Liveness | Selfie + document matching for high-risk actions |
 
+### 8.4 Communications
+
+| Channel | Provider | Use Case |
+|---|---|---|
+| **Transactional Email** | SendGrid | Booking confirmations, receipts, alerts |
+| **SMS** | Twilio | OTP, payment alerts, risk notifications |
+| **WhatsApp Business** | Twilio / 360dialog | Journey updates, visa alerts, AI assistant channel |
+| **Push Notifications** | Firebase Cloud Messaging | Price drop alerts, disruption alerts, real-time triggers |
+| **In-App Messaging** | Intercom | Customer support chat, onboarding walkthroughs |
+
+### 8.5 AI & Intelligence Providers
+
+| Provider | Models | Use Case within 3JN |
+|---|---|---|
+| **Anthropic Claude** | Claude 3.5 Sonnet / Claude 3 Haiku | Natural language intent extraction, Chief of Staff dialogue, risk summarisation |
+| **OpenAI** | GPT-4o, GPT-4o mini | Hotel review analysis, itinerary generation, document extraction |
+| **Google Vertex AI** | Gemini Pro, Gemini Flash | Multi-modal travel content, image analysis, translation |
+| **Cohere** | Command R+ | Enterprise RAG for policy documents, regulations, supplier contracts |
+| **Pinecone** | Vector DB | Agent memory, preference embeddings, supplier knowledge graph |
+
+---
+
+# SECTION 09 — PRODUCTION-GRADE TECHNICAL ARCHITECTURE
+*Full stack, infrastructure, AI orchestration, security, and observability*
+
+## 9. Technical Architecture
+
+### 9.1 Frontend Architecture
+
+| Layer | Technology | Rationale |
+|---|---|---|
+| **Framework** | Next.js 15 (App Router) | SSR/SSG for SEO, streaming for real-time agent responses |
+| **Component Library** | shadcn/ui + Radix UI | Accessible, unstyled primitives — custom 3JN design system |
+| **State Management** | Zustand + React Query | Lightweight global state + server state synchronisation |
+| **Real-Time** | WebSocket (Socket.io) + SSE | Price monitoring, agent notifications, live flight status |
+| **Maps** | Google Maps Platform + Mapbox | Transfer routing, destination intelligence, coverage maps |
+| **Mobile** | React Native (Expo) | iOS + Android — shared logic with Next.js via monorepo |
+| **Internationalisation** | next-intl | EN, FR, SW, LN (Lingala) — covering all target markets |
+| **Analytics** | PostHog (self-hosted) | Product analytics, feature flags, A/B tests — privacy-first |
+
+*(The shipping prototype is already a full PWA: `manifest.webmanifest` with shortcuts + maskable icons, an update-safe service worker (network-first shell, cache-first assets, network-only API with valid offline JSON), installed across the OS and the landing page.)*
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>3JN Travel OS — The AI-Powered Travel Operating System</title>
 <meta name="description" content="3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#060912">
+<link rel="icon" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <style>
   :root{
     --navy:#060d1f; --navy2:#0a1430; --black:#04070f;
@@ -520,5 +524,6 @@
   });
 })();
 </script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
 </body>
 </html>
