@@ -25,6 +25,7 @@ import {
   createContract, listContracts, recordBehaviour,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
+  registerHost, updateHostListing, hostBookings, hostDashboard,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -590,10 +591,33 @@ app.get('/api/visaos/government', safe((req, res) => {
   res.json({ analytics: govAnalytics() });
 }));
 
-// ---- Community Host Marketplace (Airbnb-style, 3JN-powered) ----------------
-// Anyone can host: create a listing, pass verification, appear in searches for
-// that destination alongside hotels — with 3JN reliability, price guard and
-// instalments wrapped around every stay. Hosts keep 90%; 3JN keeps 10%.
+// ---- 3JN Host Marketplace ---------------------------------------------------
+// End-to-end accommodation system: register first, then run your dashboard —
+// publish properties, set prices, pause/resume, manage bookings and earnings.
+// Verified listings appear in searches alongside hotels with 3JN reliability,
+// the price guard and instalments wrapped around every stay. Hosts keep 90%.
+app.post('/api/host/register', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to register as a host.' });
+  res.json(registerHost(user.id, req.body || {}));
+}));
+app.get('/api/host/dashboard', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to open your Host Dashboard.' });
+  res.json(hostDashboard(user.id));
+}));
+app.patch('/api/host/listings/:id', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to manage your listings.' });
+  const result = updateHostListing(user.id, req.params.id, req.body || {});
+  if (!result.ok) return res.status(result.error === 'forbidden' ? 403 : 400).json(result);
+  res.json(result);
+}));
+app.get('/api/host/bookings', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to see your reservations.' });
+  res.json({ bookings: hostBookings(user.id) });
+}));
 app.post('/api/host/listings', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to become a host.' });

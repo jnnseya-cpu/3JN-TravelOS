@@ -2581,31 +2581,64 @@ window.sendContact = async () => {
 };
 
 // ---- Become a Host --------------------------------------------------------
-// ---- Community Host Marketplace (Airbnb-style, 3JN-powered) ----------------
-// Anyone can host. A verified listing competes with hotels inside package
-// options — with 3JN reliability scoring, the price guard, instalments and
-// group stays wrapped around every stay. Hosts keep 90%; 3JN keeps 10%.
-$('#hostLink')?.addEventListener('click', () => openHostStudio());
+// ---- 3JN Host Marketplace — Host Dashboard ---------------------------------
+// End-to-end accommodation management: register first, then publish and run
+// your properties — set prices, pause/resume, manage bookings and earnings.
+$('#hostLink')?.addEventListener('click', () => openHostDashboard());
 
-async function openHostStudio() {
+async function openHostDashboard() {
   if (!state.user) { toast('Sign in first — hosting is tied to your account.'); return; }
-  let mine = { listings: [] }; let earn = null;
-  try { mine = await api('/api/host/listings'); earn = await api('/api/host/earnings'); } catch {}
-  const rows = (mine.listings || []).map((l) => `
-    <div class="kv"><span>🏠 ${esc(l.title)} <span class="muted" style="font-size:11.5px">· ${esc(l.city)} · sleeps ${l.sleeps}</span></span>
-    <span><span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">● ${esc(l.status)}</span> $${l.nightlyUSD}/night</span></div>`).join('');
-  const earnings = earn && earn.rows.length
-    ? `<div class="kv" style="font-weight:700"><span>Earnings (${earn.rows.length} stay${earn.rows.length > 1 ? 's' : ''})</span><span style="color:var(--gold)">net $${earn.totals.netUSD}</span></div>
-       <p class="muted" style="font-size:11.5px;margin:4px 0 0">Gross $${earn.totals.grossUSD} · 3JN 10% $${earn.totals.commissionUSD} · you keep 90%</p>`
-    : '<p class="muted" style="font-size:12px;margin:6px 0 0">No stays booked yet — your listing sells inside package options the moment a search matches your city.</p>';
+  let d; try { d = await api('/api/host/dashboard'); } catch { return; }
+
+  // Step 1 — registration gate.
+  if (!d.registered) {
+    modal(`
+      <span class="eyebrow">3JN Host Marketplace</span>
+      <h3 style="margin:6px 0">Register as a host</h3>
+      <p class="muted" style="font-size:13px">One registration unlocks your Host Dashboard: publish properties, set your prices, pause or resume listings, and manage bookings and payouts. You keep <strong>90%</strong> of every stay; 3JN keeps 10%.</p>
+      <div class="field" style="margin-top:12px"><label>Host display name (shown to guests)</label><input class="in" id="hostRegName" value="${esc(state.user.name || '')}" /></div>
+      <div class="field" style="margin-top:10px"><label>Payout method</label><select class="in" id="hostRegPayout"><option>Bank transfer</option><option>BitriPay wallet</option><option>PayPal</option></select></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="hostRegister()">Register & open my dashboard</button>
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Identity comes from your 3JN account; properties pass the 50-point integrity check before going live.</p>`);
+    return;
+  }
+
+  // Step 2 — the dashboard.
+  const props = (d.listings || []).map((l) => `
+    <div class="card pad" style="margin-bottom:10px">
+      <div class="kv" style="border:none;padding:0"><span style="font-family:'Space Grotesk';font-weight:700">🏠 ${esc(l.title)}</span>
+        <span class="ch-chip" style="color:${l.status === 'live' ? 'var(--green)' : 'var(--muted)'};border-color:${l.status === 'live' ? 'rgba(70,211,154,0.35)' : 'var(--line)'}">● ${l.status === 'live' ? 'Live in searches' : 'Paused'}</span></div>
+      <div class="muted" style="font-size:12px;margin:2px 0 8px">${esc(l.city)} · ${esc(l.address || '')} · sleeps ${l.sleeps} · ${(l.photos || []).length} photos · reliability ${l.reliabilityScore}</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="muted" style="font-size:12px">Nightly (USD)</label>
+        <input class="in" id="price_${l.id}" type="number" value="${l.nightlyUSD}" style="width:100px" />
+        <button class="btn btn-ghost btn-sm" onclick="hostSetPrice('${l.id}')">Update price</button>
+        <button class="btn btn-ghost btn-sm" onclick="hostToggle('${l.id}','${l.status === 'live' ? 'paused' : 'live'}')">${l.status === 'live' ? '⏸ Pause listing' : '▶ Go live'}</button>
+      </div>
+    </div>`).join('') || '<p class="muted" style="font-size:12.5px">No properties yet — publish your first below.</p>';
+
+  const bookings = (d.bookings || []).map((b) => `
+    <div class="kv"><span>${esc(b.listing)} <span class="muted" style="font-size:11.5px">· ${b.nights || '—'} nights · ${esc(b.status || '')}</span></span>
+    <span>gross $${b.grossUSD} · <strong style="color:var(--gold)">you $${b.netUSD}</strong></span></div>`).join('')
+    || '<p class="muted" style="font-size:12px">No reservations yet — live listings sell inside package options automatically.</p>';
+
+  const e = d.earnings;
   modal(`
-    <span class="eyebrow">Host Studio · Community Marketplace</span>
-    <h3 style="margin:6px 0">Host on 3JN — Airbnb power, OS intelligence</h3>
-    <p class="muted" style="font-size:13px">Your place is verified, reliability-scored, price-guarded and sold with instalments inside full travel packages — flights, visa and transfers around it. You keep <strong>90%</strong> of every stay.</p>
-    ${rows ? `<div style="margin:12px 0 4px">${rows}</div>${earnings}<hr style="border-color:var(--line);margin:14px 0">` : ''}
+    <span class="eyebrow">Host Dashboard · ${esc(d.profile.displayName)} · payout via ${esc(d.profile.payoutMethod)}</span>
+    <div class="console-grid" style="gap:10px;margin:10px 0">
+      <div class="card pad" style="text-align:center"><div class="t-stat">${(d.listings || []).length}</div><div class="t-label">Properties</div></div>
+      <div class="card pad" style="text-align:center"><div class="t-stat">${(d.bookings || []).length}</div><div class="t-label">Bookings</div></div>
+      <div class="card pad" style="text-align:center"><div class="t-stat" style="color:var(--gold)">$${e ? e.totals.netUSD : 0}</div><div class="t-label">Net earnings (90%)</div></div>
+    </div>
+    <span class="eyebrow">My properties</span>
+    <div style="margin:8px 0 14px">${props}</div>
+    <span class="eyebrow">Reservations</span>
+    <div style="margin:6px 0 14px">${bookings}</div>
+    <hr style="border-color:var(--line);margin:12px 0">
+    <span class="eyebrow">Publish a new property</span>
     <div class="field" style="margin-top:8px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
     <div class="field" style="margin-top:10px"><label>City</label><input class="in" id="hostCity" placeholder="e.g. Dubai" /></div>
-    <div class="field" style="margin-top:10px"><label>Street address (shown to guests — they verify you online)</label><input class="in" id="hostAddress" placeholder="e.g. 14 Marina Walk, Dubai Marina" /></div>
+    <div class="field" style="margin-top:10px"><label>Street address (guests verify you online by name + address)</label><input class="in" id="hostAddress" placeholder="e.g. 14 Marina Walk, Dubai Marina" /></div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <div class="field" style="flex:1"><label>Type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
       <div class="field" style="width:110px"><label>Sleeps</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="20" /></div>
@@ -2613,11 +2646,36 @@ async function openHostStudio() {
     </div>
     <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
     <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100 (one URL per line)</label>
-      <textarea class="in" id="hostPhotos" rows="5" placeholder="https://…/living-room.jpg&#10;https://…/bedroom-1.jpg&#10;… at least 10" oninput="$('#hostPhotoCount').textContent = this.value.split(/\n|,/).map(s=>s.trim()).filter(Boolean).length + ' / 10 minimum'"></textarea>
+      <textarea class="in" id="hostPhotos" rows="4" placeholder="https://…/living-room.jpg&#10;… at least 10" oninput="$('#hostPhotoCount').textContent = this.value.split(/\n|,/).map(s=>s.trim()).filter(Boolean).length + ' / 10 minimum'"></textarea>
       <div class="muted" style="font-size:11.5px;margin-top:4px" id="hostPhotoCount">0 / 10 minimum</div></div>
-    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish listing</button>
-    <p class="muted" style="font-size:11.5px;margin-top:8px">Listings pass the 50-point integrity check, start at reliability 82, and live or die by guest reviews — exactly like every other supplier in the OS.</p>`);
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish property</button>`);
 }
+
+window.hostRegister = async () => {
+  try {
+    await api('/api/host/register', { method: 'POST', body: JSON.stringify({
+      displayName: $('#hostRegName')?.value, payoutMethod: $('#hostRegPayout')?.value,
+    }) });
+    toast('🏠 Host account active — welcome to your dashboard.');
+    openHostDashboard();
+  } catch {}
+};
+
+window.hostSetPrice = async (id) => {
+  const nightlyUSD = Number($(`#price_${id}`)?.value);
+  try {
+    await api(`/api/host/listings/${id}`, { method: 'PATCH', body: JSON.stringify({ nightlyUSD }) });
+    toast(`✓ Price updated — $${nightlyUSD}/night applies to every new search.`);
+  } catch {}
+};
+
+window.hostToggle = async (id, status) => {
+  try {
+    await api(`/api/host/listings/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+    toast(status === 'live' ? '▶ Listing is live in searches again.' : '⏸ Listing paused — hidden from searches.');
+    openHostDashboard();
+  } catch {}
+};
 
 window.submitHost = async () => {
   const title = $('#hostName')?.value.trim();
@@ -2634,9 +2692,9 @@ window.submitHost = async () => {
       amenities: $('#hostAmenities')?.value || '',
       photos,
     }) });
-    closeModal();
-    toast(`🏠 ${r.listing.title} is verified & LIVE — it now competes in ${r.listing.city} searches.`);
-  } catch (e) { toast('Could not publish: ' + (e.message || 'sign in first')); }
+    toast(`🏠 ${r.listing.title} is verified & LIVE in ${r.listing.city} searches.`);
+    openHostDashboard();
+  } catch {}
 };
 
 boot();

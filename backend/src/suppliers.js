@@ -287,7 +287,7 @@ export function scanHotels(intent, dest) {
     };
   });
 
-  // Private host (Airbnb-style) — one strong option, named for the destination.
+  // Private host — one strong option, named for the destination.
   const hostNightly = dest.hotelNightBaseUSD * 0.8 * (0.8 + rnd() * 0.3);
   hotels.push({
     type: 'host',

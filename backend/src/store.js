@@ -27,7 +27,7 @@ const db = {
   esims: [], // provisioned eSIM profiles
   contracts: [], // supplier volume agreements
   blog: [], // AI-written blog posts
-  hostListings: [], // community host properties (Airbnb-style, 3JN-verified)
+  hostListings: [], // 3JN Host Marketplace properties (community-hosted, 3JN-verified)
   behaviour: [], // behavioural-learning event stream (searches, views, books…)
   commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
 };
@@ -793,12 +793,31 @@ export function hydrate(s) {
 
 export { db };
 
-// ---- Community Host Marketplace (Airbnb-style, 3JN-powered) ----------------
-// Anyone can host. Listings pass a verification pipeline, then appear INSIDE
-// package options alongside hotels — wrapped by everything the OS already
-// does: reliability scoring, the price guard, instalments, group stays and
-// transparent pricing. 3JN keeps the standard 10% commission; hosts keep 90%.
+// ---- 3JN Host Marketplace ---------------------------------------------------
+// An end-to-end accommodation system: hosts REGISTER first, then run their own
+// dashboard — publish properties, set prices, pause/resume, manage bookings and
+// earnings. Verified listings appear INSIDE package options alongside hotels —
+// wrapped by everything the OS already does: reliability scoring, the price
+// guard, instalments, group stays and transparent pricing. 3JN keeps the
+// standard 10% commission; hosts keep 90%.
 const HOST_COMMISSION = 0.10;
+
+// Step 1 — registration. Hosting is an account capability: register once,
+// then the dashboard unlocks. Listings cannot be created without it.
+export function registerHost(userId, { displayName, payoutMethod = 'Bank transfer' } = {}) {
+  const u = userId ? db.users.get(userId) : null;
+  if (!u) return { ok: false, error: 'auth-required', message: 'Sign in to register as a host.' };
+  if (u.host && u.hostProfile) return { ok: true, alreadyRegistered: true, profile: u.hostProfile };
+  u.host = true;
+  u.hostProfile = {
+    displayName: String(displayName || u.name || 'Host').trim().slice(0, 60),
+    payoutMethod: ['Bank transfer', 'BitriPay wallet', 'PayPal'].includes(payoutMethod) ? payoutMethod : 'Bank transfer',
+    registeredAt: new Date().toISOString(),
+  };
+  recordAudit({ actor: u.id, role: 'host', action: 'host.registered', entity: 'user', entityId: u.id, summary: `${u.hostProfile.displayName} · ${u.hostProfile.payoutMethod}` });
+  pushNotification(u.id, { type: 'success', icon: '🏠', title: 'Host account active', body: 'Your Host Dashboard is ready — publish your first property.' });
+  return { ok: true, profile: u.hostProfile };
+}
 
 export const HOST_PHOTOS_MIN = 10;
 export const HOST_PHOTOS_MAX = 100;
@@ -806,6 +825,7 @@ export const HOST_PHOTOS_MAX = 100;
 export function createHostListing(userId, { title, city, address, propertyType = 'Entire apartment', nightlyUSD, sleeps = 2, amenities = [], photos = [] } = {}) {
   const u = userId ? db.users.get(userId) : null;
   if (!u) return { ok: false, error: 'auth-required' };
+  if (!u.host || !u.hostProfile) return { ok: false, error: 'host-registration-required', message: 'Register as a host first — your dashboard unlocks publishing.' };
   const t = String(title || '').trim().slice(0, 80);
   const c = String(city || '').trim().slice(0, 60);
   const rate = Math.round(Number(nightlyUSD) || 0);
@@ -841,7 +861,6 @@ export function createHostListing(userId, { title, city, address, propertyType =
     createdAt: new Date().toISOString(),
   };
   db.hostListings.push(listing);
-  u.host = true; // hosting capability on the account
   recordAudit({ actor: u.id, role: 'host', action: 'host.listing.created', entity: 'hostListing', entityId: listing.id, summary: `${t} · ${c} · $${rate}/night` });
   pushNotification(u.id, { type: 'success', icon: '🏠', title: 'Listing is live', body: `${t} is verified and now appears in ${c} searches.` });
   return { ok: true, listing };
@@ -876,4 +895,78 @@ export function hostEarnings(userId) {
   }
   const sum = (k) => Math.round(rows.reduce((s, r) => s + r[k], 0) * 100) / 100;
   return { rows, totals: { grossUSD: sum('grossUSD'), commissionUSD: sum('commissionUSD'), netUSD: sum('netUSD') }, listings: listHostListings(userId).length };
+}
+
+// Step 3 — manage: edit price/details, pause/resume, and see bookings. Only the
+// owner can touch a listing; paused listings drop out of searches instantly
+// (hostListingsForCity only serves status 'live').
+export function updateHostListing(userId, listingId, patch = {}) {
+  const l = db.hostListings.find((x) => x.id === listingId);
+  if (!l) return { ok: false, error: 'not-found', message: 'Listing not found.' };
+  if (l.hostId !== userId) return { ok: false, error: 'forbidden', message: 'Only the owner can manage this listing.' };
+  if (patch.nightlyUSD !== undefined) {
+    const rate = Math.round(Number(patch.nightlyUSD) || 0);
+    if (rate <= 0) return { ok: false, error: 'invalid-price', message: 'Nightly rate must be a positive amount.' };
+    l.nightlyUSD = rate;
+  }
+  if (patch.status !== undefined) {
+    if (!['live', 'paused'].includes(patch.status)) return { ok: false, error: 'invalid-status', message: 'Status must be live or paused.' };
+    l.status = patch.status;
+  }
+  if (patch.sleeps !== undefined) l.sleeps = Math.max(1, Math.min(20, Math.round(Number(patch.sleeps) || l.sleeps)));
+  if (patch.title !== undefined && String(patch.title).trim()) l.title = String(patch.title).trim().slice(0, 80);
+  if (patch.address !== undefined) {
+    const addr = String(patch.address).trim().slice(0, 160);
+    if (addr.length < 8) return { ok: false, error: 'address-required', message: 'A full street address is required.' };
+    l.address = addr;
+  }
+  if (patch.amenities !== undefined) {
+    l.amenities = (Array.isArray(patch.amenities) ? patch.amenities : String(patch.amenities).split(/[\n,]+/)).map((a) => String(a).trim()).filter(Boolean).slice(0, 12);
+  }
+  if (patch.photos !== undefined) {
+    const pics = (Array.isArray(patch.photos) ? patch.photos : String(patch.photos).split(/[\n,]+/)).map((x) => String(x).trim()).filter(Boolean);
+    if (pics.length < HOST_PHOTOS_MIN) return { ok: false, error: 'photos-min', message: `Minimum ${HOST_PHOTOS_MIN} pictures.` };
+    if (pics.length > HOST_PHOTOS_MAX) return { ok: false, error: 'photos-max', message: `Maximum ${HOST_PHOTOS_MAX} pictures.` };
+    l.photos = pics;
+  }
+  recordAudit({ actor: userId, role: 'host', action: 'host.listing.updated', entity: 'hostListing', entityId: l.id, summary: Object.keys(patch).join(', ') });
+  return { ok: true, listing: l };
+}
+
+// Bookings that include one of my properties — the host's reservation book.
+export function hostBookings(userId) {
+  const mine = new Map(listHostListings(userId).map((l) => [l.title, l]));
+  const rows = [];
+  for (const b of db.bookings.values()) {
+    for (const c of (b.option?.components || [])) {
+      if (c.type === 'host' && mine.has(c.supplier)) {
+        rows.push({
+          bookingId: b.id,
+          listing: c.supplier,
+          nights: c.details?.nights || null,
+          guests: c.details?.sleeps || null,
+          status: b.status,
+          grossUSD: Math.round((c.priceUSD || 0) * 100) / 100,
+          netUSD: Math.round((c.priceUSD || 0) * (1 - HOST_COMMISSION) * 100) / 100,
+          bookedAt: b.createdAt,
+        });
+      }
+    }
+  }
+  return rows.sort((a, b) => (a.bookedAt < b.bookedAt ? 1 : -1));
+}
+
+// One call powering the whole Host Dashboard.
+export function hostDashboard(userId) {
+  const u = userId ? db.users.get(userId) : null;
+  if (!u) return { ok: false, error: 'auth-required' };
+  const registered = !!(u.host && u.hostProfile);
+  return {
+    ok: true,
+    registered,
+    profile: u.hostProfile || null,
+    listings: registered ? listHostListings(userId) : [],
+    bookings: registered ? hostBookings(userId) : [],
+    earnings: registered ? hostEarnings(userId) : null,
+  };
 }
