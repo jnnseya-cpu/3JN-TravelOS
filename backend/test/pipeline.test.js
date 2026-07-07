@@ -2483,3 +2483,24 @@ test('human gate end-to-end: bot signup/login are refused; verified humans pass'
     server.close();
   }
 });
+
+// ---- Accommodation identity: full name + real web/map verification links -----
+test('every stay carries a FULL property name, address, and live web/map links', () => {
+  const r = plan({ text: 'hotel in Cairo for 4 nights', context: GB });
+  assert.equal(r.stage, 'options');
+  const stays = r.packages.options.flatMap((o) => o.components).filter((c) => c.type === 'hotel' || c.type === 'host');
+  assert.ok(stays.length >= 1);
+  for (const st of stays) {
+    assert.ok(st.details.propertyName, `${st.supplier} carries a full property name`);
+    assert.ok(st.details.address, 'street address present');
+    assert.match(st.details.verifyUrl, /^https:\/\/www\.google\.com\/search\?q=/, 'live internet link for pictures & info');
+    assert.match(st.details.mapUrl, /^https:\/\/www\.google\.com\/maps\/search\//, 'map link present');
+    assert.ok(st.details.verifyUrl.includes(encodeURIComponent(st.details.propertyName).slice(0, 20)), 'link searches the FULL name');
+  }
+  // The private host is never an anonymous "apartment" — it has a real name.
+  const host = stays.find((s2) => s2.type === 'host');
+  if (host) {
+    assert.match(host.details.propertyName, /Residence|Suites|Apartments|House|Lofts/, 'host has a named property');
+    assert.ok(host.details.propertyName.includes('Cairo'), 'name is destination-anchored');
+  }
+});

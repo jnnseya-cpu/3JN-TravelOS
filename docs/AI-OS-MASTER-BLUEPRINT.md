@@ -230,6 +230,16 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 | **CRO Agent** | Revenue conversion optimisation across all user journeys | Funnel data, pricing elasticity, A/B test results | Conversion uplift recommendations, pricing adjustments | Real-time + weekly |
 | **COO Agent** | Operational excellence monitoring, SLA management, capacity planning | Uptime, agent performance, support queue, SLA data | Ops alerts, SLA breach warnings, capacity recommendations | Continuous |
 
+#### 5.2.2 Cybersecurity Agents
+
+| Agent | Core Capability | Inputs | Outputs | Trigger |
+|---|---|---|---|---|
+| **Threat Hunter Agent** | Proactive threat identification across all platform surfaces | Log data, traffic patterns, behavioural baselines | Threat report, IOC alerts, remediation recommendations | Continuous real-time |
+| **SOC Agent** | Security operations centre — triage, classify, escalate incidents | Security event stream, threat intelligence feeds | Incident ticket, severity classification, escalation | Security event trigger |
+| **Fraud Detection Agent** | Transaction fraud scoring + account takeover detection | Transaction data, device fingerprint, behavioural biometrics | Fraud score, block/flag/allow decision, alert | Every transaction |
+| **Identity Agent** | MFA enforcement, session monitoring, access anomaly detection | Auth events, device data, location data, time patterns | Access allow/deny, MFA challenge trigger, alert | Every auth event |
+| **Vulnerability Agent** | Continuous code + infrastructure vulnerability scanning | Codebase, infrastructure config, dependency manifest | CVE report, priority remediation list, auto-patch | Scheduled + deploy trigger |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).

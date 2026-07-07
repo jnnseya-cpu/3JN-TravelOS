@@ -805,11 +805,12 @@ window.showComponentInfo = (tier, idx) => {
   modal(`<span class="eyebrow">${c.type === 'host' ? 'Private host' : 'Hotel'} details</span>
     <div class="property-banner">
       <span class="property-icon">${c.type === 'host' ? '🏡' : '🏨'}</span>
-      <div><div style="font-family:'Space Grotesk';font-weight:700;font-size:17px">${esc(c.supplier)}</div>
+      <div><div style="font-family:'Space Grotesk';font-weight:700;font-size:17px">${esc(d.propertyName || c.supplier)}</div>
+        ${d.propertyName && d.propertyName !== c.supplier ? `<div class="muted" style="font-size:12px">${esc(c.supplier)}</div>` : ''}
         <div style="font-size:13px"><span style="color:var(--gold)">${stars}</span> <span class="muted">· ${esc(d.area || '')}</span></div></div>
     </div>
     <div class="muted" style="font-size:12.5px;margin-top:8px">${esc(d.propertyType || '')} · ${d.distanceToCentreKm ? d.distanceToCentreKm + 'km to centre · ' : ''}${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
-    ${d.address ? `<div class="kv" style="margin-top:8px"><span>📍 Address</span><span style="text-align:right">${esc(d.address)} · <a href="https://www.google.com/search?q=${encodeURIComponent(c.supplier + ' ' + d.address)}" target="_blank" rel="noopener" style="color:var(--blue-bright);text-decoration:underline">verify on the web ↗</a></span></div>` : ''}
+    ${d.address ? `<div class="kv" style="margin-top:8px"><span>📍 Address</span><span style="text-align:right">${esc(d.address)} · <a href="${esc(d.verifyUrl || ('https://www.google.com/search?q=' + encodeURIComponent((d.propertyName || c.supplier) + ' ' + d.address)))}" target="_blank" rel="noopener" style="color:var(--blue-bright);text-decoration:underline">see pictures & info on the web ↗</a> · <a href="${esc(d.mapUrl || ('https://www.google.com/maps/search/' + encodeURIComponent(d.address)))}" target="_blank" rel="noopener" style="color:var(--blue-bright);text-decoration:underline">map ↗</a></span></div>` : ''}
     ${(d.photos || []).length ? `
       <div style="margin-top:12px"><span class="eyebrow">Photos · ${d.photos.length} provided by the host</span>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">

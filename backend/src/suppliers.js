@@ -316,7 +316,7 @@ export function scanHotels(intent, dest) {
         reviews: 200 + Math.floor(rnd() * 4800),
         amenities: amenitiesFor(rnd, h.stars),
         description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${area}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
-        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel'),
+        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel', h.name),
       },
       priceUSD: round(nightly * nights * rooms),
     };
@@ -366,7 +366,7 @@ export function scanHotels(intent, dest) {
 
 // Extended, realistic accommodation detail so the traveller can decide with
 // confidence — times, policies, room spec, payment options and what's nearby.
-function hotelExtras(rnd, dest, intent, stars, type) {
+function hotelExtras(rnd, dest, intent, stars, type, name = null) {
   const propertyType = type === 'host' ? 'Entire apartment'
     : stars >= 5 ? 'Luxury hotel' : stars >= 4 ? 'Resort / 4★ hotel' : 'City hotel';
   const beds = intent.travellers.children
@@ -379,9 +379,24 @@ function hotelExtras(rnd, dest, intent, stars, type) {
   // its NAME + STREET ADDRESS so the traveller can look it up on the internet
   // themselves (deterministic street in the prototype; the real feed supplies it).
   const streets = ['Corniche Road', 'Palm Avenue', 'Harbour Street', 'Garden Boulevard', 'Old Market Lane', 'Union Square', 'Bay View Drive'];
-  const address = `${3 + Math.floor(rnd() * 220)} ${streets[Math.floor(rnd() * streets.length)]}, ${dest.city}`;
+  const street = streets[Math.floor(rnd() * streets.length)];
+  const address = `${3 + Math.floor(rnd() * 220)} ${street}, ${dest.city}`;
+  // FULL accommodation name — always present so the traveller can look the
+  // property up on the internet themselves. Hosts get a real, searchable
+  // residence name (never just "an apartment"); hotels carry their brand name.
+  const HOST_SUFFIXES = ['Residence', 'Suites', 'Apartments', 'House', 'Lofts'];
+  const propertyName = type === 'host'
+    ? `The ${street.replace(/ (Road|Avenue|Street|Boulevard|Lane|Square|Drive)$/, '')} ${HOST_SUFFIXES[Math.floor(rnd() * HOST_SUFFIXES.length)]}, ${dest.city}`
+    : name;
+  // Direct links to the open internet: a web search (pictures, reviews, more
+  // information) and the address on the map.
+  const verifyUrl = `https://www.google.com/search?q=${encodeURIComponent(`${propertyName || ''} ${address}`.trim())}`;
+  const mapUrl = `https://www.google.com/maps/search/${encodeURIComponent(address)}`;
   return {
     address,
+    propertyName,
+    verifyUrl,
+    mapUrl,
     propertyType,
     checkInTime: checkIn,
     checkOutTime: type === 'host' ? '11:00' : '12:00',
