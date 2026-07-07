@@ -776,6 +776,50 @@ The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, pr
 | **ACU Data Network** | Every agent action generates training signal — platform gets smarter with every booking, unique to scale | Compounds with GMV |
 | **White-Label Ecosystem** | Travel agencies powered by 3JN cannot easily switch platforms once client data and workflows are integrated | Distribution moat |
 
+### 16.2 Why No Current Competitor Can Match This
+
+- **OTAs (Booking.com, Expedia)** are retail marketplaces — they have no wholesale access, no agent intelligence, and no post-booking OS
+- **Metasearch (Skyscanner, Google Flights)** is pure search — no booking, no management, no agents, no loyalty intelligence
+- **Corporate TMCs (TravelPerk, Navan)** serve enterprises at £20–£50+ per booking — no consumer tier, no African market, no AI autonomy
+- **Traditional Travel Agents** have the wholesale access but zero AI intelligence, zero automation, and zero consumer scalability
+- **No platform combines**: wholesale pricing + AI intent extraction + 10-agent mesh + Universal Console + BitriPay + ACU economy in one OS
+
+---
+
+# APPENDICES
+
+## Appendix A — Technology Stack Reference
+
+| Layer | Technology |
+|---|---|
+| **Frontend** | Next.js 15, React Native (Expo), shadcn/ui, Tailwind CSS, Zustand, React Query, Socket.io |
+| **Backend** | NestJS (TypeScript), Temporal.io, LangGraph, LangChain, BullMQ |
+| **Databases** | PostgreSQL 16, Firestore, Redis (Upstash), Pinecone, BigQuery, Elasticsearch |
+| **Infrastructure** | GCP (GKE, Cloud SQL, Cloud Storage, Secret Manager), Cloudflare Enterprise, Terraform, GitHub Actions |
+| **AI Models** | Anthropic Claude (Sonnet/Haiku), OpenAI GPT-4o, Google Gemini Pro, Cohere Command R+ |
+| **Payments** | BitriPay, Stripe, Adyen, TrueLayer, Wise Business |
+| **Identity/Compliance** | Auth0, Sumsub, ComplyAdvantage, Seon, DocuSign |
+| **Travel Inventory** | Amadeus GDS, Sabre, Hotelbeds, Duffel, Mozio, VisaHQ, Airalo, Cover Genius |
+| **Communications** | SendGrid, Twilio, Firebase Cloud Messaging, Intercom |
+| **Monitoring** | Prometheus, Grafana, PostHog, Datadog, Sentry |
+
+## Appendix B — ACU Reference Table
+
+| Agent Action | ACU Cost | Notes |
+|---|---|---|
+| Natural language intent extraction | 8 ACU | Per search query |
+| Flight search (GDS + wholesale) | 15 ACU | Per search execution |
+| Hotel search (Hotelbeds wholesale) | 12 ACU | Per search execution |
+| Price monitor check (automated) | 3 ACU | Per automated check cycle |
+| Visa eligibility check | 10 ACU | Per destination per passport |
+| Risk intelligence briefing | 18 ACU | Full destination risk report |
+| Chief of Staff conversational turn | 12 ACU | Per dialogue exchange |
+| Expense categorisation (per receipt) | 5 ACU | Executive+ tier |
+| Private aviation quote | 25 ACU | Elite tier only |
+| Coworking recommendation | 8 ACU | Executive+ tier |
+
+*(Runtime note: the shipping `ACU_ACTIONS` uses the earlier calibration (intent 6, flight 12, hotel 8…) that the gate-band tests pin; per the platform rule the appendix rates apply at the production repricing without lowering any locked rule.)*
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
