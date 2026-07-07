@@ -344,6 +344,16 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 | **Card (Visa/Mastercard)** | Global | Multi | T+2 |
 | **QR Payment** | In-store / kiosk | Multi-currency | Instant |
 
+### 7.3 BitriPay Developer Centre
+
+- **Interactive API Reference** with live request/response testing
+- **SDK packages**: JavaScript / TypeScript, Python, PHP, Flutter, React Native
+- **Webhook simulator** for integration testing without live transactions
+- **API Key management** with environment separation (sandbox / staging / production)
+- **Rate limit dashboard** and quota management
+- **Compliance documentation**: PCI-DSS v4.0 data flow, BCC Instruction n°58 scope
+- **Integration guides**: NestJS, Next.js, WordPress/WooCommerce, Shopify
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
