@@ -34,7 +34,10 @@ import {
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest,
   searchToBookStats,
+  earnAcu, getPartnerProfile, applyInfluencer, decideInfluencer, partnerDashboard,
+  rewardsLeaderboard, requestWithdrawal,
 } from './store.js';
+import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
@@ -1089,6 +1092,66 @@ app.get('/api/notifications', safe((req, res) => {
 app.post('/api/notifications/read', safe((req, res) => {
   const user = currentUser(req);
   res.json(markNotificationsRead(user?.id));
+}));
+
+// ---- Global Rewards & Influencer Programme --------------------------------
+// Public programme catalogue — earning actions, redemption categories, tiers.
+app.get('/api/rewards/catalog', safe((req, res) => {
+  res.json({
+    earnActions: Object.values(REWARD_ACTIONS),
+    redeemCategories: REDEEM_CATEGORIES,
+    tiers: Object.values(PARTNER_TIERS),
+    aiGrowthTools: AI_GROWTH_TOOLS,
+    referralAcu: REFERRAL_ACU,
+    revshareCapGbp: REVSHARE_CAP_GBP,
+    revshareUnlockReferrals: REFERRER_REVSHARE_UNLOCK,
+  });
+}));
+// My partner dashboard (§4) — real-time, derived from the ledgers.
+app.get('/api/rewards/me', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const dash = partnerDashboard(user.id);
+  if (!dash) return res.status(404).json({ error: 'not-found' });
+  res.json({ dashboard: dash });
+}));
+// Apply to the influencer programme (§3).
+app.post('/api/rewards/influencer/apply', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const { followers, handles } = req.body || {};
+  res.json(applyInfluencer(user.id, { followers, handles }));
+}));
+// Earn ACU for a user-triggerable action (share itinerary, upload photo, etc.).
+// Booking/completion/referral awards fire automatically server-side.
+const USER_EARN_ACTIONS = new Set(['SHARE_ITINERARY', 'UPLOAD_PHOTO', 'PROFILE_VERIFIED']);
+app.post('/api/rewards/earn', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const { action } = req.body || {};
+  if (!USER_EARN_ACTIONS.has(action)) return res.status(400).json({ error: 'action-not-user-triggerable' });
+  res.json(earnAcu(user.id, action));
+}));
+// Request a payout of pending commission (§4/§6).
+app.post('/api/rewards/withdraw', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const { amountGbp, method } = req.body || {};
+  res.json(requestWithdrawal(user.id, { amountGbp, method }));
+}));
+// Public leaderboard (§4).
+app.get('/api/rewards/leaderboard', safe((req, res) => {
+  res.json({ leaderboard: rewardsLeaderboard(Number(req.query.limit) || 20) });
+}));
+// Admin: review & decide influencer applications (§3/§6).
+app.get('/api/admin/rewards/influencers', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ leaderboard: rewardsLeaderboard(100) });
+}));
+app.post('/api/admin/rewards/influencer/:userId/decide', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { approve, tier, standing } = req.body || {};
+  res.json(decideInfluencer(req.params.userId, { approve, tier, standing }));
 }));
 
 // ---- Visa Centre + Risk Intelligence Feed ---------------------------------

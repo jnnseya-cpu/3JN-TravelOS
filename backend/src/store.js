@@ -5,6 +5,11 @@
 import { createHash } from 'node:crypto';
 import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD } from '../../shared/constants.js';
+import {
+  REWARD_ACTIONS, REDEEM_CATEGORIES, acuForAction, PARTNER_TIERS, tierForFollowers,
+  effectiveRevshareRate, accrueRevshare, isValidAttribution, derivePartnerMetrics,
+  AI_GROWTH_TOOLS, REFERRAL_ACU, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK,
+} from './rewards.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -37,6 +42,9 @@ const db = {
   searchDeposits: [], // refundable search deposits (deep £5 / luxury £20 / corporate £50)
   visaChain: [], // hash-chained (blockchain-style) audit trail of visa decisions
   quoteRequests: [], // exact-quote requests on estimated options (lead + deposit intent)
+  influencerProfiles: new Map(), // userId -> influencer/partner profile (tier, followers, standing)
+  revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
+  rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -1037,6 +1045,9 @@ export function recordPayment(bookingId, payment) {
   const b = db.bookings.get(bookingId);
   if (!b) return null;
   b.payments.push({ ...payment, at: nowISO(), status: 'paid' });
+  // Rewards: the first payment makes this a "paid booking" — fire the referral
+  // engine once (250 ACU + revenue-share accrual). Guarded so it never double-pays.
+  try { if (!b.referralProcessed) processReferralOnPaidBooking(b); } catch { /* rewards are best-effort */ }
   return b;
 }
 
@@ -1075,6 +1086,185 @@ export function reviewsForSupplier(supplier) {
 
 export function allReviews() {
   return db.reviews;
+}
+
+// ===========================================================================
+// GLOBAL REWARDS & INFLUENCER PROGRAMME (docs/REWARDS-INFLUENCER-PROGRAMME.md)
+// Travel Together. Earn Together. Grow Together.
+// ===========================================================================
+const REWARDS_GBP_TO_USD = 1.27;
+const gbpFromUsd = (usd) => Math.round(((usd || 0) / REWARDS_GBP_TO_USD) * 100) / 100;
+
+// §1 — award ACU for a traveller reward action. `once` actions are granted a
+// single time per user (tracked on the user). Returns the ACU granted.
+export function earnAcu(userId, actionKey, { netBookingGbp = 0, promo = false, reason } = {}) {
+  const u = db.users.get(userId);
+  const action = REWARD_ACTIONS[actionKey];
+  if (!u || !action) return { ok: false, error: 'invalid' };
+  u.rewardActionsDone = u.rewardActionsDone || {};
+  if (action.once && u.rewardActionsDone[actionKey]) return { ok: true, acu: 0, already: true, balance: u.acuBalance };
+  const acu = acuForAction(actionKey, { netBookingGbp, promo });
+  if (acu <= 0) return { ok: true, acu: 0, balance: u.acuBalance };
+  u.rewardActionsDone[actionKey] = (u.rewardActionsDone[actionKey] || 0) + 1;
+  rewardAcu(userId, acu, reason || `reward:${actionKey}`);
+  return { ok: true, acu, balance: u.acuBalance };
+}
+
+// §3 — a partner profile (referrer by default; influencer once approved).
+function ensurePartner(userId) {
+  let p = db.influencerProfiles.get(userId);
+  if (!p) {
+    p = { userId, tier: 'referrer', status: 'active', standing: 'good', followers: 0, handles: [], paidReferrals: 0, appliedAt: null, approvedAt: null };
+    db.influencerProfiles.set(userId, p);
+  }
+  return p;
+}
+export function getPartnerProfile(userId) {
+  const u = db.users.get(userId);
+  if (!u) return null;
+  return { ...ensurePartner(userId), referralCode: u.referralCode };
+}
+
+// §3 — apply to the influencer programme (needs follower proof; approval gated).
+export function applyInfluencer(userId, { followers = 0, handles = [] } = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'auth-required' };
+  const p = ensurePartner(userId);
+  p.followers = Math.max(0, Math.floor(Number(followers) || 0));
+  p.handles = Array.isArray(handles) ? handles.slice(0, 8) : [];
+  p.status = 'pending';
+  p.appliedAt = nowISO();
+  p.eligibleTier = tierForFollowers(p.followers).key; // what they'd qualify for
+  recordAudit({ actor: userId, role: 'consumer', action: 'influencer.applied', entity: 'partner', entityId: userId, summary: `${p.followers} followers · eligible ${p.eligibleTier}` });
+  return { ok: true, profile: p };
+}
+
+// §3/§6 — admin approves an influencer to a tier (or rejects / suspends).
+export function decideInfluencer(userId, { approve, tier, standing } = {}) {
+  const p = db.influencerProfiles.get(userId);
+  if (!p) return { ok: false, error: 'not-found' };
+  if (standing) p.standing = standing; // 'good' | 'suspended' (§6 fraud/forfeiture)
+  if (approve) {
+    const t = PARTNER_TIERS[tier] || tierForFollowers(p.followers);
+    p.tier = t.key;
+    p.status = 'active';
+    p.approvedAt = nowISO();
+  } else if (approve === false) {
+    p.status = 'rejected';
+  }
+  recordAudit({ actor: 'admin', role: 'admin', action: 'influencer.decided', entity: 'partner', entityId: userId, summary: `approve=${approve} tier=${p.tier} standing=${p.standing}` });
+  return { ok: true, profile: p };
+}
+
+// §2/§6 — the referral engine. Called when a booking is PAID. Awards 250 ACU per
+// paid referral booking and accrues lifetime revenue share on 3JN NET revenue,
+// respecting the £20,000-per-customer cap and last-valid attribution.
+export function processReferralOnPaidBooking(booking) {
+  if (!booking || booking.referralProcessed) return { ok: false, error: 'skip' };
+  const friend = booking.userId ? db.users.get(booking.userId) : null;
+  if (!friend || !friend.referredByCode) return { ok: false, error: 'no-referrer' };
+  const referrer = [...db.users.values()].find((u) => u.referralCode === friend.referredByCode);
+  if (!referrer) return { ok: false, error: 'no-referrer' };
+  const rp = ensurePartner(referrer.id);
+  if (!isValidAttribution({ referrerId: referrer.id, friendId: friend.id, referrerStanding: rp.standing })) {
+    return { ok: false, error: 'invalid-attribution' };
+  }
+  booking.referralProcessed = true;
+
+  // 250 ACU for every successful paid referral booking (§2).
+  rewardAcu(referrer.id, REFERRAL_ACU, `referral:paid-booking:${booking.id}`);
+
+  // Count a DISTINCT referred customer's first paid booking toward the 20-unlock.
+  friend.hasPaidBooking = friend.hasPaidBooking || false;
+  if (!friend.hasPaidBooking) {
+    friend.hasPaidBooking = true;
+    rp.paidReferrals = (rp.paidReferrals || 0) + 1;
+  }
+
+  // Revenue share on 3JN net revenue from this booking (§2/§3/§6).
+  const netRevenueGbp = gbpFromUsd(booking.option?.pricing?.revenue?.commissionUSD || 0);
+  const rate = effectiveRevshareRate({ approvedTier: rp.tier === 'referrer' ? null : rp.tier, paidReferrals: rp.paidReferrals });
+  let shareGbp = 0;
+  if (rate > 0 && netRevenueGbp > 0) {
+    const alreadyEarnedGbp = db.revshareLedger
+      .filter((r) => r.partnerId === referrer.id && r.customerId === friend.id)
+      .reduce((s, r) => s + (r.amountGbp || 0), 0);
+    shareGbp = accrueRevshare({ netRevenueGbp, rate, alreadyEarnedGbp });
+    if (shareGbp > 0) {
+      db.revshareLedger.push({ id: id('rsh'), partnerId: referrer.id, customerId: friend.id, bookingId: booking.id, netRevenueGbp, rate, amountGbp: shareGbp, at: nowISO() });
+    }
+  }
+  recordAudit({ actor: 'system', role: 'system', action: 'referral.rewarded', entity: 'booking', entityId: booking.id, summary: `+${REFERRAL_ACU} ACU · revshare £${shareGbp} @ ${(rate * 100).toFixed(2)}%` });
+  return { ok: true, acu: REFERRAL_ACU, revshareGbp: shareGbp, rate };
+}
+
+// §4 — the partner dashboard (real-time, derived from the ledgers).
+export function partnerDashboard(userId) {
+  const u = db.users.get(userId);
+  if (!u) return null;
+  const p = ensurePartner(userId);
+  const myReferrals = db.referrals.filter((r) => r.referrerId === userId);
+  const friendIds = new Set(myReferrals.map((r) => r.friendId));
+  const activeTravellers = [...friendIds].filter((fid) => [...db.bookings.values()].some((b) => b.userId === fid && (b.payments || []).length)).length;
+  const rows = db.revshareLedger.filter((r) => r.partnerId === userId);
+  const acuEarned = db.acuTxns.filter((t) => t.userId === userId && t.type === 'REWARD').reduce((s, t) => s + t.amount, 0);
+  const myBookingsByReferred = [...db.bookings.values()].filter((b) => friendIds.has(b.userId));
+  const bookingValueGbp = myBookingsByReferred.reduce((s, b) => s + gbpFromUsd(b.option?.pricing?.totals?.totalUSD || 0), 0);
+  const revenueGbp = rows.reduce((s, r) => s + (r.netRevenueGbp || 0), 0);
+  const withdrawals = db.rewardWithdrawals.filter((w) => w.partnerId === userId);
+  const metrics = derivePartnerMetrics({
+    referrals: myReferrals, activeTravellers, revshareRows: rows, acuEarned,
+    bookingValueGbp, revenueGbp, withdrawals, rank: rewardsLeaderboardRank(userId),
+    tier: p.tier, paidReferrals: p.paidReferrals,
+  });
+  return {
+    ...metrics,
+    referralCode: u.referralCode,
+    referralLink: `https://3jntravel.com/?ref=${u.referralCode}`,
+    referralQrData: `https://3jntravel.com/?ref=${u.referralCode}`,
+    standing: p.standing,
+    status: p.status,
+    followers: p.followers,
+    unlockReferrals: REFERRER_REVSHARE_UNLOCK,
+    revshareUnlocked: p.tier !== 'referrer' || p.paidReferrals >= REFERRER_REVSHARE_UNLOCK,
+    aiGrowthTools: AI_GROWTH_TOOLS,
+    redeemCategories: REDEEM_CATEGORIES,
+    capPerCustomerGbp: REVSHARE_CAP_GBP,
+  };
+}
+
+// §4 — leaderboard by lifetime revenue-share earnings (ties broken by referrals).
+export function rewardsLeaderboard(limit = 20) {
+  const byPartner = new Map();
+  for (const r of db.revshareLedger) byPartner.set(r.partnerId, (byPartner.get(r.partnerId) || 0) + (r.amountGbp || 0));
+  const refCount = new Map();
+  for (const r of db.referrals) refCount.set(r.referrerId, (refCount.get(r.referrerId) || 0) + 1);
+  const ids = new Set([...byPartner.keys(), ...refCount.keys()]);
+  return [...ids].map((pid) => {
+    const u = db.users.get(pid);
+    return { partnerId: pid, name: u?.name || 'Partner', tier: (db.influencerProfiles.get(pid)?.tier) || 'referrer', earningsGbp: Math.round((byPartner.get(pid) || 0) * 100) / 100, referrals: refCount.get(pid) || 0 };
+  }).sort((a, b) => b.earningsGbp - a.earningsGbp || b.referrals - a.referrals).slice(0, limit);
+}
+function rewardsLeaderboardRank(userId) {
+  const board = rewardsLeaderboard(1000);
+  const i = board.findIndex((e) => e.partnerId === userId);
+  return i === -1 ? null : i + 1;
+}
+
+// §4/§6 — request a payout of pending commission. Pending = lifetime earned −
+// already withdrawn. Only accounts in good standing may withdraw.
+export function requestWithdrawal(userId, { amountGbp, method = 'bank' } = {}) {
+  const p = ensurePartner(userId);
+  if (p.standing !== 'good') return { ok: false, error: 'account-not-in-good-standing' };
+  const lifetime = db.revshareLedger.filter((r) => r.partnerId === userId).reduce((s, r) => s + (r.amountGbp || 0), 0);
+  const drawn = db.rewardWithdrawals.filter((w) => w.partnerId === userId && w.status !== 'rejected').reduce((s, w) => s + (w.amountGbp || 0), 0);
+  const available = Math.round((lifetime - drawn) * 100) / 100;
+  const amt = Math.round((Number(amountGbp) || available) * 100) / 100;
+  if (!(amt > 0) || amt > available) return { ok: false, error: 'insufficient-balance', availableGbp: available };
+  const w = { id: id('wdl'), partnerId: userId, amountGbp: amt, method, status: 'pending', at: nowISO() };
+  db.rewardWithdrawals.push(w);
+  recordAudit({ actor: userId, role: 'consumer', action: 'reward.withdrawal.requested', entity: 'partner', entityId: userId, summary: `£${amt} via ${method}` });
+  return { ok: true, withdrawal: w, availableGbp: Math.round((available - amt) * 100) / 100 };
 }
 
 // Admin / profitability snapshot.
@@ -1283,8 +1473,8 @@ export function searchToBookStats() {
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals'];
 
 export function snapshot() {
   const out = { counter };

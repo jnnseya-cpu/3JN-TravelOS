@@ -19,6 +19,8 @@ import { visaCheck, riskFeed } from '../src/intelligence.js';
 import { destinationsCatalog } from '../src/destinations.js';
 import { snapshot, hydrate } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
+import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
+import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
@@ -2847,3 +2849,60 @@ test('suppliers & agents must actually operate at the destination', () => {
   const dxb = comps(plan({ text: '2 adults to Dubai for 5 nights in October, flights hotel transfer visa', context: GB, user: null }));
   assert.ok(dxb.some((c) => c.sourcedVia === 'Rayna Tours' && c.agent), 'Rayna IS the in-region agent for the UAE');
 });
+
+// ---- Global Rewards & Influencer Programme --------------------------------
+test('rewards: ACU earning maths (fixed, per-£ and promo multiplier)', () => {
+  assert.equal(acuForAction('REFER_FRIEND'), 250, '250 ACU per paid referral');
+  assert.equal(acuForAction('VERIFIED_REVIEW'), 100);
+  assert.equal(acuForAction('BOOK_TRIP', { netBookingGbp: 500 }), 500, '1 ACU per £1 net');
+  assert.equal(acuForAction('BOOK_TRIP', { netBookingGbp: 500, promo: true }), 1000, 'promo doubles the earn');
+});
+
+test('rewards: revenue-share rate by tier + 20-referral unlock', () => {
+  assert.equal(effectiveRevshareRate({ paidReferrals: 0 }), 0, 'no share before unlock');
+  assert.equal(effectiveRevshareRate({ paidReferrals: 20 }), 0.0025, 'baseline 0.25% at 20 referrals');
+  assert.equal(effectiveRevshareRate({ approvedTier: 'ambassador' }), 0.01, 'ambassador 1%');
+  assert.equal(effectiveRevshareRate({ approvedTier: 'rising' }), 0.0025, 'rising 0.25%');
+  assert.equal(tierForFollowers(12000).key, 'ambassador');
+  assert.equal(tierForFollowers(6000).key, 'rising');
+  assert.equal(tierForFollowers(100).key, 'referrer');
+});
+
+test('rewards: revenue share respects the £20,000 per-customer cap', () => {
+  // Near the cap, only the remaining headroom is payable.
+  const near = accrueRevshare({ netRevenueGbp: 1000000, rate: 0.01, alreadyEarnedGbp: 19950 });
+  assert.equal(near, 50, 'caps at exactly the £20k remaining');
+  assert.equal(accrueRevshare({ netRevenueGbp: 1000, rate: 0.01, alreadyEarnedGbp: REVSHARE_CAP_GBP }), 0, 'nothing past the cap');
+});
+
+test('rewards: self-referral attribution is rejected', () => {
+  assert.equal(isValidAttribution({ referrerId: 'u1', friendId: 'u1' }), false);
+  assert.equal(isValidAttribution({ referrerId: 'u1', friendId: 'u2', referrerStanding: 'suspended' }), false);
+  assert.equal(isValidAttribution({ referrerId: 'u1', friendId: 'u2' }), true);
+});
+
+test('rewards: paid referral awards 250 ACU and accrues revenue share for an approved ambassador', () => {
+  const referrer = createUser({ email: 'amb@x.co', name: 'Ambassador' });
+  const raw = getUserRefCode(referrer.id);
+  const friend = createUser({ email: 'friend@x.co', name: 'Friend', referredByCode: raw });
+  // Approve the referrer as a 1% ambassador so revenue share applies immediately.
+  decideInfluencer(referrer.id, { approve: true, tier: 'ambassador' });
+  const booking = { id: 'bk_rwd_1', userId: friend.id, option: { pricing: { revenue: { commissionUSD: 127 } } } };
+  const r = processReferralOnPaidBooking(booking);
+  assert.ok(r.ok, 'referral processed');
+  assert.equal(r.acu, 250, '250 ACU to the referrer');
+  // £127 commission ≈ £100 net → 1% = £1 revenue share.
+  assert.ok(Math.abs(r.revshareGbp - 1) < 0.01, 'revenue share ~= £1 at 1%');
+  const dash = partnerDashboard(referrer.id);
+  assert.ok(dash.totalReferrals >= 1 && dash.lifetimeEarningsGbp >= 1, 'dashboard reflects the earnings');
+  assert.equal(booking.referralProcessed, true, 'guarded against double-processing');
+  // Re-processing the same booking must not double-pay.
+  const again = processReferralOnPaidBooking(booking);
+  assert.ok(!again.ok, 'same booking is never rewarded twice');
+});
+
+// Helper: read a user's referral code from the raw store.
+function getUserRefCode(userId) {
+  const dash = partnerDashboard(userId);
+  return dash.referralCode;
+}
