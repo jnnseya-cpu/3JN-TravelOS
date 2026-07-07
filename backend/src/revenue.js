@@ -216,14 +216,16 @@ export const WHITE_LABEL_PRICING = {
 // The Cost Protection Gate's eight questions, answered per search.
 function gateChecklist({ acuCovers, hasDeposit, subscriptionActive, revenueCovers, recentSearches, priorBookings, intentStrong }) {
   return [
-    { q: 'Is the user paying ACUs?', a: !!acuCovers },
-    { q: 'Is there a deposit?', a: !!hasDeposit },
-    { q: 'Is there subscription coverage?', a: !!subscriptionActive },
-    { q: 'Is there supplier commission?', a: true }, // every booked component earns per SUPPLIER_COMMISSIONS
-    { q: 'Is expected 10% revenue enough?', a: !!revenueCovers },
-    { q: 'Is cached data available?', a: true }, // the downgrade path always exists
-    { q: 'Is the user abusing the system?', a: recentSearches > 20 && priorBookings === 0 },
-    { q: 'Is booking intent strong?', a: !!intentStrong },
+    { q: 'User ACU balance sufficient?', a: !!acuCovers },
+    { q: 'Deposit paid?', a: !!hasDeposit },
+    { q: 'Subscription coverage?', a: !!subscriptionActive },
+    { q: 'Estimated AI/API cost within cap?', a: true }, // enforced by the x10 formula below
+    { q: 'Expected 10% platform revenue enough (>= 10x cost)?', a: !!revenueCovers },
+    { q: 'Supplier commission potential?', a: true }, // every booked component earns per SUPPLIER_COMMISSIONS
+    { q: 'Abuse score acceptable?', a: !(recentSearches > 20 && priorBookings === 0) },
+    { q: 'Search history healthy?', a: recentSearches <= 20 || priorBookings > 0 },
+    { q: 'Cache available as fallback?', a: true }, // the downgrade path always exists
+    { q: 'Booking likelihood strong?', a: !!intentStrong },
   ];
 }
 

@@ -1737,7 +1737,7 @@ import { createTravelPot, contributeToPot } from '../src/store.js';
 
 test('gate part 16: 8-question checklist, abuse throttle, free daily cap, intent assist', () => {
   const funded = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 10000, intentStrong: true });
-  assert.equal(funded.checklist.length, 8);
+  assert.equal(funded.checklist.length, 10);
   const abuse = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 10000, recentSearches: 25, priorBookings: 0 });
   assert.equal(abuse.reason, 'abuse-throttle');
   const capped = costProtectionGate({ tier: 'smart', user: null, expectedBookingUSD: 10000, searchesToday: FREE_DAILY_SEARCH_LIMIT });
