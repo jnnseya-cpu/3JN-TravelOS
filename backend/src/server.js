@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
-import { destinationsCatalog, findDestination } from './destinations.js';
+import { destinationsCatalog, findDestination, resolveOrigin } from './destinations.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
 import {
@@ -44,7 +44,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode, createDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode, createDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -690,8 +690,26 @@ app.post('/api/plan', safe(async (req, res) => {
   // deterministic estimate — we never present an unconverted or invented price.
   if (result.stage === 'options' && liveSuppliersConfigured()) {
     try {
-      const live = await fetchLiveOffers(result.intent, result.intent.destination, result.origin);
-      if ((live.flights && live.flights.length) || (live.hotels && live.hotels.length)) {
+      const intent = result.intent;
+      const dest = intent.destination;
+      let live;
+      // MULTI-ORIGIN GROUP: fetch live fares for EACH party's own departure
+      // city so every leg in the one booking is a real bookable fare.
+      if (intent.groupOrigins && intent.groupOrigins.length && liveFlightsEnabled()) {
+        const groupFlights = await Promise.all(intent.groupOrigins.map(async (party, idx) => {
+          const origin = resolveOrigin(party.city) || result.origin;
+          const partyIntent = { ...intent, travellers: { adults: party.count, children: 0, childAges: [], total: party.count } };
+          const offers = await fetchLiveFlights(partyIntent, dest, origin).catch(() => null);
+          return { partyIndex: idx, city: party.city, offers: (offers && offers.length) ? offers : null };
+        }));
+        const withOffers = groupFlights.filter((g) => g.offers);
+        const hotels = liveHotelsEnabled() ? await fetchLiveHotels(intent, dest).catch(() => null) : null;
+        live = { groupFlights: withOffers.length ? withOffers : null, hotels };
+      } else {
+        live = await fetchLiveOffers(intent, dest, result.origin);
+      }
+      const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length);
+      if (hasLive) {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
       }
     } catch { /* keep the estimated result */ }

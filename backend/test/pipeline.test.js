@@ -2795,3 +2795,17 @@ test('month-name single dates: 03/october/2026, 3 October 2026, October 3 2026',
     assert.equal(i.dates.checkIn, '2026-10-03', `${phrase} → 2026-10-03`);
   }
 });
+
+// ================= Multi-origin group: LIVE per-party fares ====================
+test('group booking uses LIVE per-party fares when the flight provider is on', () => {
+  const text = 'group of 4 to Ottawa on 03/october/2026, 2 from London and 2 from Manchester, flights and hotel, 5 days';
+  const fakeOffer = (from) => ({ type: 'flight', supplier: 'Air Canada', verified: true, reliabilityScore: 90, live: true, sourcedVia: 'Duffel (live)', details: { outbound: { from, to: 'YOW', depart: '10:00', arrive: '13:00', stops: 0, stopLabel: 'Direct' }, inbound: { from: 'YOW', to: from, depart: '15:00', arrive: '18:00', stops: 0 }, offerId: 'off_' + from, offerExpiresAt: new Date(Date.now() + 3600000).toISOString(), liveAmount: '880.00', liveCurrency: 'GBP' }, priceUSD: 1100 });
+  const live = { groupFlights: [{ partyIndex: 0, offers: [fakeOffer('LHR')] }, { partyIndex: 1, offers: [fakeOffer('MAN')] }] };
+  const r = plan({ text, context: GB, live });
+  assert.equal(r.stage, 'options');
+  assert.equal(r.intent.destination.code, 'YOW', 'Ottawa resolves to the real IATA YOW');
+  const legs = r.packages.options[0].components.filter((c) => c.type === 'flight');
+  assert.equal(legs.length, 2, 'one live leg per party origin');
+  assert.ok(legs.every((c) => c.live && c.supplier === 'Air Canada'), 'both party legs are the live fare');
+  assert.ok(legs.some((c) => c.details.route === 'London → Ottawa') && legs.some((c) => c.details.route === 'Manchester → Ottawa'));
+});

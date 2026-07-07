@@ -783,13 +783,18 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
   // headcount; everyone shares the same dates, stay and booking. "2 from
   // Birmingham, 1 from London, 4 from Manchester, 2 from Nottingham" yields
   // four flight components in one package.
-  if (intent.groupOrigins && intent.groupOrigins.resolved && scan.flights) {
+  if (intent.groupOrigins && intent.groupOrigins.resolved && (scan.flights || (live && live.groupFlights))) {
     scan.groupTravel = intent.groupOrigins.resolved.flatMap((party, idx) => {
       const partyIntent = {
         ...intent,
         travellers: { adults: party.count, children: 0, childAges: [], total: party.count },
       };
-      return scanFlights(partyIntent, dest, party.origin).map((o) => ({
+      // Live per-party fares when available (real bookable); else the estimator.
+      const liveParty = live && live.groupFlights && live.groupFlights.find((g) => g.partyIndex === idx);
+      const partyOffers = (liveParty && liveParty.offers && liveParty.offers.length)
+        ? liveParty.offers
+        : scanFlights(partyIntent, dest, party.origin);
+      return partyOffers.map((o) => ({
         ...o,
         details: {
           ...o.details,
