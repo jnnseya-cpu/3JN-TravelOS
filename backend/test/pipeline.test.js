@@ -25,6 +25,7 @@ import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/s
 import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
 import { visaFramework, buildChecklist, assessApplication, validateApplicant, redactApplicant, requiredFieldsFor, CORE_DOCUMENTS } from '../src/visa-framework.js';
+import * as agentsModule from '../src/agents.js';
 import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } from '../src/booking-schema.js';
 import { architecture as commsArchitecture, emit as commsEmit, renderEmail as commsRenderEmail, EVENTS as COMMS_EVENTS } from '../src/comms.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
@@ -1380,4 +1381,44 @@ test('host dashboard: set price, pause removes from searches, resume restores', 
   assert.equal(updateHostListing(host.id, listing.id, { photos: ['one.jpg'] }).error, 'photos-min');
   // Reservation book exists (empty until booked).
   assert.deepEqual(hostBookings(host.id), []);
+});
+
+// ---- Master Travel Profile: loyalty accounts + autonomous publishing --------
+test('profile: loyalty accounts (BA/Skywards/Bonvoy/Honors/IHG) stored structured', () => {
+  const u = createUser({ name: 'Loyal Traveller', email: 'loyal@example.com' });
+  const out = updateUser(u.id, { travelProfile: {
+    title: 'Ms', firstName: 'Ama', lastName: 'Okafor', preferredName: 'Ama',
+    knownTravelerNumber: 'KTN123456', redressNumber: 'RN987', tsaPreCheck: 'Yes',
+    billingAddress: '1 Ledger St, London', postalCode: 'E1 6AN',
+    loyaltyAccounts: [
+      { program: 'British Airways Executive Club', membershipNumber: 'BA1234567', tier: 'Silver', expiry: '2027-03-01', statusBenefits: 'Lounge access, seat selection' },
+      { program: 'Emirates Skywards', membershipNumber: 'EK7654321', tier: 'Gold', expiry: '2027-09-01', statusBenefits: 'Extra baggage' },
+      { program: '', membershipNumber: 'dropped-no-program' },
+    ],
+  } });
+  const tp = out.travelProfile;
+  assert.equal(tp.knownTravelerNumber, 'KTN123456');
+  assert.equal(tp.tsaPreCheck, 'Yes');
+  assert.equal(tp.loyaltyAccounts.length, 2, 'entries without a programme are dropped');
+  assert.equal(tp.loyaltyAccounts[0].program, 'British Airways Executive Club');
+  assert.equal(tp.loyaltyAccounts[1].tier, 'Gold');
+});
+
+test('agents: blog/SEO/marketing publish autonomously once per day', () => {
+  const { ensureDailyPublish } = agentsModule;
+  const t0 = Date.UTC(2026, 6, 10, 9, 0, 0);
+  const first = ensureDailyPublish(t0);
+  assert.equal(first.published, true, 'stale journal → agent publishes');
+  assert.ok(first.post.slug && first.social.includes(first.post.destination));
+  // Within the same 24h window: idempotent, no double-posting.
+  const again = ensureDailyPublish(t0 + 3600 * 1000);
+  assert.equal(again.published, false);
+  assert.ok(again.nextDueInMs > 0);
+  // Next day: publishes again.
+  const nextDay = ensureDailyPublish(t0 + 25 * 3600 * 1000);
+  assert.equal(nextDay.published, true);
+  // Audit shows the marketing + SEO agents acted.
+  const audit = adminAudit(50);
+  assert.ok(audit.some((a) => a.action === 'marketing.social.published'));
+  assert.ok(audit.some((a) => a.action === 'seo.sitemap.refreshed'));
 });
