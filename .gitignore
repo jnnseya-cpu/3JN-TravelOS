@@ -12,3 +12,8 @@ firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
 .vercel/
+
+# Firebase service-account keys — NEVER commit (use FIREBASE_SERVICE_ACCOUNT env var)
+serviceAccountKey*.json
+*service-account*.json
+*-firebase-adminsdk-*.json
