@@ -46,6 +46,8 @@ Use **Firebase for speed · Neon/Postgres for governance · BigQuery/Data Wareho
 
 Hostinger domain + Vercel frontend + **Google Cloud/Firebase backend** + Google Cloud Storage + **Postgres later inside Google Cloud (Cloud SQL)** — not Neon as the main backend.
 
+**Why not Vercel + Neon as the main long-term backend.** Excellent for modern SaaS, but this platform's biggest challenge is not database speed — it is: heavy document storage · sensitive visa files · identity verification · audit logs · government-grade security · access control · AI processing · long-running background checks · document forensics · compliance. Those needs belong on the Google Cloud stack above.
+
 ```
 Claude Build
    ↓

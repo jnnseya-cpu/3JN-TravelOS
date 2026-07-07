@@ -822,6 +822,12 @@ The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, pr
 
 ---
 
+**3JN TRAVEL OS  |  AI INFRASTRUCTURE OS BLUEPRINT**
+*Powered by Artificial Intelligence · Built for Better Travel*
+**CONFIDENTIAL — Proprietary & Investor-Grade — Groupe Nseya Digital / JNN Global Ltd**
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
