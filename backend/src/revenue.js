@@ -39,11 +39,25 @@ function tierFrom(name, depth, actions) {
   return { name, depth, acu, aiCostUSD: Math.round(acu * ACU_GBP * GBP_TO_USD * 100) / 100, actions };
 }
 
+// Multi-tier search system (spec §7). Tier 1 is free and never touches
+// expensive AI; every paid tier lists the agents its ACUs actually fund.
 export const SEARCH_TIERS = {
-  free: { name: 'Cached / Free', acu: 0, aiCostUSD: 0, depth: 'cached', actions: [] },
-  smart: tierFrom('Smart Search', 'standard', ['intent', 'flightSearch', 'hotelSearch']),
-  deep: tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
-  concierge: tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
+  free: {
+    name: 'Cached / Free', acu: 0, aiCostUSD: 0, depth: 'cached', actions: [],
+    features: ['Cached results', 'Top deals', 'Destination suggestions', 'Previous searches', 'Limited searches (5/day)', 'No expensive AI'],
+  },
+  smart: {
+    ...tierFrom('Smart Search', 'standard', ['intent', 'flightSearch', 'hotelSearch']),
+    agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent'],
+  },
+  deep: {
+    ...tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
+    agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent', 'Visa Agent', 'Price Monitor Agent', 'Savings/Risk Agent'],
+  },
+  concierge: {
+    ...tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
+    agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent', 'Visa Agent', 'Savings/Risk Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
+  },
 };
 
 // Revenue must be at least this multiple of AI cost (spec: revenue >= cost x10).

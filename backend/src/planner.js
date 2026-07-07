@@ -149,6 +149,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const gate = costProtectionGate({
     tier: searchTier,
     user,
+    // A live refundable search deposit funds paid depth (spec §6).
+    hasDeposit: !!usage.hasDeposit,
     subscriptionActive: !!(user && user.subscriptionActive),
     expectedBookingUSD,
     // Strong intent = explicit dates + more than one component named.

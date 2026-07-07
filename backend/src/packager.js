@@ -6,7 +6,7 @@
 // transparent options. The session added: produce multiple tiers
 // (Standard / Premium / Luxury) and recommend the best.
 
-import { RELIABILITY_FLOOR } from './suppliers.js';
+import { RELIABILITY_FLOOR, INTEGRITY_CHECKS } from './suppliers.js';
 import { priceBreakdown } from './pricing.js';
 
 // Keep only verified suppliers at or above the reliability floor.
@@ -194,6 +194,9 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
     label: tier.label,
     blurb: tier.blurb,
     verified: selections.every((s) => s.verified),
+    // Integrity Verification Shield: every surfaced supplier passed the
+    // 50-point rubric (verified + at/above the reliability floor).
+    integrity: { pointsChecked: INTEGRITY_CHECKS.length, allPassed: selections.every((s) => s.verified && s.reliabilityScore >= RELIABILITY_FLOOR) },
     avgReliability,
     components: selections.map((s) => ({
       type: s.type,

@@ -6,7 +6,7 @@
 >
 > **Master rule** (heads `backend/src/revenue.js` as a never-to-be-weakened contract): *AI work starts only when the platform is protected by ACUs, a deposit, strong booking intent, supplier commission, advertising revenue, or expected 10% final-payment revenue — or is served from cache. If none of these hold, the system downgrades, limits, or asks for payment before continuing.*
 
-Every section below is **live in production**. Column three names the exact implementing symbol; every rule is pinned by the test suite (`backend/test/pipeline.test.js`, **128 tests green**) so it cannot silently regress.
+Every section below is **live in production**. Column three names the exact implementing symbol; every rule is pinned by the test suite (`backend/test/pipeline.test.js`, **133 tests green**) so it cannot silently regress.
 
 ---
 
@@ -62,10 +62,10 @@ AI cost £2 → minimum revenue potential required £20 — otherwise **BLOCK** 
 | # | Rule | Implementation |
 |---|---|---|
 | 1 | **10% final-payment fee** (main revenue) | `COMMISSION_RATE = 0.10` in every `priceBreakdown` |
-| 2 | **Refundable search deposits £5–£20**, deducted from final payment | Gate `requirement.orDepositGBP`; filters unserious users |
-| 3 | **Paid ACU packs** — Starter £5 · Smart Traveller £15 · Family £29 · Business £99 (£1 = 100 ACU) | `ACU_PACKS` + console top-up UI |
+| 2 | **Refundable search deposits** — Deep **£5** · Luxury **£20** · Corporate **£50**; refundable, and **deducted from the final payment** when a booking occurs (`search_deposits` ledger: deposit_id, user_id, amount, search_id, refunded, converted_to_booking, date) | `placeSearchDeposit` / `refundSearchDeposit` / `convertDepositToBooking`; live deposit funds the gate (`hasDeposit`); `/api/account/:id/deposit` |
+| 3 | **ACU Marketplace** — Starter **£5 = 500** · Traveller **£15 = 1,750** · Family **£29 = 4,000** · Business **£99 = 20,000** · Enterprise **custom (contact sales)**. Volume above the £1 = 100 base rate is booked as a BONUS transaction | `ACU_PACKS` + console top-up UI; `buyAcu` splits base purchase vs volume bonus |
 | 4 | **Subscriptions** — Free (cached) · Smart · Family · Business (companies, NGOs, churches, teams, schools, delegations) · Concierge (AI + human, deposit) | `MEMBERSHIP_TIERS` + `CORPORATE_PLANS` + concierge tier |
-| 5 | **AI cost tiers** — Basic free/cached · Smart **26 ACU** · Deep Hunt **57 ACU** · Concierge **91 ACU + deposit** | `SEARCH_TIERS` (composed from `ACU_ACTIONS`) |
+| 5 | **Multi-tier search system** — Tier 1 Free: cached results, top deals, destination suggestions, previous searches, limited (5/day), **no expensive AI** · Smart **26 ACU** (Flight + Hotel + Transfer agents) · Deep Hunt **57 ACU** (+ Visa, Price Monitor, Savings/Risk agents) · Concierge **91 ACU + deposit** (+ Chief-of-Staff, Private Aviation) | `SEARCH_TIERS` (composed from `ACU_ACTIONS`; `features`/`agents` per tier) |
 
 ## 5b–8. Supply-side & value-based earnings
 
@@ -87,6 +87,12 @@ AI cost £2 → minimum revenue potential required £20 — otherwise **BLOCK** 
 | 13 | **White-label** — setup £1,500 · SaaS £199/mo · ACU metering · 10% commission share (partners keep 90%) · support £99/mo | `WHITE_LABEL_PRICING` / `whiteLabelPayout` |
 | 14 | **API revenue** — 6 productised endpoints: search £0.05 · itinerary £0.04 · visa checklist £0.03 · group quote £0.08 · savings £0.05 · hotels £0.04 per call | `API_PRODUCTS` · `/api/v1/*` (key-gated) |
 | 15 | **Finance** — pay-monthly, savings wallet, deposit plans, **group pots (1.5% processing, working)**, corporate invoicing, layaway £1/mo | `FINANCE_PRODUCTS` · `createTravelPot`/`contributeToPot` |
+
+## The cost & ACU ledgers (spec §3–§4)
+
+**AI Cost Estimator — `ai_request_costs`.** Every routed AI call books a ledger row: `id, provider, model, agent_name, estimated_tokens, estimated_cost, actual_cost, request_timestamp, user_id, trip_id` (+ search/booking/organisation). The gateway records automatically on every `run()` (local fallback = £0 actual); funded searches book their tier cost per user. `aiCostReport()` aggregates **per provider (OpenAI / Claude / Gemini / Vertex)** and **per Search / Trip / User / Booking / Organisation** — served at `GET /api/admin/ai-costs`. Implementation: `recordAiRequestCost` / `aiCostReport` (store) + `estimateRequestCost` / `PROVIDER_TOKEN_RATES` (gateway).
+
+**ACU Economy — `acu_wallets` + `acu_transactions`.** The wallet view (`acuWallet`) derives `wallet_id, user_id, current_balance, lifetime_purchased, lifetime_used, lifetime_earned, status` live from the transaction ledger so counters can never drift. Every movement is a typed transaction — **PURCHASE / USAGE / REFUND / BONUS / REWARD** (`transaction_id, wallet_id, type, amount, date`): pack purchases split base PURCHASE vs volume BONUS, membership funding books as BONUS, incentives as REWARD (`rewardAcu`), reversals as REFUND (`refundAcu`). Served at `GET /api/account/:id/wallet`.
 
 ## Survival mechanics
 

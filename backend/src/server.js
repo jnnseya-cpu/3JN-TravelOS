@@ -28,6 +28,8 @@ import {
   createHostListing, listHostListings, hostEarnings,
   registerHost, updateHostListing, hostBookings, hostDashboard,
   grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT, usageStats,
+  acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
+  placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, SEARCH_DEPOSIT_GBP,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -262,6 +264,36 @@ app.post('/api/account/:id/acu', safe((req, res) => {
   res.json(result);
 }));
 
+// ---- ACU Economy (spec §4): wallet view + typed transaction ledger --------
+app.get('/api/account/:id/wallet', safe((req, res) => {
+  const wallet = acuWallet(req.params.id);
+  if (!wallet) return res.status(404).json({ error: 'unknown-user' });
+  res.json({ wallet, transactions: acuTransactions(req.params.id) });
+}));
+
+// ---- Refundable search deposits (spec §6): place / list / refund ----------
+// Deep £5 · Luxury £20 · Corporate £50 — refundable; a booking converts the
+// deposit and deducts it from the final payment.
+app.post('/api/account/:id/deposit', safe((req, res) => {
+  const result = placeSearchDeposit({ userId: req.params.id, tier: (req.body || {}).tier || 'deep', searchId: (req.body || {}).searchId || null });
+  if (!result.ok) return res.status(400).json({ ...result, schedule: SEARCH_DEPOSIT_GBP });
+  res.json({ ...result, schedule: SEARCH_DEPOSIT_GBP });
+}));
+app.get('/api/account/:id/deposits', safe((req, res) => {
+  res.json({ deposits: listSearchDeposits(req.params.id), schedule: SEARCH_DEPOSIT_GBP });
+}));
+app.post('/api/deposits/:id/refund', safe((req, res) => {
+  const result = refundSearchDeposit(req.params.id);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+
+// ---- AI Cost Estimator (spec §3): the finance view of AI spend -------------
+app.get('/api/admin/ai-costs', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(aiCostReport());
+}));
+
 // Lightweight "login" — look up an existing account by email (prototype: no
 // password; a real build authenticates via Auth0/Firebase).
 app.post('/api/login', safe((req, res) => {
@@ -338,7 +370,7 @@ app.post('/api/plan', safe(async (req, res) => {
   const { text, searchTier, overrides, country, currencyCountry, preferences } = req.body || {};
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
-  let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {} });
+  let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, usage: usageStats(user?.id) });
 
   // Live provider pricing overlay: when flight/hotel provider keys are present
   // and reachable, fetch real offers and rebuild the packages from them. Any
@@ -390,6 +422,18 @@ app.post('/api/plan', safe(async (req, res) => {
       }
       result.acuCharged = cost;
       result.acuBalance = spend.balance;
+      // AI Cost Estimator: every funded (non-cached) search books its cost
+      // into the ai_request_costs ledger, attributed to the paying user.
+      recordAiRequestCost({
+        provider: 'anthropic', model: 'model-router',
+        agentName: `search:${searchTier}`,
+        estimatedTokens: cost * 120,
+        estimatedCostUSD: reqTier.aiCostUSD,
+        actualCostUSD: 0, // deterministic local engine — no external spend
+        mode: 'local-fallback',
+        userId: user.id,
+        searchId: result.intent?.destination?.code ? `${searchTier}:${result.intent.destination.code}` : null,
+      });
     }
   }
 
@@ -495,6 +539,12 @@ app.post('/api/book', safe((req, res) => {
   }
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null });
+  // Refundable search deposit (spec §6): a booking converts the user's active
+  // deposit — its value comes OFF the final payment, never double-charged.
+  if (user) {
+    const depositCredit = convertDepositToBooking(user.id, booking.id);
+    if (depositCredit) booking.depositCredit = depositCredit;
+  }
   recordBehaviour(user?.id, {
     event: 'book',
     destination: quote.intent?.destination?.code || null,

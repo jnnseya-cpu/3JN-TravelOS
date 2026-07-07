@@ -15,6 +15,7 @@
 // (see .env.example) to route to live providers.
 
 import { ACU_ACTIONS } from '../../shared/constants.js';
+import { recordAiRequestCost } from './store.js';
 
 const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 
@@ -88,6 +89,20 @@ export function checkAgentBudget(acuAction, spentThisSession = 0) {
   };
 }
 
+// ---- AI Cost Estimator (spec §3) -------------------------------------------
+// Blended USD per 1M tokens per provider (estimator inputs; the deterministic
+// local engine is free). Vertex is listed so Gemini-via-Vertex deployments
+// report under their own column.
+export const PROVIDER_TOKEN_RATES = { anthropic: 15, openai: 10, gemini: 7, vertex: 7, cohere: 5, local: 0 };
+// Deterministic request sizing: each metered ACU action expands to ~120 tokens
+// of routed work — enough to compare estimated vs actual spend meaningfully.
+export const TOKENS_PER_ACU = 120;
+export function estimateRequestCost(routeInfo) {
+  const estimatedTokens = Math.max(1, routeInfo.acu || 1) * TOKENS_PER_ACU;
+  const rate = PROVIDER_TOKEN_RATES[routeInfo.provider] ?? PROVIDER_TOKEN_RATES.anthropic;
+  return { estimatedTokens, estimatedCostUSD: Math.round((estimatedTokens / 1e6) * rate * 10000) / 10000 };
+}
+
 const DEFAULT_PROVIDER = env.AI_GATEWAY_DEFAULT_PROVIDER || 'anthropic';
 
 function hasKey(providerId) {
@@ -121,7 +136,7 @@ export function route(task) {
 //   localFn — deterministic fallback that produces the result offline
 // Returns { result, meta } where meta records the provider, model, acu and mode.
 // Never throws: a live-call failure degrades to localFn.
-export async function run({ task, payload, localFn, spentThisSession = 0 }) {
+export async function run({ task, payload, localFn, spentThisSession = 0, context = {} }) {
   const r = route(task);
   // Agent budget guard: once the per-agent ACU budget is reached, STOP and
   // ask for approval — never silently keep spending.
@@ -146,6 +161,24 @@ export async function run({ task, payload, localFn, spentThisSession = 0 }) {
     // Offline / fallback path — deterministic, always valid.
     result = typeof localFn === 'function' ? await localFn(payload) : null;
   }
+
+  // Book the request into the ai_request_costs ledger: what the routed call
+  // WOULD cost vs what it actually cost (local fallback = £0 actual).
+  const est = estimateRequestCost(r);
+  recordAiRequestCost({
+    provider: r.provider,
+    model: r.model,
+    agentName: task,
+    estimatedTokens: est.estimatedTokens,
+    estimatedCostUSD: est.estimatedCostUSD,
+    actualCostUSD: mode === 'live' ? est.estimatedCostUSD : 0,
+    mode,
+    userId: context.userId ?? null,
+    tripId: context.tripId ?? null,
+    searchId: context.searchId ?? null,
+    bookingId: context.bookingId ?? null,
+    orgId: context.orgId ?? null,
+  });
 
   return {
     result,
