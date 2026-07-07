@@ -290,6 +290,19 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 | **Supplier Contract Manager** | AI-negotiated volume agreements with airlines, hotels, car hire | Enterprise Admin |
 | **Analytics & Reporting** | Spend analytics, savings reports, policy compliance rates, traveller behaviour | Finance Admin + Enterprise |
 
+### 6.3 Admin & Operations Modules
+
+| Module | Key Features |
+|---|---|
+| **Super Admin Panel** | User management, system config, feature flags, global agent management, emergency controls |
+| **Revenue Control Centre** | MRR/ARR dashboard, ACU analytics, subscription cohorts, churn analysis, invoice management |
+| **Compliance Centre** | KYC queue, AML alerts, SAR management, GDPR requests, audit log viewer, regulatory reports |
+| **Dispute Centre** | Booking disputes, chargebacks, supplier issues — full resolution workflow |
+| **API Management Panel** | API key management, rate limit config, usage analytics, developer portal admin |
+| **Agent Configuration Centre** | Agent instructions, model selection, temperature settings, escalation rules, A/B testing |
+| **Platform Health Monitor** | Uptime, latency P99, error rates, agent queue depth, GDS connection status |
+| **Fraud Intelligence Panel** | Transaction scoring matrix, fraud ring detection, account review queue, block/unblock |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
