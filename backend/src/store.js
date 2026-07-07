@@ -10,6 +10,7 @@ import {
   effectiveRevshareRate, accrueRevshare, isValidAttribution, derivePartnerMetrics,
   AI_GROWTH_TOOLS, REFERRAL_ACU, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK,
 } from './rewards.js';
+import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -1315,6 +1316,72 @@ export function findUserBookingByRef(userId, ref) {
   if (!ref) return null;
   const r = String(ref).trim().toLowerCase();
   return bookingsForUser(userId).find((b) => b.id.toLowerCase() === r || (b.fulfilment?.pnr || '').toLowerCase() === r) || null;
+}
+
+// ---- Assistant booking-operator actions (quote → confirm → execute) --------
+// The AI Assistant does what a human operator does: it QUOTES a change, the
+// customer confirms, then it EXECUTES — applying the change, collecting the
+// extra, re-issuing the e-ticket, auditing and notifying. Nothing is charged
+// or changed without an explicit confirmation.
+export function operatorQuoteChange(bookingId, changes) {
+  const b = db.bookings.get(bookingId);
+  if (!b) return { ok: false, error: 'not-found' };
+  const q = quoteChange(b, changes, { todayISO: nowISO().slice(0, 10) });
+  if (!q.ok) return q;
+  b.pendingAction = { id: id('act'), kind: 'change', quote: q.quote, at: nowISO() };
+  return { ok: true, quote: q.quote, actionId: b.pendingAction.id };
+}
+export function operatorQuoteCancel(bookingId) {
+  const b = db.bookings.get(bookingId);
+  if (!b) return { ok: false, error: 'not-found' };
+  const q = quoteCancellation(b);
+  if (!q.ok) return q;
+  b.pendingAction = { id: id('act'), kind: 'cancel', quote: q.quote, at: nowISO() };
+  return { ok: true, quote: q.quote, actionId: b.pendingAction.id };
+}
+export function operatorHasPending(bookingId) {
+  return !!db.bookings.get(bookingId)?.pendingAction;
+}
+// Execute the confirmed pending action. Returns the outcome + updated booking.
+export function operatorConfirm(bookingId) {
+  const b = db.bookings.get(bookingId);
+  if (!b) return { ok: false, error: 'not-found' };
+  const pa = b.pendingAction;
+  if (!pa) return { ok: false, error: 'nothing-to-confirm' };
+
+  if (pa.kind === 'change') {
+    const summary = applyChange(b, pa.quote);
+    const extra = pa.quote.totalExtraGbp || 0;
+    if (extra > 0) {
+      b.payments.push({ type: 'change-charge', amount: extra, gateway: b.gateway, at: nowISO(), status: 'paid', note: summary.description });
+    }
+    // Re-issue: the ticket must be regenerated to reflect the change.
+    b.fulfilment = b.fulfilment || {};
+    b.fulfilment.ticketing = 'reissued';
+    b.fulfilment.reissuedAt = nowISO();
+    b.changeLog = b.changeLog || [];
+    b.changeLog.push({ ...summary, extraGbp: extra, deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
+    delete b.pendingAction;
+    recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.changed', entity: 'booking', entityId: b.id, summary: `${summary.description} · +£${extra}` });
+    if (b.userId) pushNotification(b.userId, { type: 'success', icon: '🔄', title: 'Booking updated', body: `We've ${summary.description}. ${extra > 0 ? `£${extra} change cost applied. ` : ''}Your updated e-ticket is ready in your Console.` });
+    return { ok: true, kind: 'change', summary, extraGbp: extra, hasDeferred: !!pa.quote.hasDeferred, booking: b };
+  }
+
+  if (pa.kind === 'cancel') {
+    const refund = pa.quote.refundGbp || 0;
+    b.status = 'cancelled';
+    b.cancelledAt = nowISO();
+    if (refund > 0) {
+      b.payments.push({ type: 'refund', amount: -refund, gateway: b.gateway, at: nowISO(), status: 'refunded' });
+    }
+    b.fulfilment = b.fulfilment || {};
+    b.fulfilment.ticketing = 'cancelled';
+    delete b.pendingAction;
+    recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.cancelled', entity: 'booking', entityId: b.id, summary: `refund £${refund} of £${pa.quote.paidGbp}` });
+    if (b.userId) pushNotification(b.userId, { type: 'info', icon: '🚫', title: 'Booking cancelled', body: `Your booking is cancelled. ${refund > 0 ? `A refund of £${refund} is being processed.` : 'This fare was non-refundable, so no refund is due.'}` });
+    return { ok: true, kind: 'cancel', refundGbp: refund, booking: b };
+  }
+  return { ok: false, error: 'unknown-action' };
 }
 
 // Admin / profitability snapshot.

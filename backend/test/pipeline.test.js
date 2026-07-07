@@ -2979,3 +2979,33 @@ test('admin can approve an influencer who has not formally applied yet', () => {
   recordPayment(b.id, { type: 'deposit', amount: 250 });
   assert.ok(Math.abs(partnerDashboard(ref.id).lifetimeEarningsGbp - 1) < 0.01, '1% revenue share accrues (£1 of £100 net)');
 });
+
+// ---- Assistant as booking operator (quote → confirm → execute) ------------
+test('assistant executes a date change with confirmation and charges the fee', () => {
+  const u = createUser({ email: 'opr@x.co', name: 'Operator Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 2 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  const quote = assist('change my flight date to 20 October 2027', u.id);
+  assert.ok(/CONFIRM/i.test(quote.reply) && /45/.test(quote.reply), 'quotes the change fee and asks to confirm');
+  const done = assist('confirm', u.id);
+  assert.equal(done.resolved, true);
+  assert.equal(b.option.components[0].details.outbound.date, '2027-10-20', 'date is actually changed');
+  assert.equal(b.fulfilment.ticketing, 'reissued', 'e-ticket re-issued');
+  assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 45), 'change fee charged');
+});
+
+test('assistant adds baggage on confirmation with the extra charge', () => {
+  const u = createUser({ email: 'opr2@x.co', name: 'Bag Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  assert.ok(/80/.test(assist('add 2 checked bags', u.id).reply), 'quotes 2 × £40');
+  assist('yes go ahead', u.id);
+  assert.ok(/added checked bag/i.test(b.option.components[0].details.baggage), 'baggage updated');
+  assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 80), '£80 charged');
+});
+
+test('assistant cancels with a policy-based refund quote', () => {
+  const u = createUser({ email: 'opr3@x.co', name: 'Cancel Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 500 } }, totalUSD: 635, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id, instalment: { deposit: 200, schedule: [{ due: '2027-01-01', amount: 200, status: 'paid' }] } });
+  assert.ok(/CONFIRM/i.test(assist('cancel my booking', u.id).reply), 'quotes cancellation and asks to confirm');
+  assist('confirm', u.id);
+  assert.equal(b.status, 'cancelled', 'booking is cancelled');
+});

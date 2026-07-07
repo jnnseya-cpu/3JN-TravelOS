@@ -118,7 +118,7 @@ function parseComponents(text) {
 // "17-24 August", "August 17 to 24". Returns {checkIn, checkOut, nights,
 // monthIndex} or null when no explicit date is present. DD/MM is assumed (the
 // platform is UK-first); a value > 12 in the first slot confirms it.
-function parseExplicitDates(text, today = new Date()) {
+export function parseExplicitDates(text, today = new Date()) {
   const baseYear = today.getUTCFullYear();
   const iso = (y, m, d) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
   const rollYear = (m) => (m < today.getUTCMonth() ? baseYear + 1 : baseYear);

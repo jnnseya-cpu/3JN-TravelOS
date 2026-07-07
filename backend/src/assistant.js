@@ -15,9 +15,11 @@ import { classifySupport } from './chatbot.js';
 import {
   getUserRaw, latestBookingForUser, bookingsForUser, findUserBookingByRef,
   acuWallet, partnerDashboard,
+  operatorQuoteChange, operatorQuoteCancel, operatorConfirm, operatorHasPending,
 } from './store.js';
 import { visaCheck } from './intelligence.js';
 import { resolveDestinationFromText } from './destinations.js';
+import { parseExplicitDates } from './intent.js';
 
 // ---- Deep system knowledge (facts the agent reasons from) ------------------
 // Also serialised as grounding context for the LLM path.
@@ -79,6 +81,37 @@ export function assist(message, userId) {
   const intent = classifySupport(message);
   const ctx = gatherContext(message, userId);
   const money = (n) => `${ctx.booking?.symbol || '£'}${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+
+  // ---- Operator actions: the assistant DOES what an operator does ----------
+  // 1) A confirmation of a previously-quoted change/cancel → execute it now.
+  if (ctx.booking && operatorHasPending(ctx.booking.id) && isConfirmation(message)) {
+    const r = operatorConfirm(ctx.booking.id);
+    if (r.ok && r.kind === 'change') {
+      return mkResult(intent.key, `Done — I've ${r.summary.description}.${r.extraGbp > 0 ? ` The ${money(r.extraGbp)} change cost has been applied.` : ''}${r.hasDeferred ? ' Any airline fare difference is confirmed with the carrier at re-issue.' : ''} Your updated e-ticket is ready in your Console (🎫 View e-ticket).`, ctx, { resolved: true });
+    }
+    if (r.ok && r.kind === 'cancel') {
+      return mkResult(intent.key, `Your booking is cancelled.${r.refundGbp > 0 ? ` A refund of ${money(r.refundGbp)} is being processed to your original payment method.` : ' This fare was non-refundable, so no refund is due.'}`, ctx, { resolved: true });
+    }
+    return mkResult(intent.key, 'I couldn’t complete that just now — I’m passing it to a specialist to finish safely.', ctx, { escalate: true, reason: 'operator action failed' });
+  }
+  // 2) A NEW change request → parse it, quote it, and ask to confirm.
+  if (ctx.booking && intent.key === 'change') {
+    const changes = parseChange(message);
+    if (changes) {
+      const q = operatorQuoteChange(ctx.booking.id, changes);
+      if (q.ok) {
+        const items = q.quote.lines.map((l) => `• ${l.label}: ${l.deferred ? 'confirmed at re-issue' : money(l.amountGbp)}`).join('\n');
+        return mkResult('change', `I can ${q.quote.description} on booking ${ctx.booking.id}. Here's the cost:\n${items}\n**Total now: ${money(q.quote.totalExtraGbp)}${q.quote.hasDeferred ? ' + any airline fare difference' : ''}.** Reply **CONFIRM** and I'll make the change and re-issue your e-ticket.`, ctx, { resolved: true });
+      }
+    }
+  }
+  // 3) A cancellation → quote the refund and ask to confirm (operator self-serve).
+  if (ctx.booking && intent.key === 'cancel') {
+    const q = operatorQuoteCancel(ctx.booking.id);
+    if (q.ok) {
+      return mkResult('cancel', `I can cancel booking ${ctx.booking.id}. You've paid ${money(q.quote.paidGbp)}; per the fare rules ${q.quote.refundablePct}% is refundable, so you'd get back **${money(q.quote.refundGbp)}**${q.quote.nonRefundableGbp > 0 ? ` (${money(q.quote.nonRefundableGbp)} non-refundable)` : ''}. Reply **CONFIRM** to cancel, or tell me if you'd rather change the dates instead.`, ctx, { resolved: true });
+    }
+  }
 
   // Intents that ALWAYS need a human (authorised action / duty of care), but we
   // still resolve everything we can and attach it to the escalation.
@@ -180,6 +213,30 @@ export function assist(message, userId) {
 }
 
 // ---- helpers --------------------------------------------------------------
+// Build the standard assist() result (used by the operator-action fast paths).
+function mkResult(intentKey, text, ctx, { resolved = false, escalate = false, reason = null, diagnostic = null } = {}) {
+  return { intent: intentKey, reply: text, resolved, escalate, reason, context: ctx, diagnostic };
+}
+// Is the customer confirming a previously-quoted action?
+function isConfirmation(message) {
+  return /\b(confirm|confirmed|yes(\s*,?\s*(please|go ahead|proceed|do it))?|go ahead|proceed|do it|approve|accept)\b/i.test(String(message || '')) && !/\b(no|don'?t|cancel that|stop)\b/i.test(String(message || ''));
+}
+// Parse a change request into a structured change. Returns null if unclear.
+function parseChange(message) {
+  const t = String(message || '');
+  // Add checked baggage.
+  const bagM = t.match(/\b(?:add|extra|another|more)\b[^.]*\bbag(?:gage|s)?\b/i) || t.match(/\bbaggage\b/i);
+  if (bagM) { const n = (t.match(/\b(\d+)\s*(?:bag|checked)/i) || [])[1]; return { kind: 'baggage', bags: Math.max(1, Number(n) || 1) }; }
+  // Add a passenger/traveller.
+  const paxM = t.match(/\b(?:add|extra|another)\b[^.]*\b(passenger|traveller|traveler|person|adult|child)\b/i);
+  if (paxM) { const n = (t.match(/\b(\d+)\s*(?:passenger|traveller|traveler|person|adult|child)/i) || [])[1]; return { kind: 'passenger', passengers: Math.max(1, Number(n) || 1) }; }
+  // Change the travel date.
+  if (/\b(change|move|reschedul|shift|new date|different date|bring forward|push back)\b/i.test(t)) {
+    const dates = safe(() => parseExplicitDates(t, new Date()));
+    if (dates?.checkIn) return { kind: 'date', newDate: dates.checkIn, newReturnDate: dates.checkOut || null };
+  }
+  return null;
+}
 function extractRef(message) {
   const m = String(message || '').match(/\b((?:bkg|bk|qr)_[a-z0-9]+|[A-Z0-9]{5,7})\b/i);
   return m ? m[1] : null;
