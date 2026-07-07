@@ -871,6 +871,13 @@ window.openBooking = async (tier) => {
       </div>
       <div class="muted" style="font-size:11px;margin-top:4px">Sent to the airline / operator with your booking (SSR codes).</div>
     </div>
+    ${(state.lastQuote?.option?.components || []).some((c) => c.type === 'hotel' || c.type === 'host') ? `
+    <div style="margin-top:12px"><span class="eyebrow">Hotel special requests</span>
+      <div class="chips" style="margin-top:6px" id="bkHotelSSR">
+        ${['Early check-in', 'Late check-out', 'Airport transfer', 'Accessible room', 'Baby cot', 'Connecting rooms', 'Honeymoon setup', 'Anniversary setup', 'Birthday package', 'High floor', 'Low floor', 'Quiet room'].map((o) => `<span class="chip" style="cursor:pointer" data-ssr="${o}" onclick="this.classList.toggle('chip-on');this.style.borderColor=this.classList.contains('chip-on')?'var(--gold)':'';this.style.color=this.classList.contains('chip-on')?'var(--gold)':''">${o}</span>`).join('')}
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Passed to the property with your reservation (subject to availability).</div>
+    </div>` : ''}
 
     <div class="field" style="margin-top:14px">
       <label>Payment method</label>
@@ -909,6 +916,7 @@ window.confirmBooking = async () => {
     lead.idNumber = $('#bkIdNum').value.trim();
   }
   const specialRequests = [...document.querySelectorAll('#bkSSR .chip-on')].map((c) => c.dataset.ssr);
+  const hotelRequests = [...document.querySelectorAll('#bkHotelSSR .chip-on')].map((c) => c.dataset.ssr);
   const payment = { cardHolder: $('#payHolder')?.value.trim() || '', billingAddress: $('#payBilling')?.value.trim() || '' };
   // Validate traveller + documents (+ entry rules for international) BEFORE pay.
   const vbox = $('#bkValidate');
@@ -939,7 +947,7 @@ window.confirmBooking = async () => {
   }
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, payment, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();

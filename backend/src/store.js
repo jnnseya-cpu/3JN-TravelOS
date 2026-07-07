@@ -609,7 +609,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], payment = null }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null }) {
   const bookingId = id('bkg');
   const gateway = GATEWAY[paymentMethod] || 'stripe';
   const booking = {
@@ -618,6 +618,8 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     userId: userId || null,
     // Airline/operator special service requests (wheelchair, meals, pets…).
     specialRequests: (Array.isArray(specialRequests) ? specialRequests : []).map((x) => String(x).slice(0, 40)).slice(0, 17),
+    // Property special requests (early check-in, cot, quiet room…).
+    hotelRequests: (Array.isArray(hotelRequests) ? hotelRequests : []).map((x) => String(x).slice(0, 40)).slice(0, 12),
     // Payment context (never card numbers — those stay on the PSP page).
     payment: payment ? { cardHolder: String(payment.cardHolder || '').slice(0, 80), billingAddress: String(payment.billingAddress || '').slice(0, 160) } : null,
     // Post-booking fulfilment record (PNR, e-ticket, locators, rules).
