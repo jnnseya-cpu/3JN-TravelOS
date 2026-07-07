@@ -1778,3 +1778,30 @@ test('search cache: fresh results cached; free tier serves from the database', (
   assert.equal(cached.cached, true, 'free tier answered from the database');
   assert.equal(cached.packages.options.length, fresh.packages.options.length);
 });
+
+// ---- Admin complimentary Elite ×2 (max 5 accounts) ---------------------------
+import { grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT } from '../src/store.js';
+
+test('comp elite: admin grants free Elite x2 (1,000 ACU/mo), capped at 5', () => {
+  const admin = createUser({ name: 'The Admin', email: 'theadmin@3jn.example' });
+  updateUser(admin.id, { role: 'admin' });
+  const nobody = createUser({ name: 'Nobody', email: 'nobody@x.example' });
+  // Non-admin cannot grant.
+  assert.equal(grantComplimentaryElite(nobody.id, 'x@x.example').error, 'forbidden');
+  // Grant to five accounts — each gets Elite at 2x, free.
+  for (let i = 1; i <= COMP_ELITE_LIMIT; i++) {
+    const friend = createUser({ name: `VIP ${i}`, email: `vip${i}@x.example` });
+    const r = grantComplimentaryElite(admin.id, friend.email);
+    assert.equal(r.ok, true, `slot ${i}`);
+    assert.equal(r.user.membership.pricePerMonth, 0, 'free');
+    assert.equal(r.user.membership.acuPerMonth, 1000, '2x Elite ACU');
+    assert.equal(r.user.membership.complimentary, true);
+    assert.ok(r.user.acuBalance >= 1000, 'first month credited');
+  }
+  assert.equal(compEliteCount(), 5);
+  // The sixth grant is refused — hard cap.
+  const sixth = createUser({ name: 'VIP 6', email: 'vip6@x.example' });
+  assert.equal(grantComplimentaryElite(admin.id, sixth.email).error, 'limit-reached');
+  // Double-grant refused.
+  assert.equal(grantComplimentaryElite(admin.id, 'vip1@x.example').error, 'already-granted');
+});

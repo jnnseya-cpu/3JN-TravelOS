@@ -1148,3 +1148,38 @@ export function getCachedSearch(key) {
 export function searchCacheStats() {
   return { entries: db.searchCache.size };
 }
+
+// ---- Admin-granted complimentary Elite (2×) ------------------------------------
+// The platform admin can gift up to FIVE free accounts running Travel+ Elite at
+// DOUBLE strength: £0/month, 1,000 ACU auto-funded monthly (2× Elite's 500),
+// every Elite feature, est. savings £10,000+/yr. Capped hard at 5 grants.
+export const COMP_ELITE_LIMIT = 5;
+export function compEliteCount() {
+  return [...db.users.values()].filter((u) => u.membership?.complimentary).length;
+}
+export function grantComplimentaryElite(adminId, targetEmail) {
+  const admin = adminId ? db.users.get(adminId) : null;
+  if (!admin || !(admin.allAccess || admin.role === 'admin')) return { ok: false, error: 'forbidden', message: 'Only an admin can grant complimentary Elite.' };
+  const target = [...db.users.values()].find((u) => u.email === String(targetEmail || '').trim().toLowerCase())
+    || [...db.users.values()].find((u) => u.email === String(targetEmail || '').trim());
+  if (!target) return { ok: false, error: 'user-not-found', message: 'No account with that email — they must sign up first.' };
+  if (target.membership?.complimentary) return { ok: false, error: 'already-granted', message: `${target.name} already holds complimentary Elite.` };
+  if (compEliteCount() >= COMP_ELITE_LIMIT) return { ok: false, error: 'limit-reached', message: `All ${COMP_ELITE_LIMIT} complimentary Elite slots are taken.` };
+  const elite = MEMBERSHIP_TIERS.find((t) => t.key === 'elite');
+  const now = Date.now();
+  target.membership = {
+    tier: 'elite',
+    name: 'Travel+ Elite ×2 (complimentary)',
+    pricePerMonth: 0,
+    acuPerMonth: elite.acuPerMonth * 2, // 2× — 1,000 ACU/month
+    active: true,
+    complimentary: true,
+    grantedBy: admin.id,
+    startedAt: new Date(now).toISOString(),
+    renewsAt: new Date(now + 30 * 24 * 3600 * 1000).toISOString(),
+  };
+  creditAcu(target.id, elite.acuPerMonth * 2, 'membership:elite-comp:initial');
+  pushNotification(target.id, { type: 'success', icon: '👑', title: 'Elite — on the house', body: `You've been granted Travel+ Elite ×2 free: 1,000 ACU/month, private aviation access, guaranteed upgrades, 24/7 risk mitigation.` });
+  recordAudit({ actor: admin.id, role: 'admin', action: 'membership.comp-elite.granted', entity: 'user', entityId: target.id, summary: `${target.email} · slot ${compEliteCount()}/${COMP_ELITE_LIMIT}` });
+  return { ok: true, user: publicUser(target), slotsUsed: compEliteCount(), slotsLeft: COMP_ELITE_LIMIT - compEliteCount() };
+}
