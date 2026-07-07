@@ -705,6 +705,10 @@ function optionCard(o, sym, intent) {
         ? ' <span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">⭐ Direct</span>'
         : ` <span class="ch-chip">${esc(c.details.outbound.stopLabel || '1 stop')}</span>`)
       : '';
+    // Baggage allowance chip on flights — visible without expanding "ⓘ more".
+    const bagTag = c.type === 'flight' && c.details?.baggage
+      ? ` <span class="ch-chip" style="color:var(--blue-bright);border-color:rgba(78,161,255,0.3)" title="Baggage allowance included in this fare">🧳 ${esc(c.details.baggage)}</span>`
+      : '';
     // Hotel/host rating chip: star class + guest score out of 10 with review count.
     const ratingTag = (c.type === 'hotel' || c.type === 'host')
       ? `${c.stars ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">${'★'.repeat(c.stars)}</span>` : ''}${c.details?.guestRating ? ` <span class="ch-chip" title="${(c.details.reviews || 0).toLocaleString()} verified reviews">${c.details.guestRating}/10</span>` : ''}`
@@ -725,7 +729,7 @@ function optionCard(o, sym, intent) {
       ? `${c.details?.nights ? ` <span class="ch-chip">${c.details.nights} night${c.details.nights > 1 ? 's' : ''}</span>` : ''}${c.details?.cabin ? ` <span class="ch-chip">${esc(c.details.cabin.split('·')[0].trim())}</span>` : ''}${c.details?.travelClass ? ` <span class="ch-chip">${esc(c.details.travelClass)}</span>` : ''}`
       : (c.type === 'esim' && c.details?.planLabel ? ` <span class="ch-chip">${esc(c.details.planLabel)}</span>` : '');
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${legTag}${partyTag}${groupStayTag}${flightTag}${ratingTag}${modeTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">

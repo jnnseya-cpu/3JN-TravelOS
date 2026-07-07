@@ -148,6 +148,22 @@ function sliceToLeg(slice) {
   };
 }
 
+// Read the REAL baggage allowance a Duffel offer includes (per passenger, per
+// segment). Duffel returns baggages as [{type:'checked'|'carry_on', quantity}].
+// Produces a clear, human string; falls back to a cabin-only note when the fare
+// includes no checked bag, or a generic line if the data is absent.
+export function duffelBaggageLabel(offer) {
+  const seg = offer?.slices?.[0]?.segments?.[0];
+  const bags = seg?.passengers?.[0]?.baggages;
+  if (!Array.isArray(bags) || !bags.length) return 'Cabin bag included · checked bags per fare rules';
+  const checked = bags.filter((b) => b.type === 'checked').reduce((s, b) => s + (Number(b.quantity) || 0), 0);
+  const carry = bags.filter((b) => b.type === 'carry_on').reduce((s, b) => s + (Number(b.quantity) || 0), 0);
+  const parts = [];
+  parts.push(carry > 0 ? `${carry} cabin bag${carry > 1 ? 's' : ''}` : 'Cabin bag');
+  parts.push(checked > 0 ? `${checked} checked bag${checked > 1 ? 's' : ''} included` : 'no checked bag (add at booking)');
+  return parts.join(' + ');
+}
+
 // Normalise one Duffel offer to our flight-offer shape. Returns null if the
 // offer is unusable. `priceUSD` is pre-converted by the caller.
 export function normalizeDuffelOffer(offer, priceUSD, travellers) {
@@ -169,7 +185,7 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       outbound, inbound,
       passengers: travellers.total,
       cabin: offer.slices?.[0]?.segments?.[0]?.passengers?.[0]?.cabin_class_marketing_name || 'Economy',
-      baggage: 'As per fare rules',
+      baggage: duffelBaggageLabel(offer),
       offerId: offer.id,
       // Real-money safety: a Duffel offer is only ticketable until it expires,
       // and can reprice. Store both so payment can RE-VALIDATE before charging.
@@ -612,7 +628,7 @@ export async function fetchOagFlights(intent, dest, origin) {
         inbound: inLeg ? { ...inLeg, perSeatUSD: fares.inboundPerSeat } : null,
         passengers: intent.travellers.total,
         cabin: 'Economy',
-        baggage: 'As per fare rules',
+        baggage: premium ? '2 × 30kg checked + cabin' : '1 × 23kg checked + cabin',
         fareBreakdown: fares.fareCounts,
         fareUnits: fares.fareUnits,
         adultFareUSD: fares.totalPerSeat,
