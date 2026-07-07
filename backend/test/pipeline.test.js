@@ -1819,3 +1819,22 @@ test('savings share: free below £100 saved; 10% above (£250 saved → £25)', 
   // Booking commission still applies in both cases.
   assert.ok(small.lines.commissionUSD > 0 && big.lines.commissionUSD > 0);
 });
+
+// ---- Account types: consulate + fully dressed seeds + access levels ----------
+import { ROLES, ACCESS_LEVELS } from '../src/store.js';
+
+test('accounts: consulate role exists; every seeded type fully dressed', () => {
+  assert.ok(ROLES.includes('consulate'), 'consulate account type');
+  assert.ok(ACCESS_LEVELS.consulate.some((a) => /eVisa decisions/i.test(a)));
+  const seeded = seedAllRoles();
+  assert.equal(seeded.length, 7, 'admin, business, merchant, partner, consumer, embassy, consulate');
+  for (const u of seeded) {
+    assert.ok(u.avatar && String(u.avatar).length > 0, `${u.role}: profile picture (emoji or image)`);
+    assert.ok(u.coverImage && u.coverImage.startsWith('data:image/svg'), `${u.role}: cover picture`);
+    assert.ok(u.travelProfile.fullLegalName && u.travelProfile.passportNumber && u.travelProfile.residentialAddress, `${u.role}: required details set`);
+    assert.ok(Array.isArray(u.accessLevel) && u.accessLevel.length > 0, `${u.role}: access level set`);
+  }
+  const consulate = seeded.find((u) => u.role === 'consulate');
+  assert.match(consulate.email, /consulate@/);
+  assert.ok(consulate.accessLevel.some((a) => /consular caseload/i.test(a)));
+});

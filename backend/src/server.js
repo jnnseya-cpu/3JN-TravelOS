@@ -601,17 +601,17 @@ app.get('/api/visaos/my-applications', safe((req, res) => {
 
 // ---- Embassy / Government workspace (embassy or admin only) ----------------
 app.get('/api/visaos/applications', safe((req, res) => {
-  if (!requireRole(req, res, ['embassy', 'admin'])) return;
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
   res.json({ applications: listVisaApplications() });
 }));
 app.get('/api/visaos/applications/:id', safe((req, res) => {
-  if (!requireRole(req, res, ['embassy', 'admin'])) return;
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
   const app = getVisaApplication(req.params.id);
   if (!app) return res.status(404).json({ error: 'not-found' });
   res.json({ application: app });
 }));
 app.post('/api/visaos/applications/:id/decide', safe((req, res) => {
-  if (!requireRole(req, res, ['embassy', 'admin'])) return;
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
   const { decision, reason } = req.body || {};
   const result = decideVisaApplication(req.params.id, { decision, reason, officerId: currentUser(req)?.id });
   if (!result.ok) return res.status(400).json(result);
