@@ -24,7 +24,7 @@ import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
 import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
-import { visaFramework, buildChecklist, assessApplication } from '../src/visa-framework.js';
+import { visaFramework, buildChecklist, assessApplication, validateApplicant, redactApplicant, requiredFieldsFor, CORE_DOCUMENTS } from '../src/visa-framework.js';
 import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } from '../src/booking-schema.js';
 import { architecture as commsArchitecture, emit as commsEmit, renderEmail as commsRenderEmail, EVENTS as COMMS_EVENTS } from '../src/comms.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
@@ -927,4 +927,87 @@ test('behavioural learning: different regions get different default destinations
   const b = journeyDashboard(null, { country: 'IN', countryName: 'India', currency: { code: 'INR', symbol: '₹', rateFromUSD: 83 } });
   // Region-derived defaults are deterministic; at least one differs from Dubai.
   assert.ok([a.destination.code, b.destination.code].some((c) => c !== 'DXB'));
+});
+
+// ---- Visa framework: field governance, validation, redaction ---------------
+test('visa framework: per-country required sets (UK history, US social handles)', () => {
+  const base = requiredFieldsFor(null, {});
+  assert.ok(base.includes('fullName') && base.includes('passportNumber'));
+  assert.ok(!base.includes('travelHistory') && !base.includes('socialHandles'));
+  assert.ok(requiredFieldsFor('GB', {}).includes('travelHistory'), 'UK requires 10-year travel history');
+  assert.ok(requiredFieldsFor('GB', {}).includes('employer'), 'UK requires employer details');
+  assert.ok(requiredFieldsFor('US', {}).includes('socialHandles'), 'US requires social identifiers');
+});
+
+test('visa framework: declarations force detail fields + sponsor conditional', () => {
+  const declared = requiredFieldsFor(null, { criminalHistory: 'Yes — declared', previousRefusals: 'Yes — declared', overstayHistory: 'Yes — declared' });
+  assert.ok(declared.includes('criminalHistoryDetails'));
+  assert.ok(declared.includes('previousRefusalsDetails'));
+  assert.ok(declared.includes('overstayDetails'));
+  assert.ok(requiredFieldsFor(null, { fundingSource: 'Sponsor' }).includes('sponsorDetails'));
+});
+
+test('visa framework: validateApplicant catches missing + bad formats', () => {
+  const r = validateApplicant({ fullName: 'A. Person', email: 'not-an-email', passportExpiry: '2019-01-01' }, 'GB');
+  assert.equal(r.valid, false);
+  assert.ok(r.missing.includes('travelHistory'));
+  assert.ok(r.errors.some((e) => e.field === 'email'));
+  assert.ok(r.errors.some((e) => e.field === 'passportExpiry' && /expired/i.test(e.message)));
+  assert.ok(r.completeness >= 0 && r.completeness < 100);
+});
+
+test('visa framework: complete applicant validates at 100%', () => {
+  const app = {
+    fullName: 'Amara Okafor', dob: '1990-04-12', placeOfBirth: 'Lagos', nationality: 'NG',
+    passportNumber: 'A01234567', passportIssue: '2021-01-01', passportExpiry: '2031-01-01',
+    address: '14 Marina Rd, Lagos', email: 'amara@example.com', occupation: 'Nurse',
+    employer: 'Lagos General Hospital', travelHistory: 'Ghana 2022; Kenya 2023',
+    arrival: '2027-08-01', departure: '2027-08-14',
+  };
+  const r = validateApplicant(app, 'GB');
+  assert.equal(r.valid, true, JSON.stringify(r.errors));
+  assert.equal(r.completeness, 100);
+});
+
+test('visa framework: redaction masks restricted, truncates confidential', () => {
+  const red = redactApplicant({
+    fullName: 'Amara Okafor', passportNumber: 'A01234567',
+    criminalHistory: 'Yes — declared', criminalHistoryDetails: 'sensitive',
+  });
+  assert.equal(red.criminalHistory, '‹restricted›');
+  assert.equal(red.criminalHistoryDetails, '‹restricted›');
+  assert.ok(String(red.passportNumber).startsWith('••••'));
+  assert.equal(red.fullName, 'Amara Okafor');
+});
+
+test('visa framework: core checklist covers the global default set + conditionals', () => {
+  assert.ok(CORE_DOCUMENTS.some((d) => /payslips/i.test(d)));
+  assert.ok(CORE_DOCUMENTS.some((d) => /tax returns/i.test(d)));
+  assert.ok(CORE_DOCUMENTS.some((d) => /property|assets/i.test(d)));
+  assert.ok(CORE_DOCUMENTS.some((d) => /family ties/i.test(d)));
+  assert.ok(CORE_DOCUMENTS.some((d) => /10 years|≤10/i.test(d)), 'Schengen ≤10y passport rule surfaced');
+  // Sponsor-funded → sponsor evidence appears in the profile-conditional section.
+  const cl = buildChecklist({ country: 'GB', visaType: 'tourist', applicant: { fundingSource: 'Sponsor', occupation: 'Student', dob: '2012-05-01' } });
+  const cond = cl.sections.find((s) => /profile/i.test(s.title));
+  assert.ok(cond, 'conditional section present');
+  assert.ok(cond.items.some((i) => /Sponsor ID/i.test(i)));
+  assert.ok(cond.items.some((i) => /Student enrolment/i.test(i)));
+  assert.ok(cond.items.some((i) => /Parental consent/i.test(i)));
+});
+
+test('visa framework: declared-but-undetailed history drives Request more info', () => {
+  // A declaration with no details is critical → downgrade to Request more info.
+  const file = assessApplication({
+    applicant: { fullName: 'X', nationality: 'NG', criminalHistory: 'Yes — declared' },
+    country: 'GB', visaType: 'tourist',
+  });
+  assert.ok(file.applicantValidation.missing.includes('criminalHistoryDetails'));
+  assert.equal(file.recommendation, 'Request more info');
+  // Base-profile gaps are surfaced report-only and do NOT force a downgrade.
+  const clean = assessApplication({
+    applicant: { fullName: 'Jane Doe', nationality: 'GB', age: 34, monthlyIncome: 4000, purpose: 'tourism', homeTies: 'strong' },
+    country: 'AE', visaType: 'tourist',
+  });
+  assert.ok(clean.applicantValidation.missing.length > 0, 'completeness gaps reported');
+  assert.equal(clean.recommendation, 'Approve');
 });
