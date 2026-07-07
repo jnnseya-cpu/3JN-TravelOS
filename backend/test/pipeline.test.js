@@ -523,10 +523,13 @@ test('Dubai land products are sourced via the Rayna Tours agent account at net r
     searchTier: 'smart',
   });
   const std = result.packages.options.find((o) => o.tier === 'Standard');
-  const visa = std.components.find((c) => c.type === 'visa');
-  assert.equal(visa.sourcedVia, 'Rayna Tours');
-  assert.equal(visa.agent, true);
-  assert.ok(visa.priceUSD < visa.publicPriceUSD, 'agent net rate is below public price');
+  // A British passport is visa-free (VoA) for the UAE, so there is no visa
+  // component; the Rayna agent account instead sources the land products
+  // (transfers/activities). Verify Rayna net-rate sourcing on those.
+  const land = std.components.find((c) => (c.type === 'transfer' || c.type === 'activities') && c.sourcedVia === 'Rayna Tours');
+  assert.ok(land, 'Dubai land products are sourced via Rayna Tours');
+  assert.equal(land.agent, true);
+  assert.ok(land.priceUSD < land.publicPriceUSD, 'agent net rate is below public price');
   // Direct flights are a privilege: when a non-stop exists, the package picks it.
   const flight = std.components.find((c) => c.type === 'flight');
   assert.equal(flight.details.outbound.stops, 0, 'prefers a direct outbound when available');
@@ -606,8 +609,10 @@ test('BitriPay payment links create, settle and net out the gateway fee', () => 
 test('visa centre returns eligibility + checklist by nationality', () => {
   const gbDubai = visaCheck('GB', 'Dubai');
   assert.equal(gbDubai.ok, true);
-  assert.equal(gbDubai.required, true);
-  assert.ok(gbDubai.checklist.length > 0);
+  assert.equal(gbDubai.required, false); // British passport = free visa-on-arrival for the UAE
+  const ngDubai = visaCheck('NG', 'Dubai');
+  assert.equal(ngDubai.required, true); // Nigerian passport needs a pre-arranged eVisa
+  assert.ok(ngDubai.checklist.length > 0);
   const gbIstanbul = visaCheck('GB', 'Istanbul');
   assert.equal(gbIstanbul.required, false); // visa-free for GB
 });

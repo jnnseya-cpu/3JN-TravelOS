@@ -505,8 +505,14 @@ export function scanActivities(intent, dest) {
 }
 
 // --- Visa ------------------------------------------------------------------
+// Returns a bookable visa component ONLY when the traveller's nationality
+// actually needs a visa for the destination. Visa-free / visa-on-arrival
+// nationalities (e.g. a British passport into the UAE) get NO paid visa
+// component — the visa-free status is surfaced separately as reassurance, never
+// as a service to buy. Returns null when no visa is required.
 export function scanVisa(intent, dest) {
   const rule = visaRule(dest, intent.nationality);
+  if (!rule || rule.required === false) return null;
   const people = intent.travellers.total;
   return {
     type: 'visa',
@@ -881,7 +887,7 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
     delete scan[backMode === 'flights' ? 'flights' : backMode];
   }
   if (wanted.has('activities')) scan.activities = scanActivities(intent, dest);
-  if (wanted.has('visa')) scan.visa = [scanVisa(intent, dest)];
+  if (wanted.has('visa')) { const v = scanVisa(intent, dest); scan.visa = v ? [v] : []; }
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);
   if (wanted.has('transfer')) scan.transfer = scanTransfers(intent, dest);
   if (wanted.has('carhire')) scan.carhire = scanCarHire(intent, dest);

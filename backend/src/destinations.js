@@ -18,9 +18,10 @@ export const DESTINATIONS = {
     carDayBaseUSD: 45,
     aliases: ['dubai', 'dxb', 'united arab emirates', 'uae'],
     visa: {
-      // by traveller nationality (ISO country)
-      GB: { required: true, type: 'eVisa (30-day tourist)', costUSD: 95, processingDays: 4 },
-      US: { required: true, type: 'eVisa (30-day tourist)', costUSD: 95, processingDays: 4 },
+      // by traveller nationality (ISO country). UAE grants a FREE visa-on-arrival
+      // to UK/US/EU passport holders — they do not book a visa.
+      GB: { required: false, type: 'Visa on arrival (free, 30 days)', costUSD: 0, processingDays: 0 },
+      US: { required: false, type: 'Visa on arrival (free, 30 days)', costUSD: 0, processingDays: 0 },
       NG: { required: true, type: 'eVisa (30-day tourist)', costUSD: 120, processingDays: 6 },
       IN: { required: true, type: 'eVisa (30-day tourist)', costUSD: 95, processingDays: 5 },
       DEFAULT: { required: true, type: 'eVisa (30-day tourist)', costUSD: 110, processingDays: 5 },

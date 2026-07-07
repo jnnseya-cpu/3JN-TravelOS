@@ -70,12 +70,18 @@ export function detectContext(req, overrides = {}) {
   };
 }
 
+// One entry PER CURRENCY (not per country) — several countries share a currency
+// (FR/DE/ES all use EUR), which previously listed the Euro three times. Dedupe
+// by currency code, keeping the first country as the representative.
 export function listCurrencies() {
-  return Object.entries(CURRENCY_BY_COUNTRY).map(([country, c]) => ({
-    country,
-    countryName: COUNTRY_NAMES[country],
-    ...c,
-  }));
+  const seen = new Set();
+  const out = [];
+  for (const [country, c] of Object.entries(CURRENCY_BY_COUNTRY)) {
+    if (seen.has(c.code)) continue;
+    seen.add(c.code);
+    out.push({ country, countryName: COUNTRY_NAMES[country], ...c });
+  }
+  return out;
 }
 
 export { CURRENCY_BY_COUNTRY, COUNTRY_NAMES };
