@@ -280,6 +280,16 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 | **Document Vault** | E-ticket, vouchers, insurance certificates, visa approvals — encrypted storage | Chief of Staff Agent | GCP Cloud Storage + AES-256 |
 | **Referral & Rewards** | Referral tracking, reward crediting, social sharing engine | Revenue Agent | NestJS + custom referral engine |
 
+### 6.2 Business & Enterprise Modules
+
+| Module | Key Features | Access Level |
+|---|---|---|
+| **Business Travel Portal** | Multi-traveller management, policy setup, approval workflows, team itinerary mesh | Business Admin |
+| **Expense Intelligence** | Real-time categorisation, export to Xero/QuickBooks/SAP, receipt capture | Executive + Enterprise |
+| **Duty of Care Centre** | Live employee location, emergency contacts, crisis protocol automation | Enterprise Admin |
+| **Supplier Contract Manager** | AI-negotiated volume agreements with airlines, hotels, car hire | Enterprise Admin |
+| **Analytics & Reporting** | Spend analytics, savings reports, policy compliance rates, traveller behaviour | Finance Admin + Enterprise |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
