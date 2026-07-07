@@ -171,10 +171,10 @@ const STEPS = [
 ];
 
 const LOYALTY = [
-  ['Explorer', '0 pts', '2% discount'],
-  ['Voyager', '1,000 pts', '5% discount'],
-  ['Nomad', '5,000 pts', '8% discount'],
-  ['Elite', '15,000 pts', '12% discount + priority verification'],
+  ['Explorer', '0 pts', '0% discount'],
+  ['Voyager', '1,000 pts', '3% discount'],
+  ['Nomad', '5,000 pts', '6% discount'],
+  ['Elite', '15,000 pts', '10% discount + priority verification'],
 ];
 
 function renderStatic() {
@@ -2331,14 +2331,49 @@ function applyRoleVisibility() {
 
 function setUser(u) {
   state.user = u;
+  // Compact account chip: avatar + first name only — everything else lives in
+  // the dropdown, so the top bar never overflows when signed in.
   const chip = $('#userChip');
   chip.classList.remove('hidden');
-  chip.innerHTML = `${avatarHTML(u, 22)} ${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
+  chip.classList.add('account-chip');
+  const firstName = (u.name || 'Account').split(' ')[0];
+  chip.title = `${u.name} · ${u.tier} · ${u.points.toLocaleString()} pts`;
+  chip.innerHTML = `${avatarHTML(u, 22)} ${esc(firstName)} <span class="caret">▾</span>`;
+  chip.onclick = (e) => { e.stopPropagation(); toggleAccountMenu(); };
   try { localStorage.setItem('3jn_uid', u.id); } catch {}
-  const signBtn = $('#signBtn'); if (signBtn) signBtn.textContent = 'Sign out';
+  // Signed in: Sign in + Full Access buttons disappear (sign-out moves into
+  // the account menu); the bar keeps only chip · bell · CTA.
+  $('#signBtn')?.classList.add('hidden');
+  $('#testAccountBtn')?.classList.add('hidden');
   applyRoleVisibility();
   refreshNotifications();
 }
+
+function toggleAccountMenu() {
+  const existing = $('#accountMenu');
+  if (existing) { existing.remove(); return; }
+  const u = state.user;
+  if (!u) return;
+  const can = (roles) => u.allAccess || roles.includes(u.role);
+  const item = (icon, label, fn) => `<div class="am-item" onclick="${fn}">${icon} ${label}</div>`;
+  const menu = document.createElement('div');
+  menu.id = 'accountMenu';
+  menu.className = 'account-menu';
+  menu.innerHTML = `
+    <div class="am-head">${avatarHTML(u, 34)}<div><div class="am-name">${esc(u.name)}</div>
+      <div class="am-sub">${esc(u.tier)} · ${u.points.toLocaleString()} pts${u.membership?.active ? ' · ' + esc(u.membership.name) : ''}</div></div></div>
+    ${item('🧭', 'My Console', "closeAccountMenu();nav('console')")}
+    ${item('🏠', 'Host Dashboard', 'closeAccountMenu();openHostDashboard()')}
+    ${can(['business', 'admin']) ? item('💼', 'Business Centre', "closeAccountMenu();nav('business')") : ''}
+    ${can(['admin']) ? item('🛡', 'Admin Centre', "closeAccountMenu();nav('admin')") : ''}
+    <div class="am-sep"></div>
+    ${item('🚪', 'Sign out', 'closeAccountMenu();signOut()')}`;
+  $('#userChip').insertAdjacentElement('afterend', menu);
+  // Close on any outside click.
+  setTimeout(() => document.addEventListener('click', closeAccountMenu, { once: true }), 0);
+  menu.addEventListener('click', (e) => e.stopPropagation());
+}
+window.closeAccountMenu = () => $('#accountMenu')?.remove();
 async function restoreSession() {
   let uid; try { uid = localStorage.getItem('3jn_uid'); } catch {}
   if (!uid) return;
@@ -2354,7 +2389,12 @@ async function restoreSession() {
 window.signOut = () => {
   try { localStorage.removeItem('3jn_uid'); } catch {}
   if (window.firebaseAuth?.available) { try { window.firebaseAuth.signOut(); } catch {} }
-  state.user = null; $('#userChip').classList.add('hidden'); $('#signBtn').textContent = 'Sign in';
+  state.user = null;
+  $('#userChip').classList.add('hidden');
+  $('#accountMenu')?.remove();
+  const signBtn = $('#signBtn');
+  if (signBtn) { signBtn.textContent = 'Sign in'; signBtn.classList.remove('hidden'); }
+  $('#testAccountBtn')?.classList.remove('hidden');
   applyRoleVisibility();
   if (state.lastView === 'admin' || state.lastView === 'business') nav('home');
   toast('Signed out.');

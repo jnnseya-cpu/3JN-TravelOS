@@ -340,6 +340,8 @@ function hotelExtras(rnd, dest, intent, stars, type) {
     checkOutTime: type === 'host' ? '11:00' : '12:00',
     cancellationDeadline: stars >= 3 ? 'Free cancellation until 48h before check-in' : 'Non-refundable rate',
     bedConfiguration: beds,
+    view: stars >= 5 ? 'Sea / skyline view' : stars >= 4 ? 'City view' : rnd() > 0.5 ? 'Courtyard view' : 'Street side',
+    smoking: 'Non-smoking',
     roomSizeSqm: 18 + Math.round(rnd() * (stars >= 5 ? 42 : 22)),
     maxOccupancy: intent.travellers.total + (type === 'host' ? 1 : 0),
     breakfastDetail: stars >= 4 ? 'Full buffet breakfast included' : stars >= 3 ? 'Continental breakfast (optional add-on)' : 'Breakfast not included',

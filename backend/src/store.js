@@ -620,6 +620,8 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     specialRequests: (Array.isArray(specialRequests) ? specialRequests : []).map((x) => String(x).slice(0, 40)).slice(0, 17),
     // Payment context (never card numbers — those stay on the PSP page).
     payment: payment ? { cardHolder: String(payment.cardHolder || '').slice(0, 80), billingAddress: String(payment.billingAddress || '').slice(0, 160) } : null,
+    // Post-booking fulfilment record (PNR, e-ticket, locators, rules).
+    fulfilment: buildFulfilment(bookingId, option),
     option,
     instalment,
     paymentMethod,
@@ -988,5 +990,36 @@ export function hostDashboard(userId) {
     listings: registered ? listHostListings(userId) : [],
     bookings: registered ? hostBookings(userId) : [],
     earnings: registered ? hostEarnings(userId) : null,
+  };
+}
+
+// Post-booking flight data — everything the traveller and support need after
+// ticketing: PNR, e-ticket number, fare basis, ticket class, airline + GDS
+// locators, ticket status, boarding pass availability, check-in status,
+// refundability and change/cancellation rules. Deterministic from bookingId.
+function buildFulfilment(bookingId, option) {
+  const flight = (option?.components || []).find((c) => c.type === 'flight');
+  if (!flight) return null;
+  let h = 0;
+  for (const ch of bookingId) h = (h * 31 + ch.charCodeAt(0)) % 2147483647;
+  const alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let pnr = '';
+  let x = h;
+  for (let i = 0; i < 6; i++) { pnr += alpha[x % alpha.length]; x = Math.floor(x / alpha.length) + 7; }
+  const airlinePrefix = { 'Emirates': '176', 'Qatar Airways': '157', 'British Airways': '125', 'Turkish Airlines': '235', 'Lufthansa': '220' }[flight.supplier] || '999';
+  const free = !!flight.details?.freeCancellation;
+  return {
+    pnr,
+    eTicketNumber: `${airlinePrefix}-${String(2400000000 + (h % 99999999)).padStart(10, '0')}`,
+    fareBasis: flight.details?.travelClass ? 'YFLEX' : 'YLOWX',
+    ticketClass: flight.details?.cabin || 'Economy (Y)',
+    airlineLocator: pnr,
+    gdsLocator: `AMA-${String(h % 999999).padStart(6, '0')}`,
+    ticketStatus: 'Ticketed',
+    boardingPass: 'Issued at online check-in (opens 24h before departure)',
+    checkInStatus: 'Not yet open',
+    refundability: free ? 'Refundable (fare rules apply)' : 'Non-refundable — taxes refundable on request',
+    changeRules: free ? 'Date changes permitted; fare difference may apply' : 'Changes with fee + fare difference',
+    cancellationRules: free ? 'Free cancellation until 48h before departure' : 'Cancellation fee applies; 3JN Price Guard credit on rebooking',
   };
 }

@@ -600,3 +600,24 @@ header.nav { padding-top: env(safe-area-inset-top); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---- Signed-in account chip + dropdown (keeps the top bar tidy) ---- */
+.account-chip { cursor: pointer; user-select: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.account-chip .caret { font-size: 10px; color: var(--muted); margin-left: 2px; }
+.nav-cta { position: relative; }
+.account-menu {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 80; min-width: 240px;
+  background: rgba(10, 16, 32, 0.97); border: 1px solid var(--line-strong); border-radius: 14px;
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.8); padding: 8px; backdrop-filter: blur(14px);
+}
+.account-menu .am-head { display: flex; gap: 10px; align-items: center; padding: 10px 10px 12px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.account-menu .am-name { font-family: 'Space Grotesk'; font-weight: 700; font-size: 14.5px; }
+.account-menu .am-sub { font-size: 11.5px; color: var(--muted); }
+.account-menu .am-item { padding: 10px 12px; border-radius: 9px; font-size: 13.5px; cursor: pointer; transition: background 120ms ease; }
+.account-menu .am-item:hover { background: rgba(255, 255, 255, 0.06); }
+.account-menu .am-sep { height: 1px; background: var(--line); margin: 6px 4px; }
+@media (max-width: 1240px) {
+  /* Inside the drawer the menu flows inline instead of floating. */
+  .account-menu { position: static; width: 100%; margin-top: 8px; }
+  .account-chip { max-width: none; }
+}
