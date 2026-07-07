@@ -52,11 +52,15 @@ export const SEARCH_TIERS = {
   },
   deep: {
     ...tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
-    agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent', 'Visa Agent', 'Price Monitor Agent', 'Savings/Risk Agent'],
+    agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent'],
   },
   concierge: {
     ...tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
-    agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent', 'Visa Agent', 'Savings/Risk Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
+    agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
+    // Tier 4 pairs the AI agents with a HUMAN travel expert — human time is
+    // never funded speculatively, so access requires a real commitment.
+    humanExpert: 'Human Travel Expert',
+    requires: ['Refundable deposit', 'Subscription', 'Premium plan'],
   },
 };
 
@@ -79,7 +83,32 @@ export function aiCostCap(expectedProfitUSD) {
 // no deep agent comparison, negotiation, booking hold or custom itineraries.
 export const FREE_DAILY_SEARCH_LIMIT = 5;
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0 }) {
+// ---- Search Abuse Detection Engine (spec §15) -------------------------------
+// Seven tracked signals scored 0–100. The gate throttles on an elevated score;
+// the fraud engine (bookingRiskScore) covers the booking-time equivalents.
+export const ABUSE_SIGNALS = [
+  'Searches without booking', 'Repeated searches', 'Bot behaviour',
+  'Multiple accounts', 'Excessive AI consumption', 'Chargebacks', 'Suspicious activity',
+];
+export function searchAbuseScore({ searchesWithoutBooking = 0, repeatedSearches = 0, botBehaviour = false, multipleAccounts = false, acuConsumedToday = 0, chargebacks = 0, suspiciousActivity = false } = {}) {
+  let score = 0;
+  score += Math.min(40, searchesWithoutBooking * 2); // volume with zero conversion
+  score += Math.min(30, repeatedSearches * 3);       // same destination over and over
+  if (botBehaviour) score += 20;                     // typing/mouse/timing anomalies
+  if (multipleAccounts) score += 20;                 // device/IP fingerprint overlap
+  score += Math.min(15, Math.floor(acuConsumedToday / 100) * 5); // AI burn rate
+  score += Math.min(20, chargebacks * 10);
+  if (suspiciousActivity) score += 15;
+  score = Math.min(100, score);
+  // Spec bands: 0–30 Normal · 31–60 Monitor · 61–80 Restrict · 81–100 Block.
+  const band = score >= 81 ? 'Block' : score >= 61 ? 'Restrict' : score >= 31 ? 'Monitor' : 'Normal';
+  // Gate action: Monitor keeps running (logged); Restrict throttles to cached;
+  // Block refuses paid depth entirely until reviewed.
+  const level = band === 'Block' ? 'block' : band === 'Restrict' ? 'throttle' : band === 'Monitor' ? 'monitor' : 'clear';
+  return { score, band, level, signals: ABUSE_SIGNALS };
+}
+
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -97,11 +126,34 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
     };
   }
 
-  // Abuse throttle: heavy searching with zero booking history downgrades to
-  // cached regardless of funding — the system is not a free AI search machine.
-  if ((recentSearches > 20 || sameDestinationRepeats > 10) && priorBookings === 0) {
+  // Tier 4 Concierge (spec §7): AI agents + a Human Travel Expert. Human time
+  // is never funded speculatively — the tier REQUIRES a deposit, an active
+  // subscription, or a premium plan, regardless of ACU balance or expected
+  // revenue. Without one, the search downgrades instead of running.
+  if (tier === 'concierge') {
+    const committed = hasDeposit || subscriptionActive || !!(user && user.membership?.active);
+    if (!committed) {
+      return {
+        allowed: false, downgradeTo: 'free', tier, reason: 'concierge-requires-commitment', aiCostUSD: t.aiCostUSD,
+        requirement: {
+          orDepositGBP: 20, orSubscription: true, orPremiumPlan: true,
+          message: 'Concierge Search pairs AI agents with a human travel expert, so it needs a commitment first: place a refundable £20 deposit, or use an active subscription/premium plan. Showing cached results instead.',
+        },
+      };
+    }
+  }
+
+  // Abuse throttle (spec §15): the Search Abuse Detection Engine scores seven
+  // signals 0–100 (Normal / Monitor / Restrict / Block). Restrict+ with zero
+  // booking history downgrades to cached regardless of funding — the system is
+  // not a free AI search machine.
+  const abuse = searchAbuseScore({
+    searchesWithoutBooking: priorBookings === 0 ? recentSearches : 0,
+    repeatedSearches: sameDestinationRepeats,
+  });
+  if ((abuse.level === 'block' || abuse.level === 'throttle' || recentSearches > 20 || sameDestinationRepeats > 10) && priorBookings === 0) {
     return {
-      allowed: false, downgradeTo: 'free', tier, reason: 'abuse-throttle', aiCostUSD: t.aiCostUSD,
+      allowed: false, downgradeTo: 'free', tier, reason: 'abuse-throttle', aiCostUSD: t.aiCostUSD, abuse,
       requirement: { message: 'To continue deep AI price hunting, please add ACUs or place a refundable booking deposit.' },
     };
   }
@@ -111,12 +163,19 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   const revenueCovers = expectedRevenueUSD >= t.aiCostUSD * REVENUE_TO_COST_MULTIPLE;
   const acuCovers = user && user.acuBalance >= t.acu;
 
+  // FINAL PLATFORM RULE (LOCKED): no AI agent may execute a task unless funded
+  // by 1) ACU balance, 2) search deposit, 3) active subscription, 4) supplier-
+  // commission opportunity (expected revenue path), 5) expected 10% booking
+  // revenue, 6) corporate contract, or 7) white-label contract. If none exist:
+  // downgrade, request payment, or block.
   const fundingReasons = [];
   if (acuCovers) fundingReasons.push('acu-balance');
   if (hasDeposit) fundingReasons.push('search-deposit');
   if (subscriptionActive) fundingReasons.push('subscription');
   if (revenueCovers) fundingReasons.push('expected-booking-revenue');
   if (advertisingCreditUSD >= t.aiCostUSD) fundingReasons.push('advertising-revenue');
+  if (corporateContract) fundingReasons.push('corporate-contract');
+  if (whiteLabelContract) fundingReasons.push('white-label-contract');
 
   // Strong booking intent (explicit dates + multiple components) lets the
   // expected-revenue path count at a friendlier threshold (x5 instead of x10).
@@ -153,18 +212,20 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   };
 }
 
-// Priority search fees — speed is a product: standard runs on ACU economics,
-// priority and urgent same-day searches carry a cash fee.
+// Priority search fees (Revenue Source 6) — speed is a product: standard runs
+// on ACU economics; fast, urgent and emergency searches carry a flat cash fee.
 export const PRIORITY_SEARCH_FEES = {
-  standard: { feeGBP: 0, note: 'Free / low ACU' },
-  priority: { minGBP: 3, maxGBP: 10, note: 'Jump the queue — results first' },
-  urgent: { minGBP: 15, maxGBP: 50, note: 'Same-day travel — dedicated scan + human check' },
+  standard: { feeGBP: 0, note: 'Free / standard queue' },
+  fast: { feeGBP: 3, note: 'Fast search — jump the queue, results first' },
+  urgent: { feeGBP: 10, note: 'Urgent search — immediate dedicated scan' },
+  emergency: { feeGBP: 25, note: 'Emergency search — same-day travel, dedicated scan + human check' },
+  // Legacy aliases (older clients used priority/urgent bands).
+  priority: { feeGBP: 3, aliasOf: 'fast' },
 };
-export function prioritySearchFee(level = 'standard', tripValueGBP = 0) {
+export function prioritySearchFee(level = 'standard') {
   const t = PRIORITY_SEARCH_FEES[level] || PRIORITY_SEARCH_FEES.standard;
-  if (!t.minGBP) return { level: 'standard', feeGBP: 0 };
-  const fee = Math.max(t.minGBP, Math.min(t.maxGBP, Math.round(tripValueGBP * 0.01)));
-  return { level, feeGBP: fee, note: t.note };
+  const canonical = t.aliasOf || (PRIORITY_SEARCH_FEES[level] ? level : 'standard');
+  return { level: canonical, feeGBP: t.feeGBP, note: t.note || PRIORITY_SEARCH_FEES[canonical].note };
 }
 
 // Revenue streams summary for the white-label / API partner calculator.
@@ -179,6 +240,33 @@ export function whiteLabelPayout(bookingVolumeUSD, avgCommissionRate = 0.10) {
     platformShareUSD: round2(platformShare),
   };
 }
+
+// ---- The Real Positioning (LOCKED) -------------------------------------------
+// 3JN never competes with free aggregators (Google Flights, Skyscanner, Kayak,
+// Momondo, Trivago) on "we also search cheap flights" — they do that free.
+// We do not sell SEARCH. We sell what they can't:
+export const POSITIONING = {
+  // USP #10 — the ultimate developer-ready positioning, at the top of the
+  // business model. Never "Travel Booking Platform".
+  category: 'The AI Travel Operating System',
+  statement: '3JN Travel OS is not a travel search engine. It is an AI-powered Travel Operating System that continuously saves travellers money, optimises every component of their journey, negotiates better travel outcomes, manages trips end-to-end, and provides personalised travel intelligence before, during and after travel.',
+  does: ['Plans', 'Optimises', 'Negotiates', 'Books', 'Protects', 'Tracks', 'Manages', 'Saves Money', 'Supports During Travel', 'Learns User Preferences'],
+  usp: "Don't Search. Let AI Find, Negotiate and Build the Best Trip.",
+  sells: ['Savings', 'Protection', 'Intelligence', 'Negotiation', 'Execution'],
+  neverCompeteOn: 'free flight search (Google Flights / Skyscanner / Kayak / Momondo / Trivago)',
+  customerWants: ['cheapest price', 'less risk', 'less time wasted', 'better travel experience', 'somebody to do the work'],
+  deliver: 'decisions, not options — an advisor, not a search engine',
+  pillars: [
+    { usp: 'AI Travel CFO', symbol: 'travelCFO (quantified date/airport/hotel-swap advice)' },
+    { usp: 'Guaranteed Savings Engine', symbol: 'claimSavingsGuarantee (ACU refund if unbeaten)' },
+    { usp: 'Travel Intelligence Score', symbol: 'travelIntelligenceScore (7 scores per trip)' },
+    { usp: 'Global Travel Optimiser', symbol: 'buildPackages + decision.optimisedTogether (whole journey, one basket)' },
+    { usp: 'AI Negotiation Layer', symbol: 'negotiation (net rates + perks: upgrades, breakfast, pickup, late checkout)' },
+    { usp: 'Diaspora Travel Specialist', symbol: 'diaspora (Africa/Caribbean/South Asia/Middle East family journeys)' },
+    { usp: 'Group Travel OS', symbol: 'groupOrigins + groupTravelFees (multi-origin groups, one booking, 4 stacked earners)' },
+  ],
+};
+export const SAVINGS_GUARANTEE = 'If 3JN Travel OS cannot beat or match your current quote, we refund your search credits.';
 
 export const REVENUE_STREAMS = [
   '10% final payment fee',
@@ -203,7 +291,7 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // ---- Group travel revenue (high-profit segment) ------------------------------
 // Churches, schools, football teams, wedding groups, conferences, family
 // reunions, diaspora trips — four stacked earners per group.
-export const GROUP_SEGMENTS = ['Churches', 'Schools', 'Football teams', 'Wedding groups', 'Conferences', 'Family reunions', 'Diaspora trips to Africa'];
+export const GROUP_SEGMENTS = ['Churches', 'Schools', 'Sports teams', 'NGOs', 'Wedding groups', 'Conferences', 'Family reunions', 'Diaspora groups'];
 export function groupTravelFees(headcount = 10, tripValueGBP = 0) {
   const planningFeeGBP = headcount >= 25 ? 149 : headcount >= 10 ? 99 : 49;
   const groupBookingFeeGBP = Math.round(headcount * 5); // £5/head coordination fee
@@ -220,10 +308,11 @@ export function groupTravelFees(headcount = 10, tripValueGBP = 0) {
 // ---- White-label pricing ------------------------------------------------------
 // Agencies run 3JN Travel OS under their own brand; five stacked charges.
 export const WHITE_LABEL_PRICING = {
+  branding: 'Powered by 3JN Travel OS', // required on every white-label deployment
   setupFeeGBP: 1500,
   monthlySaasGBP: 199,
   acuUsage: 'metered at £1 = 100 ACU (standard rate)',
-  bookingCommissionPct: 0.10, // 3JN keeps 10% of partner-generated commission
+  bookingCommissionPct: 0.10, // booking revenue share — 3JN keeps 10% of partner-generated commission
   premiumSupportGBPMonth: 99,
 };
 
@@ -245,12 +334,19 @@ function gateChecklist({ acuCovers, hasDeposit, subscriptionActive, revenueCover
 
 // ---- API revenue: productised endpoints sold to travel businesses ------------
 export const API_PRODUCTS = [
-  { key: 'search', endpoint: '/api/v1/search', name: 'Cheapest price search API', pricePerCallGBP: 0.05 },
-  { key: 'itinerary', endpoint: '/api/v1/itinerary', name: 'Itinerary AI API', pricePerCallGBP: 0.04 },
-  { key: 'visa', endpoint: '/api/v1/visa-checklist', name: 'Visa checklist API', pricePerCallGBP: 0.03 },
-  { key: 'group', endpoint: '/api/v1/group-quote', name: 'Group travel quote API', pricePerCallGBP: 0.08 },
-  { key: 'savings', endpoint: '/api/v1/savings', name: 'Travel savings API', pricePerCallGBP: 0.05 },
-  { key: 'hotels', endpoint: '/api/v1/hotels', name: 'Hotel comparison API', pricePerCallGBP: 0.04 },
+  { key: 'search', endpoint: '/api/v1/search', name: 'Cheapest Fare API', pricePerCallGBP: 0.05 },
+  { key: 'itinerary', endpoint: '/api/v1/itinerary', name: 'Itinerary API', pricePerCallGBP: 0.04 },
+  { key: 'visa', endpoint: '/api/v1/visa-checklist', name: 'Visa API', pricePerCallGBP: 0.03 },
+  { key: 'group', endpoint: '/api/v1/group-quote', name: 'Group Travel API', pricePerCallGBP: 0.08 },
+  { key: 'savings', endpoint: '/api/v1/savings', name: 'Savings API', pricePerCallGBP: 0.05 },
+  { key: 'hotels', endpoint: '/api/v1/hotels', name: 'Hotel Comparison API', pricePerCallGBP: 0.04 },
+  { key: 'esim', endpoint: '/api/v1/esim', name: 'eSIM API', pricePerCallGBP: 0.02 },
+];
+// API billing modes (spec §14): pay-per-call, monthly bundles, enterprise.
+export const API_BILLING = [
+  { key: 'perCall', name: 'Per call', pricing: 'API_PRODUCTS pricePerCallGBP per request' },
+  { key: 'monthly', name: 'Monthly', pricing: 'bundled call volume at a monthly rate (from £199/mo, aligned with white-label SaaS)' },
+  { key: 'enterprise', name: 'Enterprise', pricing: 'custom volume, SLA and support — contact sales' },
 ];
 
 // ---- Finance revenue: products + processing fees ------------------------------

@@ -63,14 +63,17 @@ export const TASK_ROUTES = {
   recommendation: { provider: 'openai', acuAction: 'intent', why: 'personalised journey recommendation' },
 };
 
-// Per-agent ACU budgets — hard ceilings per request/session. Once an agent's
-// budget is reached the gateway STOPS and asks for approval instead of running.
+// Per-agent ACU budgets (spec §8) — hard spending limits per request/session.
+// If a budget would be exceeded the gateway PAUSES EXECUTION and REQUESTS
+// USER APPROVAL instead of running (see checkAgentBudget → budget-stop).
 export const AGENT_BUDGETS = {
-  flightSearch: 20,   // Flight Agent
-  hotelSearch: 20,    // Hotel Agent
-  visaCheck: 10,      // Visa Agent
-  coworking: 15,      // Itinerary Agent (itinerary task route)
-  riskBriefing: 25,   // Savings/Risk Agent
+  flightSearch: 20,   // Flight Agent — 20 ACUs
+  hotelSearch: 20,    // Hotel Agent — 20 ACUs
+  visaCheck: 10,      // Visa Agent — 10 ACUs
+  esim: 5,            // eSIM Agent — 5 ACUs
+  transfer: 5,        // Transfer Agent — 5 ACUs
+  coworking: 15,      // Itinerary Agent — 15 ACUs (itinerary task route)
+  riskBriefing: 25,   // Savings Agent — max 25 ACUs
   intent: 10,
   chiefOfStaff: 20,
   expense: 10,

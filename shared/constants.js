@@ -51,27 +51,47 @@ export const MEMBERSHIP_ACU_FUND_RATE = 0.10;
 // Each plan auto-funds ACUs every billing period: 10% of the subscription,
 // converted at £1 = 100 ACU. e.g. £12.99 → £1.299 → ~130 ACU / month.
 export const MEMBERSHIP_TIERS = [
-  { key: 'nomad', name: 'Travel+ Nomad', pricePerMonth: 4.99 },
-  { key: 'family', name: 'Travel+ Family', pricePerMonth: 12.99 },
-  { key: 'executive', name: 'Travel+ Executive', pricePerMonth: 24.99 },
-  { key: 'elite', name: 'Travel+ Elite', pricePerMonth: 49.99 },
+  { key: 'nomad', name: 'Travel+ Smart Traveller', pricePerMonth: 4.99 },
+  { key: 'family', name: 'Travel+ Family Saver', pricePerMonth: 12.99 },
+  { key: 'executive', name: 'Travel+ Frequent Flyer', pricePerMonth: 24.99 },
+  { key: 'elite', name: 'Travel+ Concierge Elite', pricePerMonth: 49.99 },
 ].map((t) => ({ ...t, acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP) }));
 
 export const TIER_ACU_ALLOWANCE = Object.fromEntries(
   MEMBERSHIP_TIERS.map((t) => [t.name.replace('Travel+ ', ''), t.acuPerMonth]),
 );
 
-// ---- Corporate travel accounts (monthly recurring) -------------------------
+// 3JN Travel+ membership benefits (USP #9) — recurring revenue instead of
+// one-off users. Every paid tier carries these seven benefit families.
+export const TRAVEL_PLUS_BENEFITS = [
+  'Priority searches', 'Travel alerts', 'Price monitoring', 'Discounted fees',
+  'Premium support', 'Lounge offers', 'Visa support',
+];
+
+// Subscription catalogue (Revenue Source 8) — the seven plans, spanning the
+// free tier, the four Travel+ memberships and the two corporate accounts.
+export const SUBSCRIPTION_PLANS = [
+  { key: 'free', name: 'Free', pricePerMonth: 0, engine: 'cached search tier' },
+  ...MEMBERSHIP_TIERS.map((t) => ({ key: t.key, name: t.name.replace('Travel+ ', ''), pricePerMonth: t.pricePerMonth, engine: 'MEMBERSHIP_TIERS' })),
+  { key: 'business', name: 'Business Travel', pricePerMonth: 99, engine: 'CORPORATE_PLANS (Team)' },
+  { key: 'enterprise', name: 'Enterprise', pricePerMonth: 299, engine: 'CORPORATE_PLANS (Enterprise)' },
+];
+
+// ---- Corporate travel platform (spec §10: separate SaaS module) ------------
+// Earns three ways per account: the monthly subscription, the standard 10%
+// per-booking fee, and metered ACU usage.
 export const CORPORATE_PLANS = [
   { key: 'team', name: 'Corporate Team', pricePerMonth: 99, seats: 15 },
   { key: 'enterprise', name: 'Corporate Enterprise', pricePerMonth: 299, seats: 100 },
 ].map((p) => ({
   ...p,
   features: [
-    'Staff travel booking', 'Travel policy control', 'Invoice management',
-    'Approval workflows', 'Expense export', 'Cheapest compliant fare search',
-    'Travel reporting dashboard',
+    'Travel policies', 'Approval workflows', 'Expense management',
+    'Invoice management', 'Employee travel profiles', 'Budget controls',
+    'Department tracking', 'Travel analytics dashboard',
+    'Staff travel booking', 'Cheapest compliant fare search',
   ],
+  revenueStreams: ['Monthly subscription', '10% per-booking fee', 'Metered ACU usage'],
 }));
 
 // ---- Reliability floor for "cheapest *reliable*" --------------------------

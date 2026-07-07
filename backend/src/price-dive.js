@@ -116,6 +116,32 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
     });
   }
 
+  // ---- 5. Hotel swap: same star rating, lower price ------------------------
+  // The AI Travel CFO's "Stay in Hotel B — same rating — save £X" advice.
+  const hotelPool = (scan.hotel || []).filter((o) => o.verified && o.reliabilityScore >= 70);
+  if (hotelPool.length >= 2) {
+    const byStars = new Map();
+    for (const h of hotelPool) {
+      const k = h.stars || 0;
+      if (!byStars.has(k)) byStars.set(k, []);
+      byStars.get(k).push(h);
+    }
+    let bestSwap = null;
+    for (const [stars, list] of byStars) {
+      if (list.length < 2) continue;
+      const sorted = [...list].sort((a, b) => a.priceUSD - b.priceUSD);
+      const diff = sorted[sorted.length - 1].priceUSD - sorted[0].priceUSD;
+      if (diff > 1 && (!bestSwap || diff > bestSwap.savingUSD)) {
+        bestSwap = {
+          savingUSD: round(diff),
+          how: `Stay at ${sorted[0].supplier} instead of ${sorted[sorted.length - 1].supplier} — same ${stars}★ rating.`,
+          apply: { hotel: sorted[0].supplier },
+        };
+      }
+    }
+    if (bestSwap) savings.push({ lever: 'Hotel swap (same rating)', ...bestSwap });
+  }
+
   // ---- Unbeatable-price verdict --------------------------------------------
   // Our reliable floor total vs what the same basket lists at publicly.
   let ourTotalUSD = 0;

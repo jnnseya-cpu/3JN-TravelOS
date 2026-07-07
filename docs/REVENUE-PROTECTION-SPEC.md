@@ -2,11 +2,28 @@
 ## Revenue Protection, Cost Control & Multi-Income Engine
 ### Complete Developer-Ready Specification — *implemented, enforced, test-locked*
 
+> **THE ULTIMATE POSITIONING (USP #10, top of the business model).** *3JN Travel OS is not a travel search engine. It is an AI-powered **Travel Operating System** that continuously saves travellers money, optimises every component of their journey, negotiates better travel outcomes, manages trips end-to-end, and provides personalised travel intelligence before, during and after travel.* It **Plans · Optimises · Negotiates · Books · Protects · Tracks · Manages · Saves Money · Supports During Travel · Learns User Preferences** — from one platform. We never compete with free aggregators on search; we sell **Savings, Protection, Intelligence, Negotiation and Execution** — outcomes, not search results (`POSITIONING`, test-locked).
+>
 > **Final positioning.** 3JN Travel OS is **not** a free AI travel search tool. It is an AI-powered travel savings and booking operating system that finds the cheapest global prices while earning from ACUs, deposits, subscriptions, supplier commissions, savings fees, corporate accounts, group travel, marketplace add-ons, white-label SaaS and APIs. This keeps the platform profitable while still delivering the promise: **world-cheapest travel prices.**
 >
 > **Master rule** (heads `backend/src/revenue.js` as a never-to-be-weakened contract): *AI work starts only when the platform is protected by ACUs, a deposit, strong booking intent, supplier commission, advertising revenue, or expected 10% final-payment revenue — or is served from cache. If none of these hold, the system downgrades, limits, or asks for payment before continuing.*
 
-Every section below is **live in production**. Column three names the exact implementing symbol; every rule is pinned by the test suite (`backend/test/pipeline.test.js`, **133 tests green**) so it cannot silently regress.
+Every section below is **live in production**. Column three names the exact implementing symbol; every rule is pinned by the test suite (`backend/test/pipeline.test.js`, **147 tests green**) so it cannot silently regress.
+
+### The ten USP pillars (all live)
+
+| USP | What it does | Symbol |
+|---|---|---|
+| 1. AI Travel CFO | Quantified adviser: "travel 10 days later: save £430 · fly from Manchester: save £165 · same-rating hotel swap: save £290" | `travelCFO` (dive levers incl. new hotel-swap) |
+| 2. Guaranteed Savings Engine | Can't beat or match your quote → your search ACUs are refunded | `claimSavingsGuarantee` · `POST /api/account/:id/savings-guarantee` |
+| 3. Travel Intelligence Score | 7 scores per trip: Cost, Safety, Visa, Weather, Crowd, Value, Risk (0–100 + band) | `travelIntelligenceScore` → `result.intelligenceScore` |
+| 4. Global Travel Optimiser | Flight+hotel+transfer+visa+insurance+eSIM optimised together, never piecemeal | `buildPackages` · `decision.optimisedTogether` |
+| 5. AI Negotiation Layer | Net rates below public prices + perks (upgrade, breakfast, pickup, late checkout) | `result.negotiation` |
+| 6. Diaspora Travel Specialist | Africa/Caribbean/South Asia/Middle East family journeys: excess baggage, money transfer, SIM, relative pickup, visa, multi-city | `result.diaspora` (region/family-signal detection) |
+| 7. Group Travel OS | Multi-origin groups in ONE booking + 4 stacked group earners | `groupOrigins` + `groupTravelFees` |
+| 8. Travel Wallet | Savings pots with goals, monthly plans, family/group kinds — earn before travel | `createTravelPot` (goal/monthlyUSD/kind) |
+| 9. Travel+ Membership | 7 recurring benefit families | `TRAVEL_PLUS_BENEFITS` + `MEMBERSHIP_TIERS` |
+| 10. Travel Operating System | The category: decisions, not options — `result.decision` returns ONE recommended answer with the saving and each best pick | `POSITIONING` + `buildDecision` |
 
 ---
 
@@ -96,8 +113,12 @@ AI cost £2 → minimum revenue potential required £20 — otherwise **BLOCK** 
 
 ## Survival mechanics
 
-- **Cache everything** — popular routes, packages, visa rules, prior agent answers; **checked before spending ACUs at every tier**; fresh hits served free (`served-from-cache`, `acuCharged: 0`).
-- **Abuse prevention** — daily cap, volume throttle, same-destination repetition, searches-vs-bookings ratio; fraud engine covers multi-account signals (IP switching, device intelligence).
+- **Cache-First Intelligence Engine (spec §16)** — before ANY AI search the engine checks: historical results, popular routes, past bookings, cached prices, destination intelligence, supplier deals. Cache confidence decays with age; **above 85% → serve cache, no AI cost** (`cacheConfidence` / `CACHE_SERVE_CONFIDENCE`); the free tier serves any age.
+- **Search Abuse Detection Engine (spec §15)** — seven tracked signals (searches without booking, repeated searches, bot behaviour, multiple accounts, excessive AI consumption, chargebacks, suspicious activity) scored 0–100 with the spec bands **0–30 Normal · 31–60 Monitor · 61–80 Restrict · 81–100 Block** (`searchAbuseScore`, verdict attached to every gate throttle). Abuse detection also **forfeits the active search deposit** (Revenue Source 3: non-refundable if abuse detected — `forfeitSearchDeposit`).
+- **Multi-tier search (spec §7, complete)** — Tier 3 Deep runs Flight, Hotel, Visa, Transfer, **Price Negotiation** and **Savings** agents; Tier 4 Concierge pairs the AI agents with a **Human Travel Expert** and REQUIRES a deposit, subscription or premium plan (`concierge-requires-commitment` — ACU balance alone is never enough for human time).
+- **Per-agent budgets (spec §8)** — Flight 20 · Hotel 20 · Visa 10 · **eSIM 5 · Transfer 5** · Itinerary 15 · Savings max 25; exceeding a budget **pauses execution and requests user approval** (`budget-stop`).
+- **Profitability Dashboard (spec §17)** — `GET /api/admin/profitability`: real-time ACUs sold/burned, AI costs (estimated vs actual), profit, and every stream (commission, supplier, subscription, search-deposit, savings, ACU sales, protection, corporate, white-label, API) computed live from the ledgers.
+- **FINAL PLATFORM RULE (LOCKED)** — no AI agent executes unless funded by: ACU balance · search deposit · active subscription · supplier-commission opportunity · expected 10% booking revenue · **corporate contract** · **white-label contract**. If none exist: downgrade, request payment, or block (`costProtectionGate`, all seven sources test-pinned).
 - **Positioning enforced in the AI itself** — the platform `SYSTEM_PROMPT` carries: *“NOT free AI travel search — the AI-powered travel savings engine that finds cheaper global prices, protects customers from overpaying, and only charges when real value is created.”*
 
 ## Where each rule lives

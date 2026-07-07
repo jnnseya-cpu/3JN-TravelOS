@@ -1673,13 +1673,14 @@ import { prioritySearchFee, PRIORITY_SEARCH_FEES } from '../src/revenue.js';
 import { addSponsoredPlacement, sponsoredFor, PLACEMENT_SECTIONS, placementRevenueGBP } from '../src/partners.js';
 import { CORPORATE_PLANS } from '../../shared/constants.js';
 
-test('priority search fees: standard free, priority £3–£10, urgent £15–£50', () => {
+test('priority search fees: standard free, fast £3, urgent £10, emergency £25', () => {
   assert.equal(prioritySearchFee('standard').feeGBP, 0);
-  const p = prioritySearchFee('priority', 500);
-  assert.ok(p.feeGBP >= 3 && p.feeGBP <= 10);
-  const u = prioritySearchFee('urgent', 400);
-  assert.ok(u.feeGBP >= 15 && u.feeGBP <= 50);
-  assert.equal(prioritySearchFee('urgent', 99999).feeGBP, 50, 'capped');
+  assert.equal(prioritySearchFee('fast').feeGBP, 3);
+  assert.equal(prioritySearchFee('urgent').feeGBP, 10);
+  assert.equal(prioritySearchFee('emergency').feeGBP, 25);
+  const p = prioritySearchFee('priority');
+  assert.ok(p.feeGBP === 3 && p.level === 'fast', 'legacy priority level maps to fast');
+  assert.equal(prioritySearchFee('nonsense').feeGBP, 0, 'unknown level falls back to standard');
 });
 
 test('sponsored placements: labelled slots across the six sections', () => {
@@ -1696,8 +1697,12 @@ test('corporate plans: monthly recurring with the seven capabilities', () => {
   assert.equal(CORPORATE_PLANS.length, 2);
   for (const plan of CORPORATE_PLANS) {
     assert.ok(plan.pricePerMonth >= 99);
-    assert.equal(plan.features.length, 7);
+    // Spec §10: the eight corporate SaaS features (+ booking & compliant-fare search).
+    for (const f of ['Travel policies', 'Approval workflows', 'Expense management', 'Invoice management', 'Employee travel profiles', 'Budget controls', 'Department tracking', 'Travel analytics dashboard']) {
+      assert.ok(plan.features.includes(f), `${plan.key} has ${f}`);
+    }
     assert.ok(plan.features.includes('Cheapest compliant fare search'));
+    assert.deepEqual(plan.revenueStreams, ['Monthly subscription', '10% per-booking fee', 'Metered ACU usage']);
   }
 });
 
@@ -1706,7 +1711,10 @@ import { groupTravelFees, GROUP_SEGMENTS, WHITE_LABEL_PRICING } from '../src/rev
 import { scanMarketplaceAddons, MARKETPLACE_ADDONS } from '../src/suppliers.js';
 
 test('group travel: four stacked earners across the seven segments', () => {
-  assert.equal(GROUP_SEGMENTS.length, 7);
+  assert.equal(GROUP_SEGMENTS.length, 8);
+  for (const seg of ['Churches', 'Schools', 'Sports teams', 'NGOs', 'Wedding groups', 'Conferences', 'Diaspora groups']) {
+    assert.ok(GROUP_SEGMENTS.includes(seg), `${seg} is a target segment`);
+  }
   const f = groupTravelFees(30, 15000);
   assert.equal(f.planningFeeGBP, 149);
   assert.equal(f.groupBookingFeeGBP, 150, '£5/head × 30');
@@ -1750,8 +1758,9 @@ test('gate part 16: 8-question checklist, abuse throttle, free daily cap, intent
   assert.ok(assist.allowed && assist.reason.includes('strong-booking-intent'));
 });
 
-test('API revenue: six productised endpoints catalogued and priced', () => {
-  assert.equal(API_PRODUCTS.length, 6);
+test('API revenue: seven productised endpoints catalogued and priced (+eSIM API)', () => {
+  assert.equal(API_PRODUCTS.length, 7);
+  assert.ok(API_PRODUCTS.some((p) => p.key === 'esim'), 'eSIM API is sold');
   for (const p of API_PRODUCTS) assert.ok(p.endpoint.startsWith('/api/v1/') && p.pricePerCallGBP > 0);
 });
 
@@ -2050,4 +2059,175 @@ test('risk feed: Kinshasa reports honest elevated risk; Tokyo stays safe', () =>
   // Genuinely safe destinations stay accurate too.
   const tokyo = riskFeed('Tokyo');
   if (tokyo.ok) { assert.equal(tokyo.level, 'Low'); assert.ok(tokyo.riskScore >= 90); }
+});
+
+// ================= Spec §7–§17 + USP pillars (batch) ===========================
+import { ABUSE_SIGNALS, searchAbuseScore, POSITIONING, SAVINGS_GUARANTEE, API_BILLING } from '../src/revenue.js';
+import { forfeitSearchDeposit, claimSavingsGuarantee, cacheConfidence, CACHE_SOURCES, CACHE_SERVE_CONFIDENCE, profitabilityDashboard } from '../src/store.js';
+import { MARKETPLACE_COMMISSION_RANGE } from '../src/suppliers.js';
+import { SUBSCRIPTION_PLANS, TRAVEL_PLUS_BENEFITS } from '../../shared/constants.js';
+import { travelIntelligenceScore } from '../src/intelligence.js';
+
+test('tiers 3-4: Deep agents named per spec; Concierge requires deposit/subscription/premium + human expert', () => {
+  for (const a of ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent']) {
+    assert.ok(SEARCH_TIERS.deep.agents.includes(a), `Deep runs the ${a}`);
+  }
+  assert.equal(SEARCH_TIERS.concierge.humanExpert, 'Human Travel Expert');
+  assert.deepEqual(SEARCH_TIERS.concierge.requires, ['Refundable deposit', 'Subscription', 'Premium plan']);
+  // ACU balance alone is NOT enough for concierge — human time needs commitment.
+  const refused = costProtectionGate({ tier: 'concierge', user: { acuBalance: 99999 }, expectedBookingUSD: 50000 });
+  assert.equal(refused.allowed, false);
+  assert.equal(refused.reason, 'concierge-requires-commitment');
+  assert.equal(refused.requirement.orDepositGBP, 20);
+  // A deposit (or subscription) unlocks it.
+  assert.equal(costProtectionGate({ tier: 'concierge', user: { acuBalance: 99999 }, hasDeposit: true }).allowed, true);
+  assert.equal(costProtectionGate({ tier: 'concierge', user: null, subscriptionActive: true }).allowed, true);
+});
+
+test('spec §8: per-agent budgets include eSIM 5 / Transfer 5; exceeding pauses + requests approval', () => {
+  assert.equal(AGENT_BUDGETS.flightSearch, 20);
+  assert.equal(AGENT_BUDGETS.hotelSearch, 20);
+  assert.equal(AGENT_BUDGETS.visaCheck, 10);
+  assert.equal(AGENT_BUDGETS.esim, 5);
+  assert.equal(AGENT_BUDGETS.transfer, 5);
+  assert.equal(AGENT_BUDGETS.coworking, 15);
+  assert.equal(AGENT_BUDGETS.riskBriefing, 25);
+  const over = checkAgentBudget('flightSearch', 20);
+  assert.equal(over.allowed, false);
+  assert.equal(over.requiresApproval, true, 'pause execution + request user approval');
+});
+
+test('spec §9: deposits become NON-refundable when abuse is detected (forfeit)', () => {
+  const u = createUser({ name: 'Abuser', email: 'abuse@example.com' });
+  const placed = placeSearchDeposit({ userId: u.id, tier: 'deep' });
+  const forfeited = forfeitSearchDeposit(u.id, 'abuse-throttle');
+  assert.equal(forfeited.id, placed.deposit.id);
+  assert.equal(forfeited.forfeited, true);
+  const refuse = refundSearchDeposit(placed.deposit.id);
+  assert.equal(refuse.ok, false);
+  assert.equal(refuse.error, 'forfeited-abuse');
+  assert.equal(activeSearchDeposit(u.id), null, 'forfeited deposit no longer funds the gate');
+});
+
+test('rev source 4: all ten spec supplier-commission categories exist', () => {
+  const map = { hotels: 'hotel', airlines: 'flights', cruises: 'cruise', tours: 'activities', transfers: 'transfer', carRentals: 'carhire', insurance: 'insurance', esim: 'esim', visa: 'visa', attractions: 'tickets' };
+  for (const key of Object.values(map)) assert.ok(SUPPLIER_COMMISSIONS[key] > 0, `${key} earns commission`);
+});
+
+test('spec §12: marketplace add-ons all carry a commission inside the 5%-30% band', () => {
+  assert.ok(MARKETPLACE_ADDONS.length >= 9);
+  for (const a of MARKETPLACE_ADDONS) {
+    assert.ok(a.commission >= MARKETPLACE_COMMISSION_RANGE.min && a.commission <= MARKETPLACE_COMMISSION_RANGE.max, `${a.key} commission ${a.commission} within 5-30%`);
+  }
+});
+
+test('rev source 8 + §10: seven subscription plans; corporate SaaS earns 3 ways', () => {
+  assert.equal(SUBSCRIPTION_PLANS.length, 7);
+  const names = SUBSCRIPTION_PLANS.map((p) => p.name);
+  for (const n of ['Free', 'Smart Traveller', 'Family Saver', 'Frequent Flyer', 'Business Travel', 'Concierge Elite', 'Enterprise']) {
+    assert.ok(names.includes(n), `${n} plan exists`);
+  }
+  assert.equal(TRAVEL_PLUS_BENEFITS.length, 7);
+});
+
+test('spec §15: abuse score 0-100 with Normal/Monitor/Restrict/Block bands + 7 signals', () => {
+  assert.equal(ABUSE_SIGNALS.length, 7);
+  assert.equal(searchAbuseScore({}).band, 'Normal');
+  const monitor = searchAbuseScore({ searchesWithoutBooking: 20 });
+  assert.equal(monitor.band, 'Monitor');
+  const restrict = searchAbuseScore({ searchesWithoutBooking: 20, botBehaviour: true, multipleAccounts: true });
+  assert.equal(restrict.band, 'Restrict');
+  const block = searchAbuseScore({ searchesWithoutBooking: 25, repeatedSearches: 12, botBehaviour: true, multipleAccounts: true, chargebacks: 2 });
+  assert.equal(block.band, 'Block');
+  assert.equal(block.score, 100);
+  // The gate carries the abuse verdict on a throttle.
+  const throttled = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 10000, recentSearches: 25, priorBookings: 0 });
+  assert.equal(throttled.reason, 'abuse-throttle');
+  assert.ok(throttled.abuse.score > 30, 'abuse score attached to the gate verdict');
+});
+
+test('spec §16: cache confidence decays with age; >85% serves with no AI cost', () => {
+  assert.equal(CACHE_SOURCES.length, 6);
+  assert.equal(CACHE_SERVE_CONFIDENCE, 85);
+  const fresh = { cachedAt: new Date().toISOString() };
+  assert.ok(cacheConfidence(fresh) > 95, 'just-written cache is near 100%');
+  const old = { cachedAt: new Date(Date.now() - 12 * 3600 * 1000).toISOString() };
+  assert.ok(cacheConfidence(old) < 85, '12h-old cache falls below the serve threshold');
+  assert.equal(cacheConfidence(null), 0);
+});
+
+test('spec §17: profitability dashboard reports ACUs sold/burned, AI costs and every stream', () => {
+  const d = profitabilityDashboard();
+  assert.ok(d.totalAcusSold > 0, 'ACUs sold tracked');
+  assert.ok(d.totalAcusBurned >= 0);
+  assert.ok(d.aiCosts.requests >= 0 && typeof d.aiCosts.estimatedUSD === 'number');
+  assert.ok(typeof d.revenueUSD === 'number' && typeof d.profitUSD === 'number');
+  for (const k of ['commissionRevenueUSD', 'supplierRevenueUSD', 'subscriptionRevenueUSD', 'searchDepositRevenueUSD', 'savingsRevenueUSD', 'corporateRevenueUSD', 'whiteLabelRevenueUSD', 'apiRevenueUSD', 'acuSalesRevenueUSD']) {
+    assert.ok(k in d.streams, `${k} stream reported`);
+  }
+});
+
+test('FINAL PLATFORM RULE: corporate & white-label contracts are funding sources 6-7', () => {
+  const corp = costProtectionGate({ tier: 'deep', user: null, corporateContract: true });
+  assert.ok(corp.allowed && corp.reason.includes('corporate-contract'));
+  const wl = costProtectionGate({ tier: 'deep', user: null, whiteLabelContract: true });
+  assert.ok(wl.allowed && wl.reason.includes('white-label-contract'));
+  const none = costProtectionGate({ tier: 'deep', user: null });
+  assert.equal(none.allowed, false, 'no funding source → downgrade / request payment');
+});
+
+test('USPs: decision (advisor not search), Travel CFO, negotiation perks, diaspora specialist', () => {
+  const r = plan({ text: 'all inclusive holiday to Dubai from London for 2 adults in August, 7 nights', context: GB, searchTier: 'deep', user: { id: 'u_usp', acuBalance: 5000, subscriptionActive: true } });
+  assert.equal(r.stage, 'options');
+  // Decision: one recommended answer, not a wall of options.
+  assert.ok(r.decision, 'decision block present');
+  assert.match(r.decision.headline, /Don't Search/i);
+  assert.ok(r.decision.totalSaving.usd >= 0);
+  assert.ok(r.decision.bestRoute || r.decision.bestHotel, 'best picks named');
+  assert.ok(r.decision.optimisedTogether.length >= 2, 'whole journey optimised together (USP #4)');
+  // AI Travel CFO quantifies alternatives.
+  assert.ok(r.travelCFO, 'CFO present on funded journey');
+  assert.ok(Array.isArray(r.travelCFO.advice));
+  // Negotiation layer: net rates + perks.
+  if (r.negotiation) {
+    assert.ok(r.negotiation.savedUSD >= 0);
+    assert.ok(Array.isArray(r.negotiation.perksSecured));
+  }
+  // Dubai = Middle East → diaspora specialist active with the six services.
+  assert.ok(r.diaspora, 'diaspora support for Middle East destination');
+  assert.equal(r.diaspora.services.length, 6);
+  // Intelligence Score: the seven scores.
+  assert.ok(r.intelligenceScore, 'intelligence score present');
+  assert.deepEqual(Object.keys(r.intelligenceScore.scores), ['costScore', 'safetyScore', 'visaScore', 'weatherScore', 'crowdScore', 'valueScore', 'riskScore']);
+  for (const v of Object.values(r.intelligenceScore.scores)) assert.ok(v >= 0 && v <= 100);
+});
+
+test('USP #2: guaranteed savings — beaten quote reports saving; unbeaten refunds the ACUs', () => {
+  const u = createUser({ name: 'Guarantee User', email: 'guarantee@example.com' });
+  buyAcu(u.id, 'starter');
+  const won = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 2000, ourTotalUSD: 1700, acuSpent: 57 });
+  assert.equal(won.refunded, false);
+  assert.equal(won.savedUSD, 300);
+  const lost = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 1500, ourTotalUSD: 1700, acuSpent: 57 });
+  assert.equal(lost.refunded, true);
+  assert.equal(lost.acuRefunded, 57);
+  assert.match(SAVINGS_GUARANTEE, /refund your search credits/i);
+});
+
+test('USP #8: savings wallet pots carry goals, monthly plans and family/group kinds', () => {
+  const u = createUser({ name: 'Pot Owner', email: 'pots@example.com' });
+  const r = createTravelPot(u.id, { name: 'Dubai 2027', targetUSD: 3000, goal: 'Dubai, August 2027', destination: 'Dubai', monthlyUSD: 250, kind: 'family' });
+  assert.equal(r.ok, true);
+  assert.equal(r.pot.kind, 'family');
+  assert.equal(r.pot.goal, 'Dubai, August 2027');
+  assert.equal(r.pot.monthlyUSD, 250);
+});
+
+test('USP #10 + billing: the locked positioning statement and API billing modes', () => {
+  assert.equal(POSITIONING.category, 'The AI Travel Operating System');
+  assert.match(POSITIONING.statement, /not a travel search engine/i);
+  assert.equal(POSITIONING.does.length, 10);
+  assert.deepEqual(POSITIONING.sells, ['Savings', 'Protection', 'Intelligence', 'Negotiation', 'Execution']);
+  assert.equal(POSITIONING.pillars.length, 7);
+  assert.deepEqual(API_BILLING.map((b) => b.name), ['Per call', 'Monthly', 'Enterprise']);
 });

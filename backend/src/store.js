@@ -512,16 +512,28 @@ export function placeSearchDeposit({ userId, tier = 'deep', searchId = null }) {
   return { ok: true, deposit };
 }
 export function activeSearchDeposit(userId) {
-  return db.searchDeposits.find((d) => d.userId === userId && !d.refunded && !d.convertedToBooking) || null;
+  return db.searchDeposits.find((d) => d.userId === userId && !d.refunded && !d.forfeited && !d.convertedToBooking) || null;
 }
 export function refundSearchDeposit(depositId) {
   const d = db.searchDeposits.find((x) => x.id === depositId);
   if (!d) return { ok: false, error: 'not-found' };
   if (d.convertedToBooking) return { ok: false, error: 'already-converted' };
   if (d.refunded) return { ok: false, error: 'already-refunded' };
+  if (d.forfeited) return { ok: false, error: 'forfeited-abuse', message: 'This deposit was forfeited after abuse was detected — deposits are non-refundable when the abuse throttle trips.' };
   d.refunded = true;
   d.refundedAt = nowISO();
   return { ok: true, deposit: d };
+}
+// Revenue Engine (spec §9): search deposits are NON-REFUNDABLE when abuse is
+// detected — the abuse throttle forfeits the active deposit to the platform.
+export function forfeitSearchDeposit(userId, reason = 'abuse-detected') {
+  const d = activeSearchDeposit(userId);
+  if (!d) return null;
+  d.forfeited = true;
+  d.forfeitReason = reason;
+  d.forfeitedAt = nowISO();
+  recordAudit({ actor: 'system', role: 'system', action: 'deposit.forfeited', entity: 'deposit', entityId: d.id, summary: `£${d.amountGBP} forfeited (${reason})` });
+  return d;
 }
 // On booking: the user's active deposit converts and its value comes OFF the
 // final payment. Returns the credit line for the booking (or null).
@@ -534,6 +546,44 @@ export function convertDepositToBooking(userId, bookingId) {
 }
 export function listSearchDeposits(userId) {
   return db.searchDeposits.filter((d) => d.userId === userId);
+}
+
+// ---- Guaranteed Savings Engine (USP #2) --------------------------------------
+// "If 3JN Travel OS cannot beat or match your current quote, we refund your
+// search credits." The claim is honest: our floor vs the competing quote,
+// and a losing comparison refunds the ACUs the search consumed.
+export function claimSavingsGuarantee(userId, { competitorQuoteUSD, ourTotalUSD, acuSpent = 0 }) {
+  const u = db.users.get(userId);
+  if (!u || !(competitorQuoteUSD > 0) || !(ourTotalUSD > 0)) return { ok: false, error: 'invalid' };
+  const beatenOrMatched = ourTotalUSD <= competitorQuoteUSD;
+  if (beatenOrMatched) {
+    return {
+      ok: true, refunded: false,
+      verdict: `3JN's price ($${ourTotalUSD}) beats or matches your quote ($${competitorQuoteUSD}) — guarantee satisfied.`,
+      savedUSD: round2(competitorQuoteUSD - ourTotalUSD),
+    };
+  }
+  const refund = Math.max(0, Math.round(acuSpent));
+  if (refund > 0) refundAcu(userId, refund, 'savings-guarantee');
+  recordAudit({ actor: userId, role: u.role, action: 'guarantee.refund', entity: 'acu', entityId: userId, summary: `+${refund} ACU refunded — quote $${competitorQuoteUSD} not beaten ($${ourTotalUSD})` });
+  return {
+    ok: true, refunded: true, acuRefunded: refund,
+    verdict: `We couldn't beat your quote this time — your ${refund} search ACUs are refunded.`,
+    balance: u.acuBalance,
+  };
+}
+
+// ---- Cache-First Intelligence Engine (spec §16) ------------------------------
+// Before ANY AI search the engine checks these knowledge sources; when cache
+// confidence exceeds the serve threshold the answer is served with NO AI COST.
+export const CACHE_SOURCES = ['Historical results', 'Popular routes', 'Past bookings', 'Cached prices', 'Destination intelligence', 'Supplier deals'];
+export const CACHE_SERVE_CONFIDENCE = 85; // serve cache above this — no AI cost
+// Confidence decays with age: 100% when just written, ~2.5 pts/hour, crossing
+// the 85% serve threshold at ~6 hours (the paid-tier freshness window).
+export function cacheConfidence(hit) {
+  if (!hit || !hit.cachedAt) return 0;
+  const ageHours = Math.max(0, (Date.now() - Date.parse(hit.cachedAt)) / 3600000);
+  return Math.max(0, Math.round((100 - ageHours * 2.5) * 10) / 10);
 }
 
 // ---- Membership Programme (subscription → 10% auto-funds ACUs) -------------
@@ -742,6 +792,7 @@ export function useApiKey(secret) {
   const k = db.apiKeys.find((x) => x.secret === secret && !x.revokedAt);
   if (!k) return null;
   k.lastUsedAt = nowISO();
+  k.calls = (k.calls || 0) + 1; // metered per call — feeds API revenue reporting
   return { userId: k.userId, environment: k.environment };
 }
 
@@ -938,6 +989,46 @@ export function revenueSnapshot() {
     acuUsed,
     users: db.users.size,
     reviews: db.reviews.length,
+  };
+}
+
+// ---- Profitability Dashboard (spec §17) -------------------------------------
+// The admin's real-time money view: ACUs sold vs burned, AI costs, and every
+// revenue stream side by side — computed live from the actual ledgers, never
+// hard-coded.
+export function profitabilityDashboard() {
+  const bookings = [...db.bookings.values()];
+  const users = [...db.users.values()];
+  const sumB = (fn) => round2(bookings.reduce((s, b) => s + (fn(b) || 0), 0));
+
+  const acusSold = db.acuTxns.filter((t) => t.type === 'PURCHASE').reduce((s, t) => s + t.amount, 0);
+  const acusBurned = db.acuTxns.filter((t) => t.type === 'USAGE').reduce((s, t) => s + Math.abs(t.amount), 0);
+  const aiCostEstimatedUSD = round4(db.aiRequestCosts.reduce((s, r) => s + r.estimatedCostUSD, 0));
+  const aiCostActualUSD = round4(db.aiRequestCosts.reduce((s, r) => s + r.actualCostUSD, 0));
+
+  const GBP_TO_USD = 1.27;
+  const streams = {
+    commissionRevenueUSD: sumB((b) => b.option?.pricing?.revenue?.commissionUSD),
+    supplierRevenueUSD: sumB((b) => b.supplierEarnings?.totalUSD),
+    savingsRevenueUSD: sumB((b) => b.option?.pricing?.revenue?.savingsShareUSD),
+    subscriptionRevenueUSD: round2(users.filter((u) => u.membership?.active && u.membership.pricePerMonth > 0).reduce((s, u) => s + u.membership.pricePerMonth, 0) * GBP_TO_USD),
+    searchDepositRevenueUSD: round2(db.searchDeposits.filter((d) => d.forfeited).reduce((s, d) => s + d.amountGBP, 0) * GBP_TO_USD),
+    acuSalesRevenueUSD: round2((db.acuTxns.filter((t) => t.type === 'PURCHASE').reduce((s, t) => s + t.amount, 0) / ACU_PER_GBP) * GBP_TO_USD),
+    protectionRevenueUSD: sumB((b) => b.protection?.fee),
+    corporateRevenueUSD: round2(users.filter((u) => u.corporatePlan?.active).reduce((s, u) => s + (u.corporatePlan.pricePerMonth || 0), 0) * GBP_TO_USD),
+    whiteLabelRevenueUSD: round2(db.apiKeys.filter((k) => !k.revokedAt && k.environment === 'production').length * 199 * GBP_TO_USD),
+    apiRevenueUSD: round2(db.apiKeys.reduce((s, k) => s + (k.calls || 0), 0) * 0.05 * GBP_TO_USD),
+  };
+  const revenueUSD = round2(Object.values(streams).reduce((s, v) => s + v, 0));
+  return {
+    totalAcusSold: acusSold,
+    totalAcusBurned: acusBurned,
+    aiCosts: { estimatedUSD: aiCostEstimatedUSD, actualUSD: aiCostActualUSD, requests: db.aiRequestCosts.length },
+    revenueUSD,
+    profitUSD: round2(revenueUSD - aiCostActualUSD),
+    streams,
+    bookings: bookings.length,
+    payingMembers: users.filter((u) => u.membership?.active).length,
   };
 }
 
@@ -1323,10 +1414,23 @@ import { bookingSupplierCommission as bookingSupplierCommissionLocal } from './p
 // ---- Finance: group contribution pots ----------------------------------------
 // Churches/families/teams save towards a trip together; contributions carry a
 // 1.5% processing fee (FINANCE_PRODUCTS) and the pot converts to booking credit.
-export function createTravelPot(userId, { name, targetUSD }) {
+// 3JN Savings Wallet (USP #8) — earn before travel happens. A pot is a travel
+// goal: save monthly, contribute as a family, or run it as a group pot.
+export function createTravelPot(userId, { name, targetUSD, goal, destination, monthlyUSD, kind }) {
   const u = userId ? db.users.get(userId) : null;
   if (!u) return { ok: false, error: 'auth-required' };
-  const pot = { id: `pot_${db.travelPots.length + 1}_${Date.now().toString(36)}`, ownerId: u.id, name: String(name || 'Trip pot').slice(0, 60), targetUSD: Math.max(1, Math.round(Number(targetUSD) || 0)), balanceUSD: 0, feePct: 0.015, feesCollectedUSD: 0, contributions: [], createdAt: new Date().toISOString() };
+  const pot = {
+    id: `pot_${db.travelPots.length + 1}_${Date.now().toString(36)}`,
+    ownerId: u.id,
+    name: String(name || 'Trip pot').slice(0, 60),
+    kind: ['personal', 'family', 'group'].includes(kind) ? kind : 'group',
+    goal: goal ? String(goal).slice(0, 120) : null,           // e.g. "Dubai, August 2027"
+    destination: destination ? String(destination).slice(0, 60) : null,
+    monthlyUSD: monthlyUSD > 0 ? Math.round(Number(monthlyUSD)) : null, // monthly saving plan
+    targetUSD: Math.max(1, Math.round(Number(targetUSD) || 0)),
+    balanceUSD: 0, feePct: 0.015, feesCollectedUSD: 0, contributions: [],
+    createdAt: new Date().toISOString(),
+  };
   db.travelPots.push(pot);
   return { ok: true, pot };
 }

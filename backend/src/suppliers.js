@@ -845,17 +845,20 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
 // ---- Destination Marketplace add-ons ------------------------------------------
 // Every trip becomes a marketplace basket: local services sold alongside the
 // core package, priced per destination and verified like any supplier.
+// Destination Marketplace (spec §12) — every trip becomes a basket. Each
+// add-on carries its commission rate; all rates sit inside the 5%–30% band.
+export const MARKETPLACE_COMMISSION_RANGE = { min: 0.05, max: 0.30 };
 export const MARKETPLACE_ADDONS = [
-  { key: 'tours', name: 'Guided tours', baseUSD: 45, per: 'person' },
-  { key: 'driver', name: 'Local driver (day)', baseUSD: 60, per: 'day' },
-  { key: 'translator', name: 'Translator / interpreter', baseUSD: 70, per: 'day' },
-  { key: 'security', name: 'Security support', baseUSD: 120, per: 'day' },
-  { key: 'photographer', name: 'Trip photographer', baseUSD: 90, per: 'session' },
-  { key: 'pickup', name: 'Airport pickup', baseUSD: 35, per: 'trip' },
-  { key: 'restaurants', name: 'Restaurant bookings', baseUSD: 8, per: 'booking' },
-  { key: 'tickets', name: 'Event tickets', baseUSD: 55, per: 'ticket' },
-  { key: 'esim', name: 'Local SIM / eSIM', baseUSD: 12, per: 'plan' },
-  { key: 'guide', name: 'Digital travel guide', baseUSD: 6, per: 'trip' },
+  { key: 'tours', name: 'Guided tours', baseUSD: 45, per: 'person', commission: 0.15 },
+  { key: 'driver', name: 'Local driver (day)', baseUSD: 60, per: 'day', commission: 0.12 },
+  { key: 'translator', name: 'Translation services', baseUSD: 70, per: 'day', commission: 0.15 },
+  { key: 'security', name: 'Security services', baseUSD: 120, per: 'day', commission: 0.10 },
+  { key: 'photographer', name: 'Trip photographer', baseUSD: 90, per: 'session', commission: 0.15 },
+  { key: 'pickup', name: 'Airport pickup', baseUSD: 35, per: 'trip', commission: 0.10 },
+  { key: 'restaurants', name: 'Restaurant reservations', baseUSD: 8, per: 'booking', commission: 0.05 },
+  { key: 'tickets', name: 'Event tickets', baseUSD: 55, per: 'ticket', commission: 0.10 },
+  { key: 'esim', name: 'Local SIM / eSIM', baseUSD: 12, per: 'plan', commission: 0.30 },
+  { key: 'guide', name: 'Local guides', baseUSD: 6, per: 'trip', commission: 0.30 },
 ];
 export function scanMarketplaceAddons(dest) {
   const rnd = seeded(`addons-${dest.code || dest.city}`);
