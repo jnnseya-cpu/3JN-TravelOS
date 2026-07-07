@@ -2697,3 +2697,18 @@ test('duffel fees: recovered ON TOP of the 10% commission, never eroding margin'
   // The 10% commission (our margin) is identical — fees are pass-through, not margin.
   assert.equal(withFee.revenue.commissionUSD, noFee.revenue.commissionUSD, 'commission/margin unchanged by the pass-through fee');
 });
+
+// ================= Auto-ticketing (Duffel order on payment) ====================
+import { createDuffelOrder, duffelOrderPassengers } from '../src/live-suppliers.js';
+
+test('auto-ticketing: order creation is credential-gated; passenger builder shapes data', async () => {
+  const r = await createDuffelOrder({ offerId: 'off_123', paymentAmount: '100', paymentCurrency: 'GBP' });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'not-configured');
+  const pax = duffelOrderPassengers([{ id: 'pas_1', type: 'adult' }], { fullName: 'Amina Okafor', email: 'a@example.com', phone: '+4477' });
+  assert.equal(pax.length, 1);
+  assert.equal(pax[0].given_name, 'Amina');
+  assert.equal(pax[0].family_name, 'Okafor');
+  assert.equal(pax[0].type, 'adult');
+  assert.ok(pax[0].born_on, 'has a date of birth field Duffel requires');
+});

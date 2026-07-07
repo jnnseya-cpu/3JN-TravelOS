@@ -168,6 +168,7 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       offerExpiresAt: offer.expires_at || null,
       liveAmount: offer.total_amount || null,
       liveCurrency: offer.total_currency || null,
+      offerPassengers: (offer.passengers || []).map((p) => ({ id: p.id, type: p.type })),
     },
     priceUSD,
   };
@@ -194,6 +195,62 @@ export async function validateDuffelOffer(offerId) {
 
 // A tiny connectivity self-test for admin: confirms the Duffel token works and
 // whether it is a TEST or LIVE key (test tokens start with 'duffel_test').
+// Create a Duffel ORDER against a live offer — this ISSUES THE TICKET.
+// Called on payment success (money already captured). Duffel is paid from the
+// balance (mode 'balance') by default. Returns { ok, order:{...} } or
+// { ok:false, error } — the caller triggers a refund on failure.
+export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance' } = {}) {
+  if (!liveFlightsEnabled() || !offerId) return { ok: false, error: 'not-configured' };
+  const body = {
+    data: {
+      type: 'instant',
+      selected_offers: [offerId],
+      passengers,
+      payments: [{ type: paymentType, amount: String(paymentAmount), currency: paymentCurrency }],
+    },
+  };
+  const res = await httpJSON(`${DUFFEL_BASE}/air/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${DUFFEL_TOKEN}`,
+      'Duffel-Version': DUFFEL_VERSION,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (res?.__error || !res?.data) {
+    return { ok: false, error: res?.__error?.errors?.[0]?.message || res?.__error?.message || 'duffel-order-failed', status: res?.__status };
+  }
+  const o = res.data;
+  const ticketNumbers = [];
+  for (const d of (o.documents || [])) if (d.type === 'electronic_ticket' && d.unique_identifier) ticketNumbers.push(d.unique_identifier);
+  return {
+    ok: true,
+    order: {
+      id: o.id,
+      bookingReference: o.booking_reference || null,
+      ticketNumbers,
+      passengers: (o.passengers || []).map((p) => ({ name: `${p.given_name || ''} ${p.family_name || ''}`.trim() })),
+      totalAmount: o.total_amount, totalCurrency: o.total_currency,
+    },
+  };
+}
+// Build Duffel passenger records for order creation from stored traveller data.
+export function duffelOrderPassengers(offerPassengers = [], lead = {}) {
+  return (offerPassengers.length ? offerPassengers : [{ type: 'adult' }]).map((p, i) => ({
+    id: p.id || undefined,
+    type: p.type || 'adult',
+    given_name: i === 0 ? (String(lead.fullName || 'Guest').split(' ')[0] || 'Guest') : 'Guest',
+    family_name: i === 0 ? (String(lead.fullName || 'Traveller').split(' ').slice(-1)[0] || 'Traveller') : 'Traveller',
+    born_on: p.born_on || '1990-01-01',
+    email: lead.email || undefined,
+    phone_number: lead.phone || undefined,
+    gender: p.gender || 'm',
+    title: p.title || 'mr',
+  }));
+}
+
 export function duffelMode() {
   if (!DUFFEL_TOKEN) return 'off';
   return /test/i.test(DUFFEL_TOKEN) ? 'test' : 'live';

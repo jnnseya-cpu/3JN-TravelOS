@@ -44,7 +44,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode } from './live-suppliers.js';
+import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode, createDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -127,6 +127,47 @@ const safe = (fn) => async (req, res) => {
     res.status(500).json({ error: 'internal', message: String(err.message || err) });
   }
 };
+
+// ---- Auto-ticketing: create the Duffel order after payment (issue the ticket)
+async function autoTicketFlight(booking) {
+  const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
+  if (!flight || !liveFlightsEnabled()) return;
+  // Re-validate the offer one last time before ticketing.
+  const check = await validateDuffelOffer(flight.details.offerId);
+  if (check.ok && (check.expired || check.live === false)) {
+    booking.fulfilment = { ...(booking.fulfilment || {}), ticketing: 'failed', reason: 'offer-expired-before-ticketing', needsRefund: true };
+    if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: 'The fare expired at the final step — we are refunding your payment in full. Please re-search to rebook.' });
+    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.failed', entity: 'booking', entityId: booking.id, summary: 'offer expired before ticketing — refund flagged' });
+    return;
+  }
+  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.lead || {});
+  const order = await createDuffelOrder({
+    offerId: flight.details.offerId,
+    passengers,
+    paymentAmount: check.amount || flight.details.liveAmount,
+    paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP',
+  });
+  if (!order.ok) {
+    booking.fulfilment = { ...(booking.fulfilment || {}), ticketing: 'failed', reason: order.error, needsRefund: true };
+    if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: `We could not issue your ticket (${order.error}). Your payment is being refunded in full.` });
+    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.failed', entity: 'booking', entityId: booking.id, summary: order.error });
+    return;
+  }
+  // Ticketed! Store the airline PNR + e-ticket numbers on the booking.
+  booking.fulfilment = {
+    ...(booking.fulfilment || {}),
+    ticketing: 'issued',
+    duffelOrderId: order.order.id,
+    pnr: order.order.bookingReference,
+    ticketNumbers: order.order.ticketNumbers,
+    issuedAt: new Date().toISOString(),
+  };
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference} · ${order.order.ticketNumbers.length} e-ticket(s)` });
+  if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${order.order.bookingReference}. E-tickets are in your Console and on their way by email.` });
+  if (booking.lead?.email) {
+    try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${order.order.bookingReference}`, text: `Your flight is ticketed. Airline booking reference: ${order.order.bookingReference}. E-ticket(s): ${order.order.ticketNumbers.join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${order.order.bookingReference}</p><p><strong>E-ticket(s):</strong> ${order.order.ticketNumbers.join(', ')}</p>` }); } catch {}
+  }
+}
 
 // ---- Context / config -----------------------------------------------------
 app.get('/api/context', safe((req, res) => {
@@ -963,6 +1004,10 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       if (booking && meta.userId) {
         pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Card payment of ${(amountMinor / 100).toFixed(2)} confirmed via Stripe — your booking is secured.` });
       }
+      // AUTO-TICKETING: money is captured — now issue the flight ticket by
+      // creating the Duffel order. Runs async; failure flags the booking for a
+      // refund rather than leaving the traveller paid-but-unticketed.
+      if (booking) autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
     }
   }
   res.json({ received: true });
