@@ -581,6 +581,30 @@ All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tok
 
 ---
 
+# SECTION 12 — MONETISATION MODEL
+*Commercial architecture for maximum profitability and sustainable growth*
+
+## 12. Monetisation Model
+
+### 12.1 Revenue Architecture Overview
+
+| Revenue Stream | Mechanism | Indicative Rate | Scale Potential |
+|---|---|---|---|
+| **Membership Subscriptions** | Monthly/annual recurring plans (Nomad to Elite) | £4.99 – £49.99/user/month | Primary recurring revenue base |
+| **Wholesale Margin** | 3JN margin on direct wholesale inventory | 3–8% per booking | High volume, compounding |
+| **Transaction Fees** | Per-booking service fee | 1.5% – 2.5% of booking value | Scales directly with GMV |
+| **ACU Credits System** | AI compute usage billed per agent action | From £0.002/ACU | Metered intelligence revenue |
+| **BitriPay Gateway Revenue** | Transaction processing fees via BitriPay integration | 0.8% – 1.5% per transaction | African market growth driver |
+| **API Access Fees** | Developer API tier subscriptions | £99 – £2,499/month | B2B SaaS revenue layer |
+| **White-Label Licensing** | Full OS licensed to travel agencies/enterprises | £2,000 – £25,000/month | Enterprise ARR multiplier |
+| **Supplier Advertising** | Promoted placements in search results (verified only) | CPM + CPC model | Incremental high-margin revenue |
+| **Insurance Commission** | Embedded travel insurance referral | 8–15% of premium | Zero marginal cost revenue |
+| **Data Intelligence** | Anonymised travel trend intelligence for B2B | Custom enterprise pricing | Long-term data monetisation |
+
+> This blueprint layer composes with the locked **Revenue Protection, Cost Control & Multi-Income Engine** spec (`docs/REVENUE-PROTECTION-SPEC.md`): the 10% final-payment fee, ACU marketplace, refundable deposits, savings share, priority fees, protection fees, group/marketplace/finance streams and the Cost Protection Gate remain the enforced runtime rules; per the platform rule, no newer figure that is *lower* than an already-locked rule replaces it.
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
