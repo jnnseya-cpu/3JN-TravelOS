@@ -31,6 +31,7 @@ import {
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
+  createTravelPot, contributeToPot,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -46,19 +47,25 @@ import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE } from './revenue.js';
-import { gatewayStatus } from './ai-gateway.js';
+import { gatewayStatus, PROVIDER_TOKEN_RATES } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
+import { stripeEnabled, createCheckoutSession, verifyStripeSignature } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 // Payload limit: host property photos travel as compressed data URLs in JSON
 // (10–100 images ≈ 100–150KB each after client-side compression), so the body
 // cap is generous. Individual photos are size-capped again server-side.
-app.use(express.json({ limit: '30mb' }));
+app.use(express.json({
+  limit: '30mb',
+  // Keep the exact request bytes for webhook signature verification (Stripe
+  // signs the raw payload — re-serialised JSON would never match).
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 
 // CORS — allows the Vercel-hosted frontend to call this API directly (or via a
 // rewrite proxy). Lock CORS_ORIGIN to your domain in production.
@@ -263,8 +270,95 @@ app.patch('/api/account/:id', safe((req, res) => {
 }));
 
 // Provision one account per role (consumer/business/merchant/partner/admin).
+// FULLY LOADED: each demo account ships with live data — memberships, ACU,
+// bookings, pots, API keys, payment links, a published host listing and a
+// populated visa queue — so every command centre demos end-to-end.
+function fullyLoadDemoAccounts() {
+  const byEmail = (e) => findUserByEmail(e);
+  const loaded = [];
+  const step = (label, fn) => { try { fn(); loaded.push(label); } catch (err) { console.warn('[demo-load]', label, err?.message); } };
+  const ctx = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
+  const bookFor = (userId, text, tier = 'smart') => {
+    const r = plan({ text, context: ctx, user: getUser(userId), searchTier: tier, usage: usageStats(userId) });
+    if (r.stage !== 'options') return null;
+    const option = r.packages.options.find((o) => o.recommended) || r.packages.options[0];
+    const quote = saveQuote({ option, intent: r.intent, instalment: instalmentPlan({ totalLocal: option.pricing.local.total, currency: ctx.currency, months: 3, depositPct: 0.2 }) });
+    return createBooking({ quoteId: quote.id, option, instalment: quote.instalment, userId, paymentMethod: 'card', lead: { fullName: getUser(userId)?.name, email: getUser(userId)?.email } });
+  };
+
+  // Consumer — the flagship demo journey.
+  const t = byEmail('tester@3jntravel.com');
+  if (t && listBookings(t.id).length === 0) {
+    step('consumer: Travel+ Family Saver membership', () => subscribeMembership(t.id, 'family'));
+    step('consumer: Traveller ACU pack (1,750)', () => buyAcu(t.id, 'traveller'));
+    step('consumer: loyalty points (Voyager)', () => addPoints(t.id, 1400));
+    step('consumer: Dubai family booking', () => bookFor(t.id, 'All inclusive holiday to Dubai from London for 2 adults and 1 child in August, 7 nights', 'deep'));
+    step('consumer: family savings pot', () => {
+      const pot = createTravelPot(t.id, { name: 'Dubai 2027 family pot', targetUSD: 3000, goal: 'Dubai, August 2027', destination: 'Dubai', monthlyUSD: 250, kind: 'family' });
+      if (pot.ok) contributeToPot(pot.pot.id, { name: 'Demo Family', amountUSD: 450 });
+    });
+    step('consumer: visa application on file', () => recordVisaApplication(assessVisa({ name: t.name, nationality: 'GB', destination: 'Dubai', purpose: 'tourism' })));
+    step('consumer: eSIM provisioned', () => provisionEsim(t.id, { destination: 'Dubai', dataGB: 5, days: 7 }));
+  }
+
+  // Business — corporate demo.
+  const b = byEmail('business@3jntravel.com');
+  if (b && listBookings(b.id).length === 0) {
+    step('business: Frequent Flyer membership', () => subscribeMembership(b.id, 'executive'));
+    step('business: 5,000 ACU float', () => creditAcu(b.id, 5000, 'corporate-demo-float'));
+    step('business: Paris team booking', () => bookFor(b.id, 'Flights and hotel to Paris from London for 3 adults, 2 nights', 'smart'));
+  }
+
+  // Merchant — BitriPay portal demo.
+  const m = byEmail('merchant@3jntravel.com');
+  if (m && listApiKeys(m.id).length === 0) {
+    step('merchant: sandbox API key', () => createApiKey(m.id, { label: 'Demo sandbox key', environment: 'sandbox' }));
+    step('merchant: payment link £420', () => createPaymentLink(m.id, { amountMinor: 42000, currency: 'GBP', description: 'Dubai excursion — demo invoice' }));
+  }
+
+  // Partner — white-label demo.
+  const pn = byEmail('partner@3jntravel.com');
+  if (pn && listApiKeys(pn.id).length === 0) {
+    step('partner: production API key', () => createApiKey(pn.id, { label: 'White-label production key', environment: 'production' }));
+  }
+
+  // Host — marketplace demo with a published, photo-complete listing.
+  let h = byEmail('host@3jntravel.com');
+  if (!h) { step('host: account created', () => createUser({ name: 'Demo Host', email: 'host@3jntravel.com', role: 'consumer' })); h = byEmail('host@3jntravel.com'); }
+  if (h && listHostListings(h.id).length === 0) {
+    step('host: registered + listing published (12 photos)', () => {
+      registerHost(h.id, { displayName: 'Demo Host', payoutMethod: 'BitriPay wallet' });
+      createHostListing(h.id, {
+        title: 'The Palm Residence — Marina View Apartment',
+        city: 'Dubai',
+        address: '14 Palm Avenue, Dubai Marina, Dubai',
+        propertyType: 'Entire apartment',
+        nightlyUSD: 120, sleeps: 4,
+        amenities: ['Full kitchen', 'Free WiFi', 'Pool', 'Washing machine', 'Self check-in', 'Workspace'],
+        photos: Array.from({ length: 12 }, (_, i) => `https://picsum.photos/seed/3jn-demo-${i}/800/600`),
+      });
+    });
+  }
+
+  // Embassy / consulate — a populated visa decision queue (safe + risky).
+  const e1 = byEmail('embassy@3jntravel.com');
+  if (e1 && listVisaApplications().length < 3) {
+    step('visa queue: clean applicant', () => recordVisaApplication(assessVisa({ name: 'Amina Okafor', nationality: 'NG', destination: 'Paris', purpose: 'tourism' })));
+    step('visa queue: conditional case', () => recordVisaApplication(assessVisa({ name: 'Jean Mbala', nationality: 'CD', destination: 'Dubai', purpose: 'business', fundsConsistent: false, homeTies: 'moderate' })));
+    step('visa queue: high-risk case', () => recordVisaApplication(assessVisa({ name: 'Flagged Applicant', nationality: 'GB', destination: 'Dubai', purpose: 'tourism', documentsAuthentic: false, knownFraudNetwork: true })));
+  }
+
+  // Admin — funded and comped.
+  const a = byEmail('admin@3jntravel.com');
+  if (a && (getUser(a.id)?.acuBalance || 0) < 1000) {
+    step('admin: 10,000 ACU + Concierge Elite', () => { creditAcu(a.id, 10000, 'admin-demo-float'); subscribeMembership(a.id, 'elite'); });
+  }
+  return loaded;
+}
 app.post('/api/accounts/seed-roles', safe((req, res) => {
-  res.json({ roles: ROLES, accounts: seedAllRoles() });
+  const accounts = seedAllRoles();
+  const demoLoaded = fullyLoadDemoAccounts();
+  res.json({ roles: ROLES, accounts: accounts.map((u) => getUser(u.id) || u), demoLoaded });
 }));
 
 // One-click FULL-ACCESS account — a single account that can use every section of
@@ -314,7 +408,34 @@ app.get('/api/admin/ai-costs', safe((req, res) => {
 // ---- Profitability Dashboard (spec §17): real-time money view --------------
 app.get('/api/admin/profitability', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  res.json(profitabilityDashboard());
+  const dash = profitabilityDashboard();
+  const costs = aiCostReport();
+  // ACU economics: what each AI provider costs us vs what ACUs earn.
+  const GBP_TO_USD = 1.27;
+  const acuRevenueUSD = dash.streams.acuSalesRevenueUSD || 0;
+  const aiActualUSD = costs.totalActualUSD || 0;
+  const grossProfitUSD = Math.round((acuRevenueUSD - aiActualUSD) * 100) / 100;
+  res.json({
+    ...dash,
+    acuEconomics: {
+      // Provider price list (USD per 1M tokens, blended) — the estimator basis.
+      providerRatesUSDPerMTokens: PROVIDER_TOKEN_RATES,
+      // What each provider has actually been asked to do (from the ledger).
+      providerSpend: costs.byProvider,
+      requests: costs.requests,
+      aiCostEstimatedUSD: costs.totalEstimatedUSD,
+      aiCostActualUSD: aiActualUSD,
+      acuSalesRevenueUSD: acuRevenueUSD,
+      grossProfitUSD,
+      marginPct: acuRevenueUSD > 0 ? Math.round((grossProfitUSD / acuRevenueUSD) * 1000) / 10 : null,
+      unitEconomics: {
+        acuSellPriceGBP: 0.01,       // £1 = 100 ACU (customer rate)
+        acuInternalCostGBP: 0.003,   // ACU_GBP — what 1 ACU costs to serve
+        intrinsicMarginPct: 70,      // sell 1p, serve at 0.3p
+        rule: 'Expected Revenue >= AI Cost x 10 (Cost Protection Gate) — AI never runs unfunded',
+      },
+    },
+  });
 }));
 
 // ---- Guaranteed Savings Engine (USP #2) -------------------------------------
@@ -650,6 +771,55 @@ app.get('/api/book/:id', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   res.json({ booking });
+}));
+
+// ---- Stripe Checkout: live card payments -----------------------------------
+// Credential-gated: without STRIPE_SECRET_KEY the simulated flow continues.
+app.get('/api/pay/stripe/status', safe((req, res) => {
+  res.json({ enabled: stripeEnabled() });
+}));
+// Create a hosted Checkout session for a booking's deposit (or full amount).
+app.post('/api/pay/stripe/session', safe(async (req, res) => {
+  if (!stripeEnabled()) return res.status(400).json({ error: 'stripe-not-configured', message: 'Card checkout is not configured yet — set STRIPE_SECRET_KEY.' });
+  const { bookingId, kind } = req.body || {};
+  const booking = getBooking(bookingId);
+  if (!booking) return res.status(404).json({ error: 'booking-not-found' });
+  const cur = booking.option?.pricing?.currency || 'GBP';
+  const total = booking.instalment?.deposit && kind !== 'full'
+    ? booking.instalment.deposit
+    : booking.option?.pricing?.local?.total || 0;
+  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const user = currentUser(req);
+  const session = await createCheckoutSession({
+    amountMinor: Math.round(total * 100),
+    currency: cur,
+    description: `3JN Travel OS — ${booking.option?.tier || ''} package ${kind === 'full' ? '(full payment)' : '(deposit)'}`.trim(),
+    bookingId: booking.id,
+    userId: user?.id || booking.userId || '',
+    customerEmail: user?.email,
+    successUrl: `${origin}/console?paid=1&booking=${booking.id}`,
+    cancelUrl: `${origin}/console?paid=0&booking=${booking.id}`,
+  });
+  if (!session.ok) return res.status(400).json(session);
+  res.json(session);
+}));
+// Webhook: signature-verified; a forged event can never mark a booking paid.
+app.post('/api/pay/stripe/webhook', safe((req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const check = verifyStripeSignature(req.rawBody, sig);
+  if (!check.ok) return res.status(400).json(check);
+  const event = req.body || {};
+  if (event.type === 'checkout.session.completed') {
+    const meta = event.data?.object?.metadata || {};
+    const amountMinor = event.data?.object?.amount_total || 0;
+    if (meta.bookingId) {
+      const booking = recordPayment(meta.bookingId, { type: 'stripe-checkout', amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
+      if (booking && meta.userId) {
+        pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Card payment of ${(amountMinor / 100).toFixed(2)} confirmed via Stripe — your booking is secured.` });
+      }
+    }
+  }
+  res.json({ received: true });
 }));
 
 // ---- Notifications --------------------------------------------------------

@@ -2504,3 +2504,55 @@ test('every stay carries a FULL property name, address, and live web/map links',
     assert.ok(host.details.propertyName.includes('Cairo'), 'name is destination-anchored');
   }
 });
+
+// ================= Stripe Checkout + fully-loaded demo accounts ================
+import { stripeEnabled, verifyStripeSignature, signStripePayload, createCheckoutSession } from '../src/stripe.js';
+import { listVisaApplications } from '../src/store.js';
+
+test('stripe: credential-gated, and webhook signatures are properly verified', async () => {
+  // Without STRIPE_SECRET_KEY the integration stays off and sessions refuse cleanly.
+  assert.equal(stripeEnabled(), false);
+  const off = await createCheckoutSession({ amountMinor: 5000, bookingId: 'bk_x' });
+  assert.equal(off.ok, false);
+  assert.equal(off.error, 'stripe-not-configured');
+  // Webhook verification: a correctly signed payload passes…
+  const secret = 'whsec_test_secret';
+  const body = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_1', amount_total: 5000, metadata: { bookingId: 'bk_x' } } } });
+  const sig = signStripePayload(body, secret);
+  assert.equal(verifyStripeSignature(body, sig, secret).ok, true);
+  // …a forged signature fails, a tampered body fails, a stale timestamp fails.
+  assert.equal(verifyStripeSignature(body, sig.replace(/v1=.{10}/, 'v1=deadbeefde'), secret).ok, false);
+  assert.equal(verifyStripeSignature(body + ' ', sig, secret).ok, false);
+  const old = signStripePayload(body, secret, Date.now() - 10 * 60 * 1000);
+  assert.equal(verifyStripeSignature(body, old, secret).ok, false);
+});
+
+test('demo accounts: seed-roles returns fully loaded accounts for every role', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    const d = await res.json();
+    assert.equal(d.accounts.length, 7, 'one account per role');
+    assert.ok(Array.isArray(d.demoLoaded), 'demo-load ran');
+    // Consumer is fully loaded: membership, ACU, a real booking, a pot, a visa file.
+    const tester = d.accounts.find((a) => a.email === 'tester@3jntravel.com');
+    assert.ok(tester.membership?.active, 'consumer has an active membership');
+    assert.ok(tester.acuBalance > 0, 'consumer holds ACUs');
+    const consoleRes = await (await fetch(`${base}/api/account/${tester.id}`)).json();
+    assert.ok((consoleRes.bookings || []).length >= 1, 'consumer has a real booking');
+    // Host demo published a photo-complete listing.
+    const login = await fetch(`${base}/api/host/listings`).then((r) => r.json()).catch(() => null);
+    if (login && login.listings) assert.ok(login.listings.some((l) => l.city === 'Dubai'), 'demo host listing live');
+    // Visa queue populated for embassy/consulate review.
+    assert.ok(listVisaApplications().length >= 3, 'visa queue has demo cases');
+    // Idempotent: running again does not duplicate bookings.
+    await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' });
+    const again = await (await fetch(`${base}/api/account/${tester.id}`)).json();
+    assert.equal((again.bookings || []).length, (consoleRes.bookings || []).length, 'seed is idempotent');
+  } finally {
+    server.close();
+  }
+});

@@ -106,7 +106,7 @@ export const VISAOS_REVENUE_MODEL = [
 // Travel OS + VisaOS becomes unmatched: the booking flow understands the visa
 // before money moves — "Before booking: Visa approval probability: 93%".
 export const TRAVEL_OS_INTEGRATION = {
-  synergy: 'Travel OS + VisaOS becomes unmatched.',
+  synergy: '3JN Travel OS + 3JN VisaOS becomes unmatched.',
   bookingUnderstands: ['Visa likelihood', 'Approval probability', 'Required documents', 'Timing risk'],
   example: 'Before booking: Visa approval probability: 93%',
   liveWiring: [

@@ -993,6 +993,19 @@ window.confirmBooking = async () => {
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
+  // LIVE CARD CHECKOUT: when Stripe is configured, card payments redirect to
+  // the hosted Checkout page for the real deposit charge; the webhook then
+  // marks the booking paid. Without Stripe keys, the simulated flow continues.
+  if (paymentMethod === 'card' && data.booking?.id) {
+    try {
+      const st = await api('/api/pay/stripe/status', { silent: true });
+      if (st.enabled) {
+        toast('💳 Redirecting to secure card checkout…');
+        const sess = await api('/api/pay/stripe/session', { method: 'POST', body: JSON.stringify({ bookingId: data.booking.id }) });
+        if (sess.url) { window.location.href = sess.url; return; }
+      }
+    } catch { /* fall through to the recorded flow */ }
+  }
   const rail = paymentMethod === 'card' ? 'Stripe' : paymentMethod === 'bitripay' ? 'BitriPay Wallet' : 'BitriPay Mobile Money';
   toast(`✓ Documents validated · booking confirmed — deposit paid via ${rail}.`);
   nav('console');
@@ -1599,6 +1612,8 @@ async function renderAdmin() {
     sec = (await api('/api/agents/security')).report; ops = (await api('/api/agents/ops')).report;
     seo = (await api('/api/agents/seo')).report; mkt = (await api('/api/agents/marketing')).report;
   } catch { accessGate(out, 'Admin', 'admin'); return; }
+  let profit = null;
+  try { profit = await api('/api/admin/profitability'); } catch { /* optional panel */ }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -1644,6 +1659,41 @@ async function renderAdmin() {
           ${g.costOptimization ? `<div class="kv" style="margin-top:8px"><span>AI cost saving <span class="muted">(floor ${g.costOptimization.floorPct}%)</span></span><span style="color:${g.costOptimization.meetsFloor ? 'var(--green)' : '#ff6b6b'}">${g.costOptimization.savingPct}% ${g.costOptimization.meetsFloor ? '✓' : '⚠'}</span></div>
           <div class="kv"><span>Cache hit rate</span><span>${g.costOptimization.cacheHitRatePct}%</span></div>
           <div class="muted" style="font-size:11.5px;margin-top:6px">${g.costOptimization.techniques.join(' · ')}</div>` : ''}</div>
+        ${profit ? (() => {
+          const st = profit.streams || {};
+          const rows = [
+            ['10% commission (bookings)', st.commissionRevenueUSD],
+            ['Supplier commissions', st.supplierRevenueUSD],
+            ['Savings-share fees', st.savingsRevenueUSD],
+            ['Subscriptions (monthly)', st.subscriptionRevenueUSD],
+            ['ACU pack sales', st.acuSalesRevenueUSD],
+            ['Forfeited search deposits', st.searchDepositRevenueUSD],
+            ['Booking protection fees', st.protectionRevenueUSD],
+            ['Corporate accounts', st.corporateRevenueUSD],
+            ['White-label SaaS', st.whiteLabelRevenueUSD],
+            ['API per-call revenue', st.apiRevenueUSD],
+          ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>$${Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></div>`).join('');
+          return `<div class="card pad" style="margin-top:16px;border-color:rgba(216,180,106,0.35)"><span class="eyebrow">3JN income — every stream (our revenue only)</span>
+            ${rows}
+            <div class="kv" style="margin-top:8px"><span><strong>Total 3JN revenue</strong></span><span style="color:var(--gold)"><strong>$${Number(profit.revenueUSD || 0).toLocaleString()}</strong></span></div>
+            <div class="kv"><span>AI cost (actual)</span><span>−$${Number(profit.aiCosts?.actualUSD || 0).toLocaleString()}</span></div>
+            <div class="kv"><span><strong>Profit</strong></span><span style="color:var(--green)"><strong>$${Number(profit.profitUSD || 0).toLocaleString()}</strong></span></div>
+            <div class="muted" style="font-size:11.5px;margin-top:6px">Live from the ledgers — supplier gross (the 90% host share etc.) is excluded; this is 3JN's income only.</div>
+          </div>`;
+        })() : ''}
+        ${profit?.acuEconomics ? (() => {
+          const e = profit.acuEconomics;
+          const rates = Object.entries(e.providerRatesUSDPerMTokens || {}).map(([pr, r]) => `<div class="kv"><span>${pr}</span><span>$${r} / 1M tokens</span></div>`).join('');
+          const spend = Object.entries(e.providerSpend || {}).filter(([, v]) => v.requests > 0).map(([pr, v]) => `<div class="kv"><span>${pr} <span class="muted">· ${v.requests} calls</span></span><span>est $${v.estimatedUSD} · actual $${v.actualUSD}</span></div>`).join('') || '<div class="muted" style="font-size:12.5px">No routed AI calls yet — local engine served everything at $0.</div>';
+          return `<div class="card pad" style="margin-top:16px"><span class="eyebrow">AI provider costs & ACU profit</span>
+            <div style="margin-top:8px"><span class="muted" style="font-size:11px;letter-spacing:.14em;text-transform:uppercase">Provider price list</span>${rates}</div>
+            <div style="margin-top:10px"><span class="muted" style="font-size:11px;letter-spacing:.14em;text-transform:uppercase">Actual spend (from the ai_request_costs ledger)</span>${spend}</div>
+            <div class="kv" style="margin-top:10px"><span>ACU sales revenue</span><span>$${(e.acuSalesRevenueUSD || 0).toLocaleString()}</span></div>
+            <div class="kv"><span>AI cost (actual)</span><span>$${(e.aiCostActualUSD || 0).toLocaleString()}</span></div>
+            <div class="kv"><span><strong>ACU gross profit</strong></span><span style="color:var(--gold)"><strong>$${(e.grossProfitUSD || 0).toLocaleString()}${e.marginPct != null ? ' · ' + e.marginPct + '%' : ''}</strong></span></div>
+            <div class="muted" style="font-size:11.5px;margin-top:8px">Unit economics: 1 ACU sells at £${e.unitEconomics.acuSellPriceGBP} and costs £${e.unitEconomics.acuInternalCostGBP} to serve (${e.unitEconomics.intrinsicMarginPct}% intrinsic margin). ${e.unitEconomics.rule}.</div>
+          </div>`;
+        })() : ''}
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Tier mix</span>${mix(o.tierMix)}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Payment rail mix</span>${mix(o.gatewayMix)}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Supplier leaderboard</span>${board}</div>
