@@ -61,8 +61,17 @@ export function supportAnswer(intentKey, { name, booking } = {}) {
       return `Every trip earns Travel ACUs, and our Refer & Earn programme pays 250 ACUs per referred booking — refer 20 travellers and you unlock lifetime revenue share. Creators can join the Influencer Programme for up to 1% lifetime revenue share. Want your referral link?`;
     case 'booking_new':
       return `Let's find you a great deal. Tell me where you'd like to go, your dates and how many travellers, and I'll build a transparent, all-in package across verified suppliers — you'll see the real bookable price, not just an estimate.`;
+    // Escalation acknowledgements — warm, specific, then a human takes over.
+    case 'refund':
+      return `I'm sorry about the payment issue. Because this involves your money, I'm passing it straight to a 3JN specialist who can review the charge and sort out any refund securely. I've logged the details so you won't need to repeat yourself.`;
+    case 'complaint':
+      return `I'm really sorry you've had this experience — that's not the standard we hold ourselves to. I'm escalating this to a member of our team right now so a person can look into it properly and make it right.`;
+    case 'safety':
+      return `That sounds urgent and I want the right person on it immediately. I'm connecting you to our travel support team now. If you're in immediate danger, please also contact local emergency services.`;
+    case 'human':
+      return `Of course — I'm connecting you with a member of our team now. They'll have your details and pick up right where we left off.`;
     default:
-      return `Let me get a member of our team to help you with that.`;
+      return `I want to make sure you get the right help, so I'm passing this to a member of our team who'll follow up shortly.`;
   }
 }
 

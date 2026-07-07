@@ -3318,3 +3318,39 @@ window.addEventListener('appinstalled', () => {
   if (btn) btn.classList.add('hidden');
   toast('✓ 3JN Travel OS installed. Launch it from your home screen.');
 });
+
+// ---- AI Support Concierge (floating chatbot with human escalation) --------
+(function initChat() {
+  const fab = $('#chatFab'); const panel = $('#chatPanel');
+  const log = $('#chatLog'); const form = $('#chatForm'); const input = $('#chatInput');
+  if (!fab || !panel) return;
+  let greeted = false;
+  const bubble = (text, cls) => {
+    const d = document.createElement('div');
+    d.className = `chat-msg ${cls}`;
+    // Allow our own <strong> emphasis, escape everything else.
+    d.innerHTML = esc(text).replace(/&lt;strong&gt;/g, '<strong>').replace(/&lt;\/strong&gt;/g, '</strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+    return d;
+  };
+  const open = () => {
+    panel.hidden = false; fab.hidden = true; input.focus();
+    if (!greeted) { greeted = true; bubble("Hi! I'm the 3JN Assistant. Ask me about your bookings, payments, visas or rewards — or just say hello.", 'bot'); }
+  };
+  const close = () => { panel.hidden = true; fab.hidden = false; };
+  fab.addEventListener('click', open);
+  $('#chatClose')?.addEventListener('click', close);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = input.value.trim(); if (!msg) return;
+    bubble(msg, 'me'); input.value = '';
+    const typing = bubble('…', 'bot');
+    try {
+      const d = await api('/api/support/chat', { method: 'POST', body: JSON.stringify({ message: msg }) });
+      typing.remove();
+      bubble(d.reply, 'bot');
+      if (d.escalated) bubble(`🎧 ${d.handoff || 'A 3JN specialist will follow up shortly.'}${d.ticketId ? ` (ref ${d.ticketId})` : ''}`, 'esc');
+    } catch { typing.remove(); bubble('Sorry — I couldn’t reach support just now. Please try again in a moment.', 'bot'); }
+  });
+})();

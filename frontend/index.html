@@ -674,6 +674,20 @@
   <div id="toast"></div>
   <div class="modal-bg" id="modalBg"><div class="card pad modal" id="modalBody"></div></div>
 
+  <!-- AI Support Concierge — floating chatbot with human escalation -->
+  <button id="chatFab" aria-label="Chat with 3JN Assistant" title="Chat with the 3JN Assistant">💬</button>
+  <div id="chatPanel" hidden>
+    <div id="chatHead">
+      <span><strong>3JN Assistant</strong> <span class="chat-status">● online</span></span>
+      <button id="chatClose" aria-label="Close chat">✕</button>
+    </div>
+    <div id="chatLog" aria-live="polite"></div>
+    <form id="chatForm" autocomplete="off">
+      <input id="chatInput" type="text" placeholder="Ask about bookings, visas, payments…" maxlength="500" />
+      <button type="submit" aria-label="Send">➤</button>
+    </form>
+  </div>
+
   <script src="/config.js"></script>
   <script src="/firebase-config.js"></script>
   <script type="module" src="/firebase-auth.js"></script>
