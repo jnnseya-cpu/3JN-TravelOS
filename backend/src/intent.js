@@ -259,12 +259,39 @@ function parseLegs(raw) {
   return null;
 }
 
+// Group origins — one group converging from several departure cities in the
+// SAME booking: "2 will come from Birmingham, 1 from London, 4 from Manchester
+// and 2 from Nottingham". Each party keeps its own origin; dates, stay and
+// booking are shared.
+function parseGroupOrigins(raw) {
+  const parties = [];
+  // "<count> [will] [come/travel/fly/depart/leave/go] from <City>" — the verb is
+  // optional but constrained, so "7 nights from London" can never match.
+  const re = /(\d+)\s+(?:(?:will|would)\s+)?(?:come(?:s)?|coming|travel(?:ling|ing)?|depart(?:ing)?|fly(?:ing)?|flies|leave|leaving|going|go)?\s*from\s+([A-ZÀ-Þ][A-Za-zÀ-ÿ'’-]*(?:\s+[A-ZÀ-Þ][A-Za-zÀ-ÿ'’-]*)?)/g;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const count = parseInt(m[1], 10);
+    if (count >= 1 && count <= 40) parties.push({ count, city: m[2].trim() });
+  }
+  // A group needs at least two distinct parties; a single "<n> from <city>"
+  // is just a headcount + origin, already handled by the base parsers.
+  return parties.length >= 2 ? parties : null;
+}
+
 export function parseIntent(text, ctx = {}, today = new Date()) {
   const raw = (text || '').trim();
   // Worldwide: resolve a catalogue city OR synthesise any destination on Earth.
   const destination = resolveDestinationFromText(raw);
   const originCity = parseOrigin(raw);
   const travellers = parseTravellers(raw);
+
+  // Multi-origin group: parties from different cities, one shared booking.
+  const groupParties = parseGroupOrigins(raw);
+  if (groupParties) {
+    const total = groupParties.reduce((s, p) => s + p.count, 0);
+    travellers.adults = Math.max(1, total - (travellers.children || 0));
+    travellers.total = travellers.adults + (travellers.children || 0);
+  }
   const requested = parseComponents(raw);
 
   // Explicit calendar dates the traveller typed take priority over a bare month.
@@ -310,6 +337,12 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     requested.add(legs.out.mode);
     requested.add(legs.back.mode);
   }
+  // A multi-origin group implies getting everyone there: default to flights
+  // when no journey mode was named ("a group traveling to Morocco by plane"
+  // names it; "2 from Birmingham, 4 from Manchester to Marrakech" does not).
+  if (groupParties && !['flights', 'train', 'coach', 'ferry', 'cruise'].some((m) => requested.has(m))) {
+    requested.add('flights');
+  }
 
   let needComponents = false;
   if (requested.size === 0 && destination) {
@@ -333,6 +366,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     nationality: ctx.country || 'GB',
     originCity, // the user's stated departure city (null if not given)
     legs, // mixed-mode / split-origin legs (null for a simple round trip)
+    groupOrigins: groupParties ? { parties: groupParties } : null, // multi-origin group, one booking
     miniCruise, // short ferry-cruise rather than an ocean liner
     hotelArea, // requested hotel neighbourhood/road (null if not given)
     recommendedDestination: destination?.recommendedFromCountry || null,

@@ -96,13 +96,33 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   const tier = TIERS[tierName];
   const selections = [];
   let componentsUSD = 0;
-  // outboundLeg/returnLeg carry mixed-mode / split-origin journeys (one booking,
-  // per-direction means & departure points) — they lead the package.
-  const componentOrder = ['outboundLeg', 'returnLeg', 'flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
+  // groupTravel carries multi-origin group parties; outboundLeg/returnLeg carry
+  // mixed-mode / split-origin journeys — one booking either way; they lead.
+  const componentOrder = ['groupTravel', 'outboundLeg', 'returnLeg', 'flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
 
   for (const key of componentOrder) {
     const offers = scan[key];
     if (!offers || !offers.length) continue;
+
+    if (key === 'groupTravel') {
+      // Multi-origin group: pick the tier's best flight PER PARTY — every
+      // party gets its own departure city; all land in the same package.
+      const pool = reliableVerified(offers);
+      const byParty = new Map();
+      for (const o of pool) {
+        const i = o.details?.partyIndex ?? 0;
+        if (!byParty.has(i)) byParty.set(i, []);
+        byParty.get(i).push(o);
+      }
+      for (const [, list] of [...byParty.entries()].sort((a, b) => a[0] - b[0])) {
+        const pick = tier.pickFlight(applyFlightPrefs(list, intent.flightPrefs));
+        if (pick) {
+          componentsUSD += pick.priceUSD;
+          selections.push(pick);
+        }
+      }
+      continue;
+    }
 
     if (key === 'activities') {
       // Activities: take all reliable+verified (they're a bundle).
