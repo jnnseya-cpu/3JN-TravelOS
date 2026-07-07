@@ -480,6 +480,25 @@ The AI Orchestration Layer is the **neural centre of 3JN Travel OS**. It is buil
 - **AI Governance Layer**: instruction templates, model parameters, permission scopes — all admin-configurable
 - **ACU Metering**: every LLM call is metered, attributed to user/tenant, and billed via ACU system *(prototype: `AGENT_BUDGETS` + `recordAiRequestCost` ledger + ACU pre-approval)*
 
+### 9.5 Zero-Trust Security Architecture
+
+3JN Travel OS implements military-grade security across every layer of the stack, consistent with zero-trust principles: **never trust, always verify, assume breach.**
+
+| Security Layer | Implementation | Standard |
+|---|---|---|
+| **Identity & Access** | Auth0 MFA + biometric verification + device fingerprinting | ISO 27001, SOC 2 Type II |
+| **API Security** | Kong Gateway: JWT validation, rate limiting, IP allowlisting, WAF | OWASP API Security Top 10 |
+| **Data Encryption at Rest** | AES-256 on all PostgreSQL, Firestore, GCS data | PCI-DSS v4.0 Req 3 |
+| **Data Encryption in Transit** | TLS 1.3 enforced on all connections, HSTS enabled | PCI-DSS v4.0 Req 4 |
+| **Tokenisation** | All PAN/card data tokenised via Stripe/BitriPay — never stored | PCI-DSS SAQ D |
+| **DDoS Protection** | Cloudflare Enterprise (Magic Transit) + GCP Cloud Armor | 99.99% mitigation SLA |
+| **Bot Protection** | Cloudflare Bot Management + CAPTCHA fallback | OWASP Automated Threats |
+| **Secret Management** | GCP Secret Manager + HashiCorp Vault for rotation | CIS Benchmark |
+| **Vulnerability Scanning** | Snyk (SAST/SCA) + Trivy (container) + OWASP ZAP (DAST) | CVE patching SLA < 48h |
+| **Audit Logging** | Immutable audit log — all user + admin + agent actions logged to BigQuery | GDPR Art.30 |
+
+*(Prototype anchors already enforcing this direction: human-only signup/login gate (`human-verify.js` — honeypot, timing, interaction, signed challenge, rate limiting), the immutable audit log + hash-chained VisaOS audit trail, and role-gated command centres.)*
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
