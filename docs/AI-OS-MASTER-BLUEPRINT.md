@@ -454,6 +454,19 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 | **Agent Memory** | Pinecone (vector) + Redis (session) | Long-term preference memory + short-term session context |
 | **Workflow Engine** | Temporal.io | Durable, long-running workflows (booking, visa, compliance) |
 
+### 9.3 Database Architecture
+
+| Database | Technology | Data Stored |
+|---|---|---|
+| **Primary Relational** | PostgreSQL 16 (Cloud SQL) | Users, bookings, transactions, memberships, agents config |
+| **Document Store** | Firestore (Firebase) | Real-time journey state, agent conversations, notifications |
+| **Cache Layer** | Redis (Upstash) | Session tokens, rate limits, price monitor state, feature flags |
+| **Vector Database** | Pinecone | User preference embeddings, supplier knowledge graph, RAG documents |
+| **Data Warehouse** | BigQuery | Analytics, BI, ML training data, regulatory reporting |
+| **Object Storage** | GCP Cloud Storage + Cloudflare R2 | Document vault, e-tickets, media assets, backups |
+| **Event Store** | Kafka + BigQuery sink | Complete event history for audit and ML |
+| **Search** | Elasticsearch (Elastic Cloud) | Hotel/destination search, supplier search, knowledge base |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
