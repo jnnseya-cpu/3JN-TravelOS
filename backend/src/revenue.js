@@ -256,6 +256,10 @@ export const POSITIONING = {
   neverCompeteOn: 'free flight search (Google Flights / Skyscanner / Kayak / Momondo / Trivago)',
   customerWants: ['cheapest price', 'less risk', 'less time wasted', 'better travel experience', 'somebody to do the work'],
   deliver: 'decisions, not options — an advisor, not a search engine',
+  // The most commercially powerful layer (strategic pack): the engine that
+  // turns "search and compare" into managed execution across the lifecycle.
+  dealExecutionEngine: ['Search', 'Negotiate', 'Package', 'Optimise', 'Monitor', 'Support', 'Continuously improve travel outcomes'],
+  lifecycle: ['Idea', 'Discovery', 'Pricing', 'Booking', 'Payments', 'Support', 'Rebooking', 'Refunds', 'Loyalty', 'Repeat Travel Intelligence'],
   pillars: [
     { usp: 'AI Travel CFO', symbol: 'travelCFO (quantified date/airport/hotel-swap advice)' },
     { usp: 'Guaranteed Savings Engine', symbol: 'claimSavingsGuarantee (ACU refund if unbeaten)' },

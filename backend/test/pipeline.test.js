@@ -2230,6 +2230,11 @@ test('USP #10 + billing: the locked positioning statement and API billing modes'
   assert.deepEqual(POSITIONING.sells, ['Savings', 'Protection', 'Intelligence', 'Negotiation', 'Execution']);
   assert.equal(POSITIONING.pillars.length, 7);
   assert.deepEqual(API_BILLING.map((b) => b.name), ['Per call', 'Monthly', 'Enterprise']);
+  // Strategic pack: the AI Travel Deal Execution Engine + full lifecycle.
+  assert.deepEqual(POSITIONING.dealExecutionEngine, ['Search', 'Negotiate', 'Package', 'Optimise', 'Monitor', 'Support', 'Continuously improve travel outcomes']);
+  assert.equal(POSITIONING.lifecycle.length, 10);
+  assert.equal(POSITIONING.lifecycle[0], 'Idea');
+  assert.equal(POSITIONING.lifecycle[9], 'Repeat Travel Intelligence');
 });
 
 // ================= 3JN VisaOS — GovTech module manifest ========================
