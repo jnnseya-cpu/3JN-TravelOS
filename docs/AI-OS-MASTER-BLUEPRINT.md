@@ -531,6 +531,42 @@ Core schema is implemented in PostgreSQL. All tables include `created_at`, `upda
 
 ---
 
+# SECTION 11 — API SPECIFICATION
+*REST API endpoints, authentication, webhooks, and rate limits*
+
+## 11. API Specification
+
+All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tokens issued by Auth0. All responses follow JSON:API structure with standard error codes. Rate limits are enforced per API key via Kong Gateway.
+
+### 11.1 Core Endpoint Registry
+
+| Method | Endpoint | Auth | Purpose | Rate Limit |
+|---|---|---|---|---|
+| POST | `/api/v1/search/intent` | JWT | Submit natural language travel intent — returns parsed parameters + initial results | 60/min |
+| POST | `/api/v1/search/flights` | JWT | Structured flight search against GDS + wholesale | 120/min |
+| POST | `/api/v1/search/hotels` | JWT | Hotel search with wholesale rate retrieval | 120/min |
+| POST | `/api/v1/bookings` | JWT | Create booking — triggers full agent booking workflow | 30/min |
+| GET | `/api/v1/bookings/:id` | JWT | Retrieve booking detail with agent log | 300/min |
+| POST | `/api/v1/bookings/:id/cancel` | JWT | Cancel booking — triggers refund + agent reoptimise | 10/min |
+| GET | `/api/v1/console` | JWT | Get Universal Console state — all trips, alerts, documents | 300/min |
+| POST | `/api/v1/agents/chat` | JWT | Send message to AI Chief of Staff agent | 60/min |
+| GET | `/api/v1/price-monitors` | JWT | List active price monitors for user | 300/min |
+| POST | `/api/v1/price-monitors` | JWT | Create price monitor for a booking | 60/min |
+| GET | `/api/v1/visa/check` | JWT | Check visa requirements for itinerary | 60/min |
+| POST | `/api/v1/visa/apply` | JWT | Submit visa application via agent | 10/min |
+| GET | `/api/v1/loyalty` | JWT | Get aggregated loyalty balances | 120/min |
+| GET | `/api/v1/risk/:destination` | JWT | Get risk intelligence for destination | 120/min |
+| GET | `/api/v1/savings/history` | JWT | Full savings history for user | 120/min |
+| POST | `/api/v1/payments/intent` | JWT | Create payment intent — returns gateway token | 30/min |
+| POST | `/api/v1/payments/webhook` | HMAC | Receive payment status webhooks from BitriPay/Stripe | N/A |
+| GET | `/api/v1/admin/users` | JWT+Admin | List users with filters | 60/min |
+| GET | `/api/v1/admin/revenue` | JWT+Admin | Revenue analytics dashboard data | 60/min |
+| POST | `/api/v1/merchant/keys` | JWT+Merchant | Generate BitriPay API key | 5/min |
+
+*(The prototype already serves the monetised `/api/v1/*` partner products — search, itinerary, visa-checklist, group-quote, savings, hotels, esim — key-gated with per-call pricing; this registry is the production expansion.)*
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
