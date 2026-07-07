@@ -1805,3 +1805,17 @@ test('comp elite: admin grants free Elite x2 (1,000 ACU/mo), capped at 5', () =>
   // Double-grant refused.
   assert.equal(grantComplimentaryElite(admin.id, 'vip1@x.example').error, 'already-granted');
 });
+
+// ---- Savings share: only above the £100 threshold ----------------------------
+test('savings share: free below £100 saved; 10% above (£250 saved → £25)', () => {
+  // Small saving (~$80) → the customer keeps ALL of it.
+  const small = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1180, currency: GB.currency, loyaltyPoints: 0 });
+  assert.ok(small.lines.savingsVsMarketUSD > 0 && small.lines.savingsVsMarketUSD <= 127);
+  assert.equal(small.revenue.savingsShareUSD, 0, 'no share below the threshold');
+  // Big saving → 10% share. Customer expected ~$1,580, we deliver $1,100+10%.
+  const big = priceBreakdown({ componentsUSD: 1100, marketRefUSD: 1580, currency: GB.currency, loyaltyPoints: 0 });
+  assert.ok(big.lines.savingsVsMarketUSD > 127);
+  assert.ok(Math.abs(big.revenue.savingsShareUSD - big.lines.savingsVsMarketUSD * 0.10) < 0.02, '10% of the saving');
+  // Booking commission still applies in both cases.
+  assert.ok(small.lines.commissionUSD > 0 && big.lines.commissionUSD > 0);
+});
