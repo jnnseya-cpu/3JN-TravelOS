@@ -388,7 +388,26 @@ export function resolveDestination(name) {
 
 // Resolve an ORIGIN / departure city → an airport + city. Falls back to a code
 // derived from the city name for anywhere not in the catalogue.
+// Port towns — ferry/coach gateways with no meaningful airport of their own.
+// A port origin routes SURFACE modes (ferry, international coach, rail), not a
+// fabricated flight.
+const PORT_TOWNS = {
+  dover: { code: 'DOV', city: 'Dover', country: 'GB' },
+  folkestone: { code: 'FOL', city: 'Folkestone', country: 'GB' },
+  newhaven: { code: 'NHV', city: 'Newhaven', country: 'GB' },
+  portsmouth: { code: 'PME', city: 'Portsmouth', country: 'GB' },
+  plymouth: { code: 'PLH', city: 'Plymouth', country: 'GB' },
+  harwich: { code: 'HPQ', city: 'Harwich', country: 'GB' },
+  hull: { code: 'HUY', city: 'Hull', country: 'GB' },
+  holyhead: { code: 'HLY', city: 'Holyhead', country: 'GB' },
+  calais: { code: 'CQF', city: 'Calais', country: 'FR' },
+  dunkirk: { code: 'DKK', city: 'Dunkirk', country: 'FR' },
+};
+
 export function resolveOrigin(name) {
+  // 0) Port towns first — they are ferry/coach gateways, not airports.
+  const port = PORT_TOWNS[String(name || '').trim().toLowerCase()];
+  if (port) return { airport: port.code, city: port.city, country: port.country, port: true };
   // 1) Real IATA table for major world cities (accurate codes + country).
   const real = airportForCity(name);
   if (real) return { airport: real.airport, city: real.city, country: real.country };

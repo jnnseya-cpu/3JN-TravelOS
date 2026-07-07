@@ -6,7 +6,12 @@
 // decision-ready file: Approve / Refuse / Request more info / Escalate.
 //
 // Flow: Applicant Profile → Visa Type → Country Rules → Dynamic Checklist →
-//       Document Upload → AI Verification → Risk Score → Final Review → Decision.
+//       Document Upload → AI Verification → Risk Score → Payment →
+//       Final Review → Decision → eVisa / Refusal / Escalation.
+//
+// The product promise: one global visa intelligence engine that automatically
+// knows what each country needs, checks documents before submission, detects
+// fraud, scores risk, and gives a decision-ready file in minutes.
 //
 // Pure + deterministic (seeded) so the same file always yields the same result.
 
@@ -238,7 +243,7 @@ export function runFraudChecks(applicant = {}) {
 }
 
 // ---- Full assessment: decision-ready file ---------------------------------
-export function assessApplication({ applicant = {}, country, visaType = 'tourist', providedDocuments = null } = {}) {
+export function assessApplication({ applicant = {}, country, visaType = 'tourist', providedDocuments = null, payment = null } = {}) {
   const checklist = buildChecklist({ country, visaType, applicant });
   // Map applicant → risk-engine input (reuse the VisaOS swarm for scoring).
   const riskInput = {
@@ -277,10 +282,17 @@ export function assessApplication({ applicant = {}, country, visaType = 'tourist
   const supplied = Array.isArray(providedDocuments) ? providedDocuments.length : required; // demo assumes full upload
   const complete = supplied >= required;
 
+  // Payment stage — the visa fee must be settled before final review. The demo
+  // defaults to paid; pass { paid:false } to hold the file at the payment gate.
+  const paid = payment ? payment.paid !== false : true;
+  const paymentStatus = { paid, reference: payment?.reference || (paid ? `VF-${(applicant.passportNumber || 'X').slice(-4)}-${(country || 'XX')}` : null) };
+
   // Final AI officer recommendation.
   let recommendation;
-  if (risk.decision === 'Auto Rejection' || fraud.flags.some((f) => /sanction|watchlist|pep/i.test(f.category))) {
+  if (risk.decision === 'Auto Rejection' || fraud.flags.some((f) => /sanction|watchlist|pep/i.test(f.name))) {
     recommendation = 'Refuse';
+  } else if (!paid) {
+    recommendation = 'Awaiting payment';
   } else if (!complete || !docs.allClear || missingCritical.length > 0) {
     recommendation = 'Request more info';
   } else if (risk.decision === 'Human Review' || fraud.flagCount >= 3) {
@@ -290,6 +302,34 @@ export function assessApplication({ applicant = {}, country, visaType = 'tourist
   } else {
     recommendation = 'Approve with conditions';
   }
+
+  // Decision artefact: an approval ISSUES the eVisa (deterministic reference);
+  // a refusal/escalation records its route. The file is decision-ready.
+  const approved = recommendation === 'Approve' || recommendation === 'Approve with conditions';
+  const rnd = seed(`evisa|${riskInput.name}|${riskInput.nationality}|${country}`);
+  const eVisa = approved ? {
+    number: `3JN-${(country || 'XX')}-${String(Math.floor(rnd() * 900000) + 100000)}`,
+    type: checklist.visaType.name,
+    validFrom: applicant.arrival || null,
+    validUntil: applicant.departure || null,
+    conditions: recommendation === 'Approve with conditions' ? risk.conditions : [],
+  } : null;
+
+  // The full 11-stage flow, each stage with its resolved status — the OS
+  // structure the engine is built on.
+  const flow = [
+    ['Applicant Profile', applicantValidation.completeness >= 100 ? 'complete' : `${applicantValidation.completeness}% complete`],
+    ['Visa Type', checklist.visaType.name],
+    ['Country Rules', checklist.country ? checklist.country.name : (country || 'universal')],
+    ['Dynamic Checklist', `${checklist.totalDocuments} documents`],
+    ['Document Upload', `${supplied}/${required}`],
+    ['AI Verification', docs.allClear ? 'clear' : `${docs.total - docs.verified} flag(s)`],
+    ['Risk Score', `${risk.totalScore}/1000 · ${risk.band}`],
+    ['Payment', paid ? `paid${paymentStatus.reference ? ' · ' + paymentStatus.reference : ''}` : 'awaiting payment'],
+    ['Final Review', recommendation],
+    ['Decision', approved ? 'Approved' : recommendation === 'Refuse' ? 'Refused' : 'Pending'],
+    [approved ? 'eVisa Issued' : recommendation === 'Refuse' ? 'Refusal Notice' : 'Escalation / Follow-up', approved ? eVisa.number : recommendation],
+  ].map(([stage, status]) => ({ stage, status }));
 
   return {
     applicant: { name: riskInput.name, nationality: riskInput.nationality, destination: riskInput.destination, purpose: riskInput.purpose },
@@ -301,7 +341,10 @@ export function assessApplication({ applicant = {}, country, visaType = 'tourist
     risk,
     applicantValidation,
     completeness: { required, supplied, complete },
+    payment: paymentStatus,
     recommendation,
+    eVisa,
+    flow,
     decisionReadyMinutes: recommendation === 'Escalate to human' ? 'escalated' : 5,
   };
 }

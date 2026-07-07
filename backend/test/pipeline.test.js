@@ -1289,3 +1289,64 @@ test('host marketplace: earnings pay the host 90%, 3JN keeps 10%', () => {
   assert.ok(Math.abs(earn.totals.commissionUSD / earn.totals.grossUSD - 0.10) < 0.001, '10% commission');
   assert.ok(earn.listings >= 1);
 });
+
+// ---- Mode competition: port towns get ferries & international coaches -------
+test('port origin: "paris from dover" competes ferry/coach/train — never a fake flight', () => {
+  const r = plan({
+    text: 'I want to travel to paris from dover alone in August for 7 nights. I want hotel, instalments and the cheapest reliable price.',
+    context: GB, user: null, searchTier: 'deep',
+  });
+  assert.equal(r.stage, 'options');
+  assert.equal(r.origin.city, 'Dover', '"alone" no longer leaks into the origin');
+  assert.deepEqual(r.modeCompetition, ['ferry', 'coach', 'train']);
+  for (const o of r.packages.options) {
+    const journeys = o.components.filter((c) => ['flight', 'train', 'coach', 'ferry'].includes(c.type));
+    assert.equal(journeys.length, 1, `${o.tier}: exactly ONE journey mode wins (alternatives, never summed)`);
+    assert.notEqual(journeys[0].type, 'flight', 'Dover has no airport — no fabricated flight');
+    assert.ok(journeys[0].bookingUrl, `${journeys[0].supplier} is bookable`);
+    assert.ok(journeys[0].details.wonModeCompetition.includes('ferry'), 'ferry competed');
+    assert.ok(o.components.some((c) => c.type === 'hotel' || c.type === 'host'), 'hotel included');
+  }
+  // Ferries and international coach operators were genuinely scanned.
+  assert.ok(r.scanSummary.ferry.scanned >= 3, 'ferry offers scanned (DFDS, P&O, Brittany)');
+  assert.ok(r.scanSummary.coach.scanned >= 5, 'coach offers scanned incl. Eurolines/FlixBus/BlaBlaCar');
+});
+
+test('mode competition: short-haul implied journey lets train/coach challenge the flight', () => {
+  const r = plan({ text: 'a trip to Paris from London in September for 3 nights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  assert.ok(r.modeCompetition && r.modeCompetition.includes('train') && r.modeCompetition.includes('coach'));
+  for (const o of r.packages.options) {
+    const journeys = o.components.filter((c) => ['flight', 'train', 'coach', 'ferry'].includes(c.type));
+    assert.equal(journeys.length, 1, `${o.tier}: one winning mode`);
+  }
+});
+
+test('mode competition: never triggered when the traveller names the mode', () => {
+  const r = plan({ text: 'London to Paris by train in September for 3 nights with hotel', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.modeCompetition, null);
+  const r2 = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r2.modeCompetition, null);
+});
+
+// ---- Visa engine OS structure: 11-stage flow, payment gate, eVisa issuance --
+test('visa flow: approval issues an eVisa; unpaid files wait at the payment gate', () => {
+  const clean = { fullName: 'Jane Doe', nationality: 'GB', age: 34, monthlyIncome: 4000, purpose: 'tourism', homeTies: 'strong', arrival: '2027-08-01', departure: '2027-08-14' };
+  const approved = assessApplication({ country: 'AE', visaType: 'tourist', applicant: clean });
+  assert.equal(approved.recommendation, 'Approve');
+  assert.ok(approved.eVisa && /^3JN-AE-\d{6}$/.test(approved.eVisa.number), 'eVisa issued');
+  assert.equal(approved.payment.paid, true);
+  assert.equal(approved.flow.length, 11, 'full 11-stage flow recorded');
+  assert.deepEqual(approved.flow.map((f) => f.stage).slice(0, 8),
+    ['Applicant Profile', 'Visa Type', 'Country Rules', 'Dynamic Checklist', 'Document Upload', 'AI Verification', 'Risk Score', 'Payment']);
+  assert.equal(approved.flow[10].stage, 'eVisa Issued');
+  // Unpaid → held at the payment gate, no eVisa.
+  const unpaid = assessApplication({ country: 'AE', visaType: 'tourist', applicant: clean, payment: { paid: false } });
+  assert.equal(unpaid.recommendation, 'Awaiting payment');
+  assert.equal(unpaid.eVisa, null);
+  // Refusal records the refusal route, never an eVisa.
+  const bad = assessApplication({ country: 'US', visaType: 'work', applicant: { fullName: 'Bad Actor', nationality: 'NG', onWatchlist: true, documentsAuthentic: false } });
+  assert.equal(bad.recommendation, 'Refuse');
+  assert.equal(bad.eVisa, null);
+  assert.equal(bad.flow[10].stage, 'Refusal Notice');
+});
