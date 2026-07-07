@@ -356,6 +356,29 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 
 ---
 
+# SECTION 08 — THIRD-PARTY API CONNECTOR ECOSYSTEM
+*Every external integration required for full OS operability*
+
+## 8. API Connector Ecosystem
+
+### 8.1 Travel Inventory & GDS
+
+| Category | Primary Provider | Secondary | Purpose | Integration Point |
+|---|---|---|---|---|
+| **GDS — Flights** | Amadeus Travel APIs | Sabre APIs | Real-time flight search, booking, PNR management | Flight Intelligence Agent + Booking Engine |
+| **Hotel Wholesale** | Hotelbeds | RateHawk, Juniper | Direct wholesale hotel rates | Hotel Negotiation Agent |
+| **Low-Cost Carriers** | Duffel API | Kiwi.com API | LCC direct inventory bypass | Flight Intelligence Agent |
+| **Car Hire** | Cartrawler | RentalCars API | Ground transport rental | Transfer Logistics Agent |
+| **Transfers** | Mozio | Kiwi.com Ground | Airport transfer booking | Transfer Logistics Agent |
+| **eSIM** | Airalo API | Holafly API | eSIM provisioning globally | eSIM Intelligence Agent |
+| **Visa Services** | VisaHQ API | Sherpa° | Visa eligibility + application | Visa Automation Agent |
+| **Travel Insurance** | Cover Genius | Battleface | In-journey insurance embedding | Risk Intelligence Agent |
+| **Loyalty Programs** | Points.com API | Award Wallet | Multi-programme points aggregation | Loyalty Aggregation Agent |
+
+*(Prototype anchors: `live-suppliers.js` already normalises Duffel offers and Amadeus hotels behind feature flags, with OAG schedules; `partners.js` carries the aggregator deep-links (Kiwi/Trip/Omio/DirectFerries/Airalo). This section locks the production provider matrix.)*
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
