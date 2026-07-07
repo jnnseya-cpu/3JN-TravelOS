@@ -1617,6 +1617,7 @@ function bookingCard(b) {
       <p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>
       <div style="margin:10px 0">${sched}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">▶ Run Price Guard</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
@@ -1624,6 +1625,21 @@ function bookingCard(b) {
       ${pgEvents ? `<div style="margin-top:10px"><span class="eyebrow">Neural Price Guard</span>${pgEvents}</div>` : ''}
     </div>`;
 }
+
+// Open the branded 3JN e-ticket / itinerary in a new tab. Fetched with auth
+// (the endpoint checks ownership), so we render the returned HTML directly.
+window.viewEticket = async (bookingId) => {
+  try {
+    const headers = {};
+    if (state.user) headers['x-user-id'] = state.user.id;
+    const res = await fetch(API_BASE + `/api/book/${bookingId}/document`, { headers });
+    if (!res.ok) { toast('Could not load your e-ticket — please try again.'); return; }
+    const html = await res.text();
+    const w = window.open('', '_blank');
+    if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+    else { const url = URL.createObjectURL(new Blob([html], { type: 'text/html' })); window.open(url, '_blank'); }
+  } catch { toast('Could not load your e-ticket — please try again.'); }
+};
 
 // ---- Document Vault -------------------------------------------------------
 window.openDocs = async (bookingId) => {

@@ -40,6 +40,7 @@ import {
 } from './store.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { supportRespond } from './chatbot.js';
+import { bookingDocument } from './documents.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
@@ -995,6 +996,19 @@ app.get('/api/book/:id', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   res.json({ booking });
+}));
+
+// Branded travel document — e-ticket / itinerary / confirmation. Returns a
+// self-contained, printable 3JN-branded HTML page (customer can Save as PDF).
+app.get('/api/book/:id/document', safe((req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  // Only the owner (or an admin) may fetch a booking document.
+  if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
+  const html = bookingDocument(booking, { user, currencySymbol: booking.option?.pricing?.symbol });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
 }));
 
 // ---- Stripe Checkout: live card payments -----------------------------------
