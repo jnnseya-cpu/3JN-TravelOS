@@ -1559,7 +1559,13 @@ test('refund engine: structured policy stored on every booking', () => {
   const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id });
   const p = b.refundPolicy;
   assert.ok(p.supplierPolicy && p.penaltyWindow && p.noShow && p.forceMajeure && p.partialRefunds);
-  assert.equal(p.refundSchedule.length, 4);
-  assert.ok(p.refundSchedule[0].refundPct >= p.refundSchedule[3].refundPct, 'refunds step down towards departure');
+  // SUPPLIER POLICY TAKES PRECEDENT — stated explicitly and per component.
+  assert.match(p.precedence, /supplier.*precedent/i);
+  assert.ok(p.supplierPolicies.length >= 1, 'per-component supplier rules captured');
+  assert.ok(p.supplierPolicies.every((sp) => sp.source === 'supplier' && sp.governs === true));
+  // The platform schedule is only a fallback where the supplier is silent.
+  assert.match(p.platformFallback.appliesWhen, /supplier.*no cancellation rule/i);
+  assert.equal(p.platformFallback.refundSchedule.length, 4);
+  assert.ok(p.platformFallback.refundSchedule[0].refundPct >= p.platformFallback.refundSchedule[3].refundPct);
   assert.ok(Array.isArray(p.nonRefundable) && p.nonRefundable.length);
 });

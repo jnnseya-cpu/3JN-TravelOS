@@ -270,26 +270,44 @@ export function hostFraudCheck(listing = {}, reviews = []) {
 }
 
 // ---- 12. Cancellation / refund engine --------------------------------------
-// A structured, per-booking policy: supplier policy, non-refundable rules,
-// stepped refund schedule, penalty window, partial refunds, no-show and
-// force majeure — stored on the booking so support never guesses.
+// A structured, per-booking policy. PRECEDENCE RULE: the SUPPLIER's stated
+// cancellation policy always takes precedent, component by component. The 3JN
+// platform schedule below is a FALLBACK that applies only where the supplier
+// is silent. Force majeure sits above both.
 export function buildRefundPolicy(option, travelDate = null) {
-  const flight = (option?.components || []).find((c) => c.type === 'flight');
-  const stay = (option?.components || []).find((c) => c.type === 'hotel' || c.type === 'host');
-  const flex = !!(stay?.details?.freeCancellation || flight?.details?.freeCancellation);
+  const comps = option?.components || [];
+
+  // 1) Supplier-stated rules, read from each component's own offer — these WIN.
+  const supplierPolicies = comps.map((c) => {
+    const d = c.details || {};
+    let policy = null;
+    if (d.cancellationDeadline) policy = d.cancellationDeadline;
+    else if (d.freeCancellation === true) policy = 'Free cancellation (supplier window applies)';
+    else if (d.freeCancellation === false) policy = 'Non-refundable supplier rate';
+    return policy ? { component: c.type, supplier: c.supplier, policy, source: 'supplier', governs: true } : null;
+  }).filter(Boolean);
+
+  const flex = comps.some((c) => c.details?.freeCancellation);
+
   return {
-    supplierPolicy: flex ? 'Flexible — free cancellation window applies' : 'Restricted — supplier fees apply from booking',
+    precedence: 'Supplier cancellation policy takes precedent. Each component follows its supplier\u2019s stated rule; the 3JN fallback schedule applies ONLY where the supplier is silent.',
+    supplierPolicies,
+    supplierPolicy: flex ? 'Flexible — supplier free-cancellation windows apply' : 'Restricted — supplier fees apply from booking',
     nonRefundable: flex ? ['Visa fees', 'Insurance premium once cover starts'] : ['Deposit', 'Visa fees', 'Insurance premium'],
-    refundSchedule: [
-      { window: '30+ days before travel', refundPct: flex ? 100 : 75 },
-      { window: '15–29 days before travel', refundPct: flex ? 75 : 50 },
-      { window: '7–14 days before travel', refundPct: flex ? 50 : 25 },
-      { window: 'Under 7 days', refundPct: flex ? 25 : 0 },
-    ],
-    penaltyWindow: 'Within 48h of departure — 100% penalty except force majeure',
-    partialRefunds: 'Unused components refunded pro-rata where the supplier permits',
-    noShow: 'No-show forfeits the booking value; taxes/fees refundable on request',
-    forceMajeure: 'Full credit or rebooking for officially declared events (weather, strikes, closures) — 3JN waives its fee',
+    // 2) Platform FALLBACK schedule — only for components with no supplier rule.
+    platformFallback: {
+      appliesWhen: 'Only for components whose supplier states no cancellation rule',
+      refundSchedule: [
+        { window: '30+ days before travel', refundPct: flex ? 100 : 75 },
+        { window: '15–29 days before travel', refundPct: flex ? 75 : 50 },
+        { window: '7–14 days before travel', refundPct: flex ? 50 : 25 },
+        { window: 'Under 7 days', refundPct: flex ? 25 : 0 },
+      ],
+    },
+    penaltyWindow: 'Within 48h of departure — 100% penalty except force majeure (unless the supplier rule is more generous)',
+    partialRefunds: 'Per supplier rule first; where silent, unused components refunded pro-rata',
+    noShow: 'Supplier no-show rule governs; where silent, no-show forfeits the booking value (taxes/fees refundable on request)',
+    forceMajeure: 'Sits above all policies: full credit or rebooking for officially declared events (weather, strikes, closures) — 3JN waives its fee',
     travelDate: travelDate || null,
   };
 }
