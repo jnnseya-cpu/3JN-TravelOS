@@ -2511,11 +2511,31 @@ window.addEventListener('firebase-auth', async (e) => {
     toast(`✓ Signed in as ${d.user.name}`);
     if (e.detail && e.detail.emailVerified === false) {
       setTimeout(() => toast('📧 Please verify your email — check your inbox.'), 1600);
+      showVerifyBanner();
+    } else {
+      $('#verifyBanner')?.remove();
     }
     if (!$('#view-console').classList.contains('active')) nav('console');
   } catch {} finally { firebaseBridging = false; }
 });
-window.addEventListener('firebase-signout', () => { /* handled by signOut() */ });
+window.addEventListener('firebase-signout', () => { $('#verifyBanner')?.remove(); });
+// Persistent nudge until the email is verified — with one-tap resend.
+function showVerifyBanner() {
+  if ($('#verifyBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'verifyBanner';
+  b.style.cssText = 'position:sticky;top:0;z-index:60;background:linear-gradient(90deg,rgba(216,180,106,.16),rgba(216,180,106,.08));border-bottom:1px solid rgba(216,180,106,.35);padding:9px 16px;font-size:13px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
+  b.innerHTML = `<span>📧 Verify your email to secure your account — check your inbox.</span>
+    <button class="btn btn-ghost btn-sm" style="padding:5px 14px" onclick="resendVerifyEmail()">Resend email</button>
+    <span style="cursor:pointer;color:var(--muted);font-size:16px;line-height:1" onclick="this.parentElement.remove()" title="Dismiss">×</span>`;
+  document.body.prepend(b);
+}
+window.resendVerifyEmail = async () => {
+  try {
+    const sent = await window.firebaseAuth?.resendVerification();
+    toast(sent ? '📧 Verification email re-sent — check your inbox (and spam).' : 'Sign in again to resend the verification email.');
+  } catch (e) { toast(e.message || 'Could not resend — try again in a minute.'); }
+};
 window.googleSignIn = async () => {
   if (!window.firebaseAuth?.available) { toast('Google sign-in unavailable — use email.'); return; }
   try { await window.firebaseAuth.google(); } catch (err) { toast('Google sign-in cancelled.'); }
