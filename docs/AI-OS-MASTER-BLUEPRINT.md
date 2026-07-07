@@ -501,6 +501,36 @@ The AI Orchestration Layer is the **neural centre of 3JN Travel OS**. It is buil
 
 ---
 
+# SECTION 10 — DATABASE SCHEMA
+*Production-ready data model — key tables, fields, and relationships*
+
+## 10. Database Schema
+
+Core schema is implemented in PostgreSQL. All tables include `created_at`, `updated_at`, `deleted_at` (soft delete), and a `version` column for optimistic locking. All monetary values stored as integers (minor currency units). All UUIDs use `uuid_generate_v4()`.
+
+### 10.1 Core Tables
+
+| Table | Primary Key | Key Fields | Relationships |
+|---|---|---|---|
+| **users** | user_id (UUID) | email, full_name, phone, nationality, membership_tier, kyc_status, accu_balance, created_at | → memberships, bookings, wallets, loyalty_accounts |
+| **memberships** | membership_id (UUID) | user_id, plan_code, status, billing_cycle, next_billing_date, stripe_subscription_id | → users, invoices |
+| **bookings** | booking_id (UUID) | user_id, booking_type (flight/hotel/transfer/visa), status, total_amount_pence, currency, pnr_reference, supplier_id, booked_at | → users, booking_segments, payments, agents_log |
+| **booking_segments** | segment_id (UUID) | booking_id, segment_type, origin, destination, departure_at, arrival_at, supplier_ref, fare_class | → bookings |
+| **payments** | payment_id (UUID) | booking_id, user_id, amount_pence, currency, gateway (bitripay/stripe/adyen), gateway_txn_id, status, refunded_at | → bookings, users, refunds |
+| **price_monitors** | monitor_id (UUID) | user_id, booking_id, original_price_pence, current_price_pence, alert_threshold_pct, status, last_checked_at | → users, bookings, savings_events |
+| **savings_events** | saving_id (UUID) | user_id, booking_id, savings_amount_pence, saving_type (initial/rebook/upgrade), recorded_at | → users, bookings |
+| **visa_applications** | visa_id (UUID) | user_id, destination_country, nationality, trip_purpose, status, submitted_at, decision_at, visa_url | → users |
+| **loyalty_accounts** | loyalty_id (UUID) | user_id, programme_code, programme_name, account_number, points_balance, tier_status, last_synced_at | → users |
+| **agent_logs** | log_id (UUID) | user_id, agent_name, trigger_event, input_summary, output_summary, model_used, accu_consumed, latency_ms, created_at | → users |
+| **risk_alerts** | alert_id (UUID) | user_id, booking_id, destination, risk_level, alert_type, advisory_text, source_url, acknowledged_at | → users, bookings |
+| **merchants** | merchant_id (UUID) | entity_name, kyb_status, bitripay_merchant_id, api_key_hash, settlement_account, commission_rate_bps, tier | → payments, api_keys |
+| **api_keys** | key_id (UUID) | merchant_id, key_prefix, key_hash, environment (sandbox/production), permissions_scope, last_used_at, revoked_at | → merchants |
+| **accu_ledger** | entry_id (UUID) | user_id, entry_type (credit/debit), amount_accu, agent_name, description, balance_after, created_at | → users |
+
+*(Prototype mappings: `db.users/bookings/quotes` → users/bookings; `db.acuTxns` + `acuWallet` → accu_ledger; `db.aiRequestCosts` → agent_logs; `db.priceEvents` → price_monitors/savings_events; `db.visaApps` + `visaChain` → visa_applications (+sealed audit); `db.apiKeys`/`paymentLinks` → api_keys/merchants; `db.searchDeposits` → the deposits ledger.)*
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
