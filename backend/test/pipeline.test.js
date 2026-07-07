@@ -1466,3 +1466,17 @@ test('validation: blank pages, damaged passport, return proof, transit visa', ()
   assert.ok(r4.checks.some((c) => /Transit via Istanbul/i.test(c.check)));
   assert.ok(r4.checks.some((c) => /Customs/i.test(c.check)));
 });
+
+// ---- Board basis end-to-end --------------------------------------------------
+test('board basis: "all inclusive" reprices and relabels the stay', () => {
+  const base = plan({ text: 'Dubai hotel in August for 7 nights for 2 adults, room only', context: GB, user: null, searchTier: 'smart' });
+  const ai = plan({ text: 'Dubai hotel in August for 7 nights for 2 adults, all inclusive', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(ai.intent.components.includes('hotel'), true);
+  const stayBase = base.packages.options.find((o) => o.tier === 'Luxury').components.find((c) => c.type === 'hotel');
+  const stayAI = ai.packages.options.find((o) => o.tier === 'Luxury').components.find((c) => c.type === 'hotel');
+  assert.equal(stayAI.details.board, 'All inclusive');
+  assert.ok(stayAI.priceUSD > stayBase.priceUSD, 'all inclusive costs more than room only');
+  const hb = plan({ text: 'Istanbul hotel in August for 5 nights, half board', context: GB, user: null, searchTier: 'smart' });
+  const stayHB = hb.packages.options[0].components.find((c) => c.type === 'hotel' || c.type === 'host');
+  if (stayHB.type === 'hotel') assert.equal(stayHB.details.board, 'Half board');
+});

@@ -287,6 +287,18 @@ export function scanHotels(intent, dest) {
     };
   });
 
+  // Requested board basis: reprice + relabel hotel offers honestly (a board
+  // upgrade costs more per night). Hosts stay self-catering by nature.
+  const BOARD_MULT = { 'Room only': 1.0, 'Bed & breakfast': 1.06, 'Half board': 1.16, 'Full board': 1.26, 'All inclusive': 1.42, 'Ultra all inclusive': 1.58 };
+  if (intent.boardBasis && BOARD_MULT[intent.boardBasis]) {
+    const mult = BOARD_MULT[intent.boardBasis];
+    for (const h of hotels) {
+      h.priceUSD = round(h.priceUSD * mult);
+      h.details.board = intent.boardBasis;
+      h.details.breakfastDetail = intent.boardBasis === 'Room only' ? 'No meals included' : `${intent.boardBasis} — meals as per basis`;
+    }
+  }
+
   // Private host — one strong option, named for the destination.
   const hostNightly = dest.hotelNightBaseUSD * 0.8 * (0.8 + rnd() * 0.3);
   hotels.push({

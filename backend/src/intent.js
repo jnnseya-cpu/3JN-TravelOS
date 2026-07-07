@@ -312,6 +312,17 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     }
     : buildDates(monthInfo, nights, today);
 
+  // Board basis — "all inclusive", "half board", "B&B", "room only"…
+  const BOARD_PATTERNS = [
+    [/(ultra[\s-]?all[\s-]?inclusive)/i, 'Ultra all inclusive'],
+    [/all[\s-]?inclusive/i, 'All inclusive'],
+    [/full[\s-]?board/i, 'Full board'],
+    [/half[\s-]?board/i, 'Half board'],
+    [/bed\s*(?:&|and)\s*breakfast|\bb\s*&\s*b\b|\bbnb\b|with breakfast/i, 'Bed & breakfast'],
+    [/room[\s-]?only|self[\s-]?catering/i, 'Room only'],
+  ];
+  const boardBasis = (BOARD_PATTERNS.find(([re]) => re.test(raw)) || [])[1] || null;
+
   // Hotel area / neighbourhood the traveller named ("hotel in Sheikh Zayed Road").
   const hotelArea = parseHotelArea(raw);
 
@@ -374,6 +385,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     groupOrigins: groupParties ? { parties: groupParties } : null, // multi-origin group, one booking
     miniCruise, // short ferry-cruise rather than an ocean liner
     hotelArea, // requested hotel neighbourhood/road (null if not given)
+    boardBasis, // requested board (Room only … Ultra all inclusive) or null
     recommendedDestination: destination?.recommendedFromCountry || null,
     unresolved: destination ? [] : ['destination'],
   };
