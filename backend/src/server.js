@@ -35,7 +35,7 @@ import {
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
-import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS, ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY } from './visaos.js';
+import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS, ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY, VISAOS_REVENUE_MODEL, TRAVEL_OS_INTEGRATION } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication, validateApplicant } from './visa-framework.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { liveShowcase } from './showcase.js';
@@ -720,7 +720,7 @@ app.get('/api/visaos/government', safe((req, res) => {
 // The module manifest: positioning, problems solved, SLA, promise and the
 // per-agent forensic checklists — the GovTech sales sheet, from the engine.
 app.get('/api/visaos/manifest', safe((req, res) => {
-  res.json({ ...VISAOS_MANIFEST, agentChecks: AGENT_CHECKS, zeroTrust: ZERO_TRUST, antiCorruption: ANTI_CORRUPTION, digitalJourney: DIGITAL_JOURNEY });
+  res.json({ ...VISAOS_MANIFEST, agentChecks: AGENT_CHECKS, zeroTrust: ZERO_TRUST, antiCorruption: ANTI_CORRUPTION, digitalJourney: DIGITAL_JOURNEY, revenueModel: VISAOS_REVENUE_MODEL, travelOsIntegration: TRAVEL_OS_INTEGRATION });
 }));
 // Blockchain audit trail: tamper-evident hash chain of every visa event.
 app.get('/api/visaos/audit-chain', safe((req, res) => {

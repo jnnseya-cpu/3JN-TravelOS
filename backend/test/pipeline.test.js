@@ -2359,3 +2359,46 @@ test('physical embassy elimination: digital journey + 90-95% fully-digital targe
   assert.deepEqual(g.digitalTargetPct, [90, 95]);
   assert.equal(g.auditChain.ok, true, 'government analytics reports chain integrity');
 });
+
+// ================= VisaOS: government dashboard, revenue model, OS integration =
+import { VISAOS_REVENUE_MODEL, TRAVEL_OS_INTEGRATION } from '../src/visaos.js';
+
+test('government dashboard: all nine dictated real-time analytics present', () => {
+  const g = govAnalytics();
+  assert.ok(typeof g.applications === 'number', 'applications volume');
+  assert.ok(typeof g.approvalRate === 'number', 'approval rate');
+  assert.ok(typeof g.fraudAttempts === 'number', 'fraud attempts');
+  assert.ok(Array.isArray(g.highRiskCountries), 'high-risk countries');
+  assert.ok(Array.isArray(g.overstayTrends), 'overstay trends');
+  assert.equal(g.processingTimes.targetMinutes, 5, 'processing times');
+  assert.ok(Array.isArray(g.agentPerformance), 'agent performance');
+  assert.ok(g.revenue && typeof g.revenue.totalUsageGBP === 'number', 'revenue');
+  assert.ok(Array.isArray(g.securityAlerts), 'security alerts');
+  // Agent performance aggregates real swarm findings.
+  if (g.applications > 0) {
+    assert.ok(g.agentPerformance.length >= 5, 'per-agent performance rows');
+    assert.ok(g.agentPerformance.every((a) => a.runs >= 1 && a.passRatePct >= 0));
+  }
+});
+
+test('VisaOS revenue model: six government revenue lines, all recurring', () => {
+  assert.equal(VISAOS_REVENUE_MODEL.length, 6);
+  const names = VISAOS_REVENUE_MODEL.map((r) => r.name);
+  for (const n of ['SaaS License', 'Per Application Fee', 'AI Processing Fee', 'Biometric Fee', 'Fraud Intelligence Subscription', 'Border Intelligence API']) {
+    assert.ok(names.includes(n), `${n} charged`);
+  }
+  assert.ok(VISAOS_REVENUE_MODEL.every((r) => r.recurring && r.gbp > 0));
+});
+
+test('Travel OS × VisaOS integration: booking understands the visa BEFORE money moves', () => {
+  assert.deepEqual(TRAVEL_OS_INTEGRATION.bookingUnderstands, ['Visa likelihood', 'Approval probability', 'Required documents', 'Timing risk']);
+  assert.match(TRAVEL_OS_INTEGRATION.example, /Visa approval probability/);
+  assert.match(VISAOS_MANIFEST.worldClassPositioning, /world's premier AI-driven digital visa and border intelligence/);
+  assert.equal(VISAOS_MANIFEST.building, 'The Operating System for Global Travel, Mobility and Border Intelligence.');
+  // Live wiring: an international plan carries the approval probability pre-booking.
+  const r = plan({ text: 'flights and hotel to Dubai from London in August, 5 nights', context: GB });
+  if (r.stage === 'options') {
+    assert.equal(r.visa.ok, true);
+    assert.ok(r.visa.approvalProbability > 0 && r.visa.approvalProbability <= 99, `pre-booking probability ${r.visa.approvalProbability}%`);
+  }
+});

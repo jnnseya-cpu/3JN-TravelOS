@@ -62,6 +62,27 @@ Old model: Apply → Queue → Appointment → Wait → Interview → Decision.
 Physical appearance only if: biometrics required · security escalation · suspicious case · random audit · final interview.
 **Target: 90–95% of applications fully digital. Embassy queues collapse.** (Live metric: `govAnalytics().autoDigitalRate` vs `digitalTargetPct`.)
 
+## Government Dashboard (immigration authorities)
+
+`GET /api/visaos/government` — real-time analytics computed from live ledgers: **applications volume · approval rate · fraud attempts · high-risk countries** (avg score > 450) **· overstay trends** (avg overstay risk by nationality) **· processing times** (5-minute target, auto vs escalated) **· agent performance** (per-agent pass/watch/fail across all runs) **· revenue** (per-application £2.50 + AI £1.00 + biometric £0.80 usage fees) **· security alerts** (security-risk ≥ 60 cases) — plus audit-chain integrity.
+
+## Revenue model — governments pay (huge recurring revenue)
+
+| Line | Pricing |
+|---|---|
+| SaaS License | £250,000 / year per authority |
+| Per Application Fee | £2.50 / application |
+| AI Processing Fee | £1.00 / AI decision run |
+| Biometric Fee | £0.80 / biometric verification |
+| Fraud Intelligence Subscription | £4,999 / month |
+| Border Intelligence API | £0.15 / call |
+
+## Integration with 3JN Travel OS — perfect synergy
+
+Travel OS + VisaOS becomes unmatched. Travel booking understands **visa likelihood · approval probability · required documents · timing risk** before money moves — *"Before booking: Visa approval probability: 93%."* Live wiring: every international plan carries `visa.approvalProbability`; the Travel Intelligence Score has a visa dimension; the visa-framework builds the dynamic document checklist; every booking nudges a prefilled VisaOS application (OS synapse).
+
+> **World-class positioning (locked).** *3JN Travel OS is powered by 3JN VisaOS — the world's premier AI-driven digital visa and border intelligence infrastructure, capable of verifying applications, detecting fraud, assessing behavioural and overstay risk, and delivering trusted visa decisions in minutes while eliminating unnecessary embassy visits.* You are building: **The Operating System for Global Travel, Mobility and Border Intelligence.**
+
 ## Where it lives
 
 `backend/src/visaos.js` (`VISAOS_MANIFEST`, `AGENT_CHECKS`, `assessVisa`, `approvalProbability`) · `backend/src/visa-framework.js` (11-stage flow: Applicant Profile → Visa Type → Country Rules → Dynamic Checklist → Document Upload → AI Verification → Risk Score → Payment → Final Review → Decision → eVisa/Refusal/Escalation) · API: `/api/visaos/assess`, `/api/visaos/manifest`, `/api/visaos/probability`, `/api/visaos/government` · consulate/embassy/admin role gates.

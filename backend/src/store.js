@@ -251,19 +251,49 @@ export function decideVisaApplication(appId, { decision, reason, officerId, seco
   return { ok: true, application: a };
 }
 
+// The Government Dashboard (immigration authorities) — real-time analytics:
+// application volume, approval rate, fraud attempts, high-risk countries,
+// overstay trends, processing times, agent performance, revenue, security alerts.
 export function govAnalytics() {
   const apps = db.visaApps;
   const by = (pred) => apps.filter(pred).length;
   const decisions = {};
   const byCountry = {};
+  const riskByCountry = {};
+  const overstayByCountry = {};
+  const agentPerf = {};
+  const securityAlerts = [];
   let fraudAttempts = 0, totalScore = 0;
   for (const a of apps) {
+    const nat = a.applicant?.nationality || '??';
     decisions[a.decision] = (decisions[a.decision] || 0) + 1;
-    byCountry[a.applicant.nationality] = (byCountry[a.applicant.nationality] || 0) + 1;
+    byCountry[nat] = (byCountry[nat] || 0) + 1;
     if (a.risk?.fraud >= 60 || a.band === 'Reject') fraudAttempts++;
     totalScore += a.totalScore || 0;
+    (riskByCountry[nat] ||= []).push(a.totalScore || 0);
+    if (typeof a.risk?.overstay === 'number') (overstayByCountry[nat] ||= []).push(a.risk.overstay);
+    if ((a.risk?.security || 0) >= 60) securityAlerts.push({ id: a.id, nationality: nat, destination: a.applicant?.destination, securityRisk: a.risk.security, at: a.at });
+    for (const f of a.agents || []) {
+      const p = (agentPerf[f.agent] ||= { runs: 0, pass: 0, watch: 0, fail: 0 });
+      p.runs++;
+      if (f.status === 'pass' || f.status === 'info') p.pass++;
+      else if (f.status === 'watch') p.watch++;
+      else if (f.status === 'fail') p.fail++;
+    }
   }
+  const avgOf = (arr) => Math.round(arr.reduce((s, v) => s + v, 0) / arr.length);
   const approved = by((a) => a.decision === 'Auto Approval' || a.decision === 'Conditional Approval');
+  const autoDecided = by((a) => a.decision !== 'Human Review');
+  const escalated = apps.length - autoDecided;
+  // Government revenue from live volume (per-application + AI + biometric fees).
+  const feeGBP = { perApplication: 2.5, aiProcessing: 1.0, biometric: 0.8 };
+  const revenue = {
+    perApplicationGBP: round2(apps.length * feeGBP.perApplication),
+    aiProcessingGBP: round2(apps.length * feeGBP.aiProcessing),
+    biometricGBP: round2(apps.length * feeGBP.biometric),
+    totalUsageGBP: round2(apps.length * (feeGBP.perApplication + feeGBP.aiProcessing + feeGBP.biometric)),
+    plus: 'SaaS license · Fraud Intelligence subscription · Border Intelligence API (see VISAOS_REVENUE_MODEL)',
+  };
   return {
     applications: apps.length,
     approved,
@@ -272,11 +302,19 @@ export function govAnalytics() {
     fraudAttempts,
     // Physical Embassy Elimination: share of applications decided fully
     // digitally (no human review / physical appearance) — target 90–95%.
-    autoDigitalRate: apps.length ? Math.round((by((a) => a.decision !== 'Human Review') / apps.length) * 100) : 0,
+    autoDigitalRate: apps.length ? Math.round((autoDecided / apps.length) * 100) : 0,
     digitalTargetPct: [90, 95],
     auditChain: verifyVisaChain(),
     avgScore: apps.length ? Math.round(totalScore / apps.length) : 0,
     topCountries: Object.entries(byCountry).sort((x, y) => y[1] - x[1]).slice(0, 6).map(([k, v]) => ({ country: k, count: v })),
+    highRiskCountries: Object.entries(riskByCountry).map(([c, scores]) => ({ country: c, avgScore: avgOf(scores), applications: scores.length }))
+      .filter((r) => r.avgScore > 450).sort((x, y) => y.avgScore - x.avgScore).slice(0, 6),
+    overstayTrends: Object.entries(overstayByCountry).map(([c, v]) => ({ country: c, avgOverstayRisk: avgOf(v) }))
+      .sort((x, y) => y.avgOverstayRisk - x.avgOverstayRisk).slice(0, 6),
+    processingTimes: { targetMinutes: 5, autoDecided, escalatedToHuman: escalated, autoDecidedPct: apps.length ? Math.round((autoDecided / apps.length) * 100) : 0 },
+    agentPerformance: Object.entries(agentPerf).map(([agent, p]) => ({ agent, ...p, passRatePct: p.runs ? Math.round((p.pass / p.runs) * 100) : 0 })),
+    revenue,
+    securityAlerts: securityAlerts.slice(-6).reverse(),
     recent: apps.slice(-8).reverse().map((a) => ({ id: a.id, nationality: a.applicant.nationality, destination: a.applicant.destination, decision: a.decision, score: a.totalScore, band: a.band })),
   };
 }
