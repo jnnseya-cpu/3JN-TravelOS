@@ -1114,3 +1114,54 @@ test('legs: plain round trips are untouched (no false positives)', () => {
   const i2 = parseIntent('Fly to Dubai from London and back to Dubai in August for 5 nights', { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
   assert.equal(i2.legs, null);
 });
+
+// ---- Multi-origin group: several departure cities, ONE booking --------------
+test('group: "2 from Birmingham, 1 from London, 4 from Manchester, 2 from Nottingham" parses', () => {
+  const i = parseIntent(
+    'a group traveling to Morocco by plane where 2 will come from Birmingham, 1 from London, 4 from Manchester and 2 from Nottingham in August for 7 nights, all staying in the same home',
+    { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)),
+  );
+  assert.ok(i.destination, 'destination resolved');
+  // "Morocco" resolves to its gateway city (not the bogus "Morocco By Plane").
+  assert.match(i.destination.city, /Casablanca|Marrakech|Morocco/i);
+  assert.ok(i.groupOrigins, 'group detected');
+  assert.deepEqual(i.groupOrigins.parties.map((p) => [p.count, p.city]),
+    [[2, 'Birmingham'], [1, 'London'], [4, 'Manchester'], [2, 'Nottingham']]);
+  assert.equal(i.travellers.total, 9, 'headcount = sum of parties');
+  assert.ok(i.components.includes('flights'));
+});
+
+test('group: every party flies from its own city — all in one package/booking', () => {
+  const r = plan({
+    text: 'a group traveling to Marrakech by plane where 2 will come from Birmingham, 1 from London, 4 from Manchester and 2 from Nottingham in August for 7 nights with hotel, all staying in the same home',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  assert.equal(r.stage, 'options');
+  const comps = r.packages.options[0].components;
+  const flights = comps.filter((c) => c.type === 'flight');
+  assert.equal(flights.length, 4, `one flight per party (${comps.map((c) => c.type)})`);
+  const routes = flights.map((c) => c.details.route).join(' | ');
+  for (const city of ['Birmingham', 'London', 'Manchester', 'Nottingham']) {
+    assert.match(routes, new RegExp(`${city} → Marrakech`), `${city} party present`);
+  }
+  // Party sizes carried per leg — 2+1+4+2 = 9 travellers.
+  assert.equal(flights.reduce((s, c) => s + c.details.partySize, 0), 9);
+  // ONE shared home for the whole group with a bedroom/apartment split.
+  const stay = comps.find((c) => c.type === 'hotel' || c.type === 'host');
+  assert.ok(stay, 'shared stay in the same booking');
+  assert.equal(stay.details.groupStay.guests, 9);
+  assert.equal(stay.details.groupStay.units.length, 4, 'one room/apartment per party');
+  assert.match(stay.details.groupStay.units.join(' '), /Family apartment \(sleeps 4\)/);
+  assert.match(stay.details.groupStay.units.join(' '), /Single room/);
+  // Same dates for everyone — one intent, one date range, one booking.
+  assert.ok(r.intent.dates.checkIn && r.intent.dates.checkOut);
+  assert.deepEqual(r.intent.groupOrigins.map((p) => p.count), [2, 1, 4, 2]);
+  // Every flight leg remains bookable.
+  for (const f of flights) assert.ok(f.bookingUrl || f.sourcedVia, `${f.details.route} bookable`);
+});
+
+test('group: single-origin sentences are untouched (no false positives)', () => {
+  const i = parseIntent('Dubai from London in August for 7 nights, flights and hotel for 2 adults', { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
+  assert.equal(i.groupOrigins, null);
+  assert.equal(i.travellers.adults, 2);
+});

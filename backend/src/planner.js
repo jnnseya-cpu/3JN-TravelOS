@@ -81,6 +81,14 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     const backOrigin = (intent.legs.back.to && resolveOrigin(intent.legs.back.to)) || origin;
     intent.legs.resolved = { out: origin, back: backOrigin };
   }
+  // Multi-origin group: resolve each party's own departure city — every party
+  // flies from its own airport, everyone shares the stay, dates and booking.
+  if (intent.groupOrigins) {
+    intent.groupOrigins.resolved = intent.groupOrigins.parties.map((p) => ({
+      count: p.count,
+      origin: resolveOrigin(p.city) || origin,
+    }));
+  }
   const scan = scanAll(intent, intent.destination, origin, live);
   const expectedBookingUSD = roughTotal(scan);
 
@@ -200,5 +208,9 @@ function publicIntent(intent) {
       out: { mode: intent.legs.out.mode, from: intent.legs.resolved?.out?.city || null },
       back: { mode: intent.legs.back.mode, to: intent.legs.resolved?.back?.city || null },
     } : null,
+    groupOrigins: intent.groupOrigins ? intent.groupOrigins.parties.map((p, i) => ({
+      count: p.count,
+      city: intent.groupOrigins.resolved?.[i]?.origin?.city || p.city,
+    })) : null,
   };
 }

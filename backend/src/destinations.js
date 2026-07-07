@@ -264,7 +264,7 @@ const titleCaseDest = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
 
 // Pull the destination phrase out of a free-text request when it isn't a
 // catalogue city — e.g. "I want to travel to Kinshasa in August" → "Kinshasa".
-const DEST_STOP = /^(in|for|with|on|during|next|this|the|my|our|a|an|and|over|plus|including|nights?|days?|weeks?|month|months|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
+const DEST_STOP = /^(in|for|with|on|during|next|this|the|my|our|a|an|and|over|plus|including|by|via|where|who|nights?|days?|weeks?|month|months|plane|flight|flights|air|train|rail|coach|bus|ferry|cruise|boat|car|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
 export function extractDestination(text) {
   if (!text) return null;
   // Work on a padded, punctuation-stripped copy.

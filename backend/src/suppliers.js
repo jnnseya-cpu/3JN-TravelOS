@@ -673,6 +673,43 @@ export function scanAll(intent, dest, origin, live = null) {
   if (wanted.has('ferry')) scan.ferry = scanFerry(intent, dest, origin);
   if (wanted.has('cruise')) scan.cruise = scanCruise(intent, dest, origin);
 
+  // Multi-origin group: each party flies from its OWN city, priced for its own
+  // headcount; everyone shares the same dates, stay and booking. "2 from
+  // Birmingham, 1 from London, 4 from Manchester, 2 from Nottingham" yields
+  // four flight components in one package.
+  if (intent.groupOrigins && intent.groupOrigins.resolved && scan.flights) {
+    scan.groupTravel = intent.groupOrigins.resolved.flatMap((party, idx) => {
+      const partyIntent = {
+        ...intent,
+        travellers: { adults: party.count, children: 0, childAges: [], total: party.count },
+      };
+      return scanFlights(partyIntent, dest, party.origin).map((o) => ({
+        ...o,
+        details: {
+          ...o.details,
+          party: `${party.count} × ${party.origin.city}`,
+          partyIndex: idx,
+          partySize: party.count,
+          route: `${party.origin.city} → ${dest.city}`,
+        },
+      }));
+    });
+    delete scan.flights; // the party legs replace the single-origin scan
+  }
+  // The whole group shares ONE home: annotate stays with the group size and a
+  // per-party bedroom/apartment split ("different kinds of bedrooms — all in
+  // one booking").
+  if (intent.groupOrigins && scan.hotel) {
+    const parties = intent.groupOrigins.parties;
+    const guests = parties.reduce((s, p) => s + p.count, 0);
+    const unitFor = (n) => (n <= 1 ? 'Single room' : n === 2 ? 'Double / twin room' : n === 3 ? 'Triple room' : `Family apartment (sleeps ${n})`);
+    const units = parties.map((p) => `${unitFor(p.count)} — party of ${p.count} (${p.city})`);
+    scan.hotel = scan.hotel.map((h) => ({
+      ...h,
+      details: { ...h.details, groupStay: { guests, units, sameProperty: true } },
+    }));
+  }
+
   // Mixed-mode / split-origin legs: one booking, per-direction means & points.
   // Each direction is scanned with its OWN mode and origin, converted to a
   // one-way leg, and packaged together — "train out from London, ferry back
