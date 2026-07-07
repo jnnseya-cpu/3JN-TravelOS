@@ -656,7 +656,7 @@ export function toOneWayLeg(offer, leg, fromCity, toCity) {
 
 // Run a full scan across every requested component. Returns a map of
 // component -> array of supplier offers (or a single offer for visa).
-export function scanAll(intent, dest, origin, live = null) {
+export function scanAll(intent, dest, origin, live = null, communityHosts = null) {
   const scan = {};
   const wanted = new Set(intent.components);
 
@@ -667,6 +667,36 @@ export function scanAll(intent, dest, origin, live = null) {
   }
   if (wanted.has('hotel')) {
     scan.hotel = (live && live.hotels && live.hotels.length) ? live.hotels : scanHotels(intent, dest);
+    // Community Host Marketplace: real 3JN-verified host listings compete with
+    // hotels in the SAME scan — so they inherit everything the OS does
+    // (reliability floor, sourcing, price guard, instalments, group stays).
+    if (Array.isArray(communityHosts) && communityHosts.length) {
+      const nights = intent.nights;
+      const fits = communityHosts.filter((l) => l.sleeps >= intent.travellers.total);
+      scan.hotel = scan.hotel.concat(fits.map((l) => ({
+        type: 'host',
+        supplier: l.title,
+        verified: !!l.verified,
+        reliabilityScore: l.reliabilityScore,
+        stars: 4,
+        details: {
+          nights,
+          rooms: 1,
+          nightlyUSD: l.nightlyUSD,
+          board: 'Self-catering',
+          freeCancellation: true,
+          sleeps: l.sleeps,
+          roomType: `${l.propertyType} · sleeps ${l.sleeps}`,
+          area: l.city,
+          amenities: l.amenities,
+          guestRating: Math.round(l.reliabilityScore) / 10,
+          community: true,
+          hostName: l.hostName,
+          description: `${l.title} — a 3JN-verified community host property in ${l.city}, hosted by ${l.hostName}.`,
+        },
+        priceUSD: Math.round(l.nightlyUSD * nights),
+      })));
+    }
   }
   if (wanted.has('train')) scan.train = scanTrain(intent, dest, origin);
   if (wanted.has('coach')) scan.coach = scanCoach(intent, dest, origin);

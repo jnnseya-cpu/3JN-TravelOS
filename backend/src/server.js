@@ -24,6 +24,7 @@ import {
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
+  createHostListing, listHostListings, hostEarnings,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -587,6 +588,28 @@ app.get('/api/visaos/probability', safe((req, res) => {
 }));
 app.get('/api/visaos/government', safe((req, res) => {
   res.json({ analytics: govAnalytics() });
+}));
+
+// ---- Community Host Marketplace (Airbnb-style, 3JN-powered) ----------------
+// Anyone can host: create a listing, pass verification, appear in searches for
+// that destination alongside hotels — with 3JN reliability, price guard and
+// instalments wrapped around every stay. Hosts keep 90%; 3JN keeps 10%.
+app.post('/api/host/listings', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to become a host.' });
+  const result = createHostListing(user.id, req.body || {});
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+app.get('/api/host/listings', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ listings: listHostListings(user.id) });
+}));
+app.get('/api/host/earnings', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(hostEarnings(user.id));
 }));
 
 // ---- Price guard ----------------------------------------------------------
