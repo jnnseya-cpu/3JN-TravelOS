@@ -1011,3 +1011,46 @@ test('visa framework: declared-but-undetailed history drives Request more info',
   assert.ok(clean.applicantValidation.missing.length > 0, 'completeness gaps reported');
   assert.equal(clean.recommendation, 'Approve');
 });
+
+// ---- Multi-modal: every travel mode has a booking route ---------------------
+import { partnerFor, applySourcing, BRAND_URLS } from '../src/partners.js';
+import { scanTrain, scanCoach, scanFerry, scanCruise } from '../src/suppliers.js';
+
+test('multi-modal: every journey mode resolves a fulfilment partner', () => {
+  for (const mode of ['train', 'coach', 'ferry', 'cruise', 'carhire']) {
+    const partner = partnerFor(mode, 'XX');
+    assert.ok(partner, `${mode} has a fulfilment partner`);
+    assert.ok(partner.url, `${mode} partner has a booking URL`);
+  }
+});
+
+test('multi-modal: scanned rail/sea offers carry a real booking route', () => {
+  const intent = { dates: { checkIn: '2026-08-17' }, travellers: { total: 2 }, nights: 2, miniCruise: true };
+  const origin = { airport: 'NCL', city: 'Newcastle' };
+  const dest = { code: 'AMS', city: 'Amsterdam' };
+  for (const [label, offers] of [
+    ['train', scanTrain(intent, dest, origin)],
+    ['coach', scanCoach(intent, dest, origin)],
+    ['ferry', scanFerry(intent, dest, origin)],
+    ['cruise', scanCruise(intent, dest, origin)],
+  ]) {
+    assert.ok(offers.length >= 2, `${label} offers exist`);
+    for (const offer of offers) {
+      const sourced = applySourcing(offer, 'NL');
+      assert.ok(sourced.bookingUrl, `${label} offer via ${offer.supplier} is bookable (got ${sourced.sourcedVia})`);
+    }
+  }
+  // Named operators link straight to the brand, not a generic aggregator.
+  assert.ok(BRAND_URLS['Eurostar'] && BRAND_URLS['DFDS Seaways'] && BRAND_URLS['MSC Cruises']);
+});
+
+test('multi-modal: ferry request plans end to end with a bookable ferry', () => {
+  const r = plan({
+    text: 'Amsterdam from Newcastle by ferry in August for 2 nights, mini cruise',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  assert.equal(r.stage, 'options');
+  const types = new Set(r.packages.options[0].components.map((c) => c.type));
+  assert.ok(types.has('ferry') || types.has('cruise'), `journey is sea-based (${[...types]})`);
+  assert.ok(!types.has('flight'), 'no flight when the traveller asked for a ferry');
+});

@@ -134,7 +134,7 @@ window.addEventListener('resize', () => { if (window.innerWidth > 1240) closeMob
 
 // ---- Static content (agents, tiers, steps, loyalty) -----------------------
 const AGENTS = [
-  ['✈', 'Flight Intelligence', 'Scans carriers for the cheapest reliable inbound + outbound fares.'],
+  ['✈', 'Journey Intelligence', 'Scans flights, trains, coaches, ferries & cruises for the cheapest reliable route.'],
   ['🏨', 'Hotel Negotiation', 'Compares hotels and private hosts, negotiates upgrades & board.'],
   ['🛂', 'Visa Automation', 'Detects requirements by nationality and processes eVisas.'],
   ['🚘', 'Transfer Logistics', 'Books verified airport transfers for arrival & departure.'],
@@ -2347,6 +2347,12 @@ const CONTENT = {
     title: '✈ Flights — inbound & outbound, always the cheapest reliable fare',
     body: `<p class="muted">We scan global carriers and wholesalers (Kiwi, Trip.com and direct airline inventory) for <strong>both legs</strong> of your journey, filter out unreliable operators, and lock the lowest verified fare. No hidden fees — 3JN's 10% is shown openly.</p>
       <ul class="comp-list"><li><span class="cs">Return flights, every cabin</span></li><li><span class="cs">Verified airlines only (reliability ≥ 70)</span></li><li><span class="cs">Price-guarded after you book</span></li></ul>`,
+    cta: 'planner',
+  },
+  journeys: {
+    title: '🚆⛴ Trains, Coaches, Ferries & Cruises — every way to travel, one OS',
+    body: `<p class="muted">3JN is not a flight tool. Ask for <strong>any journey mode</strong> in plain English — “Amsterdam from Newcastle by ferry”, “Paris by Eurostar”, “a 7-night Mediterranean cruise”, “London to Manchester by coach” — and the OS scans verified operators (Eurostar, Trainline, FlixBus, National Express, DFDS, P&O, Brittany Ferries, MSC, Royal Caribbean and more), prices the whole trip and books it with the same transparent 10% fee, instalments and price guard as flights.</p>
+      <ul class="comp-list"><li><span class="cs">Trains, coaches, ferries, mini cruises & ocean cruises</span></li><li><span class="cs">Car & bike hire, transfers, boats & yacht charters</span></li><li><span class="cs">Mix modes in one package — rail out, ferry back</span></li></ul>`,
     cta: 'planner',
   },
   hotels: {
