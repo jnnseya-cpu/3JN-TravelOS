@@ -2439,3 +2439,47 @@ test('government endpoints: analytics gated to embassy/consulate/admin; override
     server.close();
   }
 });
+
+// ================= Human-only signup & login (anti-bot gate) ===================
+import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, MIN_FORM_MS } from '../src/human-verify.js';
+
+test('human gate: honeypot, timing, interaction and challenge each block bots', () => {
+  const ch = issueHumanChallenge();
+  const good = { website: '', elapsedMs: MIN_FORM_MS + 500, interactions: 8, a: ch.a, b: ch.b, expiresAt: ch.expiresAt, token: ch.token, answer: ch.a + ch.b };
+  assert.equal(verifyHumanCheck(good).ok, true, 'a real human passes');
+  assert.equal(verifyHumanCheck({ ...good, website: 'http://spam.bot' }).error, 'bot-honeypot');
+  assert.equal(verifyHumanCheck({ ...good, elapsedMs: 200 }).error, 'bot-timing');
+  assert.equal(verifyHumanCheck({ ...good, interactions: 0 }).error, 'bot-no-interaction');
+  assert.equal(verifyHumanCheck({ ...good, answer: 999 }).error, 'challenge-wrong');
+  assert.equal(verifyHumanCheck({ ...good, token: 'forged' }).error, 'challenge-invalid');
+  assert.equal(verifyHumanCheck({ ...good, expiresAt: Date.now() - 1000, token: ch.token }).error, 'challenge-expired');
+  // Light check (guest provisioning) still blocks curl bots.
+  assert.equal(verifyLightHuman({ website: '', elapsedMs: 5000, interactions: 5 }).ok, true);
+  assert.equal(verifyLightHuman({ website: '', elapsedMs: 10, interactions: 0 }).ok, false);
+});
+
+test('human gate end-to-end: bot signup/login are refused; verified humans pass', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    // A scripted signup with an email and no human proof -> 403.
+    const bot = await post('/api/account', { name: 'Bot', email: 'bot@spam.io' });
+    assert.equal(bot.status, 403);
+    assert.equal((await bot.json()).human, false);
+    // A scripted login -> 403 before the email is even looked up.
+    const botLogin = await post('/api/login', { email: 'admin@3jntravel.com' });
+    assert.equal(botLogin.status, 403);
+    // A human: fetch the challenge, answer it, pass timing + interactions.
+    const ch = await (await fetch(base + '/api/auth/challenge')).json();
+    const humanCheck = { website: '', elapsedMs: 4000, interactions: 12, a: ch.a, b: ch.b, expiresAt: ch.expiresAt, token: ch.token, answer: ch.a + ch.b };
+    const signup = await post('/api/account', { name: 'Real Human', email: 'human@example.com', humanCheck });
+    assert.equal(signup.status, 200);
+    assert.equal((await signup.json()).user.email, 'human@example.com');
+    const login = await post('/api/login', { email: 'human@example.com', humanCheck });
+    assert.equal(login.status, 200);
+  } finally {
+    server.close();
+  }
+});

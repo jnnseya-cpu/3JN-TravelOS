@@ -983,7 +983,7 @@ window.confirmBooking = async () => {
 
   const paymentMethod = $('#payMethod')?.value || 'card';
   if (!state.user) {
-    const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ name: lead.fullName || 'Guest Traveller' }) });
+    const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ name: lead.fullName || 'Guest Traveller', humanCheck: humanCheckPayload(false) }) });
     setUser(u.user);
   }
   let data;
@@ -1583,7 +1583,7 @@ function accessGate(out, area, roles) {
     <div style="font-size:34px">🔒</div>
     <h3 style="margin:10px 0 6px">${area} access required</h3>
     <p class="muted" style="font-size:14px">This area is restricted to <strong>${roles}</strong> accounts and isn't part of the public site.</p>
-    <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth()">Sign in</button>
+    <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>
     <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
   </div>`;
 }
@@ -1829,7 +1829,7 @@ async function renderVisaApply() {
       <div style="font-size:34px">🔒</div>
       <h3 style="margin:10px 0 6px">Sign in to start a visa application</h3>
       <p class="muted" style="font-size:14px">The Visa Application is part of your private dashboard. Your documents and identity data stay in your account.</p>
-      <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth()">Sign in</button>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>
       <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
     </div>`;
     return;
@@ -2404,7 +2404,7 @@ window.buyAcuFlow = () => {
     <div class="kv"><span>Enterprise · custom volume</span><a class="btn btn-ghost btn-sm" href="mailto:sales@3jntravel.com">Contact sales</a></div>`);
 };
 window.buyAcu = async (pack) => {
-  if (!state.user) { const u = await api('/api/account', { method: 'POST', body: JSON.stringify({}) }); setUser(u.user); }
+  if (!state.user) { const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ humanCheck: humanCheckPayload(false) }) }); setUser(u.user); }
   try { const data = await api(`/api/account/${state.user.id}/acu`, { method: 'POST', body: JSON.stringify({ pack }) });
     toast(`✓ ${data.charged ? '£' + data.charged + ' charged · ' : ''}balance ${data.balance.toLocaleString()} ACU`);
     setUser({ ...state.user, acuBalance: data.balance });
@@ -2497,7 +2497,7 @@ window.signOut = () => {
 };
 
 // ---- Login / Signup -------------------------------------------------------
-$('#signBtn')?.addEventListener('click', () => { if (state.user) return window.signOut(); openAuth(); });
+$('#signBtn')?.addEventListener('click', () => { if (state.user) return window.signOut(); openAuth('login'); });
 
 // Bridge a Firebase identity to a backend account (get-or-create by email).
 let firebaseBridging = false;
@@ -2526,37 +2526,70 @@ window.forgotPassword = async () => {
   catch (e) { toast(e.message || 'Could not send reset email.'); }
 };
 
-function openAuth() {
+// ---- Human verification (anti-bot) ----------------------------------------
+// Signup/login are HUMAN-ONLY: honeypot + fill-time + interaction counting +
+// a server-signed challenge. Bots and scripts are refused by the backend.
+const HUMAN = { pageLoadedAt: Date.now(), interactions: 0, formOpenedAt: 0, challenge: null };
+['keydown', 'pointerdown', 'pointermove', 'touchstart'].forEach((ev) =>
+  document.addEventListener(ev, () => { HUMAN.interactions = Math.min(HUMAN.interactions + 1, 9999); }, { passive: true }));
+async function fetchHumanChallenge() {
+  try { HUMAN.challenge = await api('/api/auth/challenge'); } catch { HUMAN.challenge = null; }
+  const el = $('#humanQ');
+  if (el && HUMAN.challenge) el.textContent = HUMAN.challenge.question + ' =';
+}
+function humanCheckPayload(full) {
+  const c = HUMAN.challenge || {};
+  return {
+    website: $('#hpWebsite')?.value || '',                    // honeypot — must stay empty
+    elapsedMs: Date.now() - (HUMAN.formOpenedAt || HUMAN.pageLoadedAt),
+    interactions: HUMAN.interactions,
+    ...(full ? { a: c.a, b: c.b, expiresAt: c.expiresAt, token: c.token, answer: Number($('#humanA')?.value || NaN) } : {}),
+  };
+}
+// The human-challenge block rendered inside both auth forms.
+function humanBlock() {
+  return `
+    <input id="hpWebsite" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" aria-hidden="true">
+    <div class="field" style="margin-top:10px"><label>Human check · <span id="humanQ">…</span></label>
+      <input class="in" id="humanA" inputmode="numeric" placeholder="Answer" autocomplete="off"></div>
+    <p class="muted" style="font-size:11px;margin-top:6px">🛡 Signup and login are human-only — automated scripts are blocked.</p>`;
+}
+
+function openAuth(mode = 'signup') {
+  HUMAN.formOpenedAt = Date.now();
   const fb = window.firebaseAuth?.available;
   const googleBtn = fb ? '<button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="googleSignIn()">🇬 Continue with Google</button><div class="muted center" style="font-size:11px;margin-bottom:8px">or with email</div>' : '';
-  modal(`
-    <span class="eyebrow">Welcome to 3JN Travel OS</span>
-    ${googleBtn}
-    <div class="chips" style="margin:10px 0">
-      <span class="chip on" id="authTabSignup" onclick="authTab('signup')">Sign up</span>
-      <span class="chip" id="authTabLogin" onclick="authTab('login')">Log in</span>
-    </div>
-    <div id="authSignup">
-      <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="auName" placeholder="Your name"></div>
-      <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="auEmail" placeholder="you@email.com"></div>
-      ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="auPass" placeholder="••••••••"></div>' : ''}
+  // SIGNUP and LOGIN are separate, dedicated screens — never mixed.
+  if (mode === 'login') {
+    modal(`
+      <span class="eyebrow">Log in</span>
+      <h3 style="margin:6px 0 4px">Welcome back</h3>
+      <p class="muted" style="font-size:13px">Sign in to your 3JN Travel OS account.</p>
+      ${googleBtn}
+      <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@email.com" autocomplete="email"></div>
+      ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••" autocomplete="current-password"></div>' : ''}
+      ${humanBlock()}
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
+      ${fb ? '<p class="muted center" style="font-size:12px;margin-top:10px"><a onclick="forgotPassword()" style="color:var(--gold);cursor:pointer">Forgot password?</a></p>' : ''}
+      <p class="muted center" style="font-size:12.5px;margin-top:12px">New to 3JN? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('signup')">Create an account</a></p>`);
+  } else {
+    modal(`
+      <span class="eyebrow">Create account</span>
+      <h3 style="margin:6px 0 4px">Join 3JN Travel OS</h3>
+      <p class="muted" style="font-size:13px">One account for searches, bookings, ACUs, visas and your travel wallet.</p>
+      ${googleBtn}
+      <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="auName" placeholder="Your name" autocomplete="name"></div>
+      <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="auEmail" placeholder="you@email.com" autocomplete="email"></div>
+      ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="auPass" placeholder="••••••••" autocomplete="new-password"></div>' : ''}
       <div class="field" style="margin-top:10px"><label>I am a…</label><select class="in" id="auRole"><option value="consumer">Traveller</option><option value="business">Business</option><option value="merchant">Merchant</option><option value="partner">Agency partner</option></select></div>
       <div class="field" style="margin-top:10px"><label>Referral code (optional)</label><input class="in" id="auRef" placeholder="3JN-XXXX"></div>
+      ${humanBlock()}
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doSignup()">Create account · 250 pts bonus</button>
-    </div>
-    <div id="authLogin" style="display:none">
-      <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@email.com"></div>
-      ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••"></div>' : ''}
-      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
-      ${fb ? '<p class="muted center" style="font-size:12px;margin-top:10px"><a onclick="forgotPassword()" style="color:var(--gold);cursor:pointer">Forgot password?</a></p>' : '<p class="muted" style="font-size:12px;margin-top:10px">Try the seeded accounts: admin@3jntravel.com, business@3jntravel.com, merchant@3jntravel.com.</p>'}
-    </div>`);
+      <p class="muted center" style="font-size:12.5px;margin-top:12px">Already have an account? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('login')">Log in</a></p>`);
+  }
+  fetchHumanChallenge();
 }
-window.authTab = (t) => {
-  $('#authTabSignup').classList.toggle('on', t === 'signup');
-  $('#authTabLogin').classList.toggle('on', t === 'login');
-  $('#authSignup').style.display = t === 'signup' ? 'block' : 'none';
-  $('#authLogin').style.display = t === 'login' ? 'block' : 'none';
-};
+window.openAuth = openAuth;
 window.doSignup = async () => {
   const name = $('#auName').value.trim();
   const email = $('#auEmail').value.trim();
@@ -2569,8 +2602,10 @@ window.doSignup = async () => {
     try { await window.firebaseAuth.signUp(email, pass, name); } catch (e) { toast(e.message || 'Sign-up failed.'); }
     return;
   }
-  const body = { name, email, role: $('#auRole').value, referredByCode: $('#auRef').value.trim() || undefined };
-  let d; try { d = await api('/api/account', { method: 'POST', body: JSON.stringify(body) }); } catch { return; }
+  if (!email) { toast('Enter your email.'); return; }
+  if (!$('#humanA')?.value) { toast('Answer the human check to continue.'); return; }
+  const body = { name, email, role: $('#auRole').value, referredByCode: $('#auRef').value.trim() || undefined, humanCheck: humanCheckPayload(true) };
+  let d; try { d = await api('/api/account', { method: 'POST', body: JSON.stringify(body) }); } catch { fetchHumanChallenge(); return; }
   setUser(d.user); closeModal(); toast(`✓ Welcome, ${d.user.name}!`); nav('console');
 };
 window.doLogin = async () => {
@@ -2581,7 +2616,8 @@ window.doLogin = async () => {
     try { await window.firebaseAuth.signIn(email, pass); } catch (e) { toast(e.message || 'Login failed.'); }
     return;
   }
-  let d; try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email }) }); } catch { return; }
+  if (!$('#humanA')?.value) { toast('Answer the human check to continue.'); return; }
+  let d; try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, humanCheck: humanCheckPayload(true) }) }); } catch { fetchHumanChallenge(); return; }
   setUser(d.user); closeModal(); toast(`✓ Welcome back, ${d.user.name}!`); nav('console');
 };
 

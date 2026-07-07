@@ -51,6 +51,7 @@ import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, l
 import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
+import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -228,8 +229,23 @@ app.post('/api/contact', safe(async (req, res) => {
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------
+// Human gate: signup and login are HUMAN-ONLY. Explicit signups (an email is
+// provided) must pass the full check (honeypot + timing + interaction +
+// signed challenge); guest auto-provisioning passes the light check. Bots and
+// scripts are refused with a structured reason.
+app.get('/api/auth/challenge', safe((req, res) => {
+  res.json(issueHumanChallenge());
+}));
 app.post('/api/account', safe((req, res) => {
-  const user = createUser(req.body || {});
+  const body = req.body || {};
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+  const rl = rateLimitAuth(ip);
+  if (!rl.ok) return res.status(429).json(rl);
+  const check = body.humanCheck || {};
+  const verdict = body.email ? verifyHumanCheck(check) : verifyLightHuman(check);
+  if (!verdict.ok) return res.status(403).json({ ...verdict, human: false });
+  delete body.humanCheck;
+  const user = createUser(body);
   res.json({ user });
 }));
 
@@ -314,6 +330,12 @@ app.post('/api/account/:id/savings-guarantee', safe((req, res) => {
 // Lightweight "login" — look up an existing account by email (prototype: no
 // password; a real build authenticates via Auth0/Firebase).
 app.post('/api/login', safe((req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress;
+  const rl = rateLimitAuth(ip);
+  if (!rl.ok) return res.status(429).json(rl);
+  // HUMAN-ONLY login: same full verification as signup.
+  const verdict = verifyHumanCheck((req.body || {}).humanCheck || {});
+  if (!verdict.ok) return res.status(403).json({ ...verdict, human: false });
   const email = ((req.body || {}).email || '').trim().toLowerCase();
   const user = findUserByEmail(email);
   if (!user) return res.status(404).json({ error: 'not-found', message: 'No account with that email. Sign up instead.' });
