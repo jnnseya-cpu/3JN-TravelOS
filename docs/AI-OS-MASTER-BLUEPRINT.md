@@ -672,6 +672,31 @@ Every AI-powered action within 3JN Travel OS is metered in **ACU (AI Credits Uni
 
 ---
 
+# SECTION 14 — ADMIN SUPER CONTROL CENTRE
+*Full-platform visibility and control for operations, compliance, and revenue*
+
+## 14. Admin Super Control Centre
+
+The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, providing complete real-time visibility and control across every dimension of the platform: users, revenue, agents, compliance, security, and infrastructure.
+
+### 14.1 Control Centre Modules
+
+| Module | Key Capabilities | Data Source |
+|---|---|---|
+| **Platform Health Monitor** | Uptime SLA dashboard, P99 latency, error rate by service, GDS connection status, Kafka lag | Prometheus + Grafana + GCP Monitoring |
+| **Revenue Intelligence** | Real-time MRR/ARR, GMV, churn rate, LTV by tier, ACU economics, BitriPay volume | BigQuery + Stripe + BitriPay APIs |
+| **User Lifecycle Manager** | Registration funnel, activation rate, DAU/MAU, tier distribution, referral attribution | PostHog + PostgreSQL |
+| **AI Governance Panel** | Agent performance metrics, model spend, escalation queue, instruction management, A/B test results | LangGraph + agent_logs table |
+| **Compliance Centre** | KYC queue, AML flag review, GDPR request management, SAR workflow, regulatory reporting | Sumsub + ComplyAdvantage + PostgreSQL |
+| **Fraud Intelligence Dashboard** | Transaction scoring distribution, fraud ring alerts, blocked accounts, false positive rate | Fraud Detection Agent + Seon |
+| **Dispute Resolution Centre** | Booking disputes, chargebacks, supplier issues — full resolution SLA tracking | PostgreSQL + Stripe Disputes API |
+| **API Management** | Key issuance, usage by partner, rate limit exceptions, developer support queue | Kong + PostgreSQL |
+| **Agent Command Centre** | Individual agent health, queue depth, success rate, latency, error log per agent | LangGraph telemetry + BigQuery |
+
+*(Prototype anchors: the Admin Super Control Centre already ships with admin overview/users/bookings/activity/audit, the Profitability Dashboard (`/api/admin/profitability`), AI cost report (`/api/admin/ai-costs`), comp-Elite management and the ops/security agent reports.)*
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
