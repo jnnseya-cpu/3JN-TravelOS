@@ -231,6 +231,34 @@ function parseOrigin(text) {
   return name && name.length > 1 ? name : null;
 }
 
+// Mixed-mode / multi-origin legs — one booking, different means and different
+// departure points per direction: "out by train from London, back by ferry
+// into Newcastle", "fly from Heathrow, returning into Manchester".
+const LEG_MODE = { fly: 'flights', flight: 'flights', flights: 'flights', plane: 'flights', air: 'flights', train: 'train', rail: 'train', eurostar: 'train', coach: 'coach', bus: 'coach', ferry: 'ferry', cruise: 'cruise' };
+const MODE_WORDS = 'fly|flight|flights|plane|air|train|rail|eurostar|coach|bus|ferry|cruise';
+function parseLegs(raw) {
+  const t = raw || '';
+  const norm = (w) => LEG_MODE[(w || '').toLowerCase()] || null;
+  // Outbound mode: "out/going/there by train", "train out", "take the train there".
+  const outBy = t.match(new RegExp(`\\b(?:out(?:bound)?|going|go|there|travel(?:ling)? out)\\s+by\\s+(${MODE_WORDS})\\b`, 'i'))
+    || t.match(new RegExp(`\\b(${MODE_WORDS})\\s+(?:out|there)\\b`, 'i'));
+  // Return mode: "back/returning/home by ferry", "ferry back", "fly home".
+  const backBy = t.match(new RegExp(`\\b(?:back|home|return(?:ing)?|coming back|come back)\\s+by\\s+(${MODE_WORDS})\\b`, 'i'))
+    || t.match(new RegExp(`\\b(${MODE_WORDS})\\s+(?:back|home)\\b`, 'i'));
+  // Return arrival point: "back into Newcastle", "returning (by ferry) into
+  // Manchester" — a couple of words may sit between the return cue and "into".
+  const backTo = t.match(/\b(?:back|return(?:ing)?)(?:\s+[\w'’-]+){0,3}?\s+(?:in)?to\s+([A-ZÀ-Þ][\w'’-]*(?:\s+[A-ZÀ-Þ][\w'’-]*)?)/);
+  const outMode = norm(outBy && outBy[1]);
+  const backMode = norm(backBy && backBy[1]);
+  const backToCity = backTo ? backTo[1].trim() : null;
+  // Legs exist only when the directions genuinely differ — different modes, or
+  // a different return arrival point (split airports/stations/ports).
+  if ((outMode && backMode && outMode !== backMode) || backToCity) {
+    return { out: { mode: outMode || backMode || 'flights' }, back: { mode: backMode || outMode || 'flights', to: backToCity } };
+  }
+  return null;
+}
+
 export function parseIntent(text, ctx = {}, today = new Date()) {
   const raw = (text || '').trim();
   // Worldwide: resolve a catalogue city OR synthesise any destination on Earth.
@@ -270,6 +298,19 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   // anything genuinely unspecified → ask what they need (handled in plan()).
   const wantsFullPackage = /\b(holiday|holidays|package|all.?inclusive|getaway|vacation|honeymoon|full package|complete trip|everything)\b/i.test(raw);
   const travelStaySignal = /\b(\d+\s*(?:night|nights|day|days|week|weeks)|weekend|trip|travel|travelling|traveling|visit|visiting|staying|go to|going to|getaway)\b/i.test(raw);
+
+  // Mixed-mode / split-origin legs (one booking, per-direction means & points).
+  let legs = parseLegs(raw);
+  // "back to <destination>" is a round trip, not a split return point.
+  if (legs && legs.back.to && destination && destination.city && legs.back.to.toLowerCase() === destination.city.toLowerCase()) {
+    legs.back.to = null;
+    if (legs.out.mode === legs.back.mode) legs = null;
+  }
+  if (legs) {
+    requested.add(legs.out.mode);
+    requested.add(legs.back.mode);
+  }
+
   let needComponents = false;
   if (requested.size === 0 && destination) {
     if (wantsFullPackage) ['flights', 'hotel', 'activities', 'transfer', 'esim'].forEach((c) => requested.add(c));
@@ -291,6 +332,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     priority: wantsCheapestReliable ? 'cheapest-reliable' : 'balanced',
     nationality: ctx.country || 'GB',
     originCity, // the user's stated departure city (null if not given)
+    legs, // mixed-mode / split-origin legs (null for a simple round trip)
     miniCruise, // short ferry-cruise rather than an ocean liner
     hotelArea, // requested hotel neighbourhood/road (null if not given)
     recommendedDestination: destination?.recommendedFromCountry || null,

@@ -1054,3 +1054,63 @@ test('multi-modal: ferry request plans end to end with a bookable ferry', () => 
   assert.ok(types.has('ferry') || types.has('cruise'), `journey is sea-based (${[...types]})`);
   assert.ok(!types.has('flight'), 'no flight when the traveller asked for a ferry');
 });
+
+// ---- Mixed-mode + split-origin journeys (one booking) -----------------------
+test('legs: "out by train, back by ferry into <city>" parses both directions', () => {
+  const i = parseIntent(
+    'Amsterdam in August for 3 nights, out by train from London and back by ferry into Newcastle',
+    { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)),
+  );
+  assert.ok(i.legs, 'legs detected');
+  assert.equal(i.legs.out.mode, 'train');
+  assert.equal(i.legs.back.mode, 'ferry');
+  assert.equal(i.legs.back.to, 'Newcastle');
+  assert.ok(i.components.includes('train') && i.components.includes('ferry'));
+});
+
+test('legs: mixed-mode journey packages BOTH one-way legs in one booking', () => {
+  const r = plan({
+    text: 'Amsterdam in August for 3 nights with 2 adults, out by train from London and back by ferry into Newcastle',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  assert.equal(r.stage, 'options');
+  const comps = r.packages.options[0].components;
+  const train = comps.find((c) => c.type === 'train');
+  const ferry = comps.find((c) => c.type === 'ferry');
+  assert.ok(train && ferry, `both legs present (${comps.map((c) => c.type)})`);
+  assert.equal(train.details.leg, 'outbound');
+  assert.equal(ferry.details.leg, 'return');
+  assert.match(train.details.route, /London → Amsterdam/);
+  assert.match(ferry.details.route, /Amsterdam → Newcastle/);
+  assert.ok(train.details.oneWay && ferry.details.oneWay, 'legs are one-way priced');
+  assert.ok(train.bookingUrl && ferry.bookingUrl, 'both legs bookable');
+  // The public intent carries the legs so the UI can present the mixed journey.
+  assert.equal(r.intent.legs.out.mode, 'train');
+  assert.equal(r.intent.legs.back.mode, 'ferry');
+});
+
+test('legs: same mode, different airports — fly out Heathrow, back into Manchester', () => {
+  const r = plan({
+    text: 'Dubai from London in August for 5 nights with 2 adults, flights and hotel, returning into Manchester',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  assert.equal(r.stage, 'options');
+  const comps = r.packages.options[0].components;
+  const legs = comps.filter((c) => c.type === 'flight' && c.details?.leg);
+  assert.equal(legs.length, 2, 'two one-way flight legs');
+  assert.match(legs.find((c) => c.details.leg === 'outbound').details.route, /London → Dubai/);
+  assert.match(legs.find((c) => c.details.leg === 'return').details.route, /Dubai → Manchester/);
+  const hotel = comps.find((c) => c.type === 'hotel' || c.type === 'host');
+  assert.ok(hotel, 'hotel still in the same package/booking');
+});
+
+test('legs: plain round trips are untouched (no false positives)', () => {
+  const i = parseIntent(
+    'I want to travel to Dubai with my family in August for 7 nights. I want flights, hotel and the cheapest reliable price.',
+    { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)),
+  );
+  assert.equal(i.legs, null);
+  // "back to <destination>" is a round trip, not a split return.
+  const i2 = parseIntent('Fly to Dubai from London and back to Dubai in August for 5 nights', { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
+  assert.equal(i2.legs, null);
+});

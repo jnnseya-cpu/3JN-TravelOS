@@ -74,6 +74,13 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Departure: the user's stated city if given, else inferred from nationality.
   const origin = (intent.originCity && resolveOrigin(intent.originCity)) || originForCountry(intent.nationality);
   origin.inferred = !intent.originCity;
+  // Mixed-mode / split-origin legs: resolve each direction's own departure /
+  // arrival point (airport, station or port city). Outbound defaults to the
+  // stated origin; the return may come back into a different place entirely.
+  if (intent.legs) {
+    const backOrigin = (intent.legs.back.to && resolveOrigin(intent.legs.back.to)) || origin;
+    intent.legs.resolved = { out: origin, back: backOrigin };
+  }
   const scan = scanAll(intent, intent.destination, origin, live);
   const expectedBookingUSD = roughTotal(scan);
 
@@ -189,5 +196,9 @@ function publicIntent(intent) {
     priority: intent.priority,
     nationality: intent.nationality,
     hotelArea: intent.hotelArea || null,
+    legs: intent.legs ? {
+      out: { mode: intent.legs.out.mode, from: intent.legs.resolved?.out?.city || null },
+      back: { mode: intent.legs.back.mode, to: intent.legs.resolved?.back?.city || null },
+    } : null,
   };
 }
