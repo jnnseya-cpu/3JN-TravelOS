@@ -305,6 +305,34 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 
 ---
 
+# SECTION 07 — BITRIPAY INTEGRATION GATEWAY
+*Dedicated BitriPay integration layer for merchants, partners, and consumers*
+
+## 7. BitriPay Integration Gateway
+
+BitriPay is the **primary payment infrastructure layer for all African market transactions** within 3JN Travel OS, with full multi-currency support including **CDF (Congolese Franc)**. The integration creates a dedicated **BitriPay API Door** — a self-contained payment gateway environment within the OS that handles merchant onboarding, transaction processing, settlement, and developer access.
+
+### 7.1 BitriPay API Door Architecture
+
+| Component | Function | Technical Implementation |
+|---|---|---|
+| **API Key Manager** | Generate, rotate, revoke API keys per merchant/environment | NestJS + PostgreSQL + AES-256 encryption |
+| **Sandbox Environment** | Full payment simulation without live money movement | Isolated GCP project + mock payment processor |
+| **Webhook Engine** | Real-time event delivery with HMAC-SHA256 signing | NestJS + Redis queue + retry logic (exponential backoff) |
+| **Merchant Onboarding** | KYB verification, contract execution, tier assignment | Sumsub KYB + DocuSign + BitriPay Merchant API |
+| **QR Payment Engine** | Dynamic QR code generation for travel service payments | Node.js QR library + BitriPay QR API endpoint |
+| **Payment Links** | Shareable payment links for travel invoices | NestJS + short URL service + BitriPay Links API |
+| **Wallet Integration** | Consumer BitriPay wallet for in-OS travel spending | BitriPay Wallet SDK + Firebase Auth |
+| **Mobile Money Bridge** | M-Pesa, Airtel Money, Orange Money, Africell — CDF native | BitriPay Mobile Money Gateway + currency conversion |
+| **Settlement Engine** | Automatic T+1 settlement to merchant bank accounts | BitriPay Settlement API + NestJS scheduler |
+| **Refund & Dispute API** | Full refund and chargeback management | BitriPay Refund API + NestJS dispute workflow |
+| **Commission Splitter** | Automatic revenue share calculation and distribution | NestJS + PostgreSQL commission engine |
+| **Transaction Monitor** | Real-time monitoring with fraud scoring overlay | BitriPay TXN webhooks + Fraud Detection Agent |
+
+*(Prototype anchors: the Merchant/BitriPay portal, payment links + QR, settlement view and API keys already run in `store.js` (`createPaymentLink`, `settlePaymentLink`, `merchantSettlement`, `createApiKey` with sandbox/production environments) and the Merchant Portal UI — this section is their production promotion.)*
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
