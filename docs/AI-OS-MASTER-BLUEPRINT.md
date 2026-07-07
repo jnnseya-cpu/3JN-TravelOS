@@ -249,6 +249,15 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 | **Churn Prevention Agent** | Early churn signal detection with intervention playbooks | Engagement metrics, last activity, support tickets | Churn risk score, intervention campaign trigger | Daily + inactivity event |
 | **Monetisation Agent** | Platform-wide revenue mix optimisation | All revenue streams, cost data, user behaviour | Revenue optimisation recommendations, A/B test suggestions | Weekly |
 
+#### 5.2.4 Compliance Agents
+
+| Agent | Core Capability | Inputs | Outputs | Trigger |
+|---|---|---|---|---|
+| **GDPR Agent** | Data subject rights management, consent tracking, breach detection | User consent records, data processing logs, DPA schedules | Consent status, data subject request fulfilment, breach alert | Continuous + user request |
+| **AML Agent** | Transaction monitoring, suspicious activity detection, SAR generation | Transaction data, user profiles, sanctions lists | AML risk score, SAR draft, account hold recommendation | Every transaction |
+| **KYC Agent** | Identity verification workflow orchestration | Identity documents, liveness checks, biometric data | Verification pass/fail, risk tier, escalation | Onboarding + periodic review |
+| **Regulatory Agent** | Jurisdiction-specific travel compliance (ATOL, IATA, CAA etc.) | Booking data, regulatory requirement library, geo data | Compliance checklist, required disclosures, reporting data | Booking event + periodic |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
