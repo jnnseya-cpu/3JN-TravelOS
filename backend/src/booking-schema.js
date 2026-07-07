@@ -48,12 +48,14 @@ export const PACKAGE = {
   components: ['flight', 'hotel', 'transfers', 'tours', 'excursions', 'insurance', 'visa', 'activities', 'concierge'],
   search: ['country', 'city', 'resortZone', 'sceneType', 'holidayType', 'duration', 'budgetTier'],
 };
+export const BUDGET_TIERS = ['Economy', 'Premium', 'Luxury', 'Ultra luxury'];
+export const PACKAGE_DURATIONS = ['Weekend', '3–5 nights', '7 nights', '10 nights', '14 nights', 'Custom'];
 export const HOLIDAY_TYPES = ['Luxury', 'Family', 'Honeymoon', 'Solo', 'Group', 'Adventure', 'Religious', 'Business-leisure', 'Cruise', 'Safari', 'Medical tourism'];
 
 // ---- 9/10. Insurance + ancillaries ----------------------------------------
 export const INSURANCE = { coverage: ['Medical', 'Cancellation', 'Delay', 'Lost baggage', 'Death', 'Repatriation', 'Legal assistance'], collect: ['dob', 'preExistingConditions', 'tripDuration', 'destinationRisk'] };
 export const ANCILLARIES = ['Airport transfer', 'Lounge access', 'Extra baggage', 'Seat selection', 'Fast-track security', 'Chauffeur', 'SIM / eSIM', 'Forex', 'Visa support', 'Concierge', 'Car rental'];
-export const ANCILLARY_SUPPLIERS = ['Hertz', 'Avis Budget Group', 'Uber'];
+export const ANCILLARY_SUPPLIERS = ['Hertz', 'Avis Budget Group', 'Uber Technologies'];
 
 // ---- 5. Payment & guarantee ------------------------------------------------
 export const PAYMENT_METHODS = ['Card', 'Wallet', 'Corporate account', 'BNPL', 'Invoice', 'Mobile money'];
@@ -71,7 +73,7 @@ const DOC_BY_COMPONENT = {
   coach: ['Photo ID', 'Booking reference / e-ticket'],
   ferry: ['Photo ID', 'Booking reference', 'Vehicle details (if taking a car)'],
   cruise: ['Port documents', 'Vaccination certificate (some itineraries)'],
-  hotel: ['Photo ID', 'Booking voucher', 'Card for incidentals / deposit'],
+  hotel: ['Photo ID / passport', 'National ID (domestic stays)', 'Booking voucher', 'Visa (where required)', 'Marriage certificate (certain countries)', 'Credit card authorization', 'Security deposit authorization'],
   transfer: ['Booking voucher', 'Arrival travel details'],
   activity: ['Liability waiver', 'Health declaration (some activities)'],
   safari: ['Yellow-fever certificate', 'Medical clearance', 'Rescue insurance'],
@@ -225,20 +227,71 @@ export function validateBooking({ travellers = [], travelDate, nationality = 'GB
 export function bookingRiskScore(signals = {}) {
   let score = 4;
   const s = signals;
+  // Identity fraud
+  if (s.fakePassport) score += 45;
+  if (s.fakeId) score += 40;
+  if (s.faceMismatch) score += 38;
+  if (s.identityMismatch) score += 35;
+  // Payment fraud
   if (s.cardStolen) score += 55;
   if (s.binMismatch) score += 18;
-  if (s.threeDSFailed) score += 22;
+  if (s.threeDSFailed || s.threeDSBypass) score += 22;
   if (s.multipleFailedPayments) score += 20;
   if (s.chargebackHistory) score += 25;
+  // Booking fraud
   if (s.botBooking) score += 30;
   if (s.cardTesting) score += 28;
+  if (s.couponAbuse) score += 16;
+  if (s.fakeRefunds) score += 26;
+  // Behavioural AI signals
   if (s.vpn) score += 10;
   if (s.ipSwitching) score += 12;
   if (s.rapidBooking) score += 14;
-  if (s.identityMismatch) score += 35;
+  if (s.typingAnomaly) score += 8;
+  if (s.mouseAnomaly) score += 8;
   score = Math.max(0, Math.min(100, score));
   const decision = score >= 70 ? 'reject' : score >= 45 ? 'manual review' : score >= 25 ? 'hold' : 'approve';
   return { score, decision };
+}
+
+// Hotel-side fraud — fake property / fake host / review manipulation. Runs on
+// Host Marketplace listings + their review stream.
+export function hostFraudCheck(listing = {}, reviews = []) {
+  const flags = [];
+  if (!listing.verified) flags.push('Unverified property');
+  if (!listing.address || String(listing.address).length < 8) flags.push('No verifiable address (fake-property signal)');
+  if (!Array.isArray(listing.photos) || listing.photos.length < 10) flags.push('Below photo minimum (fake-property signal)');
+  if (!listing.hostName) flags.push('Anonymous host (fake-host signal)');
+  const five = reviews.filter((r) => Number(r.rating) >= 5);
+  if (reviews.length >= 5 && five.length / reviews.length > 0.95) flags.push('Review manipulation suspected (uniform 5★ burst)');
+  const score = Math.min(100, flags.length * 22);
+  const decision = score >= 70 ? 'reject' : score >= 44 ? 'manual review' : score >= 22 ? 'hold' : 'approve';
+  return { score, decision, flags };
+}
+
+// ---- 12. Cancellation / refund engine --------------------------------------
+// A structured, per-booking policy: supplier policy, non-refundable rules,
+// stepped refund schedule, penalty window, partial refunds, no-show and
+// force majeure — stored on the booking so support never guesses.
+export function buildRefundPolicy(option, travelDate = null) {
+  const flight = (option?.components || []).find((c) => c.type === 'flight');
+  const stay = (option?.components || []).find((c) => c.type === 'hotel' || c.type === 'host');
+  const flex = !!(stay?.details?.freeCancellation || flight?.details?.freeCancellation);
+  return {
+    supplierPolicy: flex ? 'Flexible — free cancellation window applies' : 'Restricted — supplier fees apply from booking',
+    nonRefundable: flex ? ['Visa fees', 'Insurance premium once cover starts'] : ['Deposit', 'Visa fees', 'Insurance premium'],
+    refundSchedule: [
+      { window: '30+ days before travel', refundPct: flex ? 100 : 75 },
+      { window: '15–29 days before travel', refundPct: flex ? 75 : 50 },
+      { window: '7–14 days before travel', refundPct: flex ? 50 : 25 },
+      { window: 'Under 7 days', refundPct: flex ? 25 : 0 },
+    ],
+    penaltyWindow: 'Within 48h of departure — 100% penalty except force majeure',
+    partialRefunds: 'Unused components refunded pro-rata where the supplier permits',
+    noShow: 'No-show forfeits the booking value; taxes/fees refundable on request',
+    forceMajeure: 'Full credit or rebooking for officially declared events (weather, strikes, closures) — 3JN waives its fee',
+    travelDate: travelDate || null,
+  };
 }
 
 function dedupe(arr) { return [...new Set(arr.filter(Boolean))]; }
