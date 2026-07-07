@@ -1197,7 +1197,7 @@ test('price dive: skipped for utility-only purchases (no journey)', () => {
 });
 
 // ---- Community Host Marketplace: anyone can host, inside the OS -------------
-import { createHostListing, listHostListings, hostListingsForCity, hostEarnings, registerHost, updateHostListing, hostBookings } from '../src/store.js';
+import { createHostListing, listHostListings, hostListingsForCity, hostEarnings, registerHost, updateHostListing, hostBookings, reviewHostListing, adminUserHostOverview } from '../src/store.js';
 
 test('host marketplace: a community listing goes live and competes in searches', () => {
   const host = createUser({ name: 'Fatima Host', email: 'fatima.host@example.com' });
@@ -1212,8 +1212,17 @@ test('host marketplace: a community listing goes live and competes in searches',
     photos: Array.from({ length: 12 }, (_, i) => `https://photos.example.com/marina/${i + 1}.jpg`),
   });
   assert.equal(created.ok, true);
-  assert.equal(created.listing.status, 'live');
-  assert.equal(created.listing.verified, true);
+  // MODERATION GATE: a new property is NOT online until AI verification +
+  // admin review approve it.
+  assert.equal(created.listing.status, 'pending-review');
+  assert.equal(created.listing.verified, false);
+  assert.ok(created.listing.aiVerification.score >= 90, 'clean listing scores high in AI verification');
+  assert.equal(created.listing.aiVerification.securityRisk, 'Low');
+  assert.ok(!hostListingsForCity('Dubai').some((l) => l.title === 'Marina View Apartment'), 'pending listing is NOT publicly bookable');
+  assert.ok(adminUserHostOverview().pendingReview.some((l) => l.title === 'Marina View Apartment'), 'listing sits in the admin review queue');
+  const approved = reviewHostListing(created.listing.id, { decision: 'approve', reviewerId: 'admin_test' });
+  assert.equal(approved.ok, true);
+  assert.equal(approved.listing.status, 'live');
   assert.ok(listHostListings(host.id).length === 1);
   assert.ok(hostListingsForCity('Dubai').some((l) => l.title === 'Marina View Apartment'));
 
@@ -1277,11 +1286,12 @@ test('host marketplace: earnings pay the host 90%, 3JN keeps 10%', () => {
   const host = createUser({ name: 'Omar Host', email: 'omar.host@example.com' });
   registerHost(host.id, { displayName: 'Omar' });
   // $20/night — deterministically the cheapest reliable stay in Dubai.
-  createHostListing(host.id, {
+  const riad = createHostListing(host.id, {
     title: 'Souk Riad', city: 'Dubai', nightlyUSD: 20, sleeps: 4,
     address: '7 Old Souk Lane, Deira, Dubai',
     photos: Array.from({ length: 10 }, (_, i) => `https://photos.example.com/riad/${i + 1}.jpg`),
   });
+  reviewHostListing(riad.listing.id, { decision: 'approve', reviewerId: 'admin_test' });
   const guest = createUser({ name: 'Guest', email: 'guest.hh@example.com' });
   const r = plan({ text: 'Dubai from London in August for 7 nights, hotel only for 2 adults', context: GB, user: null, searchTier: 'smart' });
   const opt = r.packages.options.find((o) => o.tier === 'Standard');
@@ -1364,6 +1374,7 @@ test('host dashboard: set price, pause removes from searches, resume restores', 
   registerHost(host.id, { displayName: 'Lina' });
   const pics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/l/${i}.jpg`);
   const { listing } = createHostListing(host.id, { title: 'Lina Loft', city: 'Istanbul', nightlyUSD: 55, sleeps: 3, address: '3 Galata Steps, Istanbul', photos: pics });
+  reviewHostListing(listing.id, { decision: 'approve', reviewerId: 'admin_test' });
   // Price management flows straight into future searches.
   assert.equal(updateHostListing(host.id, listing.id, { nightlyUSD: 44 }).ok, true);
   assert.equal(hostListingsForCity('Istanbul')[0].nightlyUSD, 44);
@@ -1489,7 +1500,7 @@ test('synapse: booking a hosted stay notifies the host with their 90% payout', (
   const host = createUser({ name: 'Syn Host', email: 'syn.host@example.com' });
   registerHost(host.id, { displayName: 'Syn' });
   const pics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/s/${i}.jpg`);
-  createHostListing(host.id, { title: 'Synapse Suite', city: 'Dubai', nightlyUSD: 18, sleeps: 4, address: '9 Link Road, Dubai', photos: pics });
+  { const sy = createHostListing(host.id, { title: 'Synapse Suite', city: 'Dubai', nightlyUSD: 18, sleeps: 4, address: '9 Link Road, Dubai', photos: pics }); reviewHostListing(sy.listing.id, { decision: 'approve', reviewerId: 'admin_test' }); }
   const guest = createUser({ name: 'Syn Guest', email: 'syn.guest@example.com' });
   const r = plan({ text: 'Dubai hotel only in August for 7 nights for 2 adults', context: GB, user: null, searchTier: 'smart' });
   const opt = r.packages.options.find((o) => o.components.some((c) => c.supplier === 'Synapse Suite'));

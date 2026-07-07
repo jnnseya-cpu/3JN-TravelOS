@@ -1625,8 +1625,9 @@ async function renderAdmin() {
     sec = (await api('/api/agents/security')).report; ops = (await api('/api/agents/ops')).report;
     seo = (await api('/api/agents/seo')).report; mkt = (await api('/api/agents/marketing')).report;
   } catch { accessGate(out, 'Admin', 'admin'); return; }
-  let profit = null;
+  let profit = null, uh = null;
   try { profit = await api('/api/admin/profitability'); } catch { /* optional panel */ }
+  try { uh = await api('/api/admin/users-hosts'); } catch { /* optional panel */ }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -1666,6 +1667,32 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
     </div>
     <div class="kpi-grid">${kpiCards}</div>
+    ${uh ? (() => {
+      const risk = (v) => v?.securityRisk === 'Low' ? '#79d99b' : v?.securityRisk === 'Medium' ? 'var(--gold)' : '#ff6b6b';
+      const pend = (uh.pendingReview || []).map((l) => `
+        <div class="card pad" style="margin-bottom:10px;border-color:rgba(216,180,106,.35)">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+            <strong>${esc(l.title)}</strong>
+            <span style="font-size:12px;color:${risk(l.aiVerification)}">AI verify ${l.aiVerification?.score ?? '—'}/100 · ${l.aiVerification?.securityRisk || '—'} risk</span>
+          </div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(l.hostName)} · ${esc(l.city)} · ${esc(l.address)} · $${l.nightlyUSD}/night · ${l.photos} photos</div>
+          <div style="margin-top:6px">${(l.aiVerification?.checks || []).map((c) => `<span class="chip" style="font-size:10px;border-color:${c.pass ? 'rgba(121,217,155,.4)' : 'rgba(255,107,107,.5)'};color:${c.pass ? '#79d99b' : '#ff8a8a'}">${c.pass ? '✓' : '✕'} ${esc(c.check)}</span>`).join('')}</div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn btn-gold btn-sm" onclick="reviewListing('${l.id}','approve')">✓ Approve & publish</button>
+            <button class="btn btn-ghost btn-sm" onclick="reviewListing('${l.id}','reject')" style="color:#ff8a8a">✕ Reject</button>
+          </div>
+        </div>`).join('') || '<div class="muted" style="font-size:13px">No properties awaiting review.</div>';
+      const allListings = (uh.listings || []).map((l) => `<div class="kv"><span>${esc(l.title)} <span class="muted">· ${esc(l.city)}</span></span><span style="color:${l.status === 'live' ? '#79d99b' : l.status === 'rejected' ? '#ff6b6b' : 'var(--gold)'}">${l.status}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No listings.</div>';
+      const userRows = (uh.users || []).slice(0, 40).map((u) => `<div class="kv"><span>${esc(u.name)} <span class="muted">· ${esc(u.email)}</span></span><span>${u.role}${u.isHost ? ' · host' : ''} · ${u.bookings} bk · ${u.acuBalance || 0} ACU${u.suspended ? ' · 🚫' : ''}</span></div>`).join('');
+      return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Users & Host Property Management</h2></div>
+        <div class="console-grid">
+          <div class="card pad"><span class="eyebrow">Properties awaiting AI verification + review (${(uh.pendingReview || []).length})</span><div style="margin-top:10px">${pend}</div></div>
+          <div>
+            <div class="card pad"><span class="eyebrow">All properties (${(uh.listings || []).length})</span>${allListings}</div>
+            <div class="card pad" style="margin-top:16px"><span class="eyebrow">All users (${(uh.users || []).length}) · ${(uh.hosts || []).length} hosts</span>${userRows}</div>
+          </div>
+        </div>`;
+    })() : ''}
     <div class="console-grid" style="margin-top:20px">
       <div>
         <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}
@@ -2705,6 +2732,14 @@ window.doLogin = async () => {
   setUser(d.user); closeModal(); toast(`✓ Welcome back, ${d.user.name}!`); nav('console');
 };
 
+window.reviewListing = async (id, decision) => {
+  let reason = '';
+  if (decision === 'reject') { reason = prompt('Reason for rejection (sent to the host):') || 'Did not pass review'; }
+  try { await api(`/api/admin/listings/${id}/review`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); }
+  catch (e) { toast(e.message || 'Review failed.'); return; }
+  toast(decision === 'approve' ? '✓ Property approved — now live for booking.' : '✕ Property rejected — host notified.');
+  renderAdmin();
+};
 window.provisionTest = async () => {
   try { const data = await api('/api/account/test', { method: 'POST', body: JSON.stringify({}) });
     setUser(data.user);

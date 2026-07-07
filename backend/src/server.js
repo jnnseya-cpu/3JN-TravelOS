@@ -31,7 +31,7 @@ import {
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
-  createTravelPot, contributeToPot,
+  createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -328,7 +328,7 @@ function fullyLoadDemoAccounts() {
   if (h && listHostListings(h.id).length === 0) {
     step('host: registered + listing published (12 photos)', () => {
       registerHost(h.id, { displayName: 'Demo Host', payoutMethod: 'BitriPay wallet' });
-      createHostListing(h.id, {
+      const demoListing = createHostListing(h.id, {
         title: 'The Palm Residence — Marina View Apartment',
         city: 'Dubai',
         address: '14 Palm Avenue, Dubai Marina, Dubai',
@@ -337,6 +337,7 @@ function fullyLoadDemoAccounts() {
         amenities: ['Full kitchen', 'Free WiFi', 'Pool', 'Washing machine', 'Self check-in', 'Workspace'],
         photos: Array.from({ length: 12 }, (_, i) => `https://picsum.photos/seed/3jn-demo-${i}/800/600`),
       });
+      if (demoListing.ok) reviewHostListing(demoListing.listing.id, { decision: 'approve', reason: 'Demo listing — pre-approved', reviewerId: 'demo-admin' });
     });
   }
 
@@ -436,6 +437,19 @@ app.get('/api/admin/profitability', safe((req, res) => {
       },
     },
   });
+}));
+
+// ---- Admin: users, hosts & property moderation -----------------------------
+app.get('/api/admin/users-hosts', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(adminUserHostOverview());
+}));
+app.post('/api/admin/listings/:id/review', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { decision, reason } = req.body || {};
+  const result = reviewHostListing(req.params.id, { decision, reason, reviewerId: currentUser(req).id });
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
 }));
 
 // ---- Guaranteed Savings Engine (USP #2) -------------------------------------

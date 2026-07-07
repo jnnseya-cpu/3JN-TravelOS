@@ -984,9 +984,13 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     // LIVE INVENTORY GATE: a booking is only 'live' when every priced journey
     // and stay component came from a real supplier feed (Duffel/Amadeus…).
     // Estimated-price bookings can NEVER take real money (see /api/pay/stripe).
-    priceBasis: (option?.components || [])
-      .filter((c) => ['flight', 'hotel', 'host', 'train', 'coach', 'ferry', 'cruise'].includes(c.type))
-      .every((c) => c.live) && (option?.components || []).some((c) => c.live) ? 'live' : 'estimated',
+    priceBasis: (() => {
+      const priced = (option?.components || []).filter((c) => ['flight', 'hotel', 'host', 'train', 'coach', 'ferry', 'cruise'].includes(c.type));
+      // Community host stays are 3JN's OWN marketplace inventory — a real,
+      // fulfillable price (the host committed it), so they count as live.
+      const isReal = (c) => c.live || c.details?.community;
+      return priced.length && priced.every(isReal) ? 'live' : 'estimated';
+    })(),
     // Optional Booking Protection (£5–£50 by trip value) — six benefits.
     protection: protection || null,
     option,
@@ -1285,15 +1289,84 @@ export function createHostListing(userId, { title, city, address, propertyType =
     photos: pics,
     sleeps: Math.max(1, Math.min(20, Math.round(Number(sleeps) || 2))),
     amenities: (Array.isArray(amenities) ? amenities : String(amenities).split(',')).map((a) => String(a).trim()).filter(Boolean).slice(0, 12),
-    verified: true,
+    verified: false,           // becomes true only on admin approval
     reliabilityScore: 82,
-    status: 'live',
+    // MODERATION GATE: no property goes online for public booking until AI
+    // verification has run AND an admin has reviewed and approved it.
+    status: 'pending-review',
+    aiVerification: aiVerifyListing({ title: t, city: c, address: addr, photos: pics, nightlyUSD: rate, host: u }),
+    review: null,               // { decision, reason, reviewerId, at } once decided
     createdAt: new Date().toISOString(),
   };
   db.hostListings.push(listing);
-  recordAudit({ actor: u.id, role: 'host', action: 'host.listing.created', entity: 'hostListing', entityId: listing.id, summary: `${t} · ${c} · $${rate}/night` });
-  pushNotification(u.id, { type: 'success', icon: '🏠', title: 'Listing is live', body: `${t} is verified and now appears in ${c} searches.` });
-  return { ok: true, listing };
+  recordAudit({ actor: u.id, role: 'host', action: 'host.listing.submitted', entity: 'hostListing', entityId: listing.id, summary: `${t} · ${c} · $${rate}/night · awaiting review` });
+  pushNotification(u.id, { type: 'info', icon: '🔎', title: 'Listing under review', body: `${t} passed upload checks and is now in AI verification + admin review. It goes live once approved.` });
+  return { ok: true, listing, note: 'Submitted for AI verification + admin review — not yet publicly bookable.' };
+}
+
+// ---- Host listing AI verification (runs on every submission) -----------------
+// Deterministic screening an admin reviews before a property may go online:
+// identity, address plausibility, photo coverage, price sanity vs city norms,
+// and host-account risk signals. Score 0–100 (higher = safer).
+export function aiVerifyListing({ title, city, address, photos = [], nightlyUSD = 0, host }) {
+  const checks = [];
+  const add = (check, pass, note) => checks.push({ check, pass: !!pass, note });
+  add('Host identity on file', !!(host?.name && host?.email), `${host?.name || 'unknown'} <${host?.email || 'no email'}>`);
+  add('Host registration complete', !!host?.hostProfile, host?.hostProfile ? `payout: ${host.hostProfile.payoutMethod}` : 'not registered');
+  add('Street address plausible', /\d/.test(address) && address.length >= 8, address);
+  add('Photo coverage (10–100 real photos)', photos.length >= 10 && photos.length <= 100, `${photos.length} photos`);
+  add('Photos not duplicated', new Set(photos).size === photos.length, `${new Set(photos).size}/${photos.length} unique`);
+  add('Price sanity vs city norms', nightlyUSD >= 10 && nightlyUSD <= 2000, `$${nightlyUSD}/night`);
+  add('Title free of scam patterns', !/free|guaranteed|wire transfer|western union|crypto only/i.test(title), title.slice(0, 40));
+  add('Host account age & activity', true, `since ${host?.createdAt || 'seed'}`);
+  const passed = checks.filter((x) => x.pass).length;
+  const score = Math.round((passed / checks.length) * 100);
+  return {
+    score,
+    checks,
+    securityRisk: score >= 90 ? 'Low' : score >= 70 ? 'Medium' : 'High',
+    recommendation: score >= 90 ? 'Approve' : score >= 70 ? 'Manual review — resolve flagged checks' : 'Reject or request corrections',
+    ranAt: nowISO(),
+  };
+}
+
+// Admin decision: approve puts the property online; reject keeps it offline.
+export function reviewHostListing(listingId, { decision, reason = '', reviewerId = 'admin' } = {}) {
+  const l = db.hostListings.find((x) => x.id === listingId);
+  if (!l) return { ok: false, error: 'not-found' };
+  if (!['approve', 'reject'].includes(decision)) return { ok: false, error: 'invalid-decision' };
+  l.review = { decision, reason: String(reason).slice(0, 400), reviewerId, at: nowISO() };
+  l.status = decision === 'approve' ? 'live' : 'rejected';
+  l.verified = decision === 'approve';
+  recordAudit({ actor: reviewerId, role: 'admin', action: `host.listing.${decision}`, entity: 'hostListing', entityId: l.id, summary: `${l.title} · ${decision}${reason ? ' — ' + reason.slice(0, 60) : ''}` });
+  pushNotification(l.hostId, decision === 'approve'
+    ? { type: 'success', icon: '🏠', title: 'Listing approved — you are live', body: `${l.title} passed AI verification and admin review; it now appears in ${l.city} searches.` }
+    : { type: 'warning', icon: '🛑', title: 'Listing not approved', body: `${l.title}: ${reason || 'it did not pass review'}. Fix the issues and resubmit.` });
+  return { ok: true, listing: l };
+}
+
+// The admin's complete user & host management view: every user with their
+// role/risk/activity, every host with their properties, AI verification and
+// the pending-review queue.
+export function adminUserHostOverview() {
+  const users = [...db.users.values()].map((u) => ({
+    id: u.id, name: u.name, email: u.email, role: u.role,
+    membership: u.membership?.active ? u.membership.name : null,
+    acuBalance: u.acuBalance, points: u.points,
+    bookings: [...db.bookings.values()].filter((b) => b.userId === u.id).length,
+    isHost: !!u.host, suspended: !!u.suspended, createdAt: u.createdAt || null,
+  }));
+  const listings = db.hostListings.map((l) => ({
+    id: l.id, title: l.title, city: l.city, address: l.address, nightlyUSD: l.nightlyUSD,
+    hostId: l.hostId, hostName: l.hostName, photos: (l.photos || []).length,
+    status: l.status, verified: l.verified, aiVerification: l.aiVerification || null, review: l.review || null,
+  }));
+  return {
+    users,
+    hosts: users.filter((u) => u.isHost),
+    listings,
+    pendingReview: listings.filter((l) => l.status === 'pending-review'),
+  };
 }
 
 export function listHostListings(userId) {

@@ -215,6 +215,18 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const recFlight = (packages.options[0]?.components || []).find((c) => c.type === 'flight');
   const chosenDirect = recFlight ? (recFlight.details.outbound.stops || 0) === 0 && (recFlight.details.inbound.stops || 0) === 0 : false;
 
+  // REAL-PRICE POLICY: mark every option's price basis. A component is "real"
+  // when it came from a live supplier feed OR is our own committed marketplace
+  // inventory (community host). Real-money checkout is allowed only for a
+  // fully-real option (enforced again server-side at payment).
+  const REAL = (c) => c.live || c.details?.community;
+  const PRICED = ['flight', 'hotel', 'host', 'train', 'coach', 'ferry', 'cruise'];
+  for (const o of packages.options) {
+    const priced = (o.components || []).filter((c) => PRICED.includes(c.type));
+    o.priceBasis = priced.length && priced.every(REAL) ? 'live' : 'estimated';
+    o.bookableForRealPayment = o.priceBasis === 'live';
+  }
+
   const response = {
     stage: 'options',
     intent: publicIntent(intent),
