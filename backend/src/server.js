@@ -27,7 +27,7 @@ import {
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
   registerHost, updateHostListing, hostBookings, hostDashboard,
-  grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT,
+  grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT, usageStats,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -348,7 +348,7 @@ app.post('/api/plan', safe(async (req, res) => {
     try {
       const live = await fetchLiveOffers(result.intent, result.intent.destination, result.origin);
       if ((live.flights && live.flights.length) || (live.hotels && live.hotels.length)) {
-        result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live });
+        result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
       }
     } catch { /* keep the estimated result */ }
   }
@@ -357,7 +357,10 @@ app.post('/api/plan', safe(async (req, res) => {
   // must hold enough ACU before a paid tier runs — members fund this from the
   // 10% of their subscription, everyone else tops up. The free/cached tier is
   // always allowed. Guests keep the demo via the cost-protection gate.
-  if (result.stage === 'options' && user && !user.allAccess) {
+  if (result.stage === 'options' && result.cached) {
+    // Served from the cache — no ACU is ever charged for a cached answer.
+    result.acuCharged = 0;
+  } else if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     const cost = reqTier.acu || 0;
     // ACU PRE-APPROVAL: the user must approve the charge BEFORE the paid work

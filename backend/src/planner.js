@@ -29,7 +29,7 @@ const NEED_MAP = {
   'Full holiday package': ['flights', 'hotel', 'activities', 'transfer', 'esim'],
 };
 
-export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {}, live = null }) {
+export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {}, live = null, usage = {} }) {
   const intent = parseIntent(text, context, new Date(Date.UTC(2026, 5, 30)));
 
   // Flight preferences: explicit toggles win, else inferred from the request text.
@@ -92,6 +92,10 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       origin: resolveOrigin(p.city) || origin,
     }));
   }
+  // Community host supply: 3JN-verified listings for this destination compete
+  // with hotels inside the same scan (fetched early: it keys the cache too).
+  const communityHosts = hostListingsForCity(intent.destination.city);
+
   // MODE COMPETITION — when the traveller states origin + destination but
   // names no way to travel, the OS doesn't assume a flight: every realistic
   // mode competes and the cheapest reliable one wins. From a PORT town (Dover,
@@ -115,9 +119,6 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     }
   }
 
-  // Community host supply: 3JN-verified listings for this destination compete
-  // with hotels inside the same scan.
-  const communityHosts = hostListingsForCity(intent.destination.city);
   const scan = scanAll(intent, intent.destination, origin, live, communityHosts);
   const expectedBookingUSD = roughTotal(scan);
 
@@ -152,17 +153,30 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     expectedBookingUSD,
     // Strong intent = explicit dates + more than one component named.
     intentStrong: !!(intent.dates?.checkIn && intent.components.length >= 2),
+    // Real usage telemetry (abuse prevention).
+    recentSearches: usage.recentSearches || 0,
+    searchesToday: usage.searchesToday || 0,
+    priorBookings: usage.priorBookings || 0,
+    sameDestinationRepeats: usage.sameDestinationRepeats || 0,
   });
 
   const effectiveTier = gate.allowed ? searchTier : (gate.downgradeTo || 'free');
 
   // CACHE EVERYTHING: downgraded/free searches answer from the database first —
   // no paid AI. Fresh funded results are written back for the next traveller.
-  const cacheKey = [intent.destination.code || intent.destination.city, origin.airport, intent.month, intent.nights, [...intent.components].sort().join('+'), intent.travellers.total].join('|');
-  if (effectiveTier === 'free') {
+  // Key on the EXACT request (raw text captures every parsed nuance) plus the
+  // out-of-text inputs that change results: toggles, loyalty, live host supply.
+  const cacheKey = [intent.raw.toLowerCase(), origin.airport,
+    intent.flightPrefs.directOnly ? 'D1' : 'D0', intent.flightPrefs.departureWindow || '-',
+    user ? (user.points || 0) : 0, communityHosts.length].join('|');
+  // CHECK CACHE FIRST — before spending ACUs, at EVERY tier. A fresh identical
+  // answer (within 6h) is served free; the free tier serves any age.
+  const CACHE_FRESH_MS = 6 * 3600 * 1000;
+  {
     const hit = getCachedSearch(cacheKey);
-    if (hit) {
-      return { ...hit.result, cached: true, cachedAt: hit.cachedAt, gate: { ...hit.result.gate, requestedTier: searchTier, effectiveTier: 'free', allowed: gate.allowed, reason: gate.reason, requirement: gate.requirement || null } };
+    const fresh = hit && (Date.now() - Date.parse(hit.cachedAt)) < CACHE_FRESH_MS;
+    if (hit && (effectiveTier === 'free' || fresh)) {
+      return { ...hit.result, cached: true, cachedAt: hit.cachedAt, gate: { ...hit.result.gate, requestedTier: searchTier, effectiveTier, allowed: gate.allowed, reason: gate.allowed ? 'served-from-cache' : gate.reason, requirement: gate.requirement || null } };
     }
   }
 

@@ -65,7 +65,7 @@ export function aiCostCap(expectedProfitUSD) {
 // no deep agent comparison, negotiation, booking hold or custom itineraries.
 export const FREE_DAILY_SEARCH_LIMIT = 5;
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0 }) {
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0 }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -85,10 +85,10 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
 
   // Abuse throttle: heavy searching with zero booking history downgrades to
   // cached regardless of funding — the system is not a free AI search machine.
-  if (recentSearches > 20 && priorBookings === 0) {
+  if ((recentSearches > 20 || sameDestinationRepeats > 10) && priorBookings === 0) {
     return {
       allowed: false, downgradeTo: 'free', tier, reason: 'abuse-throttle', aiCostUSD: t.aiCostUSD,
-      requirement: { message: 'Unusual search volume detected — showing cached results. Book a trip or buy ACUs to restore deep search.' },
+      requirement: { message: 'To continue deep AI price hunting, please add ACUs or place a refundable booking deposit.' },
     };
   }
 
