@@ -565,6 +565,20 @@ All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tok
 
 *(The prototype already serves the monetised `/api/v1/*` partner products — search, itinerary, visa-checklist, group-quote, savings, hotels, esim — key-gated with per-call pricing; this registry is the production expansion.)*
 
+### 11.2 Webhook Events
+
+| Event | Trigger | Payload Key Fields |
+|---|---|---|
+| **booking.confirmed** | Booking successfully processed | booking_id, pnr_reference, total_amount, traveller |
+| **booking.cancelled** | Cancellation confirmed | booking_id, refund_amount, refund_status |
+| **price.drop_detected** | Price drops below monitor threshold | booking_id, original_price, new_price, saving_amount, rebooking_available |
+| **visa.status_update** | Visa application status change | visa_id, new_status, decision_date, download_url |
+| **risk.alert** | New risk advisory for traveller destination | user_id, destination, risk_level, advisory_text |
+| **payment.succeeded** | Payment captured successfully | payment_id, amount, currency, gateway |
+| **payment.failed** | Payment attempt failed | payment_id, failure_code, failure_message |
+| **kyc.completed** | KYC verification result | user_id, verification_status, risk_tier |
+| **agent.escalation** | Agent requires human review | agent_name, user_id, reason, priority |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
