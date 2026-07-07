@@ -11,7 +11,7 @@ import { findDestination, originForCountry, resolveOrigin } from './destinations
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive, farePrediction } from './price-dive.js';
-import { hostListingsForCity } from './store.js';
+import { hostListingsForCity, cacheSearch, getCachedSearch } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
@@ -150,9 +150,21 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     user,
     subscriptionActive: !!(user && user.subscriptionActive),
     expectedBookingUSD,
+    // Strong intent = explicit dates + more than one component named.
+    intentStrong: !!(intent.dates?.checkIn && intent.components.length >= 2),
   });
 
   const effectiveTier = gate.allowed ? searchTier : (gate.downgradeTo || 'free');
+
+  // CACHE EVERYTHING: downgraded/free searches answer from the database first —
+  // no paid AI. Fresh funded results are written back for the next traveller.
+  const cacheKey = [intent.destination.code || intent.destination.city, origin.airport, intent.month, intent.nights, [...intent.components].sort().join('+'), intent.travellers.total].join('|');
+  if (effectiveTier === 'free') {
+    const hit = getCachedSearch(cacheKey);
+    if (hit) {
+      return { ...hit.result, cached: true, cachedAt: hit.cachedAt, gate: { ...hit.result.gate, requestedTier: searchTier, effectiveTier: 'free', allowed: gate.allowed, reason: gate.reason, requirement: gate.requirement || null } };
+    }
+  }
 
   // Deep Price Dive — the deep-thinking pass on EVERY funded search. It digs
   // across date shifts, alternative airports, supplier spread and negotiated
@@ -181,7 +193,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const recFlight = (packages.options[0]?.components || []).find((c) => c.type === 'flight');
   const chosenDirect = recFlight ? (recFlight.details.outbound.stops || 0) === 0 && (recFlight.details.inbound.stops || 0) === 0 : false;
 
-  return {
+  const response = {
     stage: 'options',
     intent: publicIntent(intent),
     origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred, approxCode: !!origin.approxCode },
@@ -215,6 +227,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     packages,
     questions: [], // none outstanding
   };
+  cacheSearch(cacheKey, response); // the database answers the next traveller
+  return response;
 }
 
 function roughTotal(scan) {

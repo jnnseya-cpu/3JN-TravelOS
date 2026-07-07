@@ -177,3 +177,60 @@ export function applySourcing(offer, destCountry) {
     agent,
   };
 }
+
+// ---- Supplier commission schedule -------------------------------------------
+// 3JN earns from the SUPPLY side too — so the platform makes money even when
+// the customer gets the cheapest deal. Typical negotiated rates per category.
+export const SUPPLIER_COMMISSIONS = {
+  flights: 0.02,      // airlines (IATA/consolidator margin)
+  hotel: 0.10,        // hotels
+  host: 0.10,         // holiday homes (3JN Host Marketplace take)
+  activities: 0.12,   // tour operators
+  carhire: 0.08,      // car rentals
+  transfer: 0.10,     // airport transfers
+  esim: 0.15,         // eSIM providers
+  insurance: 0.20,    // travel insurance
+  visa: 0.10,         // visa support
+  luggage: 0.12,      // luggage services
+  travelFinance: 0.03, // travel finance partners (instalments, wallets)
+  cruise: 0.08,       // cruise providers
+  tickets: 0.10,      // attraction tickets
+  train: 0.05, coach: 0.05, ferry: 0.05, boat: 0.10,
+};
+export function supplierCommissionFor(componentType) {
+  return SUPPLIER_COMMISSIONS[canonicalType(componentType)] ?? SUPPLIER_COMMISSIONS[componentType] ?? 0.05;
+}
+// Per-booking supply-side earnings: what 3JN receives from suppliers for this
+// basket, independent of (and additive to) the customer-facing 10% fee.
+export function bookingSupplierCommission(option) {
+  const rows = (option?.components || []).map((c) => ({
+    type: c.type,
+    supplier: c.supplier,
+    rate: supplierCommissionFor(c.type),
+    commissionUSD: Math.round((c.priceUSD || 0) * supplierCommissionFor(c.type) * 100) / 100,
+  }));
+  return { rows, totalUSD: Math.round(rows.reduce((s, r) => s + r.commissionUSD, 0) * 100) / 100 };
+}
+
+// ---- Partner placement revenue (sponsored slots) ----------------------------
+// Suppliers can pay to appear in curated sections. HARD RULE: sponsored
+// placements are ALWAYS clearly labelled — the offer carries sponsored:true
+// and the UI must render the “Sponsored” chip. Sponsorship never overrides
+// the reliability floor or reorders the cheapest-reliable pick.
+export const PLACEMENT_SECTIONS = [
+  'recommended deals', 'destination pages', 'family package sections',
+  'African diaspora travel pages', 'student travel pages', 'business travel pages',
+];
+const sponsoredRegistry = []; // { partner, section, destination, feeGBPMonth }
+export function addSponsoredPlacement({ partner, section, destination = '*', feeGBPMonth = 250 }) {
+  if (!partner || !PLACEMENT_SECTIONS.includes(section)) return { ok: false, error: 'invalid-placement' };
+  const rec = { partner, section, destination, feeGBPMonth, labelled: true, since: new Date().toISOString() };
+  sponsoredRegistry.push(rec);
+  return { ok: true, placement: rec };
+}
+export function sponsoredFor(section, destination = null) {
+  return sponsoredRegistry.filter((r) => r.section === section && (r.destination === '*' || !destination || r.destination === destination));
+}
+export function placementRevenueGBP() {
+  return sponsoredRegistry.reduce((s, r) => s + r.feeGBPMonth, 0);
+}

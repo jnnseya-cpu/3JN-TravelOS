@@ -366,6 +366,7 @@ $('#intentInput')?.addEventListener('input', autosaveIntent);
 })();
 
 async function runPlan(overrides = {}) {
+  const { approveAcu, ...restOverrides } = overrides;
   const text = $('#intentInput').value.trim();
   if (!text) { toast('Describe your trip first.'); return; }
   const out = $('#plannerOut');
@@ -383,7 +384,8 @@ async function runPlan(overrides = {}) {
         searchTier: $('#tierSelect').value,
         country: state.country,
         currencyCountry: state.country,
-        overrides,
+        approveAcu: approveAcu === true,
+        overrides: restOverrides,
         preferences: {
           directOnly: !!$('#directOnly')?.checked,
           departureWindow: $('#departWindow')?.value || null,
@@ -396,6 +398,12 @@ async function runPlan(overrides = {}) {
   // The search just taught the behaviour model something — rebuild the dashboard.
   refreshJourney();
 
+  if (data.stage === 'acu-approval-required') {
+    const approve = confirm(`⚡ ${data.why}\n\nApprove ${data.acuNeeded} ACU? (balance: ${data.balance})`);
+    if (approve) { runPlan({ approveAcu: true }); }
+    else toast('Search cancelled — no ACU charged. Cached results remain free.');
+    return;
+  }
   if (data.stage === 'topup-required') { renderTopup(data); return; }
   if (data.stage === 'clarify') { renderClarify(data); return; }
   // A paid tier was funded by ACUs — reflect the new balance.
@@ -890,6 +898,13 @@ window.openBooking = async (tier) => {
         <option value="africell">📱 Africell Money (CDF)</option>
       </select>
     </div>
+    <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.35)">
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+        <input type="checkbox" id="bkProtection" style="margin-top:3px" />
+        <div><strong>🛡 Booking Protection</strong> <span class="muted" style="font-size:12px">· priority price-drop rebooking, mistake check, refund guidance, disruption support, document review, visa alerts</span>
+        <div class="muted" style="font-size:11.5px;margin-top:2px">£5–£50 by trip value — added to your deposit.</div></div>
+      </label>
+    </div>
     <div id="payDetails" style="margin-top:8px">
       <div class="composer-row">
         <div class="field"><label>Card / account holder</label><input class="in" id="payHolder" value="${esc(state.user?.travelProfile?.fullLegalName || state.user?.name || '')}"></div>
@@ -947,7 +962,7 @@ window.confirmBooking = async () => {
   }
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();

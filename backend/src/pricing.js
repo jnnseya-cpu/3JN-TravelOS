@@ -117,3 +117,20 @@ export function instalmentPlan({ totalLocal, currency, months = 3, depositPct = 
 function round2(n) {
   return Math.round(n * 100) / 100;
 }
+
+// ---- Booking Protection (optional add-on) -----------------------------------
+// £5–£50 scaled to trip value (~2%), covering: price-drop monitoring priority,
+// booking mistake check, refund guidance, flight disruption support, document
+// checklist review and visa deadline alerts.
+export const PROTECTION_BENEFITS = [
+  'Priority price-drop monitoring (instant rebook)',
+  'Booking mistake check (names, dates, routes)',
+  'Refund guidance end-to-end',
+  'Flight disruption support (auto-rebooking priority)',
+  'Document checklist review before travel',
+  'Visa deadline alerts',
+];
+export function protectionFee(totalLocal) {
+  const fee = Math.max(5, Math.min(50, Math.round(totalLocal * 0.02)));
+  return { fee, benefits: PROTECTION_BENEFITS };
+}

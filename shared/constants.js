@@ -24,9 +24,9 @@ export const SIGNUP_BONUS_POINTS = 250;
 
 // ---- ACU economy (blueprint Appendix B + §12.2) ---------------------------
 export const ACU_ACTIONS = {
-  intent: 8,
-  flightSearch: 15,
-  hotelSearch: 12,
+  intent: 6,
+  flightSearch: 12,
+  hotelSearch: 8,
   priceMonitor: 3,
   visaCheck: 10,
   riskBriefing: 18,
@@ -56,6 +56,19 @@ export const MEMBERSHIP_TIERS = [
 export const TIER_ACU_ALLOWANCE = Object.fromEntries(
   MEMBERSHIP_TIERS.map((t) => [t.name.replace('Travel+ ', ''), t.acuPerMonth]),
 );
+
+// ---- Corporate travel accounts (monthly recurring) -------------------------
+export const CORPORATE_PLANS = [
+  { key: 'team', name: 'Corporate Team', pricePerMonth: 99, seats: 15 },
+  { key: 'enterprise', name: 'Corporate Enterprise', pricePerMonth: 299, seats: 100 },
+].map((p) => ({
+  ...p,
+  features: [
+    'Staff travel booking', 'Travel policy control', 'Invoice management',
+    'Approval workflows', 'Expense export', 'Cheapest compliant fare search',
+    'Travel reporting dashboard',
+  ],
+}));
 
 // ---- Reliability floor for "cheapest *reliable*" --------------------------
 export const RELIABILITY_FLOOR = 70;

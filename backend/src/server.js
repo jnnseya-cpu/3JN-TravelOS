@@ -6,9 +6,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
-import { destinationsCatalog } from './destinations.js';
+import { destinationsCatalog, findDestination } from './destinations.js';
 import { plan } from './planner.js';
-import { instalmentPlan } from './pricing.js';
+import { instalmentPlan, protectionFee } from './pricing.js';
 import {
   createUser, getUser, buyAcu, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
@@ -38,6 +38,7 @@ import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled } from './live-suppliers.js';
+import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
@@ -358,6 +359,18 @@ app.post('/api/plan', safe(async (req, res) => {
   if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     const cost = reqTier.acu || 0;
+    // ACU PRE-APPROVAL: the user must approve the charge BEFORE the paid work
+    // counts. No approval = no AI cost — we return the quote, not the results.
+    if (cost > 0 && req.body?.approveAcu !== true) {
+      return res.json({
+        stage: 'acu-approval-required',
+        tierName: reqTier.name,
+        acuNeeded: cost,
+        balance: user.acuBalance,
+        why: `This ${reqTier.name} requires ${cost} ACU because we will compare live prices across suppliers, routes and dates${searchTier !== 'smart' ? ', run risk/visa agents and deep price levers' : ''}.`,
+        approveWith: { approveAcu: true },
+      });
+    }
     if (cost > 0) {
       const spend = spendAcu(user.id, cost, `search:${reqTier.name}`);
       if (!spend.ok) {
@@ -460,7 +473,7 @@ app.post('/api/quote', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment } = req.body || {};
+  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment, protection } = req.body || {};
   const quote = getQuote(quoteId);
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);
@@ -477,7 +490,7 @@ app.post('/api/book', safe((req, res) => {
     });
   }
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null });
   recordBehaviour(user?.id, {
     event: 'book',
     destination: quote.intent?.destination?.code || null,
@@ -662,6 +675,13 @@ app.post('/api/book/:id/disruption', safe((req, res) => {
   res.json(runDisruptionGuard(req.params.id, force));
 }));
 
+// ---- Destination Marketplace add-ons: every trip is a basket ----------------
+app.get('/api/marketplace/addons', safe((req, res) => {
+  const destText = req.query.destination || 'Dubai';
+  const dest = findDestination(destText) || { city: destText, code: destText };
+  res.json({ addons: scanMarketplaceAddons(dest) });
+}));
+
 // ---- OS Integration Map — proof that every part talks to every other part --
 app.get('/api/os/integration-map', safe((req, res) => {
   res.json(osIntegrationMap());
@@ -822,6 +842,39 @@ app.post('/api/blog/generate', safe((req, res) => res.json({ post: createPost(re
 
 // ---- Public "white-label" partner endpoint (returns a package) -----------
 // Demonstrates the API other businesses would integrate.
+// Productised partner APIs (API_PRODUCTS catalogue prices each per call).
+function partnerAuth(req) {
+  const partnerKey = req.headers['x-partner-key'];
+  const keyInfo = partnerKey ? useApiKey(partnerKey) : null;
+  return { partner: keyInfo ? keyInfo.userId : (partnerKey ? 'invalid-or-revoked-key' : 'demo-partner'), authenticated: Boolean(keyInfo) };
+}
+app.post('/api/v1/itinerary', safe((req, res) => {
+  const auth = partnerAuth(req);
+  const r = plan({ text: req.body?.text || '', context: detectContext(req, {}), user: null, searchTier: 'smart' });
+  res.json({ ...auth, product: 'itinerary-ai', itinerary: r.itinerary || null, stage: r.stage });
+}));
+app.post('/api/v1/visa-checklist', safe((req, res) => {
+  const auth = partnerAuth(req);
+  const { country, visaType, applicant } = req.body || {};
+  res.json({ ...auth, product: 'visa-checklist', checklist: buildChecklist({ country, visaType, applicant: applicant || {} }) });
+}));
+app.post('/api/v1/group-quote', safe((req, res) => {
+  const auth = partnerAuth(req);
+  const r = plan({ text: req.body?.text || '', context: detectContext(req, {}), user: null, searchTier: 'smart' });
+  res.json({ ...auth, product: 'group-quote', stage: r.stage, groupOrigins: r.intent?.groupOrigins || null, packages: r.stage === 'options' ? r.packages : null });
+}));
+app.post('/api/v1/savings', safe((req, res) => {
+  const auth = partnerAuth(req);
+  const r = plan({ text: req.body?.text || '', context: detectContext(req, {}), user: null, searchTier: 'deep' });
+  res.json({ ...auth, product: 'travel-savings', stage: r.stage, priceDive: r.priceDive || null, farePrediction: r.farePrediction || null });
+}));
+app.post('/api/v1/hotels', safe((req, res) => {
+  const auth = partnerAuth(req);
+  const r = plan({ text: (req.body?.text || '') + ' hotel only', context: detectContext(req, {}), user: null, searchTier: 'smart' });
+  const stays = r.stage === 'options' ? r.packages.options.map((o) => o.components.find((c) => c.type === 'hotel' || c.type === 'host')).filter(Boolean) : [];
+  res.json({ ...auth, product: 'hotel-comparison', stage: r.stage, hotels: stays });
+}));
+
 app.post('/api/v1/search', safe((req, res) => {
   const { text } = req.body || {};
   const partnerKey = req.headers['x-partner-key'];
