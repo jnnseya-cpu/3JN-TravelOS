@@ -377,6 +377,17 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 
 *(Prototype anchors: `live-suppliers.js` already normalises Duffel offers and Amadeus hotels behind feature flags, with OAG schedules; `partners.js` carries the aggregator deep-links (Kiwi/Trip/Omio/DirectFerries/Airalo). This section locks the production provider matrix.)*
 
+### 8.2 Payments, Banking & FinTech
+
+| Category | Primary Provider | Purpose |
+|---|---|---|
+| **Primary African Payment Rail** | BitriPay | All African market transactions, mobile money, CDF |
+| **International Cards** | Stripe | UK, EU, global card processing + subscription billing |
+| **Alternative Payments** | Adyen | High-volume enterprise payment routing |
+| **Open Banking** | TrueLayer | UK/EU bank account verification + instant bank transfer |
+| **Currency Exchange** | Wise Business API | FX conversion for multi-currency bookings |
+| **Subscription Billing** | Stripe Billing | Membership plan management, dunning, trials |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
