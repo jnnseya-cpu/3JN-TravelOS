@@ -36,7 +36,17 @@ export const REVENUE_TO_COST_MULTIPLE = 10;
 
 // Decide whether an AI search may run, and at what depth.
 //   ctx: { tier, user, hasDeposit, subscriptionActive, expectedBookingUSD }
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0 }) {
+// Master Rule: AI cost must never exceed 5–10% of expected 3JN profit.
+// (revenue >= cost × 10 ⇔ cost <= 10% of the expected commission.)
+export function aiCostCap(expectedProfitUSD) {
+  return {
+    maxAiCostUSD: Math.round(expectedProfitUSD * 0.10 * 100) / 100,
+    targetAiCostUSD: Math.round(expectedProfitUSD * 0.05 * 100) / 100,
+    rule: 'AI cost capped at 5–10% of expected 3JN profit',
+  };
+}
+
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0 }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -54,6 +64,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   if (hasDeposit) fundingReasons.push('search-deposit');
   if (subscriptionActive) fundingReasons.push('subscription');
   if (revenueCovers) fundingReasons.push('expected-booking-revenue');
+  if (advertisingCreditUSD >= t.aiCostUSD) fundingReasons.push('advertising-revenue');
 
   if (fundingReasons.length > 0) {
     return {

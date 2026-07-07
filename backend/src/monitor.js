@@ -5,7 +5,7 @@
 // we simulate a market re-scan and compare to the booked baseline, then apply
 // the rebooking/refund policy.
 
-import { getBooking, logPriceEvent, recordPayment } from './store.js';
+import { getBooking, logPriceEvent, recordPayment, db, pushNotification, recordAudit } from './store.js';
 
 // A booking is eligible for an automatic refund-of-difference if the new price
 // is at least this fraction lower (covers re-issue admin cost).
@@ -67,4 +67,45 @@ export function runPriceGuard(bookingId, drift) {
   };
   logPriceEvent(bookingId, event);
   return event;
+}
+
+// ---- Disruption Agent --------------------------------------------------------
+// Watches booked flights for delay/cancellation and REBOOKS automatically onto
+// the next reliable alternative, notifying the traveller — the disruption twin
+// of the Neural Price Guard. Deterministic (seeded by booking id); `force`
+// lets the demo/UI trigger a disruption to show the flow.
+import { seeded as seededRnd } from './suppliers.js';
+export function runDisruptionGuard(bookingId, force = null) {
+  const booking = getBooking(bookingId);
+  if (!booking) return { ok: false, error: 'booking-not-found' };
+  const flight = (booking.option?.components || []).find((c) => c.type === 'flight');
+  if (!flight) return { ok: true, status: 'no-flight', message: 'No flight in this booking to monitor.' };
+  const rnd = seededRnd(`disruption|${bookingId}`);
+  const roll = rnd();
+  const disrupted = force != null ? !!force : roll < 0.12; // ~12% demo incidence
+  if (!disrupted) {
+    return { ok: true, status: 'on-time', flight: flight.supplier, message: `${flight.supplier} is operating on schedule — monitoring continues.` };
+  }
+  const kind = roll < 0.05 ? 'cancellation' : 'long delay';
+  const alternates = ['Emirates', 'Qatar Airways', 'Turkish Airlines', 'British Airways', 'Lufthansa'].filter((a) => a !== flight.supplier);
+  const rebookedTo = alternates[Math.floor(rnd() * alternates.length)];
+  const event = {
+    bookingId,
+    type: 'disruption',
+    kind,
+    original: flight.supplier,
+    rebookedTo,
+    fareDifferenceUSD: 0, // disruption rebooking is cost-neutral to the traveller
+    compensationRoute: 'Claim filed via Compensair where eligible (EU261/UK261)',
+    at: new Date().toISOString(),
+  };
+  db.priceEvents.push(event);
+  if (booking.userId) {
+    pushNotification(booking.userId, {
+      type: 'warning', icon: '🛫', title: `Flight ${kind} — already rebooked`,
+      body: `${flight.supplier} ${kind} detected. The Disruption Agent rebooked you onto ${rebookedTo} at no extra cost. Compensation claim prepared.`,
+    });
+  }
+  recordAudit({ actor: 'disruption-agent', role: 'agent', action: 'disruption.rebooked', entity: 'booking', entityId: bookingId, summary: `${flight.supplier} ${kind} → ${rebookedTo}` });
+  return { ok: true, status: 'rebooked', event };
 }

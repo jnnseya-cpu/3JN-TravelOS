@@ -38,7 +38,7 @@ import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled } from './live-suppliers.js';
-import { runPriceGuard } from './monitor.js';
+import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
 import { gatewayStatus } from './ai-gateway.js';
@@ -654,6 +654,12 @@ app.get('/api/host/earnings', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to see your hosting earnings.' });
   res.json(hostEarnings(user.id));
+}));
+
+// ---- Disruption Agent: monitors booked flights, rebooks automatically ------
+app.post('/api/book/:id/disruption', safe((req, res) => {
+  const force = req.body && 'force' in req.body ? !!req.body.force : null;
+  res.json(runDisruptionGuard(req.params.id, force));
 }));
 
 // ---- OS Integration Map — proof that every part talks to every other part --
