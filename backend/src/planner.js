@@ -10,7 +10,7 @@ import { parseIntent } from './intent.js';
 import { findDestination, originForCountry, resolveOrigin } from './destinations.js';
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
-import { deepPriceDive } from './price-dive.js';
+import { deepPriceDive, farePrediction } from './price-dive.js';
 import { hostListingsForCity } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
@@ -163,6 +163,15 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     ? deepPriceDive({ intent, dest: intent.destination, origin, scan })
     : null;
 
+  // Fare Prediction Agent — book-now / wait signal before any money moves.
+  const farePredictionOut = gate.allowed && intent.components.includes('flights')
+    ? farePrediction({ intent, dest: intent.destination, origin })
+    : null;
+
+  // Travel Concierge Agent — a day-by-day itinerary from what was actually
+  // packaged (arrival, activities spread across days, free days, departure).
+  const itinerary = journey ? buildItinerary(intent, scan) : null;
+
   // Build packages (the scan already ran; gate decides depth/labelling).
   const currency = context.currency;
   const points = user ? user.points : 0;
@@ -194,6 +203,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     },
     scanSummary: summariseScan(scan),
     priceDive,
+    farePrediction: farePredictionOut,
+    itinerary,
     modeCompetition,
     // 3JN VisaOS: pre-booking visa approval probability — only for an actual
     // international journey. A local trip or a utility purchase (eSIM) needs none.
@@ -253,4 +264,20 @@ function publicIntent(intent) {
       city: intent.groupOrigins.resolved?.[i]?.origin?.city || p.city,
     })) : null,
   };
+}
+
+// Concierge itinerary builder: activities spread across the stay with arrival,
+// leisure days and departure — the full-trip plan a human concierge would draft.
+function buildItinerary(intent, scan) {
+  const nights = intent.nights || 7;
+  const dest = intent.destination.city;
+  const acts = (scan.activities || []).filter((a) => a.verified).map((a) => a.supplier);
+  const days = [];
+  for (let d = 1; d <= Math.min(nights + 1, 15); d++) {
+    if (d === 1) days.push({ day: 1, plan: `Arrive in ${dest} — transfer, check-in, evening orientation walk` });
+    else if (d === nights + 1) days.push({ day: d, plan: `Check-out & departure — transfer to your ${intent.components.includes('flights') ? 'flight' : 'journey'} home` });
+    else if (acts.length) days.push({ day: d, plan: acts[(d - 2) % acts.length] });
+    else days.push({ day: d, plan: d % 3 === 0 ? `Free day — Concierge suggestions on request` : `Explore ${dest} at your pace` });
+  }
+  return { agent: 'Travel Concierge Agent', destination: dest, days };
 }

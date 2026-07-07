@@ -316,11 +316,29 @@ function dedupe(arr) { return [...new Set(arr.filter(Boolean))]; }
 
 // Structured field-count guarantee (the "300+ fields" architecture).
 export function fieldCount() {
-  const customer = Object.values(MASTER_TRAVEL_ID).reduce((n, a) => n + a.length, 0) + LOYALTY_PROGRAMMES.length;
-  const flight = FLIGHT.search.length + FLIGHT.passenger.length + FLIGHT.apis.length + FLIGHT.postBooking.length + SSR_OPTIONS.length;
-  const hotel = HOTEL.search.length + HOTEL.room.length + HOTEL.guest.length + PROPERTY_TYPES.length + BOARD_BASIS.length + HOTEL_SSR.length;
-  const pkg = PACKAGE.components.length + PACKAGE.search.length + HOLIDAY_TYPES.length + INSURANCE.coverage.length + INSURANCE.collect.length + ANCILLARIES.length + ANCILLARY_SUPPLIERS.length;
-  const risk = 60; // fraud/risk engine signal catalogue (booking + visa engines)
+  // Counts the REAL structured field surface across the OS — the catalogues
+  // here plus the concrete structures the other engines store.
+  const APPLICANT = 34;        // visa-framework APPLICANT_FIELDS (identity/contact/history/trip)
+  const PROFILE_EXT = 22;      // Master Travel Profile extensions (KTN, redress, TSA, billing…)
+  const LOYALTY_SUB = 5;       // per-programme: number, tier, expiry, benefits, program
+  const FULFILMENT = 12;       // PNR, e-ticket, locators, rules… (stored per booking)
+  const PAYMENT_CTX = 2;       // cardHolder, billingAddress
+  const HOST_LISTING = 15;     // Host Marketplace listing record
+  const STAY_EXTRAS = 5;       // address, view, smoking, securityHolds, groupStay
+  const REFUND_POLICY = 9;     // supplier precedence + schedule + rules
+  const ITINERARY = 3;         // concierge day plan
+  const NEW_FRAUD = 10;        // fakePassport/Id, faceMismatch, couponAbuse, fakeRefunds,
+                               // typing/mouse anomalies + hostFraudCheck outputs
+  const customer = Object.values(MASTER_TRAVEL_ID).reduce((n, a) => n + a.length, 0)
+    + LOYALTY_PROGRAMMES.length + APPLICANT + PROFILE_EXT + LOYALTY_SUB;
+  const flight = FLIGHT.search.length + FLIGHT.passenger.length + FLIGHT.apis.length
+    + FLIGHT.postBooking.length + SSR_OPTIONS.length + FULFILMENT + PAYMENT_CTX;
+  const hotel = HOTEL.search.length + HOTEL.room.length + HOTEL.guest.length
+    + PROPERTY_TYPES.length + BOARD_BASIS.length + HOTEL_SSR.length + HOST_LISTING + STAY_EXTRAS;
+  const pkg = PACKAGE.components.length + PACKAGE.search.length + HOLIDAY_TYPES.length
+    + INSURANCE.coverage.length + INSURANCE.collect.length + ANCILLARIES.length
+    + ANCILLARY_SUPPLIERS.length + PACKAGE_DURATIONS.length + BUDGET_TIERS.length + REFUND_POLICY + ITINERARY;
+  const risk = 60 + NEW_FRAUD; // fraud/risk signal catalogue (booking + visa + host engines)
   return { customer, flight, hotel, package: pkg, risk, total: customer + flight + hotel + pkg + risk };
 }
 

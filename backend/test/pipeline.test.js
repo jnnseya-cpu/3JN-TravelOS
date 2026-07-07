@@ -1569,3 +1569,67 @@ test('refund engine: structured policy stored on every booking', () => {
   assert.ok(p.platformFallback.refundSchedule[0].refundPct >= p.platformFallback.refundSchedule[3].refundPct);
   assert.ok(Array.isArray(p.nonRefundable) && p.nonRefundable.length);
 });
+
+// ---- World-class AI modules (part 14): the three that were missing ----------
+import { runDisruptionGuard } from '../src/monitor.js';
+import { farePrediction } from '../src/price-dive.js';
+
+test('fare prediction agent: book-now/wait signal with drift %', () => {
+  const r = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'deep' });
+  const fp = r.farePrediction;
+  assert.ok(fp, 'prediction attached to plan');
+  assert.ok(['rising', 'falling', 'stable'].includes(fp.direction));
+  assert.ok(typeof fp.driftPct === 'number' && fp.advice.length > 10);
+});
+
+test('concierge agent: day-by-day itinerary from the packaged trip', () => {
+  const r = plan({ text: 'Dubai holiday from London in August for 5 nights for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const it = r.itinerary;
+  assert.ok(it && it.days.length === 6, 'arrival + 4 days + departure');
+  assert.match(it.days[0].plan, /Arrive/);
+  assert.match(it.days[5].plan, /departure/i);
+});
+
+test('disruption agent: detects, rebooks cost-neutral, notifies, audits', () => {
+  const guest = createUser({ name: 'Dis Guest', email: 'dis@example.com' });
+  const r = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options[0];
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id });
+  const ok = runDisruptionGuard(b.id, false);
+  assert.equal(ok.status, 'on-time');
+  const hit = runDisruptionGuard(b.id, true);
+  assert.equal(hit.status, 'rebooked');
+  assert.ok(hit.event.rebookedTo && hit.event.rebookedTo !== hit.event.original);
+  assert.equal(hit.event.fareDifferenceUSD, 0, 'cost-neutral to the traveller');
+  assert.ok(listNotifications(guest.id).some((n) => /rebooked/i.test(n.title)));
+});
+
+// ---- 300+ field architecture (part 15) --------------------------------------
+test('database checklist: 300+ structured fields across the five domains', () => {
+  const fc = fieldCount();
+  assert.ok(fc.total >= 300, `total ${fc.total} >= 300`);
+});
+
+// ---- Profit protection master rule -------------------------------------------
+import { aiCostCap } from '../src/revenue.js';
+
+test('master rule: AI cost capped at 5-10% of expected profit; advertising funds too', () => {
+  // £1,000 booking → £100 fee → AI cost cap £5–£10.
+  const cap = aiCostCap(100);
+  assert.equal(cap.maxAiCostUSD, 10);
+  assert.equal(cap.targetAiCostUSD, 5);
+  // The gate enforces it: expected revenue must be >= 10x AI cost.
+  const g = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 10000 });
+  assert.equal(g.allowed, true);
+  assert.ok(g.reason.includes('expected-booking-revenue'));
+  // Advertising revenue is a recognised funding source.
+  const ad = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 0, advertisingCreditUSD: 5 });
+  assert.equal(ad.allowed, true);
+  assert.ok(ad.reason.includes('advertising-revenue'));
+  // Unfunded → downgraded to cached, never free deep AI.
+  const un = costProtectionGate({ tier: 'deep', user: null, expectedBookingUSD: 0 });
+  assert.equal(un.allowed, false);
+  assert.equal(un.downgradeTo, 'free');
+  assert.ok(un.requirement.orDepositGBP >= 5, 'refundable search deposit path (£5–£20)');
+});

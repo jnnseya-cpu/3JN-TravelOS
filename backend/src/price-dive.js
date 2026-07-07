@@ -145,3 +145,34 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
     },
   };
 }
+
+// ---- Fare Prediction Agent ---------------------------------------------------
+// Pre-booking price-direction forecast: scans the fare curve around the chosen
+// departure (±5 days) and reads demand pressure into a book-now / wait signal.
+// Deterministic (seeded scans) — the same trip always predicts the same way.
+export function farePrediction({ intent, dest, origin }) {
+  if (!intent?.dates?.checkIn) return null;
+  const base = floorOf(scanFlights(intent, dest, origin));
+  if (base == null) return null;
+  const ahead = [];
+  for (const days of [1, 2, 3, 4, 5]) {
+    const f = floorOf(scanFlights(shiftDates(intent, days), dest, origin));
+    if (f != null) ahead.push(f);
+  }
+  if (!ahead.length) return null;
+  const avgAhead = ahead.reduce((s, x) => s + x, 0) / ahead.length;
+  const driftPct = Math.round(((avgAhead - base) / base) * 1000) / 10;
+  const direction = driftPct > 2 ? 'rising' : driftPct < -2 ? 'falling' : 'stable';
+  return {
+    agent: 'Fare Prediction Agent',
+    currentFloorUSD: base,
+    forecastFloorUSD: round(avgAhead),
+    driftPct,
+    direction,
+    advice: direction === 'rising'
+      ? `Book now — fares around your dates trend ${driftPct}% higher.`
+      : direction === 'falling'
+        ? `Waiting may pay: nearby departures trend ${Math.abs(driftPct)}% lower. The Price Guard protects you either way.`
+        : 'Fares are stable around your dates — book when ready; the Price Guard covers you after.',
+  };
+}
