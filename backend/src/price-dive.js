@@ -39,7 +39,7 @@ function shiftDates(intent, days) {
 }
 
 // Run the dive. `scan` is the already-sourced base scan (applySourcing done).
-export function deepPriceDive({ intent, dest, origin, scan }) {
+export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false }) {
   const savings = [];
   let combinationsExplored = Object.values(scan).reduce((s, offers) => s + (offers?.length || 0), 0);
 
@@ -63,6 +63,9 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
         savingUSD: round(baseFlightFloor - best.priceUSD),
         how: `Depart ${best.days > 0 ? '+' : ''}${best.days} day${Math.abs(best.days) > 1 ? 's' : ''} (${best.checkIn}) and the same flights drop.`,
         apply: { shiftDays: best.days, checkIn: best.checkIn },
+        // Alternative dates are re-priced by the model, not the live feed —
+        // acting on this re-searches for the exact live fare (never charged blind).
+        basis: liveFlights ? 'indicative' : 'estimated',
       });
     }
   }
@@ -82,6 +85,7 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
         savingUSD: round(baseFlightFloor - best.priceUSD),
         how: `Fly from ${best.code} (${best.km} km away) instead of ${origin.airport}.`,
         apply: { airport: best.code },
+        basis: liveFlights ? 'indicative' : 'estimated',
       });
     }
   }
@@ -101,6 +105,7 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
       lever: 'Supplier competition',
       savingUSD: round(supplierSpreadUSD),
       how: 'Every component priced across competing verified suppliers; the floor won.',
+      basis: liveFlights ? 'verified' : 'estimated',
     });
   }
 
@@ -113,6 +118,7 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
       lever: 'Negotiated net rates',
       savingUSD: round(negotiatedUSD),
       how: 'Booked on 3JN agent accounts below public prices.',
+      basis: 'verified',
     });
   }
 
@@ -156,10 +162,16 @@ export function deepPriceDive({ intent, dest, origin, scan }) {
   }
   const marginPct = publicTotalUSD > 0 ? Math.round(((publicTotalUSD - ourTotalUSD) / publicTotalUSD) * 1000) / 10 : 0;
 
+  const anyIndicative = savings.some((x) => x.basis === 'indicative' || x.basis === 'estimated');
   return {
     leversChecked: 4,
     combinationsExplored,
     savings,
+    // How to read the numbers: with live fares on, alternative-date/airport
+    // savings are INDICATIVE (re-search to confirm the exact live fare); the
+    // supplier/negotiated levers reflect the fares actually compared.
+    basis: liveFlights ? (anyIndicative ? 'mixed' : 'verified') : 'indicative',
+    indicativeNote: anyIndicative ? 'Alternative-date and alternative-airport savings are indicative — tap Re-search to confirm the exact live fare before booking. You are only ever charged a confirmed bookable price.' : null,
     totalIdentifiedUSD: round(savings.reduce((s, x) => s + x.savingUSD, 0)),
     unbeatable: {
       ourFloorUSD: round(ourTotalUSD),

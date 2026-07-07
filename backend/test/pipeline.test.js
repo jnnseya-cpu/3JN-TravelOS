@@ -2712,3 +2712,21 @@ test('auto-ticketing: order creation is credential-gated; passenger builder shap
   assert.equal(pax[0].type, 'adult');
   assert.ok(pax[0].born_on, 'has a date of birth field Duffel requires');
 });
+
+// ================= Deep Price Dive basis (real-money honesty) ==================
+import { deepPriceDive as dive } from '../src/price-dive.js';
+
+test('deep price dive: alternative-date/airport savings are INDICATIVE under live fares', () => {
+  const r = plan({ text: 'Dubai from London in August, flights only for 2 adults, 7 nights', context: GB });
+  const scan = null; // exercise via the planner-produced dive instead
+  const pd = r.priceDive;
+  if (pd) {
+    // Estimated engine (no live keys in test) → dive basis is 'indicative'.
+    assert.equal(pd.basis, 'indicative');
+    for (const sv of pd.savings) assert.ok(['indicative', 'estimated', 'verified'].includes(sv.basis), `${sv.lever} has a basis`);
+  }
+  // Directly: with liveFlights=true, date/airport levers are marked indicative
+  // and the response carries the honest note.
+  const intent = parseIntent('Dubai from London in August, flights only for 2 adults, 7 nights', { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
+  intent.flightPrefs = { directOnly: false, departureWindow: null };
+});

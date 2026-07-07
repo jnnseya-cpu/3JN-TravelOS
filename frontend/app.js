@@ -523,9 +523,13 @@ function renderOptions(data) {
   const diveCard = dive ? `
     <div class="card pad" style="margin-bottom:20px">
       <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers</span>
-      ${dive.savings.length ? dive.savings.map((sv) => `
-        <div class="ln"><span class="ok" style="color:var(--gold)">◆</span> <strong>${esc(sv.lever)}</strong> — ${esc(sv.how)} <span style="color:var(--green);font-weight:700">save ${money(sv.savingUSD * (data.context?.currency?.rateFromUSD || 1), sym)}</span></div>`).join('')
+      ${dive.savings.length ? dive.savings.map((sv) => {
+        const tag = sv.basis === 'verified' ? '<span class="chip" style="font-size:9px;border-color:rgba(121,217,155,.4);color:#79d99b">verified</span>'
+          : (sv.basis === 'indicative' || sv.basis === 'estimated') ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
+        return `<div class="ln"><span class="ok" style="color:var(--gold)">◆</span> <strong>${esc(sv.lever)}</strong> ${tag} — ${esc(sv.how)} <span style="color:var(--green);font-weight:700">save ${money(sv.savingUSD * (data.context?.currency?.rateFromUSD || 1), sym)}</span></div>`;
+      }).join('')
         : '<div class="ln"><span class="ok">●</span> No cheaper reliable combination exists on your exact dates and airports.</div>'}
+      ${dive.indicativeNote ? `<p class="muted" style="font-size:11.5px;margin-top:8px">ℹ ${esc(dive.indicativeNote)}</p>` : ''}
       <div class="pill" style="margin-top:12px;border-color:rgba(70,211,154,0.4)"><span class="dot" style="background:var(--green)"></span> ${esc(dive.unbeatable.verdict)}</div>
     </div>` : '';
 
