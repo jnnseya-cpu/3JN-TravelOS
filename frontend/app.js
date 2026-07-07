@@ -107,6 +107,7 @@ function nav(view) {
   if (view === 'visaos') renderVisaApply();
   if (view === 'marketplace') renderMarketplace();
   if (view === 'blog') renderBlog();
+  if (view === 'rewards') renderRewards();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -315,7 +316,7 @@ async function populateShowcase() {
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
 function applyDeepLink() {
-  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'api', 'console', 'business', 'admin']);
+  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'api', 'console', 'business', 'admin']);
   const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
   let target = '';
   const qv = new URLSearchParams(location.search).get('view');
@@ -1639,6 +1640,98 @@ window.viewEticket = async (bookingId) => {
     if (w) { w.document.open(); w.document.write(html); w.document.close(); }
     else { const url = URL.createObjectURL(new Blob([html], { type: 'text/html' })); window.open(url, '_blank'); }
   } catch { toast('Could not load your e-ticket — please try again.'); }
+};
+
+// ---- Rewards & Influencer Programme (partner dashboard) -------------------
+async function renderRewards() {
+  const out = $('#rewardsBody');
+  if (!out) return;
+  if (!state.user) {
+    out.innerHTML = `<div class="card pad center">
+      <h3 style="margin:0 0 8px">Sign in to start earning</h3>
+      <p class="muted" style="max-width:520px;margin:0 auto 16px">Every trip earns Travel ACUs. Refer friends for 250 ACUs each and unlock lifetime revenue share — or join the Influencer Programme for up to 1% lifetime revenue share.</p>
+      <button class="btn btn-gold" onclick="openAuth()">Sign in / Create account</button>
+    </div>`;
+    return;
+  }
+  out.innerHTML = '<div class="card pad center muted">Loading your rewards…</div>';
+  let d;
+  try { d = (await api('/api/rewards/me')).dashboard; } catch { out.innerHTML = '<div class="card pad center muted">Could not load your rewards. Please try again.</div>'; return; }
+  const g = (n) => `£${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const kpi = (label, val, sub) => `<div class="card pad" style="text-align:center"><div class="t-label">${label}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:var(--gold)">${val}</div>${sub ? `<div class="muted" style="font-size:11px">${sub}</div>` : ''}</div>`;
+  const tierName = { referrer: 'Referrer', rising: 'Rising Influencer', ambassador: 'Global Travel Ambassador' }[d.tier] || d.tier;
+  const unlockMsg = d.revshareUnlocked
+    ? `<span style="color:var(--green)">✓ Lifetime revenue share active · ${(d.revshareRate * 100).toFixed(2)}% · up to ${g(d.capPerCustomerGbp)}/customer</span>`
+    : `${d.paidReferrals}/${d.unlockReferrals} paid referrals — refer ${Math.max(0, d.unlockReferrals - d.paidReferrals)} more to unlock lifetime revenue share`;
+  const tools = (d.aiGrowthTools || []).map((t) => `<span class="chip" style="font-size:11px">${esc(t.label)}</span>`).join(' ');
+  const wd = (d.withdrawalHistory || []).slice(0, 5).map((w) => `<div class="kv"><span>${esc((w.at || '').slice(0, 10))} · ${esc(w.method)}</span><span>${g(w.amountGbp)} · <span class="muted">${esc(w.status)}</span></span></div>`).join('') || '<div class="muted" style="font-size:12px">No withdrawals yet.</div>';
+
+  out.innerHTML = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+      ${kpi('Total referrals', d.totalReferrals, `${d.activeTravellers} active travellers`)}
+      ${kpi('ACUs earned', Math.round(d.totalAcuEarned).toLocaleString())}
+      ${kpi('Lifetime earnings', g(d.lifetimeEarningsGbp))}
+      ${kpi('Pending commission', g(d.pendingCommissionGbp))}
+      ${kpi('This month', g(d.monthlyEarningsGbp))}
+      ${kpi('Leaderboard', d.leaderboardRank ? `#${d.leaderboardRank}` : '—')}
+    </div>
+
+    <div class="console-grid" style="margin-top:18px">
+      <div>
+        <div class="card pad"><span class="eyebrow">Your referral link</span>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <input id="refLink" readonly value="${esc(d.referralLink)}" style="flex:1;min-width:200px;background:var(--navy-700);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13px" />
+            <button class="btn btn-gold btn-sm" onclick="copyRef()">Copy</button>
+          </div>
+          <p class="muted" style="font-size:12px;margin-top:8px">Code <strong style="color:var(--gold)">${esc(d.referralCode)}</strong> · Share it anywhere. You earn 250 ACUs per friend who books. ${unlockMsg}</p>
+        </div>
+
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Partner tier</span>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            <div><strong>${esc(tierName)}</strong> <span class="muted" style="font-size:12px">· ${(d.revshareRate * 100).toFixed(2)}% revenue share</span></div>
+            <span class="chip" style="font-size:11px;color:${d.standing === 'good' ? 'var(--green)' : 'var(--gold)'}">${esc(d.standing === 'good' ? 'In good standing' : d.standing)}</span>
+          </div>
+          ${d.tier === 'referrer' ? `
+          <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+            <div class="t-label">Become a creator partner</div>
+            <p class="muted" style="font-size:12px;margin:4px 0 8px">5,000+ followers → Rising Influencer (0.25%). 10,000+ → Global Travel Ambassador (1%).</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input id="folCount" type="number" min="0" placeholder="Total followers" style="flex:1;min-width:140px;background:var(--navy-700);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13px" />
+              <button class="btn btn-ghost btn-sm" onclick="applyInfluencer()">Apply</button>
+            </div>
+          </div>` : `<p class="muted" style="font-size:12px;margin-top:8px">${d.status === 'pending' ? 'Your influencer application is under review.' : 'You’re an approved creator partner. 🎉'}</p>`}
+        </div>
+      </div>
+
+      <div>
+        <div class="card pad"><span class="eyebrow">Withdraw commission</span>
+          <div class="kv" style="margin-top:8px"><span>Available to withdraw</span><span style="color:var(--gold)">${g(d.pendingCommissionGbp)}</span></div>
+          <button class="btn btn-gold btn-block btn-sm" style="margin-top:10px" onclick="withdrawCommission(${d.pendingCommissionGbp})" ${d.pendingCommissionGbp > 0 ? '' : 'disabled'}>Request payout</button>
+          <div style="margin-top:12px"><span class="eyebrow">Recent withdrawals</span>${wd}</div>
+        </div>
+
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">AI Growth Engine</span>
+          <p class="muted" style="font-size:12px;margin:8px 0">Built-in tools to maximise your reach.</p>
+          <div class="chips">${tools}</div>
+        </div>
+      </div>
+    </div>`;
+}
+window.copyRef = () => {
+  const el = $('#refLink'); if (!el) return;
+  navigator.clipboard?.writeText(el.value).then(() => toast('✓ Referral link copied')).catch(() => { el.select(); document.execCommand('copy'); toast('✓ Copied'); });
+};
+window.applyInfluencer = async () => {
+  const followers = Number($('#folCount')?.value || 0);
+  if (!followers) { toast('Enter your total follower count.'); return; }
+  try { await api('/api/rewards/influencer/apply', { method: 'POST', body: JSON.stringify({ followers }) }); toast('✓ Application submitted — we’ll review it shortly.'); renderRewards(); }
+  catch { toast('Could not submit — please try again.'); }
+};
+window.withdrawCommission = async (amount) => {
+  if (!(amount > 0)) return;
+  try { const r = await api('/api/rewards/withdraw', { method: 'POST', body: JSON.stringify({ amountGbp: amount, method: 'bank' }) });
+    if (r.ok) { toast('✓ Payout requested'); renderRewards(); } else { toast(r.error === 'insufficient-balance' ? 'Nothing available to withdraw yet.' : 'Could not request payout.'); }
+  } catch { toast('Could not request payout.'); }
 };
 
 // ---- Document Vault -------------------------------------------------------
