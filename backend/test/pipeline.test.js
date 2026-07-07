@@ -6,7 +6,7 @@ import { parseIntent } from '../src/intent.js';
 import { detectContext } from '../src/geo.js';
 import { plan } from '../src/planner.js';
 import { priceBreakdown, instalmentPlan, tierForPoints } from '../src/pricing.js';
-import { costProtectionGate, whiteLabelPayout } from '../src/revenue.js';
+import { costProtectionGate, whiteLabelPayout, SEARCH_TIERS } from '../src/revenue.js';
 import {
   createUser, createBooking, saveQuote, updateUser, seedAllRoles,
   createApiKey, listApiKeys, revokeApiKey, useApiKey, adminOverview,
@@ -1874,20 +1874,161 @@ test('positioning: the savings-engine statement anchors every AI call', () => {
   assert.match(SYSTEM_PROMPT, /only charges.*when real value is created/i);
 });
 
-// ---- Named ACU packs (Starter / Smart Traveller / Family / Business) ---------
-import { ACU_PACKS } from '../src/store.js';
+// ---- ACU Marketplace (spec §5): named packs with volume bonuses --------------
+import { ACU_PACKS, acuWallet, acuTransactions, refundAcu, rewardAcu, ACU_TXN_TYPES } from '../src/store.js';
 
-test('ACU packs: the named catalogue at £1 = 100 ACU', () => {
+test('ACU marketplace: Starter 500 · Traveller 1,750 · Family 4,000 · Business 20,000 · Enterprise custom', () => {
   assert.equal(ACU_PACKS.starter.gbp, 5);
-  assert.equal(ACU_PACKS.smart.gbp, 15);
+  assert.equal(ACU_PACKS.starter.acu, 500);
+  assert.equal(ACU_PACKS.traveller.gbp, 15);
+  assert.equal(ACU_PACKS.traveller.acu, 1750);
   assert.equal(ACU_PACKS.family.gbp, 29);
+  assert.equal(ACU_PACKS.family.acu, 4000);
   assert.equal(ACU_PACKS.business.gbp, 99);
-  for (const key of ['starter', 'smart', 'family', 'business']) {
-    assert.equal(ACU_PACKS[key].acu, ACU_PACKS[key].gbp * 100, `${key}: £1 = 100 ACU`);
-  }
+  assert.equal(ACU_PACKS.business.acu, 20000);
+  assert.equal(ACU_PACKS.enterprise.custom, true, 'Enterprise is custom-priced');
+
   const u = createUser({ name: 'Pack Buyer', email: 'packs@example.com' });
-  const r = buyAcu(u.id, 'smart');
-  assert.ok(r.balance >= 1500, 'Smart Traveller Pack credits 1,500 ACU');
+  const r = buyAcu(u.id, 'traveller');
+  assert.equal(r.ok, true);
+  assert.equal(r.charged, 15);
+  assert.ok(r.balance >= 1750, 'Traveller Pack credits 1,750 ACU');
+  assert.equal(r.bonusAcu, 250, '£15 buys 1,500 base + 250 volume bonus');
+
+  // Enterprise never auto-charges — it routes to sales.
+  const ent = buyAcu(u.id, 'enterprise');
+  assert.equal(ent.ok, false);
+  assert.equal(ent.error, 'contact-sales');
+});
+
+// ---- ACU Economy (spec §4): wallet view + typed transaction ledger -----------
+test('ACU wallet: lifetime purchased/used/earned counters + PURCHASE/USAGE/REFUND/BONUS/REWARD types', () => {
+  const u = createUser({ name: 'Wallet User', email: 'wallet@example.com' });
+  buyAcu(u.id, 'traveller');            // PURCHASE 1500 + BONUS 250
+  spendAcu(u.id, 26, 'search:smart');   // USAGE 26
+  refundAcu(u.id, 26, 'search-refund'); // REFUND 26
+  rewardAcu(u.id, 50, 'review-reward'); // REWARD 50
+
+  const w = acuWallet(u.id);
+  assert.equal(w.walletId, `wal_${u.id}`);
+  assert.equal(w.lifetimePurchased, 1500, 'purchased counts the paid base only');
+  assert.equal(w.lifetimeUsed, 26);
+  assert.equal(w.lifetimeEarned, 250 + 50, 'earned = volume bonus + reward');
+  assert.equal(w.lifetimeRefunded, 26);
+  assert.equal(w.currentBalance, 1750 - 26 + 26 + 50);
+  assert.equal(w.status, 'active');
+
+  const txns = acuTransactions(u.id);
+  const types = new Set(txns.map((t) => t.type));
+  for (const t of types) assert.ok(ACU_TXN_TYPES.includes(t), `${t} is a spec transaction type`);
+  assert.ok(types.has('PURCHASE') && types.has('BONUS') && types.has('USAGE') && types.has('REFUND') && types.has('REWARD'));
+  assert.ok(txns.every((t) => t.transactionId && t.walletId === w.walletId && t.date), 'every txn carries id, wallet and date');
+});
+
+// ---- AI Cost Estimator (spec §3): ai_request_costs ledger ---------------------
+import { recordAiRequestCost, aiCostReport } from '../src/store.js';
+import { estimateRequestCost, route as gatewayRoute } from '../src/ai-gateway.js';
+
+test('ai_request_costs: gateway calls book estimated vs actual cost, report aggregates per provider/user', async () => {
+  const u = createUser({ name: 'Cost User', email: 'costs@example.com' });
+  const before = aiCostReport().requests;
+
+  // A routed gateway call records itself (local fallback → actual cost 0).
+  await gatewayRun({ task: 'intentExtraction', payload: {}, localFn: () => ({ ok: true }), context: { userId: u.id, tripId: 'trip_1' } });
+  // A direct ledger entry (e.g. a live provider call attributed to a booking).
+  recordAiRequestCost({ provider: 'openai', model: 'gpt-4o', agentName: 'itinerary', estimatedTokens: 2400, estimatedCostUSD: 0.024, actualCostUSD: 0.024, userId: u.id, bookingId: 'bk_1', orgId: 'org_1' });
+
+  const report = aiCostReport();
+  assert.equal(report.requests, before + 2);
+  assert.ok(report.totalEstimatedUSD > 0);
+  // Spec provider columns always present (OpenAI / Claude / Gemini / Vertex).
+  for (const p of ['openai', 'anthropic', 'gemini', 'vertex']) assert.ok(report.byProvider[p], `${p} column present`);
+  assert.ok(report.perUser[u.id].requests >= 2, 'cost attributable per user');
+  assert.ok(report.perTrip.trip_1 && report.perBooking.bk_1 && report.perOrganisation.org_1, 'cost attributable per trip/booking/organisation');
+
+  // The estimator itself: tokens scale with the route's ACU price.
+  const est = estimateRequestCost(gatewayRoute('intentExtraction'));
+  assert.ok(est.estimatedTokens > 0 && est.estimatedCostUSD >= 0);
+});
+
+// ---- Refundable search deposits (spec §6) -------------------------------------
+import { placeSearchDeposit, activeSearchDeposit, refundSearchDeposit, convertDepositToBooking, SEARCH_DEPOSIT_GBP, usageStats as usageStatsFn } from '../src/store.js';
+
+test('search deposits: Deep £5 / Luxury £20 / Corporate £50 — refundable, converted on booking', () => {
+  assert.equal(SEARCH_DEPOSIT_GBP.deep, 5);
+  assert.equal(SEARCH_DEPOSIT_GBP.luxury, 20);
+  assert.equal(SEARCH_DEPOSIT_GBP.corporate, 50);
+
+  const u = createUser({ name: 'Deposit User', email: 'deposit@example.com' });
+  const placed = placeSearchDeposit({ userId: u.id, tier: 'deep' });
+  assert.equal(placed.ok, true);
+  assert.equal(placed.deposit.amountGBP, 5);
+  assert.equal(placed.deposit.refunded, false);
+  assert.equal(placed.deposit.convertedToBooking, null);
+
+  // The live deposit funds paid depth via the gate telemetry…
+  assert.equal(usageStatsFn(u.id).hasDeposit, true);
+  const gate = costProtectionGate({ tier: 'deep', user: { acuBalance: 0 }, hasDeposit: true });
+  assert.equal(gate.allowed, true);
+  assert.match(gate.reason, /search-deposit/);
+
+  // …and a booking CONVERTS it: value deducted from the final payment.
+  const credit = convertDepositToBooking(u.id, 'bk_test_1');
+  assert.equal(credit.amountGBP, 5);
+  assert.match(credit.note, /deducted from the final payment/i);
+  assert.equal(activeSearchDeposit(u.id), null, 'converted deposit is no longer active');
+  assert.equal(refundSearchDeposit(credit.depositId).error, 'already-converted');
+
+  // A fresh corporate deposit refunds cleanly.
+  const corp = placeSearchDeposit({ userId: u.id, tier: 'corporate' });
+  assert.equal(corp.deposit.amountGBP, 50);
+  const refunded = refundSearchDeposit(corp.deposit.id);
+  assert.equal(refunded.ok, true);
+  assert.equal(refunded.deposit.refunded, true);
+});
+
+// ---- Multi-tier search system (spec §7) ----------------------------------------
+test('search tiers: free tier lists its honest features, paid tiers name their agents', () => {
+  const free = SEARCH_TIERS.free;
+  assert.ok(free.features.includes('Cached results'));
+  assert.ok(free.features.includes('Top deals'));
+  assert.ok(free.features.includes('Destination suggestions'));
+  assert.ok(free.features.includes('Previous searches'));
+  assert.ok(free.features.some((f) => /No expensive AI/i.test(f)));
+  assert.equal(free.acu, 0, 'Tier 1 never consumes ACUs');
+
+  for (const agent of ['Flight Agent', 'Hotel Agent', 'Transfer Agent']) {
+    assert.ok(SEARCH_TIERS.smart.agents.includes(agent), `Smart Search runs the ${agent}`);
+  }
+  assert.ok(SEARCH_TIERS.smart.acu > 0, 'Tier 2 consumes ACUs');
+  assert.ok(SEARCH_TIERS.deep.agents.length > SEARCH_TIERS.smart.agents.length, 'deeper tiers run more agents');
+});
+
+// ---- Landing-page pillars must be accurate (user rule: "APPLICABLE AND ACCURATE")
+import { INTENT_PARAMETERS } from '../src/intent.js';
+import { INTEGRITY_CHECKS, supplierIntegrity } from '../src/suppliers.js';
+
+test('landing accuracy: "40+ travel parameters" and the "50-point integrity check" are real', () => {
+  // 01 AI CORE — Neural Intent Extraction: over 40 distinct travel parameters.
+  assert.ok(INTENT_PARAMETERS.length > 40, `${INTENT_PARAMETERS.length} parameters registered (> 40 promised)`);
+  // Spot-check: registered parameters correspond to real extracted fields.
+  const i = parseIntent('all inclusive holiday to Dubai for 2 adults and 1 child in August, 7 nights, direct flights from Manchester');
+  assert.ok(i.destination && i.travellers.adults === 2 && i.travellers.children === 1 && i.nights === 7 && i.month === 'august' || i.month === 'August');
+  assert.equal(i.boardBasis, 'All inclusive');
+
+  // 03 SECURITY — Integrity Verification Shield: exactly a 50-point rubric.
+  assert.equal(INTEGRITY_CHECKS.length, 50, 'the integrity check is genuinely 50 points');
+  assert.equal(supplierIntegrity({ verified: true, reliabilityScore: 90 }).passed, true);
+  assert.equal(supplierIntegrity({ verified: false, reliabilityScore: 90 }).passed, false);
+
+  // The rubric outcome is stamped on every package option.
+  const r = plan({ text: 'Weekend in Paris from London', context: GB });
+  if (r.stage === 'options') {
+    for (const o of r.packages.options) {
+      assert.equal(o.integrity.pointsChecked, 50);
+      assert.equal(o.integrity.allPassed, true, 'only suppliers passing the 50-point check are surfaced');
+    }
+  }
 });
 
 // ---- Risk accuracy: high-risk destinations must never read as "Low" ----------

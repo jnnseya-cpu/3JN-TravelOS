@@ -32,6 +32,8 @@ const db = {
   searchCache: new Map(), // popular routes/packages served before any paid AI call
   behaviour: [], // behavioural-learning event stream (searches, views, books…)
   commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
+  aiRequestCosts: [], // ai_request_costs ledger — estimated vs actual AI spend per request
+  searchDeposits: [], // refundable search deposits (deep £5 / luxury £20 / corporate £50)
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -349,35 +351,189 @@ export function spendAcu(userId, amount, reason) {
   return { ok: true, balance: u.acuBalance };
 }
 
-// Paid ACU packs — the named catalogue (all at the customer rate £1 = 100 ACU).
+// ACU Marketplace — the named pack catalogue (spec §5). The base customer rate
+// is £1 = 100 ACU; bigger packs carry a volume bonus above the base rate, and
+// that bonus is booked as a separate BONUS transaction so wallets honestly
+// separate what was purchased from what was earned.
 export const ACU_PACKS = {
-  starter: { name: 'Starter Pack', gbp: 5, acu: 5 * ACU_PER_GBP },
-  smart: { name: 'Smart Traveller Pack', gbp: 15, acu: 15 * ACU_PER_GBP },
-  family: { name: 'Family Travel Pack', gbp: 29, acu: 29 * ACU_PER_GBP },
-  business: { name: 'Business Travel Pack', gbp: 99, acu: 99 * ACU_PER_GBP },
-  // Legacy top-up aliases (kept for older clients).
-  topup5: { name: 'Starter Pack', gbp: 5, acu: 5 * ACU_PER_GBP },
+  starter: { name: 'Starter Pack', gbp: 5, acu: 500 },
+  traveller: { name: 'Traveller Pack', gbp: 15, acu: 1750 },
+  family: { name: 'Family Pack', gbp: 29, acu: 4000 },
+  business: { name: 'Business Pack', gbp: 99, acu: 20000 },
+  enterprise: { name: 'Enterprise', gbp: null, acu: null, custom: true, note: 'Custom volume & pricing — contact sales' },
+  // Legacy aliases (kept for older clients).
+  smart: { name: 'Traveller Pack', gbp: 15, acu: 1750 },
+  topup5: { name: 'Starter Pack', gbp: 5, acu: 500 },
   topup10: { name: 'Top-up £10', gbp: 10, acu: 10 * ACU_PER_GBP },
-  topup25: { name: 'Family Travel Pack', gbp: 25, acu: 25 * ACU_PER_GBP },
+  topup25: { name: 'Family Pack', gbp: 29, acu: 4000 },
   topup50: { name: 'Top-up £50', gbp: 50, acu: 50 * ACU_PER_GBP },
 };
 export function buyAcu(userId, pack) {
   const p = ACU_PACKS[pack];
   const u = db.users.get(userId);
   if (!u || !p) return { ok: false, error: 'invalid' };
+  if (p.custom) return { ok: false, error: 'contact-sales', message: 'Enterprise ACU volume is priced individually — contact sales@3jntravel.com.' };
+  const base = Math.min(p.gbp * ACU_PER_GBP, p.acu);
+  const bonus = Math.max(0, p.acu - base);
   u.acuBalance += p.acu;
-  db.acuTxns.push({ id: id('acu'), userId, type: 'PURCHASE', amount: p.acu, reason: `pack:${pack}`, at: nowISO() });
+  db.acuTxns.push({ id: id('acu'), userId, type: 'PURCHASE', amount: base, reason: `pack:${pack}`, at: nowISO() });
+  if (bonus > 0) db.acuTxns.push({ id: id('acu'), userId, type: 'BONUS', amount: bonus, reason: `pack:${pack}:volume-bonus`, at: nowISO() });
   recordAudit({ actor: userId, role: u.role, action: 'acu.topup', entity: 'acu', entityId: userId, summary: `+${p.acu} ACU (£${p.gbp})` });
-  return { ok: true, balance: u.acuBalance, charged: p.gbp };
+  return { ok: true, balance: u.acuBalance, charged: p.gbp, bonusAcu: bonus };
 }
 
-// Credit ACU to a user (membership allocation, refund, bonus…). Never negative.
-export function creditAcu(userId, amount, reason = 'credit') {
+// Credit ACU to a user. `type` follows the acu_transactions vocabulary
+// (BONUS for allocations/memberships, REWARD for earned incentives).
+export function creditAcu(userId, amount, reason = 'credit', type = 'BONUS') {
   const u = db.users.get(userId);
   if (!u || !(amount > 0)) return { ok: false, error: 'invalid' };
   u.acuBalance += Math.round(amount);
-  db.acuTxns.push({ id: id('acu'), userId, type: 'ALLOCATION', amount: Math.round(amount), reason, at: nowISO() });
+  db.acuTxns.push({ id: id('acu'), userId, type, amount: Math.round(amount), reason, at: nowISO() });
   return { ok: true, balance: u.acuBalance };
+}
+// Refund previously spent ACU back to the wallet (booked as REFUND).
+export function refundAcu(userId, amount, reason = 'refund') {
+  return creditAcu(userId, amount, reason, 'REFUND');
+}
+// Reward ACU for platform incentives (reviews, referrals…) — booked as REWARD.
+export function rewardAcu(userId, amount, reason = 'reward') {
+  return creditAcu(userId, amount, reason, 'REWARD');
+}
+
+// ---- ACU Economy (spec §4): wallet view + typed transaction ledger ----------
+// acu_wallets: wallet_id, user_id, current_balance, lifetime_purchased,
+// lifetime_used, lifetime_earned, status. Derived live from the transaction
+// ledger so the counters can never drift from the truth.
+export const ACU_TXN_TYPES = ['PURCHASE', 'USAGE', 'REFUND', 'BONUS', 'REWARD'];
+export function acuWallet(userId) {
+  const u = db.users.get(userId);
+  if (!u) return null;
+  const mine = db.acuTxns.filter((t) => t.userId === userId);
+  const sum = (...types) => mine.filter((t) => types.includes(t.type)).reduce((s, t) => s + Math.abs(t.amount), 0);
+  return {
+    walletId: `wal_${userId}`,
+    userId,
+    currentBalance: u.acuBalance,
+    lifetimePurchased: sum('PURCHASE'),
+    lifetimeUsed: sum('USAGE'),
+    lifetimeEarned: sum('BONUS', 'REWARD', 'ALLOCATION'),
+    lifetimeRefunded: sum('REFUND'),
+    status: u.suspended ? 'suspended' : 'active',
+  };
+}
+// acu_transactions: transaction_id, wallet_id, type, amount, date (+reason).
+export function acuTransactions(userId, limit = 100) {
+  const mine = db.acuTxns
+    .filter((t) => t.userId === userId)
+    .map((t) => ({
+      transactionId: t.id,
+      walletId: `wal_${userId}`,
+      type: t.type === 'ALLOCATION' ? 'BONUS' : t.type,
+      amount: t.amount,
+      reason: t.reason,
+      date: t.at,
+    }))
+    .reverse();
+  return limit > 0 ? mine.slice(0, limit) : mine;
+}
+
+// ---- AI Cost Estimator (spec §3): ai_request_costs ledger --------------------
+// Every routed AI call books its estimated vs actual cost so spend is
+// attributable per provider (OpenAI / Claude / Gemini / Vertex), per agent and
+// per search / trip / user / booking / organisation.
+const AI_COST_CAP = 5000;
+export function recordAiRequestCost({ provider, model, agentName, estimatedTokens = 0, estimatedCostUSD = 0, actualCostUSD = 0, mode = null, userId = null, tripId = null, searchId = null, bookingId = null, orgId = null }) {
+  const rec = {
+    id: id('aicost'),
+    provider: provider || 'local',
+    model: model || null,
+    agentName: agentName || null,
+    estimatedTokens: Math.round(estimatedTokens),
+    estimatedCostUSD: round4(estimatedCostUSD),
+    actualCostUSD: round4(actualCostUSD),
+    mode,
+    requestTimestamp: nowISO(),
+    userId, tripId, searchId, bookingId, orgId,
+  };
+  db.aiRequestCosts.push(rec);
+  if (db.aiRequestCosts.length > AI_COST_CAP) db.aiRequestCosts.splice(0, db.aiRequestCosts.length - AI_COST_CAP);
+  return rec;
+}
+// Aggregated cost report: totals + per provider / agent / user / trip / search
+// / booking / organisation — the finance view of AI spend.
+export function aiCostReport() {
+  const rows = db.aiRequestCosts;
+  const group = (key) => {
+    const out = {};
+    for (const r of rows) {
+      const k = r[key];
+      if (!k) continue;
+      if (!out[k]) out[k] = { requests: 0, estimatedUSD: 0, actualUSD: 0 };
+      out[k].requests += 1;
+      out[k].estimatedUSD = round4(out[k].estimatedUSD + r.estimatedCostUSD);
+      out[k].actualUSD = round4(out[k].actualUSD + r.actualCostUSD);
+    }
+    return out;
+  };
+  // The spec's provider columns always appear, even at zero spend.
+  const byProvider = {
+    openai: { requests: 0, estimatedUSD: 0, actualUSD: 0 },
+    anthropic: { requests: 0, estimatedUSD: 0, actualUSD: 0 },
+    gemini: { requests: 0, estimatedUSD: 0, actualUSD: 0 },
+    vertex: { requests: 0, estimatedUSD: 0, actualUSD: 0 },
+    ...group('provider'),
+  };
+  return {
+    requests: rows.length,
+    totalEstimatedUSD: round4(rows.reduce((s, r) => s + r.estimatedCostUSD, 0)),
+    totalActualUSD: round4(rows.reduce((s, r) => s + r.actualCostUSD, 0)),
+    byProvider,
+    byAgent: group('agentName'),
+    perUser: group('userId'),
+    perTrip: group('tripId'),
+    perSearch: group('searchId'),
+    perBooking: group('bookingId'),
+    perOrganisation: group('orgId'),
+  };
+}
+
+// ---- Refundable search deposits (spec §6) -----------------------------------
+// Purpose: stop AI abuse. Deep £5 · Luxury £20 · Corporate £50 — always
+// refundable, and when a booking happens the deposit is DEDUCTED from the
+// final payment (converted, never double-charged).
+export const SEARCH_DEPOSIT_GBP = { deep: 5, concierge: 20, luxury: 20, corporate: 50 };
+export function placeSearchDeposit({ userId, tier = 'deep', searchId = null }) {
+  const u = db.users.get(userId);
+  const amountGBP = SEARCH_DEPOSIT_GBP[tier];
+  if (!u || !amountGBP) return { ok: false, error: 'invalid' };
+  const deposit = { id: id('dep'), userId, amountGBP, tier, searchId, refunded: false, convertedToBooking: null, at: nowISO() };
+  db.searchDeposits.push(deposit);
+  recordAudit({ actor: userId, role: u.role, action: 'deposit.placed', entity: 'deposit', entityId: deposit.id, summary: `£${amountGBP} refundable ${tier}-search deposit` });
+  return { ok: true, deposit };
+}
+export function activeSearchDeposit(userId) {
+  return db.searchDeposits.find((d) => d.userId === userId && !d.refunded && !d.convertedToBooking) || null;
+}
+export function refundSearchDeposit(depositId) {
+  const d = db.searchDeposits.find((x) => x.id === depositId);
+  if (!d) return { ok: false, error: 'not-found' };
+  if (d.convertedToBooking) return { ok: false, error: 'already-converted' };
+  if (d.refunded) return { ok: false, error: 'already-refunded' };
+  d.refunded = true;
+  d.refundedAt = nowISO();
+  return { ok: true, deposit: d };
+}
+// On booking: the user's active deposit converts and its value comes OFF the
+// final payment. Returns the credit line for the booking (or null).
+export function convertDepositToBooking(userId, bookingId) {
+  const d = activeSearchDeposit(userId);
+  if (!d) return null;
+  d.convertedToBooking = bookingId;
+  d.convertedAt = nowISO();
+  return { depositId: d.id, amountGBP: d.amountGBP, note: 'Refundable search deposit deducted from the final payment' };
+}
+export function listSearchDeposits(userId) {
+  return db.searchDeposits.filter((d) => d.userId === userId);
 }
 
 // ---- Membership Programme (subscription → 10% auto-funds ACUs) -------------
@@ -847,13 +1003,14 @@ function nowISO() {
   return new Date(Date.UTC(2026, 5, 30, 12, 0, counter % 60)).toISOString();
 }
 function round2(n) { return Math.round(n * 100) / 100; }
+function round4(n) { return Math.round(n * 10000) / 10000; }
 
 // ---- Persistence snapshot / hydrate (for Firebase RTDB / Firestore) -------
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits'];
 
 export function snapshot() {
   const out = { counter };
@@ -1239,7 +1396,7 @@ export function grantComplimentaryElite(adminId, targetEmail) {
 // Real counters from the behaviour log: searches today / this week, prior
 // bookings, and same-destination repetition — feed the Cost Protection Gate.
 export function usageStats(userId) {
-  if (!userId) return { searchesToday: 0, recentSearches: 0, priorBookings: 0, sameDestinationRepeats: 0 };
+  if (!userId) return { searchesToday: 0, recentSearches: 0, priorBookings: 0, sameDestinationRepeats: 0, hasDeposit: false };
   const now = Date.now();
   const DAY = 24 * 3600 * 1000;
   const mine = db.behaviour.filter((b) => b.userId === userId && (b.event === 'search' || b.event === 'plan'));
@@ -1249,5 +1406,5 @@ export function usageStats(userId) {
   for (const b of week) if (b.destination) destCounts[b.destination] = (destCounts[b.destination] || 0) + 1;
   const sameDestinationRepeats = Math.max(0, ...Object.values(destCounts));
   const priorBookings = [...db.bookings.values()].filter((b) => b.userId === userId).length;
-  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats };
+  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId) };
 }

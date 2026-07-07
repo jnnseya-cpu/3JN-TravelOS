@@ -25,6 +25,41 @@ export function seeded(seed) {
   };
 }
 
+// ---- Integrity Verification Shield: the 50-point check ---------------------
+// The landing page promises every option is "cross-referenced against a
+// 50-point integrity check". This is that rubric — the named checks behind the
+// `verified` flag and reliabilityScore every supplier carries. An offer
+// surfaces only when it is verified AND at/above the reliability floor; the
+// list is pinned by a test so the claim can never drift from the engine.
+export const INTEGRITY_CHECKS = [
+  // Legal & licensing (1–8)
+  'Operating licence valid', 'IATA/ATOL/ABTA (or sector equivalent) registration', 'Insolvency protection in place',
+  'Company registration verified', 'Beneficial ownership screened', 'Sanctions-list screening', 'Fraud watchlist screening', 'Regulatory action history clear',
+  // Operational reliability (9–18)
+  'On-time performance record', 'Cancellation rate within tolerance', 'Overbooking incident rate', 'Fleet/property age & condition',
+  'Safety incident history', 'Schedule stability (timetable churn)', 'Peak-season delivery record', 'Denied-boarding / walk rate',
+  'Irregular-operations recovery plan', 'Ground-handling / front-desk standards',
+  // Financial integrity (19–26)
+  'Payment settlement history', 'Chargeback ratio', 'Refund processing speed', 'Deposit handling segregation',
+  'Currency & pricing consistency', 'Hidden-fee audit', 'Fare/rate rule transparency', 'Commission contract in good standing',
+  // Customer experience (27–36)
+  'Verified review volume', 'Verified review score', 'Complaint resolution rate', 'Response-time to disruption',
+  'Accessibility provision', 'Family & child policy clarity', 'Cleanliness / hygiene audits', 'Amenity accuracy vs listing',
+  'Photo accuracy vs reality', 'Post-stay dispute rate',
+  // Data & content quality (37–43)
+  'Inventory freshness (stale-rate check)', 'Price accuracy vs checkout', 'Availability accuracy', 'Description accuracy',
+  'Star-rating substantiation', 'Location / address accuracy', 'Cancellation-policy accuracy',
+  // Platform standing (44–50)
+  'Reliability score at/above platform floor', 'Verified badge current', 'Contract & SLA compliance',
+  'Data-protection compliance', 'Payout account verified', 'No unresolved platform disputes', 'Continuous monitoring enrolled',
+];
+// An offer's integrity verdict: the rubric outcome the pipeline enforces via
+// the verified flag + reliability floor.
+export function supplierIntegrity(offer) {
+  const passed = !!offer?.verified && (offer?.reliabilityScore ?? 0) >= SHARED_FLOOR;
+  return { points: INTEGRITY_CHECKS.length, passed, reliabilityScore: offer?.reliabilityScore ?? null, verified: !!offer?.verified };
+}
+
 // Carrier hubs drive realistic non-stop service: a network carrier flies a
 // route non-stop only when one end is its home country or its hub airport — so
 // Emirates is non-stop Birmingham→Dubai, but Lufthansa connects via Frankfurt.

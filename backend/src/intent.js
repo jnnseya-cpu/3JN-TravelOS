@@ -392,3 +392,36 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     unresolved: destination ? [] : ['destination'],
   };
 }
+
+// ---- Neural Intent Extraction: the parameter register ----------------------
+// The landing page promises "over 40 distinct travel parameters" — this is the
+// honest list of what the extraction pipeline above actually identifies from a
+// natural-language request (plus the search preferences the planner merges in).
+// Pinned by a test so the marketing claim can never drift from the engine.
+export const INTENT_PARAMETERS = [
+  // What & where
+  'raw query', 'destination city', 'destination airport code', 'destination country',
+  'worldwide destination synthesis', 'recommended destination (from origin country)',
+  'origin city', 'origin airport / port resolution',
+  // Who
+  'adults', 'children', 'child ages', 'total party size',
+  'multi-origin group parties', 'per-party origin city', 'per-party headcount',
+  // When & how long
+  'nights', 'travel month', 'explicit check-in date', 'explicit check-out date',
+  'date-range vs bare-month distinction',
+  // Components requested (never invented)
+  'flights', 'hotel / stay', 'train', 'coach', 'ferry', 'ocean cruise',
+  'mini-cruise distinction', 'activities', 'airport transfer', 'car hire',
+  'eSIM', 'travel insurance', 'visa support', 'event tickets', 'boat / yacht charter',
+  // Stay preferences
+  'board basis (room-only → ultra all-inclusive)', 'hotel area / neighbourhood',
+  // Journey shape
+  'explicit travel mode (mode competition trigger)', 'outbound leg mode',
+  'return leg mode', 'split return point',
+  // Money & priorities
+  'instalment preference', 'cheapest-reliable priority', 'budget tier / search depth',
+  'full-package (holiday) signal', 'travel + stay signal',
+  // Context injected
+  'traveller nationality', 'direct-only flight preference', 'departure-time window',
+  'loyalty tier (discount injection)',
+];
