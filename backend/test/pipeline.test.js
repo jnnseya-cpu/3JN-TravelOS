@@ -1889,3 +1889,24 @@ test('ACU packs: the named catalogue at £1 = 100 ACU', () => {
   const r = buyAcu(u.id, 'smart');
   assert.ok(r.balance >= 1500, 'Smart Traveller Pack credits 1,500 ACU');
 });
+
+// ---- Risk accuracy: high-risk destinations must never read as "Low" ----------
+test('risk feed: Kinshasa reports honest elevated risk; Tokyo stays safe', () => {
+  const kin = riskFeed('Kinshasa');
+  assert.equal(kin.ok, true);
+  assert.ok(kin.riskScore < 60, `Kinshasa score ${kin.riskScore} must be well below the safe band`);
+  assert.ok(['High', 'Severe', 'Elevated'].includes(kin.level));
+  assert.ok(kin.knownProfile, 'known-risk profile applied');
+  const safety = kin.layers.find((l) => l.layer === 'Safety');
+  assert.match(safety.note, /advisories|avoid/i, 'no more blanket "No active advisories"');
+  const health = kin.layers.find((l) => l.layer === 'Health');
+  assert.match(health.note, /yellow-fever/i);
+  assert.match(kin.advisories[0], /essential travel|advise/i);
+  assert.ok(kin.disclaimer, 'official-portal disclaimer present');
+  // Do-not-travel destinations read as Severe.
+  const kabul = riskFeed('Kabul');
+  if (kabul.ok) { assert.equal(kabul.level, 'Severe'); assert.ok(kabul.riskScore < 20); }
+  // Genuinely safe destinations stay accurate too.
+  const tokyo = riskFeed('Tokyo');
+  if (tokyo.ok) { assert.equal(tokyo.level, 'Low'); assert.ok(tokyo.riskScore >= 90); }
+});

@@ -64,15 +64,43 @@ function seed(str) {
 
 const LAYERS = ['Weather', 'Safety', 'Visa', 'Currency', 'Demand', 'Crowd', 'Health'];
 
+// Known-risk destinations — long-standing, well-established government advisory
+// levels (FCDO/State-style). The deterministic engine must never paint a
+// do-not-travel destination as "Low risk · no advisories". Score = safety
+// (higher is safer). Matched by city or country keyword.
+const RISK_PROFILES = [
+  { match: /kinshasa|congo|drc/i, score: 42, level: 'High', safety: 'Government advisories in effect — avoid eastern provinces and North Kivu; crime and demonstration risk in Kinshasa', health: 'Yellow-fever certificate REQUIRED · malaria zone · check outbreak notices', advisory: 'Most governments advise against all but essential travel to parts of DRC — check FCDO/State before booking.' },
+  { match: /kabul|afghanistan/i, score: 12, level: 'Severe', safety: 'DO NOT TRAVEL — all government advisories', health: 'Medical infrastructure extremely limited', advisory: 'All major governments advise against ALL travel to Afghanistan.' },
+  { match: /mogadishu|somalia/i, score: 15, level: 'Severe', safety: 'DO NOT TRAVEL — terrorism and kidnap risk', health: 'Medical facilities very limited', advisory: 'Advise against all travel.' },
+  { match: /tripoli|libya/i, score: 18, level: 'Severe', safety: 'DO NOT TRAVEL — conflict and kidnap risk', health: 'Limited medical care', advisory: 'Advise against all travel.' },
+  { match: /sanaa|yemen/i, score: 12, level: 'Severe', safety: 'DO NOT TRAVEL — armed conflict', health: 'Cholera risk · infrastructure collapse', advisory: 'Advise against all travel.' },
+  { match: /damascus|syria/i, score: 15, level: 'Severe', safety: 'DO NOT TRAVEL — conflict zone', health: 'Limited medical care', advisory: 'Advise against all travel.' },
+  { match: /port.?au.?prince|haiti/i, score: 22, level: 'Severe', safety: 'DO NOT TRAVEL — gang violence and kidnapping', health: 'Cholera risk · limited care', advisory: 'Advise against all travel.' },
+  { match: /bamako|mali\b|ouagadougou|burkina/i, score: 25, level: 'High', safety: 'Advise against most travel — terrorism risk', health: 'Malaria zone', advisory: 'Advise against all but essential travel.' },
+  { match: /caracas|venezuela/i, score: 35, level: 'High', safety: 'Reconsider travel — crime and shortages', health: 'Bring essential medication', advisory: 'Reconsider travel; some areas advise against all travel.' },
+  { match: /lagos|abuja|nigeria/i, score: 52, level: 'Elevated', safety: 'Increased caution — several states carry advise-against notices', health: 'Yellow-fever certificate required · malaria zone', advisory: 'Exercise increased caution; regional advisories vary.' },
+  { match: /cairo|egypt/i, score: 62, level: 'Moderate', safety: 'Increased caution — avoid North Sinai', health: 'Routine vaccinations advised', advisory: 'Tourist areas: normal precautions; regional exceptions apply.' },
+  { match: /cape town|johannesburg|south africa/i, score: 60, level: 'Moderate', safety: 'Increased caution — elevated crime in some districts; use registered transport', health: 'No major alerts', advisory: 'Exercise increased caution.' },
+  { match: /s(ã|a)o paulo|rio de janeiro|brazil/i, score: 60, level: 'Moderate', safety: 'Increased caution — street crime in urban centres', health: 'Check dengue/zika notices', advisory: 'Exercise increased caution.' },
+  { match: /bangkok|thailand/i, score: 74, level: 'Moderate', safety: 'Normal precautions — avoid far-southern provinces', health: 'Dengue-season awareness', advisory: 'Most of Thailand: normal precautions.' },
+  { match: /tokyo|japan/i, score: 95, level: 'Low', safety: 'Very safe — normal precautions', health: 'No alerts', advisory: 'One of the safest major destinations.' },
+];
+
 export function riskFeed(destinationText) {
   const dest = resolveDest(destinationText);
   if (!dest) return { ok: false, error: 'unknown-destination' };
   const rnd = seed('risk-' + dest.code);
-  const score = Math.round(78 + rnd() * 20); // 78-98, higher = safer
-  const level = score >= 90 ? 'Low' : score >= 80 ? 'Moderate' : 'Elevated';
+  const hay = `${dest.city} ${dest.countryName || ''} ${destinationText}`;
+  const profile = RISK_PROFILES.find((p) => p.match.test(hay)) || null;
+  const score = profile ? profile.score : Math.round(78 + rnd() * 20); // higher = safer
+  const level = profile ? profile.level : (score >= 90 ? 'Low' : score >= 80 ? 'Moderate' : 'Elevated');
   const layers = LAYERS.map((name) => {
-    const s = Math.round(72 + rnd() * 26);
-    return { layer: name, status: s >= 88 ? 'good' : s >= 78 ? 'watch' : 'caution', note: layerNote(name, dest, rnd) };
+    const sVal = Math.round(72 + rnd() * 26);
+    let note = layerNote(name, dest, rnd);
+    let status = sVal >= 88 ? 'good' : sVal >= 78 ? 'watch' : 'caution';
+    if (profile && name === 'Safety') { note = profile.safety; status = score < 45 ? 'caution' : 'watch'; }
+    if (profile && name === 'Health') { note = profile.health; status = score < 45 ? 'caution' : 'watch'; }
+    return { layer: name, status, note };
   });
   return {
     ok: true,
@@ -80,11 +108,15 @@ export function riskFeed(destinationText) {
     destination: { code: dest.code, city: dest.city, country: dest.countryName },
     riskScore: score,
     level,
+    knownProfile: !!profile,
     layers,
-    advisories: [
-      `${dest.city}: ${level.toLowerCase()} overall risk — standard precautions advised.`,
-      `Best travel window identified for ${dest.city} based on weather + demand.`,
-    ],
+    advisories: profile
+      ? [profile.advisory, 'Reflects long-standing government advisories — always confirm the official FCDO/State page before booking.']
+      : [
+        `${dest.city}: ${level.toLowerCase()} overall risk — standard precautions advised.`,
+        `Best travel window identified for ${dest.city} based on weather + demand.`,
+      ],
+    disclaimer: 'Estimated intelligence — confirm on the official government travel-advice portal.',
   };
 }
 
