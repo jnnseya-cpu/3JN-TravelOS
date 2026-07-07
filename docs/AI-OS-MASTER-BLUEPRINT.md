@@ -760,6 +760,24 @@ The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, pr
 
 ---
 
+# SECTION 16 — COMPETITIVE ADVANTAGE FRAMEWORK
+*How 3JN Travel OS becomes impossible to replicate*
+
+## 16. Competitive Advantage
+
+### 16.1 Structural Moats
+
+| Moat | Description | Time to Build |
+|---|---|---|
+| **Wholesale Intelligence** | Direct GDS + wholesaler relationships producing true minimum price — not replicable without similar commercial relationships | 12–18 months to replicate |
+| **Travel Intelligence Mesh** | 10-agent coordinated system trained on 3JN-specific travel data — creates compounding intelligence advantage | 18–24 months + proprietary data |
+| **Universal Console Lock-in** | Once visa, loyalty, eSIM, transfers, and documents are centralised, switching cost is extremely high | Builds with user tenure |
+| **BitriPay African Rail** | First-mover advantage in AI-native travel for African diaspora corridors with CDF + mobile money native | Market position, regulatory moat |
+| **ACU Data Network** | Every agent action generates training signal — platform gets smarter with every booking, unique to scale | Compounds with GMV |
+| **White-Label Ecosystem** | Travel agencies powered by 3JN cannot easily switch platforms once client data and workflows are integrated | Distribution moat |
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
