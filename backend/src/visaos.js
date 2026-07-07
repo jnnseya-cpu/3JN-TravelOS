@@ -90,6 +90,60 @@ export const AGENT_CHECKS = {
   ],
 };
 
+// ---- Physical Embassy Elimination (the key USP) -------------------------------
+// Old model: Apply → Queue → Appointment → Wait → Interview → Decision.
+// VisaOS: Apply Online → AI Verification → Risk Scoring → Decision in Minutes.
+export const DIGITAL_JOURNEY = {
+  usp: 'Physical Embassy Elimination',
+  oldModel: ['Apply', 'Queue', 'Appointment', 'Wait', 'Interview', 'Decision'],
+  newModel: ['Apply Online', 'AI Verification', 'Risk Scoring', 'Decision in Minutes'],
+  physicalAppearanceOnlyIf: [
+    'Biometrics required', 'Security escalation', 'Suspicious case', 'Random audit', 'Final interview',
+  ],
+  target: { fullyDigitalPct: [90, 95], effect: 'Embassy queues collapse.' },
+};
+
+// ---- Anti-Corruption Layer (documented; enforced in store.decideVisaApplication)
+// No manual officer can secretly approve a fraudulent application: approving
+// against the AI's high-risk verdict requires a written reason + a second
+// approver (approval chain), and lands in the immutable audit log AND the
+// hash-chained audit trail. This reduces bribery.
+export const ANTI_CORRUPTION = {
+  rule: 'No manual officer can secretly approve a fraudulent application.',
+  overrideRequires: ['Reason', 'Approval chain', 'Audit log'],
+  effect: 'This reduces bribery.',
+};
+
+// ---- Fraud-Free Architecture: Zero Trust -------------------------------------
+// Trust nothing by default. Everything must be verified. Six mandatory
+// security layers wrap every application; their per-application status is
+// attached to each assessment, and decisions are sealed into a hash-chained
+// audit trail (see store.sealVisaBlock) so no decision can be altered secretly.
+export const ZERO_TRUST = {
+  principle: 'Trust nothing by default. Everything must be verified.',
+  mandatoryLayers: [
+    { layer: 'Biometric Liveness', stops: 'Impersonation' },
+    { layer: 'Device Fingerprinting', stops: 'Fraud devices' },
+    { layer: 'IP Intelligence', stops: 'Suspicious geographies' },
+    { layer: 'Metadata Analysis', stops: 'Manipulated files' },
+    { layer: 'Blockchain Audit Trail', stops: 'Decisions altered secretly' },
+    { layer: 'Immutable Logs', stops: 'Unrecorded actions' },
+  ],
+};
+function zeroTrustStatus(a) {
+  return {
+    principle: ZERO_TRUST.principle,
+    layers: [
+      { layer: 'Biometric Liveness', status: a.livenessFailed ? 'fail' : 'pass', note: a.livenessFailed ? 'Liveness check failed — possible impersonation.' : 'Live subject confirmed; presentation attack ruled out.' },
+      { layer: 'Device Fingerprinting', status: a.deviceFraud ? 'fail' : 'pass', note: a.deviceFraud ? 'Device fingerprint linked to prior fraudulent applications.' : 'Device fingerprint clean; no fraud-device linkage.' },
+      { layer: 'IP Intelligence', status: a.ipSuspicious ? 'watch' : 'pass', note: a.ipSuspicious ? 'Application submitted from a suspicious geography / anonymised network.' : 'IP geography consistent with the declared address.' },
+      { layer: 'Metadata Analysis', status: a.documentsAuthentic ? 'pass' : 'fail', note: a.documentsAuthentic ? 'File metadata consistent — no manipulation traces.' : 'File metadata indicates manipulation.' },
+      { layer: 'Blockchain Audit Trail', status: 'enforced', note: 'Decision sealed into the hash-chained audit trail — cannot be altered secretly.' },
+      { layer: 'Immutable Logs', status: 'enforced', note: 'Every action recorded in the append-only audit log.' },
+    ],
+  };
+}
+
 function seed(str) {
   let s = 0;
   for (let i = 0; i < str.length; i++) s = (s * 31 + str.charCodeAt(i)) % 2147483647;
@@ -111,8 +165,8 @@ export function assessVisa(app = {}) {
   // --- Seven risk dimensions (0 = safe, 100 = maximum risk) ---
   const base = () => 8 + rnd() * 14; // low baseline noise
 
-  const identity = clamp(base() + (a.footprintMatches ? 0 : 38) + (a.onWatchlist ? 55 : 0) + (a.identityDuplicate ? 40 : 0), 0, 100);
-  const fraud = clamp(base() + (a.documentsAuthentic ? 0 : 55) + (a.footprintMatches ? 0 : 22) + (a.knownFraudNetwork ? 60 : 0), 0, 100);
+  const identity = clamp(base() + (a.footprintMatches ? 0 : 38) + (a.onWatchlist ? 55 : 0) + (a.identityDuplicate ? 40 : 0) + (a.livenessFailed ? 35 : 0), 0, 100);
+  const fraud = clamp(base() + (a.documentsAuthentic ? 0 : 55) + (a.footprintMatches ? 0 : 22) + (a.knownFraudNetwork ? 60 : 0) + (a.deviceFraud ? 30 : 0) + (a.ipSuspicious ? 12 : 0), 0, 100);
   const financial = clamp(base() + (a.fundsConsistent ? 0 : 48) + (a.monthlyIncome < 1500 ? 22 : 0) + (a.suddenDeposit ? 30 : 0), 0, 100);
   const overstay = clamp(base() + (a.priorOverstays ? 60 : 0) + (a.homeTies === 'weak' ? 30 : a.homeTies === 'moderate' ? 12 : 0) + overstayCountryBias(a.nationality, rnd) + (a.age < 25 ? 12 : 0), 0, 100);
   const behaviour = clamp(base() + a.behaviourHesitation * 0.6 + (a.contradictions ? 25 : 0), 0, 100);
@@ -145,6 +199,7 @@ export function assessVisa(app = {}) {
     confidence,
     decisionConfidenceScore: confidence, // the Decision Agent's headline output
     conditions,
+    zeroTrust: zeroTrustStatus(a),
     slaMinutes: decision === 'Human Review' ? 'escalated' : 5,
   };
 }
@@ -198,6 +253,9 @@ function normalise(app) {
     sanctioned: !!app.sanctioned,
     knownFraudNetwork: !!app.knownFraudNetwork,
     identityDuplicate: !!app.identityDuplicate,
+    livenessFailed: !!app.livenessFailed,
+    deviceFraud: !!app.deviceFraud,
+    ipSuspicious: !!app.ipSuspicious,
     suddenDeposit: !!app.suddenDeposit,
     contradictions: !!app.contradictions,
     declaredVsHistoryMismatch: !!app.declaredVsHistoryMismatch,

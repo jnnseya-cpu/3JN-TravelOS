@@ -2295,3 +2295,67 @@ test('VisaOS decision engine: four outcomes, seven risk dimensions, 0-1000 with 
   }
   assert.ok(safe.slaMinutes === 5, 'decision in under 5 minutes unless escalated');
 });
+
+// ================= VisaOS Fraud-Free Architecture ==============================
+import { ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY } from '../src/visaos.js';
+import { sealVisaBlock, verifyVisaChain, decideVisaApplication, db as storeDb } from '../src/store.js';
+
+test('zero trust: six mandatory layers attached to every assessment; failures raise risk', () => {
+  assert.equal(ZERO_TRUST.mandatoryLayers.length, 6);
+  const clean = assessVisa({ name: 'ZT Clean', nationality: 'GB', destination: 'Dubai' });
+  assert.equal(clean.zeroTrust.layers.length, 6);
+  assert.ok(clean.zeroTrust.layers.every((l) => ['pass', 'enforced'].includes(l.status)));
+  // Liveness failure + fraud device + suspicious IP push identity/fraud risk up.
+  const dirty = assessVisa({ name: 'ZT Dirty', nationality: 'GB', destination: 'Dubai', livenessFailed: true, deviceFraud: true, ipSuspicious: true });
+  assert.equal(dirty.zeroTrust.layers.find((l) => l.layer === 'Biometric Liveness').status, 'fail');
+  assert.equal(dirty.zeroTrust.layers.find((l) => l.layer === 'Device Fingerprinting').status, 'fail');
+  assert.ok(dirty.risk.identity > clean.risk.identity, 'liveness failure raises identity risk');
+  assert.ok(dirty.risk.fraud > clean.risk.fraud, 'fraud device raises fraud risk');
+});
+
+test('blockchain audit trail: decisions sealed into a hash chain; tampering is detected', () => {
+  const b1 = sealVisaBlock('assessment', { id: 'visa_t1', decision: 'Auto Approval', totalScore: 120 });
+  const b2 = sealVisaBlock('embassy-decision', { id: 'visa_t1', decision: 'Approved', officerId: 'off_1' });
+  assert.equal(b2.prevHash, b1.hash, 'each block chains to the previous');
+  const intact = verifyVisaChain();
+  assert.equal(intact.ok, true);
+  assert.ok(intact.blocks >= 2);
+  // Tamper with a sealed payload -> the chain breaks exactly there.
+  const victim = storeDb.visaChain[storeDb.visaChain.length - 2];
+  const original = victim.payload;
+  victim.payload = original.replace('Auto Approval', 'Auto Rejection');
+  const broken = verifyVisaChain();
+  assert.equal(broken.ok, false);
+  assert.equal(broken.tamperedAtIndex, victim.index, 'tamper located');
+  victim.payload = original; // restore
+  assert.equal(verifyVisaChain().ok, true);
+});
+
+test('anti-corruption: approving against a high-risk AI verdict requires reason + approval chain', () => {
+  assert.deepEqual(ANTI_CORRUPTION.overrideRequires, ['Reason', 'Approval chain', 'Audit log']);
+  const risky = assessVisa({ name: 'Risky Case', nationality: 'GB', destination: 'Dubai', onWatchlist: true, documentsAuthentic: false, knownFraudNetwork: true });
+  const rec = recordVisaApplication(risky);
+  // Secret solo approval -> refused.
+  const solo = decideVisaApplication(rec.id, { decision: 'Approved', officerId: 'off_corrupt' });
+  assert.equal(solo.ok, false);
+  assert.equal(solo.error, 'override-requires-reason');
+  const noChain = decideVisaApplication(rec.id, { decision: 'Approved', officerId: 'off_corrupt', reason: 'Ministerial exemption' });
+  assert.equal(noChain.ok, false);
+  assert.equal(noChain.error, 'override-requires-approval-chain');
+  // A proper override carries reason + approval chain and is sealed + audited.
+  const proper = decideVisaApplication(rec.id, { decision: 'Approved', officerId: 'off_1', reason: 'Ministerial exemption', secondApproverId: 'off_2' });
+  assert.equal(proper.ok, true);
+  assert.equal(proper.application.embassyDecision.override, true);
+  assert.deepEqual(proper.application.embassyDecision.approvalChain, ['off_1', 'off_2']);
+  assert.ok(proper.application.embassyDecision.auditBlock.hash, 'override sealed into the audit chain');
+});
+
+test('physical embassy elimination: digital journey + 90-95% fully-digital target', () => {
+  assert.deepEqual(DIGITAL_JOURNEY.newModel, ['Apply Online', 'AI Verification', 'Risk Scoring', 'Decision in Minutes']);
+  assert.equal(DIGITAL_JOURNEY.physicalAppearanceOnlyIf.length, 5);
+  assert.deepEqual(DIGITAL_JOURNEY.target.fullyDigitalPct, [90, 95]);
+  const g = govAnalytics();
+  assert.ok(typeof g.autoDigitalRate === 'number');
+  assert.deepEqual(g.digitalTargetPct, [90, 95]);
+  assert.equal(g.auditChain.ok, true, 'government analytics reports chain integrity');
+});
