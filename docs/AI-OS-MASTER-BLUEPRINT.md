@@ -603,6 +603,36 @@ All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tok
 
 > This blueprint layer composes with the locked **Revenue Protection, Cost Control & Multi-Income Engine** spec (`docs/REVENUE-PROTECTION-SPEC.md`): the 10% final-payment fee, ACU marketplace, refundable deposits, savings share, priority fees, protection fees, group/marketplace/finance streams and the Cost Protection Gate remain the enforced runtime rules; per the platform rule, no newer figure that is *lower* than an already-locked rule replaces it.
 
+### 12.2 ACU (AI Credits Unit) System
+
+Every AI-powered action within 3JN Travel OS is metered in **ACU (AI Credits Units)**. ACUs create a transparent, usage-based intelligence economy that aligns platform revenue with user value delivery. Higher membership tiers receive ACU allowances; overages are billed at consumer-friendly rates.
+
+| Membership Tier | Included ACU/Month | Overage Rate | Agent Actions Covered |
+|---|---|---|---|
+| Travel+ Nomad | 1,500 ACU | £0.004/ACU | Basic intent search, price monitor, one visa check |
+| Travel+ Family | 4,000 ACU | £0.003/ACU | Full family planning, multiple visa checks, sync-mesh |
+| Travel+ Executive | 10,000 ACU | £0.0025/ACU | Expense intelligence, meeting sync, unlimited monitoring |
+| Travel+ Elite | 30,000 ACU | £0.002/ACU | All agents unlimited, private aviation queries, concierge |
+| Business Portal | 50,000 ACU / team | £0.0018/ACU | Full enterprise agent workforce |
+| API Developer | Pay-as-you-go | £0.003/ACU | All agent APIs available |
+
+*(Runtime today: tiers auto-fund ACUs at 10% of plan value (£1 = 100 ACU) with the ACU Marketplace volume packs; this table is the production allowance upgrade — allowances may only be raised, never lowered, per the platform rule.)*
+
+### 12.3 Projected Revenue Model (3-Year)
+
+| Metric | Year 1 | Year 2 | Year 3 |
+|---|---|---|---|
+| Paid Members (Consumer) | 12,000 | 65,000 | 210,000 |
+| Business/Enterprise Clients | 80 | 420 | 1,800 |
+| Average Revenue Per User (ARPU) | £12.40/month | £14.20/month | £16.80/month |
+| Gross Booking Value (GBV) | £18M | £95M | £380M |
+| Wholesale Margin Revenue | £720K | £3.8M | £15.2M |
+| Subscription Revenue (ARR) | £1.78M | £11.1M | £42.3M |
+| ACU & API Revenue | £220K | £1.4M | £6.8M |
+| BitriPay Gateway Revenue | £180K | £980K | £4.2M |
+| **Total Revenue (Gross)** | **£3.1M** | **£18.4M** | **£71.5M** |
+| Target Gross Margin | 62% | 68% | 74% |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
