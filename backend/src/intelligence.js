@@ -120,6 +120,37 @@ export function riskFeed(destinationText) {
   };
 }
 
+// ---- Travel Intelligence Score (USP #3) ------------------------------------
+// Every trip receives seven 0–100 scores — Cost, Safety, Visa, Weather, Crowd,
+// Value, Risk — deterministic (seeded) so the same trip always scores the same.
+const PEAK_MONTHS = ['july', 'august', 'december'];
+const SHOULDER_MONTHS = ['april', 'may', 'june', 'september', 'october'];
+export function travelIntelligenceScore({ destinationText, month = null, savingsPct = 0, avgReliability = 80, visaProbability = null }) {
+  const risk = riskFeed(destinationText);
+  if (!risk.ok) return null;
+  const rnd = seed('tis-' + risk.destination.code + '-' + (month || 'any'));
+  const m = (month || '').toLowerCase();
+  const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
+
+  const safetyScore = risk.riskScore; // higher = safer (honest profiles included)
+  const visaScore = visaProbability != null ? clamp(visaProbability) : clamp(70 + rnd() * 25);
+  const costScore = clamp(50 + savingsPct * 2.5);                    // savings vs public floor
+  const crowdScore = clamp(PEAK_MONTHS.includes(m) ? 45 + rnd() * 15 : SHOULDER_MONTHS.includes(m) ? 70 + rnd() * 15 : 82 + rnd() * 14);
+  const weatherScore = clamp(SHOULDER_MONTHS.includes(m) ? 80 + rnd() * 16 : PEAK_MONTHS.includes(m) ? 68 + rnd() * 20 : 60 + rnd() * 25);
+  const valueScore = clamp(avgReliability * 0.6 + costScore * 0.4);  // reliability per pound
+  const riskScore = clamp(safetyScore * 0.6 + visaScore * 0.4);      // composite trip risk (higher = lower risk)
+
+  const scores = { costScore, safetyScore, visaScore, weatherScore, crowdScore, valueScore, riskScore };
+  const overall = clamp(Object.values(scores).reduce((s, v) => s + v, 0) / 7);
+  return {
+    destination: risk.destination,
+    scores,
+    overall,
+    band: overall >= 80 ? 'Excellent' : overall >= 65 ? 'Good' : overall >= 50 ? 'Fair' : 'Caution',
+    disclaimer: risk.disclaimer,
+  };
+}
+
 function layerNote(name, dest, rnd) {
   switch (name) {
     case 'Weather': return `${Math.round(20 + rnd() * 18)}°C, mostly clear`;

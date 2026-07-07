@@ -123,17 +123,17 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-// ---- Booking Protection (optional add-on) -----------------------------------
-// £5–£50 scaled to trip value (~2%), covering: price-drop monitoring priority,
-// booking mistake check, refund guidance, flight disruption support, document
-// checklist review and visa deadline alerts.
+// ---- Booking Protection (Revenue Source 7, optional add-on) ------------------
+// £5–£50 scaled to trip value (~2%), covering the five protection services:
+// price-drop monitoring, refund support, travel alerts, disruption assistance
+// and document validation (plus the booking mistake check).
 export const PROTECTION_BENEFITS = [
-  'Priority price-drop monitoring (instant rebook)',
+  'Price-drop monitoring (priority instant rebook)',
+  'Refund support end-to-end',
+  'Travel alerts (visa deadlines, entry-rule changes)',
+  'Disruption assistance (auto-rebooking priority)',
+  'Document validation before travel',
   'Booking mistake check (names, dates, routes)',
-  'Refund guidance end-to-end',
-  'Flight disruption support (auto-rebooking priority)',
-  'Document checklist review before travel',
-  'Visa deadline alerts',
 ];
 export function protectionFee(totalLocal) {
   const fee = Math.max(5, Math.min(50, Math.round(totalLocal * 0.02)));

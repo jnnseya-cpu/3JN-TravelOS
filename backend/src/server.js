@@ -29,7 +29,8 @@ import {
   registerHost, updateHostListing, hostBookings, hostDashboard,
   grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT, usageStats,
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
-  placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, SEARCH_DEPOSIT_GBP,
+  placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
+  profitabilityDashboard, claimSavingsGuarantee,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -44,7 +45,7 @@ import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotel
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
-import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
+import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE } from './revenue.js';
 import { gatewayStatus } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
@@ -294,6 +295,22 @@ app.get('/api/admin/ai-costs', safe((req, res) => {
   res.json(aiCostReport());
 }));
 
+// ---- Profitability Dashboard (spec §17): real-time money view --------------
+app.get('/api/admin/profitability', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(profitabilityDashboard());
+}));
+
+// ---- Guaranteed Savings Engine (USP #2) -------------------------------------
+// "If we cannot beat or match your current quote, we refund your search
+// credits." Compares the competing quote to our floor and refunds the ACUs.
+app.post('/api/account/:id/savings-guarantee', safe((req, res) => {
+  const { competitorQuoteUSD, ourTotalUSD, acuSpent } = req.body || {};
+  const result = claimSavingsGuarantee(req.params.id, { competitorQuoteUSD, ourTotalUSD, acuSpent });
+  if (!result.ok) return res.status(400).json(result);
+  res.json({ ...result, guarantee: SAVINGS_GUARANTEE });
+}));
+
 // Lightweight "login" — look up an existing account by email (prototype: no
 // password; a real build authenticates via Auth0/Firebase).
 app.post('/api/login', safe((req, res) => {
@@ -395,6 +412,29 @@ app.post('/api/plan', safe(async (req, res) => {
   } else if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     const cost = reqTier.acu || 0;
+    // Revenue Engine (spec §9): abuse detection forfeits the active search
+    // deposit — deposits are refundable, EXCEPT when the abuse throttle trips.
+    if (result.gate?.reason === 'abuse-throttle') {
+      const forfeited = forfeitSearchDeposit(user.id, 'abuse-throttle');
+      if (forfeited) {
+        result.gate.requirement = {
+          ...(result.gate.requirement || {}),
+          depositForfeited: { depositId: forfeited.id, amountGBP: forfeited.amountGBP },
+          message: `${result.gate.requirement?.message || ''} Your £${forfeited.amountGBP} search deposit was forfeited because abuse was detected.`.trim(),
+        };
+      }
+    }
+    // Tier 4 Concierge requires a real commitment (deposit / subscription /
+    // premium plan) before AI + human-expert time runs — never ACU alone.
+    if (searchTier === 'concierge' && result.gate?.reason === 'concierge-requires-commitment') {
+      return res.json({
+        stage: 'concierge-requires-commitment',
+        tierName: reqTier.name,
+        requirement: result.gate.requirement,
+        depositTierGBP: 20,
+        message: result.gate.requirement?.message,
+      });
+    }
     // ACU PRE-APPROVAL: the user must approve the charge BEFORE the paid work
     // counts. No approval = no AI cost — we return the quote, not the results.
     if (cost > 0 && req.body?.approveAcu !== true) {
@@ -941,13 +981,22 @@ app.post('/api/v1/hotels', safe((req, res) => {
   res.json({ ...auth, product: 'hotel-comparison', stage: r.stage, hotels: stays });
 }));
 
+app.post('/api/v1/esim', safe((req, res) => {
+  const auth = partnerAuth(req);
+  const r = plan({ text: `esim for ${req.body?.destination || req.body?.text || 'Dubai'}`, context: detectContext(req, {}), user: null, searchTier: 'smart' });
+  const esims = r.stage === 'options' ? r.packages.options.flatMap((o) => o.components.filter((c) => c.type === 'esim')) : [];
+  res.json({ ...auth, product: 'esim', stage: r.stage, esims });
+}));
+
 app.post('/api/v1/search', safe((req, res) => {
   const { text } = req.body || {};
   const partnerKey = req.headers['x-partner-key'];
   // Validate a real issued key if supplied; otherwise allow the public demo.
   const keyInfo = partnerKey ? useApiKey(partnerKey) : null;
   const context = detectContext(req, {});
-  const result = plan({ text, context, user: null, searchTier: 'smart' });
+  // A valid partner key = a white-label contract — funding source 7 of the
+  // Final Platform Rule.
+  const result = plan({ text, context, user: null, searchTier: 'smart', usage: { whiteLabelContract: Boolean(keyInfo) } });
   res.json({
     partner: keyInfo ? keyInfo.userId : (partnerKey ? 'invalid-or-revoked-key' : 'demo-partner'),
     environment: keyInfo ? keyInfo.environment : 'demo',

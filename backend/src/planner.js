@@ -11,11 +11,12 @@ import { findDestination, originForCountry, resolveOrigin } from './destinations
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive, farePrediction } from './price-dive.js';
-import { hostListingsForCity, cacheSearch, getCachedSearch } from './store.js';
+import { hostListingsForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
 import { approvalProbability } from './visaos.js';
+import { travelIntelligenceScore } from './intelligence.js';
 
 // Maps a "what do you need?" answer to the components we'll actually search.
 const NEED_MAP = {
@@ -152,6 +153,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     // A live refundable search deposit funds paid depth (spec §6).
     hasDeposit: !!usage.hasDeposit,
     subscriptionActive: !!(user && user.subscriptionActive),
+    // Final Platform Rule funding sources 6–7: corporate & white-label contracts.
+    corporateContract: !!(user && (user.corporatePlan?.active || user.role === 'business')),
+    whiteLabelContract: !!usage.whiteLabelContract,
     expectedBookingUSD,
     // Strong intent = explicit dates + more than one component named.
     intentStrong: !!(intent.dates?.checkIn && intent.components.length >= 2),
@@ -171,14 +175,16 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const cacheKey = [intent.raw.toLowerCase(), origin.airport,
     intent.flightPrefs.directOnly ? 'D1' : 'D0', intent.flightPrefs.departureWindow || '-',
     user ? (user.points || 0) : 0, communityHosts.length].join('|');
-  // CHECK CACHE FIRST — before spending ACUs, at EVERY tier. A fresh identical
-  // answer (within 6h) is served free; the free tier serves any age.
-  const CACHE_FRESH_MS = 6 * 3600 * 1000;
+  // CHECK CACHE FIRST — before spending ACUs, at EVERY tier (Cache-First
+  // Intelligence Engine, spec §16). Confidence decays with age: above the 85%
+  // serve threshold the answer is served with NO AI COST; the free tier serves
+  // any age. The checked sources: historical results, popular routes, past
+  // bookings, cached prices, destination intelligence, supplier deals.
   {
     const hit = getCachedSearch(cacheKey);
-    const fresh = hit && (Date.now() - Date.parse(hit.cachedAt)) < CACHE_FRESH_MS;
-    if (hit && (effectiveTier === 'free' || fresh)) {
-      return { ...hit.result, cached: true, cachedAt: hit.cachedAt, gate: { ...hit.result.gate, requestedTier: searchTier, effectiveTier, allowed: gate.allowed, reason: gate.allowed ? 'served-from-cache' : gate.reason, requirement: gate.requirement || null } };
+    const confidence = cacheConfidence(hit);
+    if (hit && (effectiveTier === 'free' || confidence > CACHE_SERVE_CONFIDENCE)) {
+      return { ...hit.result, cached: true, cachedAt: hit.cachedAt, cacheConfidence: confidence, cacheSources: CACHE_SOURCES, gate: { ...hit.result.gate, requestedTier: searchTier, effectiveTier, allowed: gate.allowed, reason: gate.allowed ? 'served-from-cache' : gate.reason, requirement: gate.requirement || null } };
     }
   }
 
@@ -229,6 +235,33 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       aiCostUSD: gate.aiCostUSD,
       requirement: gate.requirement || null,
     },
+    // THE DECISION (positioning: advisor, not search engine). "Don't Search.
+    // Let AI Find, Negotiate and Build the Best Trip." — one recommended
+    // answer with the saving and each best pick, not a wall of options.
+    decision: buildDecision(packages, priceDive, farePredictionOut, intent),
+    // AI NEGOTIATION LAYER (USP #5): net rates + perks secured per trip.
+    negotiation: (gate.allowed && journey) ? buildNegotiation(packages, intent) : null,
+    // DIASPORA TRAVEL SPECIALIST (USP #6): journeys home, planned natively.
+    diaspora: journey ? diasporaSupport(intent) : null,
+    // TRAVEL INTELLIGENCE SCORE (USP #3): every trip scored across Cost,
+    // Safety, Visa, Weather, Crowd, Value and Risk — most sites don't.
+    intelligenceScore: journey && intent.destination ? travelIntelligenceScore({
+      destinationText: intent.destination.city,
+      month: intent.month,
+      savingsPct: priceDive?.unbeatable?.marginPct || 0,
+      avgReliability: packages.options.find((o) => o.recommended)?.avgReliability ?? 80,
+      visaProbability: (international && journey) ? (approvalProbability(intent.nationality, intent.destination.city)?.approvalProbability ?? null) : null,
+    }) : null,
+    // AI TRAVEL CFO (USP #1): a personal travel financial adviser — every
+    // funded search quantifies the cheaper alternatives it found ("travel 10
+    // days later: save £430 · fly from Manchester: save £165 · same-rating
+    // hotel swap: save £290").
+    travelCFO: (gate.allowed && journey && priceDive) ? {
+      role: 'AI Travel CFO — your personal travel financial adviser',
+      advice: (priceDive.savings || []).map((s) => ({ lever: s.lever, saveUSD: s.savingUSD, say: s.how, apply: s.apply || null })),
+      potentialSavingUSD: priceDive.totalIdentifiedUSD,
+      prediction: farePredictionOut?.advice || null,
+    } : null,
     scanSummary: summariseScan(scan),
     priceDive,
     farePrediction: farePredictionOut,
@@ -258,6 +291,108 @@ function roughTotal(scan) {
     }
   }
   return Math.round(total);
+}
+
+// Diaspora Travel Specialist (USP #6) — journeys home are different, and free
+// aggregators don't understand them. Detected by destination region (Africa,
+// Caribbean, South Asia, Middle East) or an explicit family-visit signal.
+const DIASPORA_REGIONS = {
+  Africa: ['NG', 'GH', 'KE', 'ZA', 'CD', 'CG', 'CM', 'SN', 'ET', 'UG', 'TZ', 'ZW', 'ZM', 'MW', 'MA', 'EG', 'DZ', 'TN', 'RW', 'BI', 'CI', 'AO', 'GM', 'SL', 'LR', 'ML', 'BF', 'NE', 'TD', 'SO', 'ER', 'MZ', 'BW', 'NA'],
+  Caribbean: ['JM', 'TT', 'BB', 'HT', 'DO', 'CU', 'GY', 'SR', 'GD', 'LC', 'VC', 'AG', 'DM', 'KN', 'BS'],
+  'South Asia': ['IN', 'PK', 'BD', 'LK', 'NP', 'AF', 'MV'],
+  'Middle East': ['AE', 'SA', 'QA', 'KW', 'OM', 'BH', 'JO', 'LB', 'IQ', 'IR', 'YE', 'SY', 'PS', 'TR'],
+};
+export const DIASPORA_SERVICES = [
+  'Excess baggage pre-purchase (cheaper than airport rates)',
+  'Money transfer options at the destination (partner rates)',
+  'Local SIM / eSIM set up before landing',
+  'Airport pickup coordination — including pickup by relatives (arrival details shared securely)',
+  'Visa support with a prefilled document checklist',
+  'Multi-city routes — visit more than one family stop in one booking',
+];
+function diasporaSupport(intent) {
+  const cc = intent.destination?.country || null;
+  const region = cc ? Object.keys(DIASPORA_REGIONS).find((r) => DIASPORA_REGIONS[r].includes(cc)) : null;
+  const familySignal = /\b(family|relatives|parents|grandm|grandf|wedding|funeral|back home|home\s?town|visit(ing)? (my|our))\b/i.test(intent.raw || '');
+  if (!region && !familySignal) return null;
+  return {
+    specialist: 'Diaspora Travel Specialist',
+    region: region || 'Family visit',
+    trigger: region ? `destination region: ${region}` : 'family-visit signal in the request',
+    services: DIASPORA_SERVICES,
+    note: 'Journeys home are different — 3JN plans excess baggage, pickups, SIMs, visas and multi-city family stops natively.',
+  };
+}
+
+// AI Negotiation Layer (USP #5) — the agent works hotels, tour operators,
+// local suppliers and transport providers for net rates AND perks. Negotiated
+// components are real (agent accounts below public price); perks are the
+// deterministic outcome of the same seeded negotiation.
+const NEGOTIATED_PERKS = ['Free room upgrade (subject to availability)', 'Free breakfast', 'Free airport pickup', 'Late checkout', 'Welcome drink / resort credit'];
+function buildNegotiation(packages, intent) {
+  const rec = packages?.options?.find((o) => o.recommended) || packages?.options?.[0];
+  if (!rec) return null;
+  const negotiated = rec.components.filter((c) => c.agent && c.publicPriceUSD > c.priceUSD);
+  const hotel = rec.components.find((c) => c.type === 'hotel' || c.type === 'host');
+  let seedN = 0;
+  for (const ch of (intent.raw || '')) seedN = (seedN * 31 + ch.charCodeAt(0)) % 997;
+  const perks = hotel
+    ? [...new Set([NEGOTIATED_PERKS[seedN % 5], NEGOTIATED_PERKS[(seedN + 2) % 5]])]
+    : [];
+  const savedUSD = negotiated.reduce((s, c) => s + (c.publicPriceUSD - c.priceUSD), 0);
+  if (!negotiated.length && !perks.length) return null;
+  return {
+    layer: 'AI Negotiation Layer',
+    contacts: ['hotels', 'tour operators', 'local suppliers', 'transport providers'],
+    negotiatedComponents: negotiated.map((c) => ({ type: c.type, supplier: c.supplier, publicUSD: c.publicPriceUSD, negotiatedUSD: c.priceUSD, agent: c.agent })),
+    savedUSD: Math.round(savedUSD * 100) / 100,
+    perksSecured: perks,
+  };
+}
+
+// The Decision — the platform is an advisor, not a search engine. Instead of
+// "Flight A / B / C / D" it returns ONE recommended answer: the total saving
+// and the best pick per component, with the reasoning attached.
+function buildDecision(packages, priceDive, farePrediction, intent) {
+  const rec = packages?.options?.find((o) => o.recommended) || packages?.options?.[0];
+  if (!rec) return null;
+  const pick = (...types) => rec.components.find((c) => types.includes(c.type)) || null;
+  const flight = pick('flight');
+  const journey = flight || pick('train', 'coach', 'ferry', 'cruise');
+  const hotel = pick('hotel', 'host');
+  const transfer = pick('transfer');
+  const esim = pick('esim');
+  const fmt = (c, detail) => (c ? { supplier: c.supplier, reliability: c.reliabilityScore, priceUSD: c.priceUSD, ...(detail || {}) } : null);
+  // Best travel window: the date-shift dive lever when it found a cheaper
+  // window, else the fare-prediction advice, else the traveller's own dates.
+  const dateLever = priceDive?.savings?.find?.((l) => /date/i.test(l.lever || '')) || null;
+  const bestTravelWindow = dateLever?.how
+    || farePrediction?.advice
+    || (intent.month ? `Your chosen window (${intent.month})` : 'Your chosen dates');
+  return {
+    headline: "Don't Search. Let AI Find, Negotiate and Build the Best Trip.",
+    recommendedTier: rec.tier,
+    totalSaving: {
+      local: rec.pricing.local.savingsVsMarket,
+      usd: rec.pricing.lines.savingsVsMarketUSD,
+      symbol: rec.pricing.symbol,
+      vs: 'public market reference for the same components',
+    },
+    bestRoute: journey ? fmt(journey, journey.details?.outbound ? { route: `${journey.details.outbound.from} → ${journey.details.outbound.to}`, depart: journey.details.outbound.depart } : {}) : null,
+    bestHotel: fmt(hotel, hotel?.stars ? { stars: hotel.stars } : {}),
+    bestTransfer: fmt(transfer),
+    bestEsim: fmt(esim),
+    bestTravelWindow,
+    // Global Travel Optimiser (USP #4): the components were optimised
+    // TOGETHER as one journey, never booked piecemeal.
+    optimisedTogether: rec.components.map((c) => c.type),
+    why: [
+      `Highest reliability per pound across ${rec.components.length} verified components (avg ${rec.avgReliability}/100)`,
+      'Wholesale/negotiated rates beat the public reference price',
+      'Every supplier passed the 50-point integrity check',
+      'Flight, stay, transfer, visa, insurance and eSIM optimised together as one journey',
+    ],
+  };
 }
 
 function summariseScan(scan) {

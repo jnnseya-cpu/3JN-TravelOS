@@ -148,14 +148,14 @@ const AGENTS = [
 ];
 
 const TIERS = [
-  { key: 'nomad', save: '£420/yr', name: 'Travel+ Nomad', price: '£4.99', priceNum: 4.99, feature: false,
+  { key: 'nomad', save: '£420/yr', name: 'Travel+ Smart Traveller', price: '£4.99', priceNum: 4.99, feature: false,
     benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', '0% instalment processing fees', 'Digital Visa Assistance'] },
-  { key: 'family', save: '£1,100/yr', name: 'Travel+ Family', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
-    benefits: ['All Nomad Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
-  { key: 'executive', save: '£2,400/yr', name: 'Travel+ Executive', price: '£24.99', priceNum: 24.99, feature: false,
-    benefits: ['All Family Features', 'Fast-Track Security', 'Coworking Intelligence', 'Expense Integration'] },
-  { key: 'elite', save: '£5,000/yr+', name: 'Travel+ Elite', price: '£49.99', priceNum: 49.99, feature: false,
-    benefits: ['All Executive Features', 'Private Aviation Access', 'Guaranteed Upgrades', '24/7 Risk Mitigation'] },
+  { key: 'family', save: '£1,100/yr', name: 'Travel+ Family Saver', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
+    benefits: ['All Smart Traveller Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
+  { key: 'executive', save: '£2,400/yr', name: 'Travel+ Frequent Flyer', price: '£24.99', priceNum: 24.99, feature: false,
+    benefits: ['All Family Saver Features', 'Fast-Track Security', 'Coworking Intelligence', 'Expense Integration'] },
+  { key: 'elite', save: '£5,000/yr+', name: 'Travel+ Concierge Elite', price: '£49.99', priceNum: 49.99, feature: false,
+    benefits: ['All Frequent Flyer Features', 'Private Aviation Access', 'Guaranteed Upgrades', '24/7 Risk Mitigation'] },
 ];
 // 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
 const ACU_PER_GBP = 100;
@@ -405,6 +405,7 @@ async function runPlan(overrides = {}) {
     return;
   }
   if (data.stage === 'topup-required') { renderTopup(data); return; }
+  if (data.stage === 'concierge-requires-commitment') { renderConciergeCommitment(data); return; }
   if (data.stage === 'clarify') { renderClarify(data); return; }
   // A paid tier was funded by ACUs — reflect the new balance.
   if (typeof data.acuBalance === 'number' && state.user) {
@@ -431,6 +432,31 @@ function renderTopup(data) {
   </div>`;
 }
 window.runFreeSearch = () => { const sel = $('#tierSelect'); if (sel) sel.value = 'free'; runPlan(); };
+
+// Tier 4 Concierge pairs AI agents with a human travel expert — it needs a
+// commitment first: a refundable £20 deposit, a subscription, or a premium plan.
+function renderConciergeCommitment(data) {
+  const out = $('#plannerOut');
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+    <div style="font-size:34px">🤝</div>
+    <h3 style="margin:10px 0 6px">Concierge Search needs a commitment</h3>
+    <p class="muted" style="font-size:14px">${data.message || 'Concierge pairs AI agents with a human travel expert — place a refundable £20 deposit, or use a subscription/premium plan.'}</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:8px">
+      <button class="btn btn-gold" onclick="placeConciergeDeposit()">Place refundable £20 deposit</button>
+      <button class="btn btn-ghost" data-nav="membership">Join a plan</button>
+      <button class="btn btn-ghost" onclick="runFreeSearch()">Run free cached search</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">The deposit is deducted from your final payment when you book, and refundable if you don't — unless abuse is detected.</p>
+  </div>`;
+}
+window.placeConciergeDeposit = async () => {
+  if (!state.user) { toast('Sign in first to place a deposit.'); return; }
+  try {
+    const d = await api(`/api/account/${state.user.id}/deposit`, { method: 'POST', body: JSON.stringify({ tier: 'concierge' }) });
+    toast(`✓ £${d.deposit.amountGBP} refundable deposit placed — running your Concierge Search.`);
+    runPlan();
+  } catch { /* api() already surfaced the error */ }
+};
 window.renewMembership = async () => {
   let d; try { d = await api('/api/membership/renew', { method: 'POST', body: '{}' }); } catch { return; }
   if (d.user) setUser(d.user);
