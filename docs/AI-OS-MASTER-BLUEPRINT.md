@@ -441,6 +441,19 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 
 *(The shipping prototype is already a full PWA: `manifest.webmanifest` with shortcuts + maskable icons, an update-safe service worker (network-first shell, cache-first assets, network-only API with valid offline JSON), installed across the OS and the landing page.)*
 
+### 9.2 Backend Architecture
+
+| Layer | Technology | Rationale |
+|---|---|---|
+| **API Framework** | NestJS (TypeScript) | Modular, testable, enterprise-grade microservices |
+| **API Gateway** | Kong + AWS API Gateway | Rate limiting, auth, routing, observability |
+| **Event Bus** | Apache Kafka (Confluent Cloud) | Agent-to-agent communication, booking events, price events |
+| **Queue** | BullMQ + Redis | Background jobs: price monitoring, email dispatch, visa checks |
+| **Auth** | Auth0 + Firebase Auth | JWT, MFA, social OAuth, device fingerprinting |
+| **AI Orchestration** | LangGraph + LangChain | Stateful multi-agent graph orchestration |
+| **Agent Memory** | Pinecone (vector) + Redis (session) | Long-term preference memory + short-term session context |
+| **Workflow Engine** | Temporal.io | Durable, long-running workflows (booking, visa, compliance) |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
