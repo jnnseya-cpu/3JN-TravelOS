@@ -459,7 +459,7 @@ app.post('/api/quote', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, payment } = req.body || {};
+  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment } = req.body || {};
   const quote = getQuote(quoteId);
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);
@@ -476,7 +476,7 @@ app.post('/api/book', safe((req, res) => {
     });
   }
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, payment });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment });
   recordBehaviour(user?.id, {
     event: 'book',
     destination: quote.intent?.destination?.code || null,
