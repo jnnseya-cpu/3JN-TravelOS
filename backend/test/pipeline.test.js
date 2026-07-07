@@ -2231,3 +2231,35 @@ test('USP #10 + billing: the locked positioning statement and API billing modes'
   assert.equal(POSITIONING.pillars.length, 7);
   assert.deepEqual(API_BILLING.map((b) => b.name), ['Per call', 'Monthly', 'Enterprise']);
 });
+
+// ================= 3JN VisaOS — GovTech module manifest ========================
+import { VISAOS_MANIFEST, AGENT_CHECKS } from '../src/visaos.js';
+
+test('VisaOS manifest: GovTech positioning, 13 problems, 5-minute SLA, 3 outcomes', () => {
+  assert.match(VISAOS_MANIFEST.positioning, /governments, immigration authorities and consulates/);
+  assert.equal(VISAOS_MANIFEST.tagline, 'From embassy queues to AI-powered border intelligence.');
+  assert.equal(VISAOS_MANIFEST.problems.length, 13);
+  assert.equal(VISAOS_MANIFEST.sla.decisionMinutes, 5);
+  assert.deepEqual(VISAOS_MANIFEST.promise.prerequisites, ['Documents uploaded', 'Biometrics submitted', 'Payment confirmed']);
+  assert.deepEqual(VISAOS_MANIFEST.promise.outcomes, ['Approved', 'Rejected', 'Escalated for Human Review']);
+});
+
+test('VisaOS agent checklists: forensics 9, financial 7, identity 8, footprint 11, behaviour 8, overstay 12', () => {
+  assert.equal(AGENT_CHECKS['Document Forensics'].length, 9);
+  assert.ok(AGENT_CHECKS['Document Forensics'].includes('Metadata tampering'));
+  assert.equal(AGENT_CHECKS['Financial Authenticity'].length, 7);
+  assert.ok(AGENT_CHECKS['Financial Authenticity'].includes('Sudden balance inflation'));
+  assert.equal(AGENT_CHECKS['Identity Verification'].length, 8);
+  assert.ok(AGENT_CHECKS['Identity Verification'].includes('Liveness detection'));
+  assert.equal(AGENT_CHECKS['Online Footprint Intelligence'].length, 11);
+  assert.ok(AGENT_CHECKS['Online Footprint Intelligence'].includes('LinkedIn consistency'));
+  assert.equal(AGENT_CHECKS['Behavioural Intelligence'].length, 8);
+  assert.equal(AGENT_CHECKS['Overstay Risk'].length, 12);
+  // The swarm attaches each agent's checklist to its finding.
+  const a = assessVisa({ name: 'Checks Test', nationality: 'GB', destination: 'Dubai' });
+  const forensics = a.agents.find((x) => x.agent === 'Document Forensics');
+  assert.deepEqual(forensics.checksRun, AGENT_CHECKS['Document Forensics']);
+  const overstay = a.agents.find((x) => x.agent === 'Overstay Risk');
+  assert.equal(overstay.checksRun.length, 12);
+  assert.ok(a.risk.overstay >= 0 && a.risk.overstay <= 100, 'overstay risk scored 0-100');
+});

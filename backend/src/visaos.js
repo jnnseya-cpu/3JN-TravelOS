@@ -10,6 +10,66 @@
 
 import { findDestination, visaRule, DESTINATIONS, resolveDestination } from './destinations.js';
 
+// ---- 3JN VisaOS — module manifest (GovTech / RegTech / Border Intelligence) --
+// The premium module positioning, dictated and locked. This is not an OTA
+// feature: it is digital border & visa decision infrastructure sold to
+// governments, immigration authorities and consulates.
+export const VISAOS_MANIFEST = {
+  name: '3JN VisaOS',
+  category: 'Global AI-Powered Digital Border & Visa Decision Infrastructure (GovTech + RegTech + Border Intelligence)',
+  positioning: '3JN VisaOS is a world-class AI-powered digital visa operating system that enables governments, immigration authorities and consulates to receive, verify, investigate, risk-score and decide visa applications in minutes through advanced fraud detection, behavioural intelligence, document forensics and real-time global risk assessment.',
+  tagline: 'From embassy queues to AI-powered border intelligence.',
+  problems: [
+    'Embassy queues', 'Long waiting times', 'Inconsistent decision-making', 'Manual verification',
+    'Forged documents', 'Fake bank statements', 'Fake employment letters', 'False declarations',
+    'Bribery / corruption risk', 'Human bias', 'Poor fraud detection', 'Slow background checks', 'Expensive staffing',
+  ],
+  vision: 'Replace slow human-heavy visa processing with AI-driven digital border intelligence and near-instant trusted decisions.',
+  sla: { decisionMinutes: 5, condition: 'after complete submission & payment, unless escalated' },
+  promise: {
+    prerequisites: ['Documents uploaded', 'Biometrics submitted', 'Payment confirmed'],
+    outcomes: ['Approved', 'Rejected', 'Escalated for Human Review'],
+    within: 'minutes',
+  },
+};
+
+// Per-agent forensic checklists (the dictated swarm architecture). Each agent
+// in agentFindings() runs these checks; the lists are test-pinned so the
+// published capability can never drift from the engine.
+export const AGENT_CHECKS = {
+  'Document Forensics': [
+    'Edits', 'Manipulation', 'Metadata tampering', 'Photoshop traces', 'Pixel inconsistencies',
+    'Forged stamps', 'Signature anomalies', 'OCR mismatch', 'Duplicate templates',
+  ],
+  'Financial Authenticity': [
+    'Bank statements', 'Salary consistency', 'Spending behaviour', 'Source of funds',
+    'Unusual deposits', 'Money laundering signals', 'Sudden balance inflation',
+  ],
+  'Identity Verification': [
+    'Passport authenticity', 'Face match', 'Liveness detection', 'Identity duplication',
+    'Criminal watchlists', 'Sanctions lists', 'Terror databases', 'Stolen identity risk',
+  ],
+  // The moat: the AI investigates whether the declared identity matches real
+  // life ("Senior Engineer at GE" with no footprint → risk rises).
+  'Online Footprint Intelligence': [
+    'LinkedIn consistency', 'Employment history', 'Professional presence', 'Business registrations',
+    'Social media footprint', 'Travel history', 'Education consistency', 'Address consistency',
+    'Public records', 'Reputation signals', 'Fraud signals',
+  ],
+  // Elite: deception shows in HOW the application is completed, not just what
+  // it says (high hesitation around employment history → risk rises).
+  'Behavioural Intelligence': [
+    'Typing speed', 'Hesitation patterns', 'Correction frequency', 'Unusual pauses',
+    'Navigation behaviour', 'Evasive answer patterns', 'Document upload stress signals', 'Contradiction signals',
+  ],
+  // Critical for governments: predicts the probability of overstay (0–100).
+  'Overstay Risk': [
+    'Travel history', 'Previous visa compliance', 'Home country economics', 'Family ties',
+    'Job stability', 'Property ownership', 'Income consistency', 'Age', 'Dependents',
+    'Migration patterns', 'Return probability', 'Historical country overstay data',
+  ],
+};
+
 function seed(str) {
   let s = 0;
   for (let i = 0; i < str.length; i++) s = (s * 31 + str.charCodeAt(i)) % 2147483647;
@@ -79,6 +139,7 @@ function overstayCountryBias(nat, rnd) {
 }
 
 function agentFindings(a, dims) {
+  const withChecks = (row) => (AGENT_CHECKS[row.agent] ? { ...row, checksRun: AGENT_CHECKS[row.agent] } : row);
   return [
     { agent: 'Document Forensics', status: statusFor(dims.fraud), finding: a.documentsAuthentic ? 'No manipulation, metadata or stamp anomalies detected.' : 'Metadata tampering + forged stamp signature detected.' },
     { agent: 'Financial Authenticity', status: statusFor(dims.financial), finding: a.fundsConsistent ? 'Bank statements consistent with declared income.' : 'Sudden balance inflation inconsistent with salary history.' },
@@ -90,7 +151,7 @@ function agentFindings(a, dims) {
     { agent: 'Intent Assessment', status: statusFor(dims.intent), finding: a.purposeCredible ? `Declared purpose (${a.purpose}) is credible and consistent.` : `Declared purpose (${a.purpose}) not supported by the application story.` },
     { agent: 'Border Risk', status: statusFor(dims.security), finding: a.onWatchlist || a.sanctioned ? 'Security database hit — escalate.' : 'Clear of criminal, terrorism and trafficking databases.' },
     { agent: 'Decision Agent', status: 'info', finding: 'Aggregated all signals into the unified risk score below.' },
-  ];
+  ].map(withChecks);
 }
 function statusFor(risk) { return risk >= 60 ? 'fail' : risk >= 35 ? 'watch' : 'pass'; }
 
