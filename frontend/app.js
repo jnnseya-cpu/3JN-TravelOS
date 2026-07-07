@@ -883,6 +883,13 @@ window.openBooking = async (tier) => {
         <option value="africell">📱 Africell Money (CDF)</option>
       </select>
     </div>
+    <div id="payDetails" style="margin-top:8px">
+      <div class="composer-row">
+        <div class="field"><label>Card / account holder</label><input class="in" id="payHolder" value="${esc(state.user?.travelProfile?.fullLegalName || state.user?.name || '')}"></div>
+        <div class="field"><label>Billing address</label><input class="in" id="payBilling" value="${esc(state.user?.travelProfile?.billingAddress || state.user?.travelProfile?.residentialAddress || '')}"></div>
+      </div>
+      <div class="muted" style="font-size:11px">Card numbers are entered on the secure payment page — never stored by 3JN (PCI SAQ-A).</div>
+    </div>
     <div id="bkValidate"></div>
     <button class="btn btn-gold btn-block" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
 };
@@ -902,6 +909,7 @@ window.confirmBooking = async () => {
     lead.idNumber = $('#bkIdNum').value.trim();
   }
   const specialRequests = [...document.querySelectorAll('#bkSSR .chip-on')].map((c) => c.dataset.ssr);
+  const payment = { cardHolder: $('#payHolder')?.value.trim() || '', billingAddress: $('#payBilling')?.value.trim() || '' };
   // Validate traveller + documents (+ entry rules for international) BEFORE pay.
   const vbox = $('#bkValidate');
   if (vbox) vbox.innerHTML = `<div class="muted" style="font-size:12.5px;margin-top:10px"><span class="loader"></span> Validating ${international ? 'documents & entry rules' : 'traveller details'}…</div>`;
@@ -931,7 +939,7 @@ window.confirmBooking = async () => {
   }
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, payment, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
