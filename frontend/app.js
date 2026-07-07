@@ -685,7 +685,7 @@ function compareCard(data, sym) {
       ${market > our ? `<div><div class="t-label">Typical retail (our estimate)</div><div style="font-size:22px;text-decoration:line-through;color:var(--muted-dim)">${money(market, sym)}</div></div>` : ''}
       ${market > our ? `<div><div class="t-label">You save vs retail</div><div style="font-size:22px;color:var(--green);font-weight:700">${money(market - our, sym)}</div></div>` : ''}
     </div>
-    <p class="muted" style="font-size:12.5px;margin:12px 0 10px">Verify the exact trip live — same dates, same passengers — on independent sites. ${realFare ? 'Our flight price is a <strong style="color:var(--green)">real bookable fare</strong>.' : 'Our price is an <strong>indicative estimate</strong>; connect a live fare provider for bookable quotes.'}</p>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 10px">Verify the exact trip live — same dates, same passengers — on independent sites. ${realFare ? 'Our flight price is a <strong style="color:var(--green)">real bookable fare</strong> — we book it and issue your e-ticket.' : 'This is an <strong>indicative estimate</strong> while we confirm live availability for this exact route and date. We only take real payment once the fare is confirmed bookable, so you\'re never charged for a price we can\'t ticket.'}</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">${linkBtns || '<span class="muted" style="font-size:12px">Add a departure city and dates to generate verify links.</span>'}</div>
   </div>`;
 }
@@ -742,32 +742,16 @@ function optionCard(o, sym, intent) {
       ${o.bookableForRealPayment
         ? `<div class="save-tag" style="color:#79d99b;border-color:rgba(121,217,155,.4)">✓ Live bookable price</div>
            <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="openBooking('${o.tier}')">Quote & ${intent.wantsInstalments ? 'pay in instalments' : 'book'}</button>`
-        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(216,180,106,.4)">Estimated — book real prices below</div>
-           <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="requestExactQuote('${o.tier}')">Ask us to book it (exact quote)</button>
-           ${bookDirectRoutes(o)}`}
+        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(216,180,106,.4)">We book it for you — pay in full or in instalments</div>
+           <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="openBooking('${o.tier}')">Book with 3JN${intent.wantsInstalments ? ' · pay monthly' : ''}</button>`}
     </div>`;
 }
 
-// Real booking route for every mode NOW: components with a supplier deep-link
-// let the customer complete a REAL booking on the supplier's own site at the
-// live price (their merchant record, our affiliate/agent commission, zero
-// liability). Shown on estimated options so all means are bookable today.
-const MODE_ICON = { flight: '✈', hotel: '🏨', host: '🏡', train: '🚆', coach: '🚌', ferry: '⛴', cruise: '🛳', carhire: '🚗', transfer: '🚙', activity: '🎟', activities: '🎟', tickets: '🎫', esim: '📶', insurance: '🛡', visa: '🛂', boat: '⛵' };
-function bookDirectRoutes(o) {
-  const rows = (o.components || []).filter((c) => c.bookingUrl).map((c) => {
-    const ico = MODE_ICON[c.type] || '•';
-    return `<a href="${esc(c.bookingUrl)}" target="_blank" rel="noopener" class="kv" style="cursor:pointer;text-decoration:none">
-      <span>${ico} ${esc(labelForType(c.type))} <span class="muted">· ${esc(c.supplier)}</span></span>
-      <span style="color:var(--blue-bright)">Book direct ↗</span></a>`;
-  }).join('');
-  if (!rows) return '';
-  return `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;color:var(--muted)">Or book each part directly at the live price ↗</summary>
-    <div style="margin-top:6px">${rows}</div>
-    <p class="muted" style="font-size:11px;margin-top:6px">You book and pay on each supplier's own site at their real price. 3JN earns a partner commission — no extra cost to you.</p></details>`;
-}
-function labelForType(t) {
-  return ({ flight: 'Flight', hotel: 'Hotel', host: 'Private host', train: 'Train', coach: 'Coach', ferry: 'Ferry', cruise: 'Cruise', carhire: 'Car hire', transfer: 'Transfer', activities: 'Activities', tickets: 'Tickets', esim: 'eSIM', insurance: 'Insurance', visa: 'Visa', boat: 'Boat charter' }[t] || t);
-}
+// The booking model: 3JN books, 3JN issues the ticket. There is no
+// "book it yourself on the supplier's site" path — the customer books with us
+// (pay in full or in instalments) and we create the order and issue the
+// e-ticket. Pay in full → ticket now; instalments → we hold the fare and issue
+// on completion. See optionCard's "Book with 3JN" CTA.
 
 function labelFor(c) {
   const s = esc(c.supplier);

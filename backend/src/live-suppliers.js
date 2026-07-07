@@ -236,6 +236,38 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
     },
   };
 }
+// HOLD order — reserve the fare WITHOUT paying yet (for pay-monthly / instalments).
+// The airline holds the price until payment_required_by; we pay to ticket once
+// the customer has finished paying us. Only works on offers that allow holds.
+export async function createDuffelHoldOrder({ offerId, passengers = [] }) {
+  if (!liveFlightsEnabled() || !offerId) return { ok: false, error: 'not-configured' };
+  const res = await httpJSON(`${DUFFEL_BASE}/air/orders`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ data: { type: 'hold', selected_offers: [offerId], passengers } }),
+  });
+  if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'hold-failed', status: res?.__status };
+  const o = res.data;
+  return { ok: true, order: { id: o.id, bookingReference: o.booking_reference || null, paymentRequiredBy: o.payment_status?.payment_required_by || null, priceGuaranteeExpiresAt: o.payment_status?.price_guarantee_expires_at || null, totalAmount: o.total_amount, totalCurrency: o.total_currency } };
+}
+// Pay a held order from balance → ISSUES THE TICKET. Called when the customer
+// has finished paying us (final instalment) or immediately for pay-in-full.
+export async function payDuffelOrder({ orderId, amount, currency }) {
+  if (!liveFlightsEnabled() || !orderId) return { ok: false, error: 'not-configured' };
+  const res = await httpJSON(`${DUFFEL_BASE}/air/payments`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ data: { order_id: orderId, payment: { type: 'balance', amount: String(amount), currency } } }),
+  });
+  if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'pay-failed', status: res?.__status };
+  // Fetch the order to read the issued e-tickets.
+  const ord = await httpJSON(`${DUFFEL_BASE}/air/orders/${orderId}`, { headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, Accept: 'application/json' } });
+  const o = ord?.data || {};
+  const ticketNumbers = [];
+  for (const d of (o.documents || [])) if (d.type === 'electronic_ticket' && d.unique_identifier) ticketNumbers.push(d.unique_identifier);
+  return { ok: true, order: { id: orderId, bookingReference: o.booking_reference || null, ticketNumbers } };
+}
+
 // Build Duffel passenger records for order creation from stored traveller data.
 export function duffelOrderPassengers(offerPassengers = [], lead = {}) {
   return (offerPassengers.length ? offerPassengers : [{ type: 'adult' }]).map((p, i) => ({
@@ -298,6 +330,48 @@ export async function fetchLiveFlights(intent, dest, origin) {
     if (norm) out.push(norm);
   }
   return out.length ? out : null;
+}
+
+// Diagnose exactly WHY a live flight search did or didn't return bookable fares.
+// This runs a real probe search against Duffel (LHR→JFK, ~30 days out) and
+// reports the precise outcome so an admin can see whether "estimated" is caused
+// by: no token, a test token, the network being unable to reach Duffel, an auth
+// rejection, or simply no offers on the probe route. Never throws.
+export async function duffelDiagnostic() {
+  const mode = duffelMode();
+  if (!DUFFEL_TOKEN) return { ok: false, mode, reason: 'not-configured', message: 'No DUFFEL_TOKEN set — flights fall back to estimated prices.' };
+  if (typeof fetch !== 'function') return { ok: false, mode, reason: 'no-fetch', message: 'This runtime has no fetch() — cannot reach any live provider.' };
+  const probeDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const body = { data: { slices: [{ origin: 'LHR', destination: 'JFK', departure_date: probeDate }], passengers: [{ type: 'adult' }], cabin_class: 'economy' } };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const r = await fetch(`${DUFFEL_BASE}/air/offer_requests?return_offers=true`, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const latencyMs = Date.now() - startedAt;
+    let payload = null;
+    try { payload = await r.json(); } catch {}
+    if (r.status === 401 || r.status === 403) {
+      return { ok: false, mode, reason: 'auth-rejected', status: r.status, latencyMs, message: `Duffel rejected the token (HTTP ${r.status}). The key may be revoked, wrong, or lacking flight permissions.` };
+    }
+    if (!r.ok) {
+      const detail = payload?.errors?.[0]?.message || payload?.errors?.[0]?.title || `HTTP ${r.status}`;
+      return { ok: false, mode, reason: 'provider-error', status: r.status, latencyMs, message: `Duffel returned an error: ${detail}` };
+    }
+    const offers = payload?.data?.offers;
+    const count = Array.isArray(offers) ? offers.length : 0;
+    if (!count) return { ok: false, mode, reason: 'no-offers', status: r.status, latencyMs, message: 'Duffel is reachable and the token works, but the probe route returned 0 offers. Live fares will appear for routes/dates that do have inventory.' };
+    return { ok: true, mode, reason: 'ok', status: r.status, latencyMs, probeOffers: count, probeCheapest: offers[0]?.total_amount ? `${offers[0].total_amount} ${offers[0].total_currency}` : null, message: `Duffel is LIVE and reachable — ${count} real offers on the probe route in ${latencyMs}ms. Flights are bookable.` };
+  } catch (e) {
+    const aborted = e?.name === 'AbortError';
+    return { ok: false, mode, reason: aborted ? 'timeout' : 'unreachable', message: aborted ? `Duffel did not respond within ${TIMEOUT_MS}ms — the deployment may be unable to reach api.duffel.com (network policy/egress).` : `Could not reach api.duffel.com from this deployment (${e?.message || 'network error'}). Check outbound network access.` };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // ===========================================================================

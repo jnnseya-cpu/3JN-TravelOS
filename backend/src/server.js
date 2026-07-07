@@ -44,7 +44,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode, createDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -129,43 +129,77 @@ const safe = (fn) => async (req, res) => {
 };
 
 // ---- Auto-ticketing: create the Duffel order after payment (issue the ticket)
+// Is the booking fully paid (total covered by payments)? Instalment bookings
+// are NOT fully paid until the final instalment lands.
+function bookingFullyPaid(booking) {
+  const total = booking.option?.pricing?.local?.total || 0;
+  const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  return total > 0 && paid + 0.01 >= total;
+}
+// The booking → ticket lifecycle (the model: WE book, WE issue the ticket).
+//   • Pay in full  → issue the ticket now (Duffel order, instant).
+//   • Instalments  → HOLD the fare now (Duffel hold order); issue the ticket
+//     automatically when the final instalment is paid.
 async function autoTicketFlight(booking) {
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
   if (!flight || !liveFlightsEnabled()) return;
-  // Re-validate the offer one last time before ticketing.
-  const check = await validateDuffelOffer(flight.details.offerId);
-  if (check.ok && (check.expired || check.live === false)) {
-    booking.fulfilment = { ...(booking.fulfilment || {}), ticketing: 'failed', reason: 'offer-expired-before-ticketing', needsRefund: true };
-    if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: 'The fare expired at the final step — we are refunding your payment in full. Please re-search to rebook.' });
-    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.failed', entity: 'booking', entityId: booking.id, summary: 'offer expired before ticketing — refund flagged' });
+  const ful = () => (booking.fulfilment = booking.fulfilment || {});
+  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.lead || {});
+  const fullyPaid = bookingFullyPaid(booking);
+
+  // --- INSTALMENT: hold the fare (once), issue later on completion ----------
+  if (!fullyPaid) {
+    if (booking.fulfilment?.holdOrderId || booking.fulfilment?.ticketing === 'issued') return;
+    const check = await validateDuffelOffer(flight.details.offerId);
+    if (check.ok && (check.expired || check.live === false)) {
+      ful().ticketing = 'failed'; booking.fulfilment.reason = 'offer-expired'; booking.fulfilment.needsRefund = true;
+      if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Fare expired', body: 'The fare expired before we could hold it — we are refunding your deposit. Please re-search.' });
+      return;
+    }
+    const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers });
+    if (!hold.ok) { ful().ticketing = 'hold-failed'; booking.fulfilment.reason = hold.error; return; }
+    ful();
+    booking.fulfilment.ticketing = 'held';
+    booking.fulfilment.holdOrderId = hold.order.id;
+    booking.fulfilment.pnr = hold.order.bookingReference;
+    booking.fulfilment.paymentRequiredBy = hold.order.paymentRequiredBy;
+    booking.fulfilment.heldAt = new Date().toISOString();
+    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.held', entity: 'booking', entityId: booking.id, summary: `held ${hold.order.bookingReference} · pay by ${hold.order.paymentRequiredBy || 'n/a'}` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Seats held — pay monthly', body: `Your fare is reserved (ref ${hold.order.bookingReference}). Your e-ticket is issued automatically once your instalments are paid.` });
     return;
   }
-  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.lead || {});
-  const order = await createDuffelOrder({
-    offerId: flight.details.offerId,
-    passengers,
-    paymentAmount: check.amount || flight.details.liveAmount,
-    paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP',
-  });
+
+  // --- FULLY PAID: issue the ticket ----------------------------------------
+  let order;
+  if (booking.fulfilment?.holdOrderId) {
+    // Pay off the held order → issues the ticket.
+    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: flight.details.liveAmount, currency: flight.details.liveCurrency || 'GBP' });
+    order = pay.ok ? { ok: true, order: { id: booking.fulfilment.holdOrderId, bookingReference: pay.order.bookingReference || booking.fulfilment.pnr, ticketNumbers: pay.order.ticketNumbers } } : pay;
+  } else {
+    const check = await validateDuffelOffer(flight.details.offerId);
+    if (check.ok && (check.expired || check.live === false)) {
+      ful().ticketing = 'failed'; booking.fulfilment.reason = 'offer-expired-before-ticketing'; booking.fulfilment.needsRefund = true;
+      if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: 'The fare expired at the final step — refunding in full. Please re-search.' });
+      return;
+    }
+    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: check.amount || flight.details.liveAmount, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP' });
+  }
   if (!order.ok) {
-    booking.fulfilment = { ...(booking.fulfilment || {}), ticketing: 'failed', reason: order.error, needsRefund: true };
+    ful().ticketing = 'failed'; booking.fulfilment.reason = order.error; booking.fulfilment.needsRefund = true;
     if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: `We could not issue your ticket (${order.error}). Your payment is being refunded in full.` });
     recordAudit({ actor: 'system', role: 'system', action: 'ticketing.failed', entity: 'booking', entityId: booking.id, summary: order.error });
     return;
   }
-  // Ticketed! Store the airline PNR + e-ticket numbers on the booking.
-  booking.fulfilment = {
-    ...(booking.fulfilment || {}),
-    ticketing: 'issued',
-    duffelOrderId: order.order.id,
-    pnr: order.order.bookingReference,
-    ticketNumbers: order.order.ticketNumbers,
-    issuedAt: new Date().toISOString(),
-  };
-  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference} · ${order.order.ticketNumbers.length} e-ticket(s)` });
+  ful();
+  booking.fulfilment.ticketing = 'issued';
+  booking.fulfilment.duffelOrderId = order.order.id;
+  booking.fulfilment.pnr = order.order.bookingReference;
+  booking.fulfilment.ticketNumbers = order.order.ticketNumbers;
+  booking.fulfilment.issuedAt = new Date().toISOString();
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference} · ${(order.order.ticketNumbers || []).length} e-ticket(s)` });
   if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${order.order.bookingReference}. E-tickets are in your Console and on their way by email.` });
   if (booking.lead?.email) {
-    try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${order.order.bookingReference}`, text: `Your flight is ticketed. Airline booking reference: ${order.order.bookingReference}. E-ticket(s): ${order.order.ticketNumbers.join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${order.order.bookingReference}</p><p><strong>E-ticket(s):</strong> ${order.order.ticketNumbers.join(', ')}</p>` }); } catch {}
+    try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${order.order.bookingReference}`, text: `Your flight is ticketed. Airline booking reference: ${order.order.bookingReference}. E-ticket(s): ${(order.order.ticketNumbers || []).join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${order.order.bookingReference}</p>` }); } catch {}
   }
 }
 
@@ -450,15 +484,23 @@ app.get('/api/admin/ai-costs', safe((req, res) => {
 }));
 
 // Live-supplier status: is Duffel connected, and is it a TEST or LIVE key?
-app.get('/api/admin/live-status', safe((req, res) => {
+app.get('/api/admin/live-status', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
+  // Live probe (opt-out with ?probe=0) tells us the REAL reason flights show
+  // estimated: no token, test token, network can't reach Duffel, auth rejected,
+  // or simply no offers on the probe route.
+  const diag = req.query.probe === '0' ? null : await duffelDiagnostic();
   res.json({
-    flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode() },
+    flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode(), diagnostic: diag },
     hotels: { provider: 'Amadeus', enabled: liveHotelsEnabled() },
     schedules: { provider: 'OAG', enabled: oagScheduleEnabled() },
     note: duffelMode() === 'test'
       ? 'Duffel is in TEST mode — searches return test offers and no real tickets are issued. Switch to a live Duffel token to sell real fares.'
-      : duffelMode() === 'live' ? 'Duffel LIVE — real fares. Fares are re-validated at payment; ticketing (order creation) is the final step to wire.' : 'Duffel not configured.',
+      : duffelMode() === 'live'
+        ? (diag?.ok
+          ? 'Duffel LIVE and reachable — real bookable fares are flowing. We hold the fare (instalments) or issue the e-ticket (paid in full) automatically.'
+          : `Duffel LIVE token set, but the live probe did not return bookable fares: ${diag?.message || 'unknown'} — flights fall back to estimated until this clears.`)
+        : 'Duffel not configured — flights are estimated.',
   });
 }));
 
