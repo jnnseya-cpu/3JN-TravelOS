@@ -2671,3 +2671,29 @@ test('exact-quote endpoints: request public, confirm admin-gated, pay refuses un
     server.close();
   }
 });
+
+// ================= Duffel pass-through fees (on top of commission) =============
+import { duffelOrderFeesUSD, DUFFEL_FEES, priceBreakdown as pb } from '../src/pricing.js';
+
+test('duffel fees: recovered ON TOP of the 10% commission, never eroding margin', () => {
+  assert.equal(DUFFEL_FEES.orderGBP, 2.20);
+  assert.equal(DUFFEL_FEES.managedContentPct, 0.01);
+  assert.equal(DUFFEL_FEES.ancillaryGBP, 1.45);
+  assert.equal(DUFFEL_FEES.searchToBookRatio, 1500);
+
+  const fees = duffelOrderFeesUSD({ orderValueUSD: 1000, ancillaries: 2 });
+  assert.ok(fees.orderUSD > 2.7 && fees.orderUSD < 2.9, '£2.20 order fee in USD');
+  assert.equal(fees.managedContentUSD, 10, '1% of $1000');
+  assert.ok(fees.ancillariesUSD > 3.6, '2 × £1.45 ancillary fee');
+  assert.ok(Math.abs(fees.totalUSD - (fees.orderUSD + fees.managedContentUSD + fees.ancillariesUSD)) < 0.02);
+
+  // A Duffel-order breakdown adds the fee on top; a non-Duffel one does not.
+  const cur = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  const withFee = pb({ componentsUSD: 1000, marketRefUSD: 1200, currency: cur, duffelOrder: true });
+  const noFee = pb({ componentsUSD: 1000, marketRefUSD: 1200, currency: cur, duffelOrder: false });
+  assert.ok(withFee.lines.duffelFeeUSD > 0, 'Duffel order carries the fee');
+  assert.equal(noFee.lines.duffelFeeUSD, 0, 'non-Duffel booking has no fee');
+  assert.ok(withFee.lines.totalUSD > noFee.lines.totalUSD, 'fee is added on top of the total');
+  // The 10% commission (our margin) is identical — fees are pass-through, not margin.
+  assert.equal(withFee.revenue.commissionUSD, noFee.revenue.commissionUSD, 'commission/margin unchanged by the pass-through fee');
+});

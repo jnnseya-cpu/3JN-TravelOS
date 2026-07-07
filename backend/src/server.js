@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { detectContext, listCurrencies } from './geo.js';
 import { destinationsCatalog, findDestination } from './destinations.js';
 import { plan } from './planner.js';
-import { instalmentPlan, protectionFee } from './pricing.js';
+import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
 import {
   createUser, getUser, buyAcu, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
@@ -33,6 +33,7 @@ import {
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest,
+  searchToBookStats,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -450,6 +451,23 @@ app.get('/api/admin/profitability', safe((req, res) => {
         rule: 'Expected Revenue >= AI Cost x 10 (Cost Protection Gate) — AI never runs unfunded',
       },
     },
+    duffelFees: (() => {
+      // Search-to-book ratio drives Duffel's excess-search fee (£0.004 per
+      // search beyond 1500 searches per confirmed booking).
+      const stb = searchToBookStats();
+      const searches = stb.searches;
+      const bookings = stb.bookings;
+      const allowance = bookings * DUFFEL_FEES.searchToBookRatio;
+      const excess = Math.max(0, searches - allowance);
+      return {
+        schedule: DUFFEL_FEES,
+        perOrderGBP: DUFFEL_FEES.orderGBP,
+        managedContentPct: DUFFEL_FEES.managedContentPct,
+        ancillaryGBP: DUFFEL_FEES.ancillaryGBP,
+        searchToBook: { searches, bookings, ratio: bookings ? Math.round(searches / bookings) : searches, limit: DUFFEL_FEES.searchToBookRatio, excessSearches: excess, excessFeeGBP: Math.round(excess * DUFFEL_FEES.excessSearchGBP * 100) / 100 },
+        note: 'All Duffel fees are recovered on top of the 10% commission on live flight bookings — margin protected.',
+      };
+    })(),
   });
 }));
 

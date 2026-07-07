@@ -1272,6 +1272,13 @@ export function listQuoteRequests({ userId = null, status = null } = {}) {
 }
 export function getQuoteRequest(id) { return db.quoteRequests.find((r) => r.id === id) || null; }
 
+// Search-to-book stats — drives Duffel's excess-search fee reporting.
+export function searchToBookStats() {
+  const searches = db.behaviour.filter((b) => b.event === 'plan' || b.event === 'search').length;
+  const bookings = db.bookings.size;
+  return { searches, bookings };
+}
+
 // ---- Persistence snapshot / hydrate (for Firebase RTDB / Firestore) -------
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive

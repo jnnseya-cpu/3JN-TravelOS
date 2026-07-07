@@ -32,13 +32,44 @@ export function formatMoney(localAmount, currency) {
 // Build the transparent price breakdown for a package, in the traveller's
 // currency. `componentsUSD` is the raw supplier subtotal. `marketRefUSD` is the
 // public/expected price we compare against to surface savings.
-export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0 }) {
+// ---- Duffel pass-through fees (recovered ON TOP of 3JN commission) ----------
+// Duffel charges us per confirmed order — these are OUR supplier costs, so we
+// add them to the customer total on live Duffel flight bookings, preserving the
+// full 10% margin. GBP fees are converted to USD internally at £1≈$1.27.
+export const DUFFEL_FEES = {
+  orderGBP: 2.20,            // per confirmed order
+  managedContentPct: 0.01,  // 1% of total order value
+  ancillaryGBP: 1.45,       // per paid ancillary
+  excessSearchGBP: 0.004,   // per search beyond the 1500:1 search-to-book ratio
+  searchToBookRatio: 1500,
+};
+const GBP_USD = 1.27;
+// Per-order Duffel cost we recover on a live flight booking.
+export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) {
+  const orderUSD = DUFFEL_FEES.orderGBP * GBP_USD;
+  const managedUSD = orderValueUSD * DUFFEL_FEES.managedContentPct;
+  const ancUSD = Math.max(0, ancillaries) * DUFFEL_FEES.ancillaryGBP * GBP_USD;
+  const totalUSD = orderUSD + managedUSD + ancUSD;
+  return {
+    orderUSD: round2(orderUSD),
+    managedContentUSD: round2(managedUSD),
+    ancillariesUSD: round2(ancUSD),
+    totalUSD: round2(totalUSD),
+  };
+}
+
+export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0 }) {
   const tier = tierForPoints(loyaltyPoints);
   const loyaltyDiscountUSD = componentsUSD * tier.discount;
   const netComponentsUSD = componentsUSD - loyaltyDiscountUSD;
 
   const commissionUSD = netComponentsUSD * COMMISSION_RATE;
-  const totalUSD = netComponentsUSD + commissionUSD;
+  // Duffel pass-through — added ON TOP of commission on a live Duffel order so
+  // our supplier cost never erodes the 10% margin. Zero on non-Duffel bookings.
+  const preFeeTotalUSD = netComponentsUSD + commissionUSD;
+  const duffelFees = duffelOrder ? duffelOrderFeesUSD({ orderValueUSD: preFeeTotalUSD, ancillaries }) : { orderUSD: 0, managedContentUSD: 0, ancillariesUSD: 0, totalUSD: 0 };
+  const duffelFeeUSD = duffelFees.totalUSD;
+  const totalUSD = preFeeTotalUSD + duffelFeeUSD;
 
   const savingsVsMarketUSD = Math.max(0, marketRefUSD - totalUSD);
   // Savings-share model: "save more than £100 and we charge 10% of the saving"
@@ -60,14 +91,17 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
       loyaltyDiscountUSD: round2(loyaltyDiscountUSD),
       netSuppliersUSD: round2(netComponentsUSD),
       commissionUSD: round2(commissionUSD),
+      duffelFeeUSD: round2(duffelFeeUSD),
       totalUSD: round2(totalUSD),
       marketRefUSD: round2(marketRefUSD),
       savingsVsMarketUSD: round2(savingsVsMarketUSD),
     },
+    duffelFees,
     local: {
       suppliers: conv(componentsUSD),
       loyaltyDiscount: conv(loyaltyDiscountUSD),
       commission: conv(commissionUSD),
+      duffelFee: conv(duffelFeeUSD),
       total: conv(totalUSD),
       marketRef: conv(marketRefUSD),
       savingsVsMarket: conv(savingsVsMarketUSD),

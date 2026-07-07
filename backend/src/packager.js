@@ -181,7 +181,10 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   }
 
   const marketRefUSD = componentsUSD * tier.marketMultiplier;
-  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints });
+  // A live Duffel flight in this package = a confirmed Duffel order, so its
+  // per-order fees are recovered on top of commission (see pricing.js).
+  const duffelOrder = selections.some((s2) => s2.type === 'flight' && s2.live && s2.details?.offerId);
+  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder });
 
   // Average reliability across selected suppliers — used for the "reliable"
   // promise and ranking.
