@@ -27,6 +27,7 @@ import {
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
   registerHost, updateHostListing, hostBookings, hostDashboard,
+  grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -680,6 +681,18 @@ app.get('/api/marketplace/addons', safe((req, res) => {
   const destText = req.query.destination || 'Dubai';
   const dest = findDestination(destText) || { city: destText, code: destText };
   res.json({ addons: scanMarketplaceAddons(dest) });
+}));
+
+// ---- Admin: complimentary Elite x2 grants (max 5) ---------------------------
+app.post('/api/admin/comp-elite', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const result = grantComplimentaryElite(currentUser(req).id, req.body?.email);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+app.get('/api/admin/comp-elite', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ slotsUsed: compEliteCount(), slotsLeft: COMP_ELITE_LIMIT - compEliteCount(), limit: COMP_ELITE_LIMIT });
 }));
 
 // ---- OS Integration Map — proof that every part talks to every other part --
