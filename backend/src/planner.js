@@ -9,6 +9,7 @@
 import { parseIntent } from './intent.js';
 import { findDestination, originForCountry, resolveOrigin } from './destinations.js';
 import { scanAll } from './suppliers.js';
+import { deepPriceDive } from './price-dive.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
@@ -125,6 +126,15 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
 
   const effectiveTier = gate.allowed ? searchTier : (gate.downgradeTo || 'free');
 
+  // Deep Price Dive — the deep-thinking pass on EVERY funded search. It digs
+  // across date shifts, alternative airports, supplier spread and negotiated
+  // net rates, quantifying each saving. Deterministic local compute: costs no
+  // external AI spend, so the ACPE gate is never violated. Downgraded (cached)
+  // searches skip it — depth is part of what funding buys.
+  const priceDive = gate.allowed && journey
+    ? deepPriceDive({ intent, dest: intent.destination, origin, scan })
+    : null;
+
   // Build packages (the scan already ran; gate decides depth/labelling).
   const currency = context.currency;
   const points = user ? user.points : 0;
@@ -155,6 +165,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       requirement: gate.requirement || null,
     },
     scanSummary: summariseScan(scan),
+    priceDive,
     // 3JN VisaOS: pre-booking visa approval probability — only for an actual
     // international journey. A local trip or a utility purchase (eSIM) needs none.
     visa: (international && journey) ? approvalProbability(intent.nationality, intent.destination.city) : { ok: false, domestic: !international, utility: !journey },

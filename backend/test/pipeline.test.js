@@ -1165,3 +1165,32 @@ test('group: single-origin sentences are untouched (no false positives)', () => 
   assert.equal(i.groupOrigins, null);
   assert.equal(i.travellers.adults, 2);
 });
+
+// ---- Deep Price Dive: deep-thinking pass on every funded search -------------
+test('price dive: explores date shifts, alternate airports, supplier spread', () => {
+  const r = plan({
+    text: 'Dubai from London in August for 7 nights, flights and hotel, cheapest reliable',
+    context: GB, user: null, searchTier: 'deep',
+  });
+  const dive = r.priceDive;
+  assert.ok(dive, 'dive runs on a funded journey search');
+  assert.equal(dive.leversChecked, 4);
+  assert.ok(dive.combinationsExplored > 50, `${dive.combinationsExplored} combinations`);
+  const levers = dive.savings.map((s) => s.lever);
+  assert.ok(levers.includes('Date optimisation'), levers.join());
+  assert.ok(levers.includes('Airport selection'), levers.join());
+  for (const s of dive.savings) {
+    assert.ok(s.savingUSD > 0, `${s.lever} quantified`);
+    assert.ok(s.how, `${s.lever} explains itself`);
+  }
+  assert.ok(dive.totalIdentifiedUSD >= dive.savings[0].savingUSD);
+  assert.ok(dive.unbeatable.verdict, 'unbeatable verdict present');
+  assert.ok(dive.unbeatable.marginPct >= 0);
+  // The traveller's own request is never silently mutated.
+  assert.equal(r.intent.dates.checkIn.slice(0, 7), '2026-08');
+});
+
+test('price dive: skipped for utility-only purchases (no journey)', () => {
+  const r = plan({ text: 'esim for Dubai', context: GB, user: null, searchTier: 'smart' });
+  if (r.stage === 'options') assert.equal(r.priceDive, null);
+});

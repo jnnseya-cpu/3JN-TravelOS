@@ -3,7 +3,7 @@
 // could be swapped out. All state lives for the lifetime of the process.
 
 import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
-import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD } from '../../shared/constants.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -620,8 +620,8 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   }
   db.bookings.set(bookingId, booking);
 
-  // Award loyalty points (0.5 pt / $1).
-  if (userId) addPoints(userId, option.totalUSD * 0.5);
+  // Award loyalty points — 1 point per £2 spent (POINTS_PER_USD per $1).
+  if (userId) addPoints(userId, option.totalUSD * POINTS_PER_USD);
 
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'booking.created', entity: 'booking', entityId: bookingId, summary: `${option.tier} via ${gateway} ($${option.totalUSD})` });
   if (userId) pushNotification(userId, { type: 'success', icon: '✅', title: 'Booking confirmed', body: `${option.tier} package — deposit paid. Price Guard is now active.` });

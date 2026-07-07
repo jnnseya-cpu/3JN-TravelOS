@@ -39,6 +39,19 @@ export function airportCoords(code) {
   return AIRPORT_COORDS[(code || '').toUpperCase()] || null;
 }
 
+// Alternative departure airports within reach of the given one — the "airport
+// selection" lever of the Deep Price Dive (fly from MAN instead of BHX when
+// it's meaningfully cheaper). Sorted nearest-first.
+export function nearbyAirports(code, maxKm = 180) {
+  const base = airportCoords(code);
+  if (!base) return [];
+  return Object.entries(AIRPORT_COORDS)
+    .filter(([c]) => c !== (code || '').toUpperCase())
+    .map(([c, xy]) => ({ code: c, km: Math.round(haversineKm(base, xy)) }))
+    .filter((a) => a.km <= maxKm)
+    .sort((a, b) => a.km - b.km);
+}
+
 // Great-circle distance in km between two [lat, lon] points.
 export function haversineKm(a, b) {
   const toRad = (d) => (d * Math.PI) / 180;
