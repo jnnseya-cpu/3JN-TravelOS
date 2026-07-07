@@ -18,7 +18,8 @@ import {
   adminAudit, saveDraft, getDraft,
   createPaymentLink, listPaymentLinks, settlePaymentLink, merchantSettlement,
   listApprovals, decideApproval,
-  listNotifications, markNotificationsRead,
+  listNotifications, markNotificationsRead, pushNotification,
+  notifyHostsOfBooking, backfillProfileFromLead, syncHostReliabilityFromReviews, bumpOSLink, osIntegrationMap,
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
@@ -482,6 +483,23 @@ app.post('/api/book', safe((req, res) => {
     destination: quote.intent?.destination?.code || null,
     payload: { nights: quote.intent?.nights, party: quote.intent?.travellers?.total, month: quote.intent?.month, components: quote.intent?.components },
   });
+  // ---- OS synapses: every part of the OS talks on every booking ----------
+  // Booking → Host Marketplace: property owners hear about their reservations.
+  if (notifyHostsOfBooking(booking) > 0) bumpOSLink('booking→host');
+  // Booking → Master Travel Profile: checkout details flow back to the profile.
+  if (backfillProfileFromLead(user?.id, lead) > 0) bumpOSLink('booking→profile');
+  // Booking → VisaOS: a visa-required trip nudges a prefilled application.
+  if (user && quote.intent?.destination?.city) {
+    const v = visaCheck(lead?.nationality || 'GB', quote.intent.destination.city);
+    if (v.ok && v.required) {
+      pushNotification(user.id, {
+        type: 'info', icon: '🛂', title: `Visa needed for ${v.destination.city}`,
+        body: `${v.visaType} · ~${v.processingDays} days · $${v.costUSD}. Start in VisaOS — your Master Travel Profile prefills the application.`,
+      });
+      bumpOSLink('booking→visaos');
+    }
+  }
+
   // Fire-and-forget confirmation email (no-op if email disabled or guest email).
   if (user?.email) {
     const { subject, html, text } = bookingEmail(quote.option, booking);
@@ -638,6 +656,11 @@ app.get('/api/host/earnings', safe((req, res) => {
   res.json(hostEarnings(user.id));
 }));
 
+// ---- OS Integration Map — proof that every part talks to every other part --
+app.get('/api/os/integration-map', safe((req, res) => {
+  res.json(osIntegrationMap());
+}));
+
 // ---- Price guard ----------------------------------------------------------
 app.post('/api/book/:id/price-guard', safe((req, res) => {
   const { drift } = req.body || {};
@@ -648,6 +671,8 @@ app.post('/api/book/:id/price-guard', safe((req, res) => {
 // ---- Reviews & supplier scoring ------------------------------------------
 app.post('/api/reviews', safe((req, res) => {
   const result = submitReview(req.body || {});
+  // Reviews → Host Marketplace: guest voice moves listing reliability live.
+  if (req.body?.supplier && syncHostReliabilityFromReviews(req.body.supplier) != null) bumpOSLink('review→host');
   res.json(result);
 }));
 app.get('/api/suppliers/leaderboard', safe((req, res) => {

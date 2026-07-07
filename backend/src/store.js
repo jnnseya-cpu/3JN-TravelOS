@@ -624,6 +624,8 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     payment: payment ? { cardHolder: String(payment.cardHolder || '').slice(0, 80), billingAddress: String(payment.billingAddress || '').slice(0, 160) } : null,
     // Post-booking fulfilment record (PNR, e-ticket, locators, rules).
     fulfilment: buildFulfilment(bookingId, option),
+    // Structured cancellation/refund policy — support never guesses.
+    refundPolicy: buildRefundPolicyLocal(option),
     option,
     instalment,
     paymentMethod,
@@ -1025,3 +1027,80 @@ function buildFulfilment(bookingId, option) {
     cancellationRules: free ? 'Free cancellation until 48h before departure' : 'Cancellation fee applies; 3JN Price Guard credit on rebooking',
   };
 }
+
+// ---- OS SYNAPSES — every part of the OS talks to every other part -----------
+// Central registry of cross-module links. Each link fires real side effects
+// and counts its traffic, so the integration is observable, not aspirational.
+const osLinkCounters = {};
+export function bumpOSLink(name) { osLinkCounters[name] = (osLinkCounters[name] || 0) + 1; }
+
+// Booking → Host Marketplace: the property owner hears about every reservation
+// of their listing the moment it's made (with their 90% payout).
+export function notifyHostsOfBooking(booking) {
+  let notified = 0;
+  for (const c of (booking.option?.components || [])) {
+    if (c.type !== 'host') continue;
+    const listing = db.hostListings.find((l) => l.title === c.supplier);
+    if (!listing) continue;
+    pushNotification(listing.hostId, {
+      type: 'success', icon: '📅', title: 'New reservation',
+      body: `${listing.title}: ${c.details?.nights || '—'} nights booked — you earn $${Math.round((c.priceUSD || 0) * 0.9 * 100) / 100} (90%).`,
+    });
+    notified += 1;
+  }
+  return notified;
+}
+
+// Booking → Master Travel Profile: details typed at checkout flow BACK into
+// the profile (never overwriting what's already there), so the user types
+// their passport once, anywhere, and every module knows it.
+export function backfillProfileFromLead(userId, lead) {
+  if (!userId || !lead) return 0;
+  const u = db.users.get(userId);
+  if (!u) return 0;
+  u.travelProfile = u.travelProfile || {};
+  const map = { fullName: 'fullLegalName', dob: 'dob', nationality: 'nationality', passportNumber: 'passportNumber', passportExpiry: 'passportExpiry', idNumber: 'nationalId' };
+  let changed = 0;
+  for (const [from, to] of Object.entries(map)) {
+    if (lead[from] && !u.travelProfile[to]) { u.travelProfile[to] = String(lead[from]).slice(0, 200); changed += 1; }
+  }
+  return changed;
+}
+
+// Reviews → Host Marketplace: guest reviews move a hosted property's live
+// reliability (60% history, 40% guest voice), exactly like any supplier.
+export function syncHostReliabilityFromReviews(supplier) {
+  const l = db.hostListings.find((x) => x.title === supplier);
+  if (!l) return null;
+  const sc = db.supplierScores.get(supplier);
+  if (!sc || !sc.count) return null;
+  const guest = (sc.sum / sc.count) * 20; // 0–5 stars → 0–100
+  l.reliabilityScore = Math.round(l.reliabilityScore * 0.6 + guest * 0.4);
+  return l.reliabilityScore;
+}
+
+// The live wiring diagram: which module talks to which, over what, and how
+// often it has actually fired. Static links describe always-on couplings.
+export function osIntegrationMap() {
+  const links = [
+    { from: 'Planner', to: 'Behavioural Learning', via: 'every search/plan records signals', live: true },
+    { from: 'Behavioural Learning', to: 'Journey Dashboard', via: 'pattern miner, affinity, budget sensor', live: true },
+    { from: 'Master Travel Profile', to: 'Booking + VisaOS', via: 'auto-prefill of passenger & applicant data', live: true },
+    { from: 'Booking', to: 'Master Travel Profile', via: 'checkout details backfill the profile', fired: osLinkCounters['booking→profile'] || 0 },
+    { from: 'Booking', to: 'Host Marketplace', via: 'hosts notified of reservations + 90% payout ledger', fired: osLinkCounters['booking→host'] || 0 },
+    { from: 'Booking', to: 'VisaOS', via: 'visa-required trips trigger a prefilled application nudge', fired: osLinkCounters['booking→visaos'] || 0 },
+    { from: 'Booking', to: 'Price Guard', via: '24/7 monitoring armed on confirmation', live: true },
+    { from: 'Reviews', to: 'Supplier Scores', via: 'ratings blend into reliability rankings', live: true },
+    { from: 'Reviews', to: 'Host Marketplace', via: 'guest reviews move listing reliability', fired: osLinkCounters['review→host'] || 0 },
+    { from: 'VisaOS', to: 'Planner', via: 'approval probability shown before booking', live: true },
+    { from: 'ACPE Revenue Gate', to: 'Every search', via: 'depth funded only when revenue ≥ cost × 10', live: true },
+    { from: 'Membership/ACU', to: 'ACPE', via: 'subscriptions auto-fund search depth', live: true },
+    { from: 'Blog Agent', to: 'SEO + Marketing', via: 'daily autonomous publish → sitemap + social', live: true },
+    { from: 'Host Marketplace', to: 'Supplier Scan', via: 'live listings compete with hotels in every search', live: true },
+    { from: 'Everything', to: 'Audit Log', via: 'immutable event trail', live: true },
+  ];
+  return { links, totalLinks: links.length, fired: { ...osLinkCounters } };
+}
+
+// Local import indirection (avoids a static cycle with booking-schema.js).
+import { buildRefundPolicy as buildRefundPolicyLocal } from './booking-schema.js';

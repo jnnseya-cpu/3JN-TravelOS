@@ -1480,3 +1480,86 @@ test('board basis: "all inclusive" reprices and relabels the stay', () => {
   const stayHB = hb.packages.options[0].components.find((c) => c.type === 'hotel' || c.type === 'host');
   if (stayHB.type === 'hotel') assert.equal(stayHB.details.board, 'Half board');
 });
+
+// ---- OS synapses: every part talks to every other part ----------------------
+import { notifyHostsOfBooking, backfillProfileFromLead, syncHostReliabilityFromReviews, osIntegrationMap } from '../src/store.js';
+import { submitReview } from '../src/reviews.js';
+
+test('synapse: booking a hosted stay notifies the host with their 90% payout', () => {
+  const host = createUser({ name: 'Syn Host', email: 'syn.host@example.com' });
+  registerHost(host.id, { displayName: 'Syn' });
+  const pics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/s/${i}.jpg`);
+  createHostListing(host.id, { title: 'Synapse Suite', city: 'Dubai', nightlyUSD: 18, sleeps: 4, address: '9 Link Road, Dubai', photos: pics });
+  const guest = createUser({ name: 'Syn Guest', email: 'syn.guest@example.com' });
+  const r = plan({ text: 'Dubai hotel only in August for 7 nights for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options.find((o) => o.components.some((c) => c.supplier === 'Synapse Suite'));
+  assert.ok(opt, 'hosted stay won a tier');
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id });
+  assert.equal(notifyHostsOfBooking(b), 1);
+  const notes = listNotifications(host.id);
+  assert.ok(notes.some((n) => /New reservation/.test(n.title) && /90%/.test(n.body)));
+});
+
+test('synapse: checkout details backfill the Master Travel Profile (never overwrite)', () => {
+  const u = createUser({ name: 'Backfill', email: 'bf@example.com' });
+  updateUser(u.id, { travelProfile: { nationality: 'NG' } });
+  const changed = backfillProfileFromLead(u.id, { fullName: 'B Fill', passportNumber: 'P123', nationality: 'GB' });
+  assert.equal(changed, 2, 'fills fullLegalName + passportNumber; keeps existing nationality');
+  const after = updateUser(u.id, {}).travelProfile;
+  assert.equal(after.fullLegalName, 'B Fill');
+  assert.equal(after.passportNumber, 'P123');
+  assert.equal(after.nationality, 'NG', 'existing value never overwritten');
+});
+
+test('synapse: guest reviews move a hosted listing reliability', () => {
+  const before = hostListingsForCity('Dubai').find((l) => l.title === 'Synapse Suite').reliabilityScore;
+  submitReview({ supplier: 'Synapse Suite', rating: 5, comment: 'Spotless.' });
+  submitReview({ supplier: 'Synapse Suite', rating: 5, comment: 'Perfect host.' });
+  const score = syncHostReliabilityFromReviews('Synapse Suite');
+  assert.ok(score >= before, `reliability moved with 5★ reviews (${before} → ${score})`);
+});
+
+test('synapse: the integration map reports the live wiring', () => {
+  const map = osIntegrationMap();
+  assert.ok(map.totalLinks >= 14);
+  const names = map.links.map((l) => `${l.from}→${l.to}`);
+  assert.ok(names.includes('Booking→Host Marketplace'));
+  assert.ok(names.includes('Booking→VisaOS'));
+  assert.ok(names.includes('Reviews→Host Marketplace'));
+});
+
+// ---- Fraud & risk engine (part 11) + refund engine (part 12) ----------------
+import { hostFraudCheck, buildRefundPolicy } from '../src/booking-schema.js';
+
+test('fraud engine: category coverage + 4-way verdict', () => {
+  assert.equal(bookingRiskScore({}).decision, 'approve');
+  assert.equal(bookingRiskScore({ vpn: true, typingAnomaly: true, mouseAnomaly: true }).decision, 'hold');
+  assert.equal(bookingRiskScore({ couponAbuse: true, fakeRefunds: true, ipSwitching: true }).decision, 'manual review');
+  assert.equal(bookingRiskScore({ fakePassport: true, faceMismatch: true }).decision, 'reject');
+  const s = bookingRiskScore({ cardStolen: true, threeDSBypass: true });
+  assert.ok(s.score >= 70 && s.decision === 'reject');
+});
+
+test('fraud engine: fake property / review manipulation detected', () => {
+  const good = hostFraudCheck({ verified: true, address: '9 Link Road, Dubai', photos: Array(10).fill('x'), hostName: 'Syn' }, [{ rating: 5 }, { rating: 4 }]);
+  assert.equal(good.decision, 'approve');
+  const fake = hostFraudCheck({ verified: false, address: '', photos: [], hostName: '' }, []);
+  assert.equal(fake.decision, 'reject');
+  const manip = hostFraudCheck({ verified: true, address: '9 Link Road', photos: Array(10).fill('x'), hostName: 'H' },
+    Array(6).fill({ rating: 5 }));
+  assert.ok(manip.flags.some((f) => /manipulation/i.test(f)));
+});
+
+test('refund engine: structured policy stored on every booking', () => {
+  const guest = createUser({ name: 'Rf Guest', email: 'rf@example.com' });
+  const r = plan({ text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options[0];
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id });
+  const p = b.refundPolicy;
+  assert.ok(p.supplierPolicy && p.penaltyWindow && p.noShow && p.forceMajeure && p.partialRefunds);
+  assert.equal(p.refundSchedule.length, 4);
+  assert.ok(p.refundSchedule[0].refundPct >= p.refundSchedule[3].refundPct, 'refunds step down towards departure');
+  assert.ok(Array.isArray(p.nonRefundable) && p.nonRefundable.length);
+});

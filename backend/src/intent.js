@@ -88,6 +88,8 @@ function parseNights(text) {
   if (dayMatch) return Math.max(1, parseInt(dayMatch[1], 10) - 1);
   const weekMatch = lower.match(/(\d+)\s*week/);
   if (weekMatch) return parseInt(weekMatch[1], 10) * 7;
+  if (/\blong weekend\b/.test(lower)) return 3;
+  if (/\bweekend\b/.test(lower)) return 2;
   return 7; // sensible default
 }
 

@@ -359,6 +359,7 @@ function hotelExtras(rnd, dest, intent, stars, type) {
     breakfastDetail: stars >= 4 ? 'Full buffet breakfast included' : stars >= 3 ? 'Continental breakfast (optional add-on)' : 'Breakfast not included',
     paymentOptions: ['Pay deposit now + instalments', 'Pay in full now', stars >= 3 ? 'Pay at the property' : 'Prepaid only'].filter(Boolean),
     depositPolicy: stars >= 4 ? 'Card pre-authorisation for incidentals at check-in' : 'Refundable damage deposit may apply',
+    securityHolds: stars >= 4 ? ['Card pre-authorisation', 'Incidentals hold'] : ['Damage deposit (refundable)'],
     taxesNote: 'Local taxes & tourism levy shown before payment',
     parking: stars >= 4 ? 'On-site parking (chargeable)' : 'Public parking nearby',
     wifi: 'Free high-speed WiFi in all rooms',
