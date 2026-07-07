@@ -2104,7 +2104,7 @@ function renderVisaDecision(a, target = '#visaDecision') {
 async function renderVisaGov() {
   const out = $('#visaosOut');
   // Embassy workspace is a government account feature.
-  const isEmbassy = state.user && (state.user.allAccess || ['embassy', 'admin'].includes(state.user.role));
+  const isEmbassy = state.user && (state.user.allAccess || ['embassy', 'consulate', 'admin'].includes(state.user.role));
   if (!isEmbassy) {
     out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto">
       <div style="font-size:34px">🏛️</div>
@@ -2114,14 +2114,16 @@ async function renderVisaGov() {
     </div>`;
     return;
   }
-  let data, apps;
+  let data, apps, chain;
   try { data = await api('/api/visaos/government'); apps = await api('/api/visaos/applications'); } catch { return; }
+  try { chain = await api('/api/visaos/audit-chain'); } catch { chain = null; }
   const g = data.analytics;
   window.__visaApps = {};
   (apps.applications || []).forEach((a) => { window.__visaApps[a.id] = a; });
   const kpis = [
     ['Applications', g.applications], ['Approval rate', g.approvalRate + '%'],
-    ['Fraud attempts', g.fraudAttempts], ['Fully digital', g.autoDigitalRate + '%'], ['Avg risk', g.avgScore],
+    ['Fraud attempts', g.fraudAttempts], ['Fully digital', `${g.autoDigitalRate}% <span style="font-size:10px;color:var(--muted)">target ${(g.digitalTargetPct || [90, 95]).join('–')}%</span>`],
+    ['Avg risk', g.avgScore], ['Usage revenue', '£' + (g.revenue?.totalUsageGBP ?? 0).toLocaleString()],
   ].map(([k, v]) => `<div class="card pad kpi"><div class="kpi-v">${v}</div><div class="kpi-k">${k}</div></div>`).join('');
   const decisions = Object.entries(g.decisions || {}).map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No applications yet — run one in the Applicant tab.</div>';
   const countries = (g.topCountries || []).map((c) => `<div class="kv"><span>${c.country}</span><span>${c.count}</span></div>`).join('') || '<div class="muted" style="font-size:13px">—</div>';
@@ -2135,14 +2137,42 @@ async function renderVisaGov() {
           <span style="color:${col};font-size:12.5px">${esc(st)} · ${a.totalScore}</span></div>`;
       }).join('')
     : '<div class="muted" style="font-size:13px">No applications yet — submit one in the Applicant tab.</div>';
+  const dash = '—';
+  const highRisk = (g.highRiskCountries || []).map((c) => `<div class="kv"><span>${esc(c.country)}</span><span style="color:#ff8a8a">${c.avgScore} avg · ${c.applications} apps</span></div>`).join('') || `<div class="muted" style="font-size:13px">No high-risk countries (avg > 450) in current volume.</div>`;
+  const overstay = (g.overstayTrends || []).map((c) => `<div class="kv"><span>${esc(c.country)}</span><span>${c.avgOverstayRisk}/100</span></div>`).join('') || `<div class="muted" style="font-size:13px">${dash}</div>`;
+  const pt = g.processingTimes || {};
+  const processing = `
+    <div class="kv"><span>Decision target</span><span>${pt.targetMinutes ?? 5} minutes</span></div>
+    <div class="kv"><span>Auto-decided</span><span>${pt.autoDecided ?? 0} (${pt.autoDecidedPct ?? 0}%)</span></div>
+    <div class="kv"><span>Escalated to human</span><span>${pt.escalatedToHuman ?? 0}</span></div>`;
+  const perf = (g.agentPerformance || []).map((a) => `<div class="kv"><span>${esc(a.agent)}</span><span><span style="color:var(--green)">${a.pass}✓</span> · ${a.watch}⚠ · <span style="color:#ff8a8a">${a.fail}✕</span> · ${a.passRatePct}%</span></div>`).join('') || `<div class="muted" style="font-size:13px">Runs appear after the first assessment.</div>`;
+  const rev = g.revenue ? `
+    <div class="kv"><span>Per-application fees</span><span>£${g.revenue.perApplicationGBP.toLocaleString()}</span></div>
+    <div class="kv"><span>AI processing fees</span><span>£${g.revenue.aiProcessingGBP.toLocaleString()}</span></div>
+    <div class="kv"><span>Biometric fees</span><span>£${g.revenue.biometricGBP.toLocaleString()}</span></div>
+    <div class="kv"><span><strong>Usage revenue total</strong></span><span style="color:var(--gold)"><strong>£${g.revenue.totalUsageGBP.toLocaleString()}</strong></span></div>
+    <p class="muted" style="font-size:11px;margin-top:8px">Plus recurring: SaaS license £250k/yr · fraud-intelligence £4,999/mo · Border Intelligence API £0.15/call.</p>` : '';
+  const alerts = (g.securityAlerts || []).map((a) => `<div class="kv"><span>🛑 ${esc(a.nationality)} → ${esc(a.destination || '')}</span><span style="color:#ff8a8a">security ${a.securityRisk}/100</span></div>`).join('') || `<div class="muted" style="font-size:13px">No active security alerts.</div>`;
+  const chainOk = chain?.integrity?.ok ?? g.auditChain?.ok;
+  const chainBadge = `<div class="kv"><span>Chain integrity</span><span style="color:${chainOk ? 'var(--green)' : '#ff6b6b'}">${chainOk ? '✓ Intact' : '✕ TAMPERED — investigate'}</span></div>
+    <div class="kv"><span>Sealed blocks</span><span>${chain?.integrity?.blocks ?? g.auditChain?.blocks ?? 0}</span></div>
+    ${(chain?.blocks || []).slice(0, 5).map((b) => `<div class="kv"><span class="muted" style="font-size:11px">#${b.index} ${esc(b.event)}</span><span class="muted" style="font-size:11px">${esc((b.hash || '').slice(0, 14))}…</span></div>`).join('')}`;
   out.innerHTML = `
     <div class="kpi-grid">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
-      <div class="card pad"><span class="eyebrow">Application queue · click to review</span>${queue}</div>
+      <div>
+        <div class="card pad"><span class="eyebrow">Application queue · click to review</span>${queue}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Agent performance · live swarm runs</span>${perf}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Security alerts</span>${alerts}</div>
+      </div>
       <div>
         <div class="card pad"><span class="eyebrow">Decisions</span>${decisions}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Processing times</span>${processing}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">High-risk countries</span>${highRisk}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Overstay trends</span>${overstay}</div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Top applicant countries</span>${countries}</div>
-        <p class="muted" style="font-size:11px;margin-top:12px">Revenue: SaaS license · per-application fee · AI processing fee · biometric fee · fraud-intelligence subscription · Border Intelligence API.</p>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Government revenue</span>${rev}</div>
+        <div class="card pad" style="margin-top:16px"><span class="eyebrow">Blockchain audit trail</span>${chainBadge}</div>
       </div>
     </div>
     <div id="visaAppDetail" style="margin-top:20px"></div>`;
@@ -2190,10 +2220,26 @@ window.openVisaApp = (id) => {
     </div>`;
   $('#visaAppDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 };
-window.decideVisa = async (id, decision) => {
+window.decideVisa = async (id, decision, secondApproverId) => {
   const reason = $('#embReason')?.value || '';
-  let d; try { d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); } catch { return; }
-  toast(`✓ Decision recorded: ${decision}`);
+  let d;
+  try {
+    d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason, secondApproverId }) });
+  } catch (e) {
+    // Anti-corruption layer: approving against a high-risk AI verdict is an
+    // override — it needs a written reason AND a second approver.
+    const msg = String(e?.message || e);
+    if (/override-requires-reason|written reason/i.test(msg)) { toast('⚠ Override: a written reason is mandatory — add it in the notes box.'); return; }
+    if (/override-requires-approval-chain|second approver/i.test(msg)) {
+      const second = prompt('Anti-corruption override: enter the SECOND approver\'s officer ID (no single officer can approve a high-risk case alone):');
+      if (second) return window.decideVisa(id, decision, second.trim());
+      toast('Override cancelled — approval chain incomplete.');
+      return;
+    }
+    return;
+  }
+  const o = d.application?.embassyDecision;
+  toast(o?.override ? `✓ OVERRIDE recorded with approval chain [${o.approvalChain.join(' → ')}] — sealed in the audit trail.` : `✓ Decision recorded: ${decision}`);
   renderVisaGov();
 };
 

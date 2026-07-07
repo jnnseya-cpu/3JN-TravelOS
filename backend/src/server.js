@@ -705,8 +705,8 @@ app.get('/api/visaos/applications/:id', safe((req, res) => {
 }));
 app.post('/api/visaos/applications/:id/decide', safe((req, res) => {
   if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
-  const { decision, reason } = req.body || {};
-  const result = decideVisaApplication(req.params.id, { decision, reason, officerId: currentUser(req)?.id });
+  const { decision, reason, secondApproverId } = req.body || {};
+  const result = decideVisaApplication(req.params.id, { decision, reason, secondApproverId, officerId: currentUser(req)?.id });
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
 }));
@@ -715,6 +715,7 @@ app.get('/api/visaos/probability', safe((req, res) => {
   res.json(approvalProbability(req.query.nationality, req.query.destination));
 }));
 app.get('/api/visaos/government', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
   res.json({ analytics: govAnalytics() });
 }));
 // The module manifest: positioning, problems solved, SLA, promise and the

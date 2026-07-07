@@ -2402,3 +2402,35 @@ test('Travel OS × VisaOS integration: booking understands the visa BEFORE money
     assert.ok(r.visa.approvalProbability > 0 && r.visa.approvalProbability <= 99, `pre-booking probability ${r.visa.approvalProbability}%`);
   }
 });
+
+test('government endpoints: analytics gated to embassy/consulate/admin; override passes approval chain end-to-end', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // Public is refused; a consulate account is admitted.
+    assert.equal((await fetch(`${base}/api/visaos/government`)).status, 403);
+    const consul = createUser({ name: 'Consul General', role: 'consulate' });
+    const okRes = await fetch(`${base}/api/visaos/government`, { headers: { 'x-user-id': consul.id } });
+    assert.equal(okRes.status, 200);
+    const gov = await okRes.json();
+    assert.ok(gov.analytics.processingTimes && gov.analytics.revenue, 'full dashboard served');
+    // Override via the API: high-risk case + Approved requires the chain.
+    const risky = recordVisaApplication(assessVisa({ name: 'API Risky', nationality: 'GB', destination: 'Dubai', onWatchlist: true, documentsAuthentic: false }));
+    const refuse = await fetch(`${base}/api/visaos/applications/${risky.id}/decide`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': consul.id },
+      body: JSON.stringify({ decision: 'Approved', reason: 'Diplomatic exemption' }),
+    });
+    assert.equal(refuse.status, 400);
+    assert.equal((await refuse.json()).error, 'override-requires-approval-chain');
+    const pass = await fetch(`${base}/api/visaos/applications/${risky.id}/decide`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': consul.id },
+      body: JSON.stringify({ decision: 'Approved', reason: 'Diplomatic exemption', secondApproverId: 'off_2' }),
+    });
+    assert.equal(pass.status, 200);
+    const decided = await pass.json();
+    assert.equal(decided.application.embassyDecision.override, true);
+  } finally {
+    server.close();
+  }
+});
