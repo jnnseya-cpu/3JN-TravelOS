@@ -218,6 +218,18 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 | **Compliance & KYC Agent** | User identity verification, AML screening, ongoing monitoring | User identity documents, transaction history, device data | Verification status, risk flag, escalation to compliance team | Onboarding, high-value transaction, suspicious pattern |
 | **AI Chief of Staff** | Central orchestrator coordinating all agents for each traveller | User profile, all journey data, preferences, history | Daily briefings, priority alerts, natural language Q&A | Continuous + user query + agent event trigger |
 
+### 5.2 Enterprise Agent Workforce
+
+#### 5.2.1 Executive Agents
+
+| Agent | Core Capability | Inputs | Outputs | Trigger |
+|---|---|---|---|---|
+| **CEO Agent** | Platform strategic health monitoring + growth signal detection | Revenue KPIs, user metrics, market data | Strategic alerts, growth opportunities, risk summaries | Daily digest + threshold breach |
+| **CFO Agent** | Revenue optimisation, cost intelligence, financial forecasting | P&L data, transaction volumes, subscription data | Financial forecasts, cost anomalies, ACU economics | Daily + month-end + threshold |
+| **CMO Agent** | User acquisition intelligence, campaign optimisation, retention signals | Traffic data, conversion funnels, cohort analysis | Campaign recommendations, channel ROI, churn predictions | Weekly + campaign trigger |
+| **CRO Agent** | Revenue conversion optimisation across all user journeys | Funnel data, pricing elasticity, A/B test results | Conversion uplift recommendations, pricing adjustments | Real-time + weekly |
+| **COO Agent** | Operational excellence monitoring, SLA management, capacity planning | Uptime, agent performance, support queue, SLA data | Ops alerts, SLA breach warnings, capacity recommendations | Continuous |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
