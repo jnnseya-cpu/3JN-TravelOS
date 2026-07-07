@@ -2625,6 +2625,7 @@ function toggleAccountMenu() {
     ${item('🧭', 'My Console', "closeAccountMenu();nav('console')")}
     ${item('🏠', 'Host Dashboard', 'closeAccountMenu();openHostDashboard()')}
     ${can(['business', 'admin']) ? item('💼', 'Business Centre', "closeAccountMenu();nav('business')") : ''}
+    ${can(['embassy', 'consulate', 'admin']) ? item('🏛', 'Consulate / VisaOS', "closeAccountMenu();nav('visaos')") : ''}
     ${can(['admin']) ? item('🛡', 'Admin Centre', "closeAccountMenu();nav('admin')") : ''}
     <div class="am-sep"></div>
     ${item('🚪', 'Sign out', 'closeAccountMenu();signOut()')}`;
@@ -2755,7 +2756,8 @@ function openAuth(mode = 'signup') {
       ${humanBlock()}
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
       ${fb ? '<p class="muted center" style="font-size:12px;margin-top:10px"><a onclick="forgotPassword()" style="color:var(--gold);cursor:pointer">Forgot password?</a></p>' : ''}
-      <p class="muted center" style="font-size:12.5px;margin-top:12px">New to 3JN? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('signup')">Create an account</a></p>`);
+      <p class="muted center" style="font-size:12.5px;margin-top:12px">New to 3JN? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('signup')">Create an account</a></p>
+      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🛡 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openStaffLogin()">Staff / Admin sign in</a></p>`);
   } else {
     modal(`
       <span class="eyebrow">Create account</span>
@@ -2774,6 +2776,20 @@ function openAuth(mode = 'signup') {
   fetchHumanChallenge();
 }
 window.openAuth = openAuth;
+// Discreet staff/admin sign-in — same secure login; privileged areas then
+// appear inside the account menu (never in the public top bar).
+window.openStaffLogin = () => {
+  HUMAN.formOpenedAt = Date.now();
+  modal(`
+    <span class="eyebrow">Staff / Admin access</span>
+    <h3 style="margin:6px 0 4px">Sign in to your 3JN Travel OS staff account</h3>
+    <p class="muted" style="font-size:13px">Admin, Business, Embassy and Consulate consoles open from your account menu after sign-in — they're never shown in the public navigation.</p>
+    <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@3jntravel.com" autocomplete="email"></div>
+    ${window.firebaseAuth?.available ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••" autocomplete="current-password"></div>' : ''}
+    ${humanBlock()}
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Sign in</button>`);
+  fetchHumanChallenge();
+};
 window.doSignup = async () => {
   const name = $('#auName').value.trim();
   const email = $('#auEmail').value.trim();

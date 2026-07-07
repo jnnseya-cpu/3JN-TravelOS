@@ -80,7 +80,7 @@ header.nav {
   box-shadow: 0 0 22px rgba(216,180,106,0.35);
 }
 .nav-menu { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex: 1; min-width: 0; }
-.nav-links { display: flex; gap: 2px; align-items: center; flex-wrap: nowrap; justify-content: center; }
+.nav-links { display: flex; gap: 2px; align-items: center; flex-wrap: wrap; justify-content: center; min-width: 0; row-gap: 4px; }
 .nav-links a {
   padding: 8px 10px; border-radius: 8px; font-size: 13.5px; color: var(--muted);
   transition: 150ms ease; white-space: nowrap;
