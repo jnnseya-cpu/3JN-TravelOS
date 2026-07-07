@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3JN Travel OS — The AI-Powered Travel Operating System</title>
+<meta name="description" content="3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.">
+<style>
+  :root{
+    --navy:#060d1f; --navy2:#0a1430; --black:#04070f;
+    --platinum:#dfe5ee; --silver:#9aa7bd; --muted:#6b7891;
+    --gold:#d8b46a; --gold2:#f0d49a; --blue:#3f8dff; --blue2:#6fd3ff;
+    --card:rgba(14,24,48,.72); --line:rgba(216,180,106,.22); --lineB:rgba(63,141,255,.25);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--black);color:var(--platinum);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;overflow-x:hidden}
+  .serif{font-family:Georgia,"Times New Roman",serif}
+  a{color:inherit;text-decoration:none}
+  section{position:relative;padding:110px 6vw}
+  .wrap{max-width:1200px;margin:0 auto;position:relative;z-index:2}
+  .eyebrow{display:inline-block;letter-spacing:.32em;text-transform:uppercase;font-size:11px;color:var(--gold);border:1px solid var(--line);padding:7px 16px;border-radius:99px;background:rgba(216,180,106,.06)}
+  h1,h2{font-family:Georgia,serif;font-weight:600;letter-spacing:-.01em}
+  h1{font-size:clamp(40px,6.2vw,84px);line-height:1.04}
+  h2{font-size:clamp(30px,4vw,52px);line-height:1.1}
+  .sub{color:var(--silver);font-size:clamp(16px,1.6vw,20px);max-width:760px}
+  .gold{color:var(--gold)}.blue{color:var(--blue2)}
+  .btn{display:inline-block;padding:17px 38px;border-radius:10px;font-weight:700;letter-spacing:.14em;font-size:13px;text-transform:uppercase;transition:.3s;cursor:pointer;border:1px solid transparent}
+  .btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;box-shadow:0 12px 40px rgba(216,180,106,.28)}
+  .btn-gold:hover{transform:translateY(-2px);box-shadow:0 18px 54px rgba(216,180,106,.4)}
+  .btn-ghost{border-color:rgba(223,229,238,.28);color:var(--platinum)}
+  .btn-ghost:hover{border-color:var(--gold);color:var(--gold)}
+  .card{background:var(--card);border:1px solid rgba(223,229,238,.09);border-radius:18px;backdrop-filter:blur(14px);padding:26px}
+  .grid{display:grid;gap:18px}
+  .center{text-align:center}
+  .head{margin-bottom:52px}
+  .head .eyebrow{margin-bottom:18px}
+  .head h2{margin-bottom:14px}
+
+  /* ---------- HERO: global command centre ---------- */
+  .hero{min-height:100vh;display:flex;align-items:center;padding-top:130px;
+    background:
+      radial-gradient(1200px 700px at 78% 8%,rgba(63,141,255,.14),transparent 60%),
+      radial-gradient(900px 600px at 12% 90%,rgba(216,180,106,.10),transparent 60%),
+      linear-gradient(180deg,var(--navy) 0%,var(--black) 90%)}
+  .skyline{position:absolute;inset:auto 0 0 0;height:34vh;opacity:.5;pointer-events:none;z-index:1}
+  .routes{position:absolute;inset:0;z-index:1;opacity:.85;pointer-events:none}
+  .routes path{fill:none;stroke-width:1.1;stroke-dasharray:6 9;animation:dash 9s linear infinite}
+  .routes .r1{stroke:rgba(63,141,255,.5)} .routes .r2{stroke:rgba(216,180,106,.45);animation-duration:12s}
+  .routes .r3{stroke:rgba(111,211,255,.35);animation-duration:15s}
+  .routes circle{fill:var(--gold);opacity:.9}
+  .routes .cb{fill:var(--blue2)}
+  @keyframes dash{to{stroke-dashoffset:-300}}
+  .holo{position:absolute;z-index:2;background:rgba(8,16,36,.78);border:1px solid var(--lineB);border-radius:12px;padding:12px 16px;font-size:12.5px;
+    box-shadow:0 0 34px rgba(63,141,255,.16), inset 0 0 24px rgba(63,141,255,.05);backdrop-filter:blur(10px);animation:float 7s ease-in-out infinite}
+  .holo b{display:block;font-size:14px;color:#fff}
+  .holo .tag{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--blue2)}
+  .holo.gold{border-color:var(--line);box-shadow:0 0 34px rgba(216,180,106,.18)}
+  .holo.gold .tag{color:var(--gold)}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+  .hero-cta{display:flex;gap:16px;flex-wrap:wrap;margin-top:38px}
+  .trustbar{display:flex;gap:34px;flex-wrap:wrap;margin-top:56px;color:var(--silver);font-size:14px}
+  .trustbar b{display:block;font-size:22px;color:var(--gold);font-family:Georgia,serif}
+  .verticals{margin-top:22px;letter-spacing:.24em;font-size:11px;text-transform:uppercase;color:var(--blue2)}
+
+  /* ---------- Section 2: problem ---------- */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:40px}
+  .chaos{background:linear-gradient(160deg,#170d0d,#0d0a14);border:1px solid rgba(255,110,110,.18)}
+  .chaos .tab{display:inline-block;background:rgba(255,255,255,.05);border:1px solid rgba(255,120,120,.22);border-radius:7px;padding:7px 12px;margin:4px;font-size:12px;color:#e8b3ab}
+  .calm{border:1px solid var(--line);background:linear-gradient(160deg,#0a1530,#07101f)}
+  .save-pop{font-family:Georgia,serif;font-size:40px;color:var(--gold);text-shadow:0 0 40px rgba(216,180,106,.4)}
+  .kv{display:flex;justify-content:space-between;border-bottom:1px solid rgba(223,229,238,.07);padding:10px 2px;font-size:14px;color:var(--silver)}
+  .kv b{color:var(--platinum);font-weight:600}
+  .ok{color:#79d99b}
+
+  /* ---------- Section 3: AI core ---------- */
+  .core-stage{position:relative;height:560px;margin-top:20px}
+  .sphere{position:absolute;left:50%;top:50%;width:210px;height:210px;transform:translate(-50%,-50%);border-radius:50%;
+    background:radial-gradient(circle at 34% 30%,rgba(111,211,255,.9),rgba(63,141,255,.45) 42%,rgba(6,13,31,.9) 76%);
+    box-shadow:0 0 90px rgba(63,141,255,.5),0 0 200px rgba(63,141,255,.25), inset 0 0 60px rgba(255,255,255,.16);animation:pulse 5s ease-in-out infinite}
+  .sphere::after{content:"3JN AI CORE";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;letter-spacing:.3em;font-size:11px;color:#fff;text-shadow:0 0 14px rgba(63,141,255,.9)}
+  @keyframes pulse{0%,100%{box-shadow:0 0 90px rgba(63,141,255,.5),0 0 200px rgba(63,141,255,.22)}50%{box-shadow:0 0 130px rgba(63,141,255,.75),0 0 260px rgba(63,141,255,.35)}}
+  .agent{position:absolute;width:172px;text-align:center;padding:13px 10px;font-size:12.5px;border-radius:12px;background:rgba(10,18,40,.85);border:1px solid var(--lineB);box-shadow:0 0 26px rgba(63,141,255,.12)}
+  .agent b{display:block;color:#fff;font-size:13px}
+  .agent span{color:var(--blue2);font-size:10px;letter-spacing:.16em;text-transform:uppercase}
+  .spokes{position:absolute;inset:0;pointer-events:none}
+  .spokes line{stroke:rgba(63,141,255,.22);stroke-width:1;stroke-dasharray:3 6;animation:dash 8s linear infinite}
+
+  /* ---------- Section 4: savings dashboard ---------- */
+  .ledger{max-width:640px;margin:36px auto 0;border:1px solid var(--line);border-radius:20px;background:linear-gradient(170deg,#0b1531,#070d1d);padding:34px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  .ledger .row{display:flex;justify-content:space-between;align-items:baseline;padding:15px 4px;border-bottom:1px solid rgba(223,229,238,.08)}
+  .ledger .row span{color:var(--silver)}
+  .ledger .row b{font-family:Georgia,serif;font-size:22px;color:var(--blue2)}
+  .ledger .total{border:none;padding-top:22px}
+  .ledger .total span{color:var(--platinum);font-size:18px}
+  .ledger .total b{font-size:44px;color:var(--gold);text-shadow:0 0 40px rgba(216,180,106,.35)}
+  .bar{height:5px;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--blue2));margin-top:6px;box-shadow:0 0 14px rgba(63,141,255,.5)}
+
+  /* ---------- Section 5: negotiation ---------- */
+  .nego{display:grid;grid-template-columns:1.1fr .9fr;gap:26px;align-items:center}
+  .lobby{border-radius:20px;min-height:380px;position:relative;overflow:hidden;border:1px solid var(--line);
+    background:linear-gradient(200deg,#1b1408 0%,#0d0a06 45%,#070b16 100%)}
+  .lobby::before{content:"";position:absolute;inset:0;background:
+    radial-gradient(340px 180px at 30% 20%,rgba(216,180,106,.22),transparent 70%),
+    repeating-linear-gradient(90deg,transparent 0 88px,rgba(216,180,106,.06) 88px 90px)}
+  .lobby .concierge{position:absolute;left:8%;bottom:10%;width:70%;padding:16px 20px;border-radius:14px;background:rgba(8,16,36,.86);border:1px solid var(--lineB);font-size:13px;box-shadow:0 0 40px rgba(63,141,255,.2)}
+  .outcome{display:flex;align-items:center;gap:12px;padding:13px 16px;border:1px solid rgba(121,217,155,.22);background:rgba(9,20,20,.6);border-radius:12px;margin-bottom:10px;font-size:14.5px}
+  .outcome .dot{width:9px;height:9px;border-radius:50%;background:#79d99b;box-shadow:0 0 12px #79d99b}
+
+  /* ---------- Section 6: globe ---------- */
+  .globe-wrap{display:grid;grid-template-columns:1fr 1fr;gap:36px;align-items:center}
+  .globe{position:relative;width:min(420px,80vw);height:min(420px,80vw);margin:0 auto;border-radius:50%;
+    background:radial-gradient(circle at 32% 28%,#14264d,#081226 60%,#04070f);
+    box-shadow:0 0 80px rgba(63,141,255,.25), inset -30px -30px 80px rgba(0,0,0,.6);overflow:hidden}
+  .globe .lat{position:absolute;left:-10%;right:-10%;height:1px;background:rgba(111,211,255,.12)}
+  .globe .lon{position:absolute;top:-10%;bottom:-10%;width:1px;background:rgba(111,211,255,.10)}
+  .globe .ping{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 16px var(--gold);animation:ping 3.4s ease-out infinite}
+  @keyframes ping{0%{transform:scale(.6);opacity:1}80%{transform:scale(1.8);opacity:.15}100%{opacity:0}}
+  .layer{display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(223,229,238,.09);border-radius:12px;padding:14px 18px;margin-bottom:10px;background:var(--card);font-size:14.5px}
+  .layer .st{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--blue2)}
+
+  /* ---------- Section 7: timeline ---------- */
+  .timeline{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:44px}
+  .tstep{text-align:center;position:relative;padding:22px 8px;border:1px solid rgba(223,229,238,.09);border-radius:14px;background:var(--card);font-size:13px}
+  .tstep b{display:block;font-size:14px;color:#fff;margin-top:8px}
+  .tstep .n{width:34px;height:34px;margin:0 auto;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;
+    background:radial-gradient(circle at 35% 30%,rgba(111,211,255,.9),rgba(63,141,255,.35));color:#02101f;font-weight:800;box-shadow:0 0 18px rgba(63,141,255,.5)}
+  .tstep::after{content:"";position:absolute;right:-11px;top:50%;width:12px;height:1px;background:linear-gradient(90deg,var(--blue),transparent)}
+  .tstep:last-child::after{display:none}
+
+  /* ---------- Section 8: audiences ---------- */
+  .aud{grid-template-columns:repeat(4,1fr)}
+  .aud .card{min-height:170px;position:relative;overflow:hidden;transition:.3s}
+  .aud .card:hover{transform:translateY(-6px);border-color:var(--line)}
+  .aud .card::before{content:"";position:absolute;inset:0;background:radial-gradient(240px 120px at 80% 0%,rgba(63,141,255,.14),transparent 70%)}
+  .aud b{font-size:17px;color:#fff;font-family:Georgia,serif}
+  .aud p{font-size:13px;color:var(--silver);margin-top:8px}
+
+  /* ---------- Section 9: membership ---------- */
+  .tiers{grid-template-columns:repeat(4,1fr);align-items:stretch}
+  .tier{position:relative;padding:30px 24px;border-radius:20px;border:1px solid rgba(223,229,238,.1);background:linear-gradient(165deg,#0c1731,#070d1c);transition:.3s}
+  .tier:hover{transform:translateY(-6px)}
+  .tier.gold-card{border-color:var(--line);background:linear-gradient(165deg,#17130a,#0b0d18);box-shadow:0 24px 60px rgba(216,180,106,.14)}
+  .tier h3{font-family:Georgia,serif;font-size:21px;color:#fff}
+  .tier .price{font-family:Georgia,serif;font-size:34px;color:var(--gold);margin:12px 0 2px}
+  .tier .per{font-size:12px;color:var(--muted)}
+  .tier ul{list-style:none;margin-top:16px;font-size:13.5px;color:var(--silver)}
+  .tier li{padding:6px 0;border-bottom:1px solid rgba(223,229,238,.06)}
+  .tier li::before{content:"◆ ";color:var(--gold);font-size:9px}
+  .chip{position:absolute;top:-12px;left:24px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#191204;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;padding:5px 12px;border-radius:99px}
+
+  /* ---------- Section 10: testimonials ---------- */
+  .quotes{grid-template-columns:repeat(3,1fr)}
+  .quote{padding:32px}
+  .quote p{font-family:Georgia,serif;font-size:20px;color:#fff;line-height:1.5}
+  .quote .who{margin-top:18px;font-size:13px;color:var(--silver)}
+  .quote .amt{color:var(--gold);font-weight:700}
+
+  /* ---------- Section 11: final CTA ---------- */
+  .final{min-height:78vh;display:flex;align-items:center;text-align:center;
+    background:
+      radial-gradient(900px 500px at 50% 0%,rgba(63,141,255,.16),transparent 65%),
+      radial-gradient(700px 420px at 50% 100%,rgba(216,180,106,.14),transparent 70%),
+      linear-gradient(180deg,var(--black),var(--navy) 55%,var(--black))}
+  .final h2{font-size:clamp(34px,4.6vw,64px)}
+  .final .mega{font-family:Georgia,serif;font-size:clamp(44px,7vw,104px);background:linear-gradient(135deg,var(--gold2),var(--gold) 45%,var(--blue2));-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1.05;margin:12px 0 34px}
+
+  /* ---------- footer ---------- */
+  footer{background:#03060d;border-top:1px solid rgba(216,180,106,.14);padding:80px 6vw 46px}
+  .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:34px;max-width:1200px;margin:0 auto}
+  .fgrid h4{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--gold);margin-bottom:16px}
+  .fgrid a{display:block;color:var(--silver);font-size:14px;padding:5px 0;transition:.2s}
+  .fgrid a:hover{color:var(--gold)}
+  .fbottom{max-width:1200px;margin:56px auto 0;padding-top:26px;border-top:1px solid rgba(223,229,238,.07);display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:13px}
+
+  nav.top{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;justify-content:space-between;align-items:center;padding:18px 6vw;
+    background:rgba(4,7,15,.72);backdrop-filter:blur(16px);border-bottom:1px solid rgba(216,180,106,.12)}
+  .logo{font-family:Georgia,serif;font-size:21px;color:#fff;letter-spacing:.04em}
+  .logo b{color:var(--gold)}
+  nav.top .links{display:flex;gap:26px;font-size:13px;color:var(--silver)}
+  nav.top .links a:hover{color:var(--gold)}
+
+  @media(max-width:960px){
+    .split,.nego,.globe-wrap{grid-template-columns:1fr}
+    .aud{grid-template-columns:repeat(2,1fr)}
+    .tiers{grid-template-columns:repeat(2,1fr)}
+    .quotes{grid-template-columns:1fr}
+    .timeline{grid-template-columns:repeat(2,1fr)}
+    .tstep::after{display:none}
+    .holo{display:none}
+    nav.top .links{display:none}
+  }
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <a class="logo" href="/">3JN <b>Travel OS</b></a>
+  <div class="links">
+    <a href="#problem">Why 3JN</a><a href="#core">AI Core</a><a href="#savings">Savings</a>
+    <a href="#intel">Intelligence</a><a href="#membership">Membership</a><a href="/">Open the OS</a>
+  </div>
+  <a class="btn btn-gold" style="padding:11px 22px" href="/">Get My Best Trip</a>
+</nav>
+
+<!-- ============ HERO — GLOBAL COMMAND CENTRE ============ -->
+<section class="hero" id="top">
+  <svg class="routes" viewBox="0 0 1440 800" preserveAspectRatio="xMidYMid slice">
+    <path class="r1" d="M120,620 Q400,300 760,420 T1360,240"/>
+    <path class="r2" d="M80,300 Q460,120 900,260 T1400,520"/>
+    <path class="r3" d="M200,720 Q640,560 1000,640 T1420,420"/>
+    <circle cx="120" cy="620" r="4"/><circle cx="760" cy="420" r="4" class="cb"/><circle cx="1360" cy="240" r="4"/>
+    <circle cx="80" cy="300" r="4" class="cb"/><circle cx="900" cy="260" r="4"/><circle cx="1400" cy="520" r="4" class="cb"/>
+    <circle cx="1000" cy="640" r="4"/><circle cx="1420" cy="420" r="4"/>
+  </svg>
+  <!-- blended world-skyline silhouette: Dubai · London · Singapore · New York · Paris -->
+  <svg class="skyline" viewBox="0 0 1440 240" preserveAspectRatio="xMidYMax slice">
+    <path fill="#0a1430" d="M0,240 L0,150 40,150 45,90 55,90 60,150 110,150 110,110 150,110 150,70 160,20 170,70 170,150 230,150 240,120 260,120 265,60 275,60 280,120 330,120 330,160 400,160 405,95 425,95 430,160 470,160 470,120 520,120 525,45 535,45 540,120 600,120 600,170 680,170 690,130 720,60 750,130 760,170 830,170 830,120 870,120 875,80 895,80 900,120 950,120 950,160 1010,160 1015,100 1035,100 1040,160 1090,160 1090,130 1120,130 1125,25 1135,25 1140,130 1200,130 1200,170 1260,170 1270,110 1300,110 1305,70 1325,70 1330,170 1380,170 1380,140 1440,140 L1440,240 Z"/>
+    <path fill="#060d1f" d="M0,240 L0,190 80,190 90,160 130,160 140,190 260,190 270,140 300,140 310,190 430,190 440,150 480,150 490,190 620,190 640,150 700,150 710,190 850,190 860,155 910,155 920,190 1060,190 1070,150 1120,150 1130,190 1250,190 1260,160 1320,160 1330,190 1440,190 L1440,240 Z"/>
+  </svg>
+
+  <!-- floating holographic dashboards -->
+  <div class="holo" style="right:7vw;top:17vh"><span class="tag">Flight Agent</span><b>Cheapest Flight Found</b>LHR → DXB · verified floor</div>
+  <div class="holo gold" style="right:12vw;top:32vh;animation-delay:1.2s"><span class="tag">Savings Engine</span><b>£842 Saved</b>vs public market reference</div>
+  <div class="holo" style="right:5vw;top:47vh;animation-delay:2.1s"><span class="tag">Negotiation Layer</span><b>AI Negotiating Hotel Upgrade</b>net rate + perks in progress</div>
+  <div class="holo gold" style="right:16vw;top:62vh;animation-delay:.6s"><span class="tag">VisaOS</span><b>Visa Approved</b>eVisa issued · 3JN-AE-402931</div>
+  <div class="holo" style="left:5vw;top:64vh;animation-delay:1.7s"><span class="tag">Logistics</span><b>Airport Transfer Confirmed</b>driver assigned · arrivals hall</div>
+  <div class="holo gold" style="left:7vw;top:20vh;animation-delay:2.6s"><span class="tag">Travel CFO</span><b>Best Travel Window Identified</b>depart +10 days · save more</div>
+  <div class="holo" style="left:11vw;top:36vh;animation-delay:3.2s"><span class="tag">Intelligence</span><b>Travel Risk Score · 92</b>weather · currency · crowd layers</div>
+
+  <div class="wrap">
+    <span class="eyebrow">The AI-Powered Travel Operating System</span>
+    <h1 style="margin:26px 0 22px">Stop Searching.<br><span class="gold">Start Saving.</span></h1>
+    <p class="sub">3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.</p>
+    <div class="hero-cta">
+      <a class="btn btn-gold" href="/">Get My Best Trip</a>
+      <a class="btn btn-ghost" href="#problem">See How It Works</a>
+    </div>
+    <div class="trustbar">
+      <div><b>£1,200,000+</b>Saved for travellers</div>
+      <div><b>195+</b>Countries covered</div>
+      <div><b>24/7</b>AI travel agents</div>
+    </div>
+    <div class="verticals">Flights · Hotels · Visa · Insurance · Transfers</div>
+  </div>
+</section>
+
+<!-- ============ SECTION 2 — THE PROBLEM ============ -->
+<section id="problem" style="background:linear-gradient(180deg,var(--black),#050a17)">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">The Problem</span>
+      <h2>Travel Search Is <span style="color:#e8857a">Broken.</span></h2>
+      <p class="sub" style="margin:0 auto">Most platforms show options. 3JN Travel OS delivers the best decision.</p>
+    </div>
+    <div class="split">
+      <div class="card chaos">
+        <p style="font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:#e8857a;margin-bottom:14px">Everyone else — 2:47am, still searching</p>
+        <div>
+          <span class="tab">flight-deals-final-v3.com</span><span class="tab">17 tabs open</span><span class="tab">price just changed ↑</span>
+          <span class="tab">"+ £68 baggage fee"</span><span class="tab">hotel sold out</span><span class="tab">is this site legit?</span>
+          <span class="tab">hidden fees at checkout</span><span class="tab">start again…</span>
+        </div>
+        <p style="margin-top:18px;font-size:14px;color:#c9a29b">Dozens of booking sites. Confusing prices. Changing fares. Hidden fees. Hours lost — and still no confidence.</p>
+      </div>
+      <div class="card calm">
+        <p style="font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);margin-bottom:14px">3JN Travel OS — one decision, everything organised</p>
+        <div class="kv"><span>Recommended trip</span><b>Dubai · 7 nights · all-inclusive</b></div>
+        <div class="kv"><span>Best route</span><b class="ok">✓ Locked at the verified floor</b></div>
+        <div class="kv"><span>Best hotel</span><b class="ok">✓ Same rating, lower price</b></div>
+        <div class="kv"><span>Visa · transfer · eSIM</span><b class="ok">✓ Handled</b></div>
+        <div style="margin-top:26px" class="center">
+          <div style="font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--silver)">Your saving on this trip</div>
+          <div class="save-pop">You Saved £427</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 3 — AI CORE ============ -->
+<section id="core" style="background:radial-gradient(800px 500px at 50% 40%,rgba(63,141,255,.08),transparent 70%),#04070f">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">AI Travel Operating System</span>
+      <h2>An Entire Team Of AI Travel Experts<br><span class="blue">Working For You.</span></h2>
+    </div>
+    <div class="core-stage" id="coreStage">
+      <svg class="spokes" id="spokes"></svg>
+      <div class="sphere"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 4 — SAVINGS ENGINE ============ -->
+<section id="savings" style="background:linear-gradient(180deg,#04070f,#070d1d)">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">Travel Savings Engine</span>
+      <h2>The AI Finds Savings <span class="gold">Humans Miss.</span></h2>
+      <p class="sub" style="margin:0 auto">Every deep search runs the levers a human never has time for — and the lines always add up.</p>
+    </div>
+    <div class="ledger">
+      <div class="row"><span>Flight Optimisation<div class="bar" style="width:46%"></div></span><b>Saved £186</b></div>
+      <div class="row"><span>Hotel Negotiation<div class="bar" style="width:80%"></div></span><b>Saved £324</b></div>
+      <div class="row"><span>Date Optimisation<div class="bar" style="width:51%"></div></span><b>Saved £208</b></div>
+      <div class="row"><span>Airport Selection<div class="bar" style="width:22%"></div></span><b>Saved £91</b></div>
+      <div class="row total"><span>Total Trip Saving</span><b>£809</b></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 5 — AI NEGOTIATION ENGINE ============ -->
+<section style="background:#050a14">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">AI Negotiation Engine</span>
+      <h2>More Than Search.<br><span class="gold">AI That Negotiates.</span></h2>
+    </div>
+    <div class="nego">
+      <div class="lobby">
+        <div class="concierge">
+          <span style="font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--blue2)">3JN Negotiation Agent · live</span><br>
+          "Confirming the corporate net rate for your guest, plus a complimentary upgrade and late checkout…"<br>
+          <span style="color:var(--gold)">Supplier: agreed. Rate locked below public price.</span>
+        </div>
+      </div>
+      <div>
+        <div class="outcome"><span class="dot"></span> Room Upgrade Secured</div>
+        <div class="outcome"><span class="dot"></span> Late Checkout Confirmed</div>
+        <div class="outcome"><span class="dot"></span> Airport Transfer Included</div>
+        <div class="outcome"><span class="dot"></span> Breakfast Included</div>
+        <div class="outcome"><span class="dot"></span> Special Discount Applied</div>
+        <p style="margin-top:16px;font-size:14px;color:var(--silver)">The agent works hotels, tour operators, local suppliers and transport providers — securing outcomes, not just prices.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 6 — GLOBAL INTELLIGENCE ============ -->
+<section id="intel" style="background:linear-gradient(180deg,#050a14,#04070f)">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">Global Intelligence</span>
+      <h2>Travel Smarter With <span class="blue">Global Intelligence.</span></h2>
+    </div>
+    <div class="globe-wrap">
+      <div class="globe" id="globe"></div>
+      <div>
+        <div class="layer"><span>Weather Intelligence</span><span class="st">Live layer</span></div>
+        <div class="layer"><span>Safety Intelligence</span><span class="st">Live layer</span></div>
+        <div class="layer"><span>Visa Intelligence</span><span class="st">Live layer</span></div>
+        <div class="layer"><span>Currency Intelligence</span><span class="st">Live layer</span></div>
+        <div class="layer"><span>Demand Intelligence</span><span class="st">Live layer</span></div>
+        <div class="layer"><span>Crowd Intelligence</span><span class="st">Live layer</span></div>
+        <div class="layer"><span>Travel Risk Intelligence</span><span class="st">Live layer</span></div>
+        <p style="margin-top:14px;font-size:13px;color:var(--muted)">Every trip receives a seven-part Travel Intelligence Score — cost, safety, visa, weather, crowd, value and risk.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 7 — END-TO-END ============ -->
+<section style="background:#04070f">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">End-To-End Trip Management</span>
+      <h2>From Idea <span class="gold">To Arrival.</span></h2>
+      <p class="sub" style="margin:0 auto">One platform. One journey. Complete control.</p>
+    </div>
+    <div class="timeline">
+      <div class="tstep"><div class="n">1</div><b>Dream Destination</b>AI understands the trip you mean</div>
+      <div class="tstep"><div class="n">2</div><b>Planning</b>routes, stays, visas mapped</div>
+      <div class="tstep"><div class="n">3</div><b>Optimisation</b>dates, airports, suppliers dived</div>
+      <div class="tstep"><div class="n">4</div><b>Booking</b>one booking, every component</div>
+      <div class="tstep"><div class="n">5</div><b>Travel</b>price guard & disruption watch</div>
+      <div class="tstep"><div class="n">6</div><b>Support</b>24/7 AI + human escalation</div>
+      <div class="tstep"><div class="n">7</div><b>Return Home</b>the OS learns your preferences</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 8 — WHO IT'S FOR ============ -->
+<section style="background:linear-gradient(180deg,#04070f,#060c1c)">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">Who It's For</span>
+      <h2>Built For Every Kind Of <span class="gold">Global Traveller.</span></h2>
+    </div>
+    <div class="grid aud">
+      <div class="card"><b>Business Travellers</b><p>Policy-compliant fares, approvals and expense export — booked in minutes.</p></div>
+      <div class="card"><b>Families</b><p>Family rooms, child safety intelligence and one bill for everyone.</p></div>
+      <div class="card"><b>Luxury Travellers</b><p>Private aviation access, guaranteed upgrades and concierge-grade care.</p></div>
+      <div class="card"><b>Digital Nomads</b><p>Long-stay rates, eSIMs and coworking intelligence wherever you land.</p></div>
+      <div class="card"><b>Students</b><p>CAS/I-20 visa support, budget fares and term-date optimisation.</p></div>
+      <div class="card"><b>Diaspora Travellers</b><p>Excess baggage, family pickups, multi-city home routes — planned natively.</p></div>
+      <div class="card"><b>Group Travel Organisers</b><p>Churches, schools, weddings and teams — many cities, one booking.</p></div>
+      <div class="card"><b>Corporate Travel Teams</b><p>A full SaaS command centre: policies, budgets, analytics, invoicing.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 9 — MEMBERSHIP ============ -->
+<section id="membership" style="background:#060c1c">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">3JN Travel OS Membership</span>
+      <h2>Choose Your Level Of <span class="gold">Intelligence.</span></h2>
+    </div>
+    <div class="grid tiers">
+      <div class="tier">
+        <h3>Travel+</h3><div class="price">£4.99</div><div class="per">per month</div>
+        <ul><li>Priority Savings Alerts</li><li>AI Concierge</li><li>Exclusive Discounts</li></ul>
+      </div>
+      <div class="tier gold-card">
+        <span class="chip">Most Popular</span>
+        <h3>Travel+ Family</h3><div class="price">£12.99</div><div class="per">per month</div>
+        <ul><li>Priority Savings Alerts</li><li>Travel Intelligence Reports</li><li>Priority Support</li><li>Airport Benefits</li></ul>
+      </div>
+      <div class="tier">
+        <h3>Travel+ Business</h3><div class="price">£99</div><div class="per">per month · team of 15</div>
+        <ul><li>Travel Policies & Approvals</li><li>Budget Controls</li><li>Travel Analytics</li><li>Priority Support</li></ul>
+      </div>
+      <div class="tier">
+        <h3>Travel+ Elite</h3><div class="price">£49.99</div><div class="per">per month</div>
+        <ul><li>AI Concierge + Human Expert</li><li>Airport Benefits</li><li>Exclusive Discounts</li><li>Travel Intelligence Reports</li></ul>
+      </div>
+    </div>
+    <p class="center" style="margin-top:22px;font-size:13px;color:var(--muted)">Every plan auto-funds AI Compute Units from 10% of your subscription. Cancel anytime.</p>
+  </div>
+</section>
+
+<!-- ============ SECTION 10 — TESTIMONIALS ============ -->
+<section style="background:linear-gradient(180deg,#060c1c,#04070f)">
+  <div class="wrap">
+    <div class="head center">
+      <span class="eyebrow">Travellers</span>
+      <h2>Real Trips. <span class="gold">Real Savings.</span></h2>
+    </div>
+    <div class="grid quotes">
+      <div class="card quote"><p>“I saved <span class="amt">£1,142</span> on my family trip.”</p><div class="who">Family of five · London → Marrakech</div></div>
+      <div class="card quote"><p>“Better hotel. <span class="amt">Lower price.</span>”</p><div class="who">Frequent flyer · Manchester → Dubai</div></div>
+      <div class="card quote"><p>“It felt like having a <span class="amt">private travel advisor.</span>”</p><div class="who">First concierge search · Birmingham → Singapore</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECTION 11 — FINAL CTA ============ -->
+<section class="final">
+  <div class="wrap" style="width:100%">
+    <span class="eyebrow">The Future Of Travel</span>
+    <h2 style="margin-top:24px">The Future Of Travel Is Not Search.</h2>
+    <div class="mega">It's Intelligent Travel.</div>
+    <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
+      <a class="btn btn-gold" href="/">Start Saving Now</a>
+      <a class="btn btn-ghost" href="/">Plan My Next Trip</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="fgrid">
+    <div>
+      <h4>Travel</h4>
+      <a href="/">Flights</a><a href="/">Hotels</a><a href="/">Visa Services</a><a href="/">Travel Insurance</a><a href="/">Airport Transfers</a>
+    </div>
+    <div>
+      <h4>Solutions</h4>
+      <a href="/">Group Travel</a><a href="/">Corporate Travel</a><a href="/">Travel Marketplace</a><a href="/">Travel Intelligence</a><a href="/">Membership</a>
+    </div>
+    <div>
+      <h4>Platform</h4>
+      <a href="/">API Platform</a><a href="/">Partner Programme</a><a href="/">Careers</a>
+    </div>
+    <div>
+      <h4>Legal & Help</h4>
+      <a href="/">Privacy Policy</a><a href="/">Terms Of Use</a><a href="/">Support</a>
+    </div>
+  </div>
+  <div class="fbottom">
+    <div>© 3JN Travel OS</div>
+    <div class="gold">Powered By Artificial Intelligence. Built For Better Travel.</div>
+  </div>
+</footer>
+
+<script>
+// AI core: 10 agents orbiting the sphere, connected by spokes.
+(function(){
+  const agents=['Flight Intelligence Agent','Hotel Intelligence Agent','Visa Agent','Transfer Agent','Insurance Agent','Currency Agent','Savings Agent','Negotiation Agent','Itinerary Agent','Travel Risk Agent'];
+  const stage=document.getElementById('coreStage'),svg=document.getElementById('spokes');
+  function layout(){
+    stage.querySelectorAll('.agent').forEach(e=>e.remove());
+    while(svg.firstChild)svg.removeChild(svg.firstChild);
+    const W=stage.clientWidth,H=stage.clientHeight,cx=W/2,cy=H/2;
+    const rx=Math.min(W/2-100,460),ry=H/2-60;
+    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    agents.forEach((name,i)=>{
+      const a=-Math.PI/2+i*(2*Math.PI/agents.length);
+      const x=cx+rx*Math.cos(a),y=cy+ry*Math.sin(a);
+      const el=document.createElement('div');
+      el.className='agent';
+      el.style.left=(x-86)+'px';el.style.top=(y-30)+'px';
+      el.innerHTML='<span>AI Agent</span><b>'+name+'</b>';
+      stage.appendChild(el);
+      const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+      ln.setAttribute('x1',cx);ln.setAttribute('y1',cy);ln.setAttribute('x2',x);ln.setAttribute('y2',y);
+      svg.appendChild(ln);
+    });
+  }
+  layout();addEventListener('resize',layout);
+})();
+// Globe: graticule + pinging destinations.
+(function(){
+  const g=document.getElementById('globe');
+  for(let i=1;i<6;i++){const l=document.createElement('div');l.className='lat';l.style.top=(i*16.6)+'%';g.appendChild(l);}
+  for(let i=1;i<6;i++){const l=document.createElement('div');l.className='lon';l.style.left=(i*16.6)+'%';g.appendChild(l);}
+  [[24,58],[38,30],[62,68],[30,78],[70,34],[48,14],[58,50]].forEach(([t,l],i)=>{
+    const p=document.createElement('div');p.className='ping';p.style.top=t+'%';p.style.left=l+'%';p.style.animationDelay=(i*.5)+'s';g.appendChild(p);
+  });
+})();
+</script>
+</body>
+</html>
