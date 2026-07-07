@@ -1196,10 +1196,14 @@ test('price dive: skipped for utility-only purchases (no journey)', () => {
 });
 
 // ---- Community Host Marketplace: anyone can host, inside the OS -------------
-import { createHostListing, listHostListings, hostListingsForCity, hostEarnings } from '../src/store.js';
+import { createHostListing, listHostListings, hostListingsForCity, hostEarnings, registerHost, updateHostListing, hostBookings } from '../src/store.js';
 
 test('host marketplace: a community listing goes live and competes in searches', () => {
   const host = createUser({ name: 'Fatima Host', email: 'fatima.host@example.com' });
+  // Registration is mandatory before publishing.
+  const gate = createHostListing(host.id, { title: 'X', city: 'Dubai', nightlyUSD: 30 });
+  assert.equal(gate.error, 'host-registration-required');
+  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet' }).ok, true);
   const created = createHostListing(host.id, {
     title: 'Marina View Apartment', city: 'Dubai', propertyType: 'Entire apartment',
     nightlyUSD: 38, sleeps: 5, amenities: 'Full kitchen, WiFi, Washer',
@@ -1229,6 +1233,7 @@ test('host marketplace: a community listing goes live and competes in searches',
 test('host marketplace: validation + auth guards', () => {
   assert.equal(createHostListing(null, { title: 'X', city: 'Y', nightlyUSD: 10 }).ok, false);
   const u = createUser({ name: 'H2', email: 'h2@example.com' });
+  registerHost(u.id, {});
   assert.equal(createHostListing(u.id, { title: '', city: 'Dubai', nightlyUSD: 10 }).ok, false);
   assert.equal(createHostListing(u.id, { title: 'No Rate', city: 'Dubai', nightlyUSD: 0 }).ok, false);
   const tenPics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/${i}.jpg`);
@@ -1269,6 +1274,7 @@ test('stays carry name + address so travellers can verify them online', () => {
 
 test('host marketplace: earnings pay the host 90%, 3JN keeps 10%', () => {
   const host = createUser({ name: 'Omar Host', email: 'omar.host@example.com' });
+  registerHost(host.id, { displayName: 'Omar' });
   // $20/night — deterministically the cheapest reliable stay in Dubai.
   createHostListing(host.id, {
     title: 'Souk Riad', city: 'Dubai', nightlyUSD: 20, sleeps: 4,
@@ -1349,4 +1355,29 @@ test('visa flow: approval issues an eVisa; unpaid files wait at the payment gate
   assert.equal(bad.recommendation, 'Refuse');
   assert.equal(bad.eVisa, null);
   assert.equal(bad.flow[10].stage, 'Refusal Notice');
+});
+
+// ---- Host Dashboard: price management + pause/resume ------------------------
+test('host dashboard: set price, pause removes from searches, resume restores', () => {
+  const host = createUser({ name: 'Lina Host', email: 'lina.host@example.com' });
+  registerHost(host.id, { displayName: 'Lina' });
+  const pics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/l/${i}.jpg`);
+  const { listing } = createHostListing(host.id, { title: 'Lina Loft', city: 'Istanbul', nightlyUSD: 55, sleeps: 3, address: '3 Galata Steps, Istanbul', photos: pics });
+  // Price management flows straight into future searches.
+  assert.equal(updateHostListing(host.id, listing.id, { nightlyUSD: 44 }).ok, true);
+  assert.equal(hostListingsForCity('Istanbul')[0].nightlyUSD, 44);
+  // Only the owner can manage it.
+  const stranger = createUser({ name: 'S', email: 's.h@example.com' });
+  assert.equal(updateHostListing(stranger.id, listing.id, { nightlyUSD: 1 }).error, 'forbidden');
+  // Pause → instantly out of searches; resume → back.
+  updateHostListing(host.id, listing.id, { status: 'paused' });
+  assert.equal(hostListingsForCity('Istanbul').length, 0);
+  updateHostListing(host.id, listing.id, { status: 'live' });
+  assert.equal(hostListingsForCity('Istanbul').length, 1);
+  // Invalid updates rejected.
+  assert.equal(updateHostListing(host.id, listing.id, { nightlyUSD: 0 }).ok, false);
+  assert.equal(updateHostListing(host.id, listing.id, { status: 'gone' }).ok, false);
+  assert.equal(updateHostListing(host.id, listing.id, { photos: ['one.jpg'] }).error, 'photos-min');
+  // Reservation book exists (empty until booked).
+  assert.deepEqual(hostBookings(host.id), []);
 });
