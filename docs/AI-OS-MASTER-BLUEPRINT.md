@@ -388,6 +388,17 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 | **Currency Exchange** | Wise Business API | FX conversion for multi-currency bookings |
 | **Subscription Billing** | Stripe Billing | Membership plan management, dunning, trials |
 
+### 8.3 Identity, KYC & Compliance
+
+| Category | Provider | Purpose |
+|---|---|---|
+| **Consumer KYC** | Sumsub | Identity verification for all consumer tiers |
+| **Business KYB** | Sumsub Business | Entity verification for merchant/partner onboarding |
+| **AML Screening** | ComplyAdvantage | Sanctions screening, PEP checks, adverse media |
+| **Fraud Prevention** | Stripe Radar / Seon | Transaction fraud scoring + device intelligence |
+| **Authentication** | Auth0 / Firebase Auth | MFA, social login, device fingerprinting, JWT |
+| **Biometric Auth** | Sumsub Liveness | Selfie + document matching for high-risk actions |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
