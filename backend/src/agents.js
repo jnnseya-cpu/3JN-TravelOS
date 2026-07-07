@@ -105,7 +105,7 @@ export function marketingPlan() {
 function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 70); }
 let blogCounter = 0;
 
-export function createPost({ topic, destination } = {}) {
+export function createPost({ topic, destination, now } = {}) {
   const dest = destination || DESTS[blogCounter % DESTS.length];
   const title = topic || `Cheapest reliable ${dest} holiday: flights, hotel, visa & transfers`;
   const slug = slugify(title) + '-' + (++blogCounter);
@@ -125,7 +125,7 @@ export function createPost({ topic, destination } = {}) {
     body,
     readMins: 3,
     author: '3JN AI Editorial',
-    publishedAt: new Date(Date.UTC(2026, 5, 30, 12, 0, blogCounter % 60)).toISOString(),
+    publishedAt: (now ? new Date(now) : new Date(Date.UTC(2026, 5, 30, 12, 0, blogCounter % 60))).toISOString(),
   };
   db.blog.unshift(post);
   recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.published', entity: 'blog', entityId: post.id, summary: title });
@@ -140,3 +140,34 @@ export function listPosts() { return ensureSeedPosts().map(({ body, ...meta }) =
 export function getPost(slug) { ensureSeedPosts(); return db.blog.find((p) => p.slug === slug) || null; }
 
 export { slugify };
+
+// ---- Autonomous daily publishing loop ---------------------------------------
+// The Blog, SEO and Marketing agents publish WITHOUT a human: whenever the
+// newest post is older than the cadence (24h), the Blog agent writes the next
+// destination post, the SEO agent's sitemap picks it up automatically (the
+// sitemap is built from db.blog), and the Marketing agent logs the matching
+// social push. Checked on boot, on an interval, and lazily on every blog read —
+// so it works on always-on servers AND serverless cold starts alike.
+const PUBLISH_EVERY_MS = 24 * 3600 * 1000;
+
+export function ensureDailyPublish(now = Date.now()) {
+  ensureSeedPosts();
+  const newest = db.blog.reduce((max, p) => Math.max(max, Date.parse(p.publishedAt) || 0), 0);
+  if (now - newest < PUBLISH_EVERY_MS) return { published: false, nextDueInMs: PUBLISH_EVERY_MS - (now - newest) };
+
+  const post = createPost({ now });
+  // Marketing agent: matching social push for the fresh post (audited).
+  const social = `✈️ ${post.destination} on a budget? New on the 3JN journal: "${post.title}" → 3jntravel.com/blog/${post.slug} #travel #AItravel`;
+  recordAudit({ actor: 'marketing-agent', role: 'agent', action: 'marketing.social.published', entity: 'blog', entityId: post.id, summary: social.slice(0, 140) });
+  recordAudit({ actor: 'seo-agent', role: 'agent', action: 'seo.sitemap.refreshed', entity: 'blog', entityId: post.id, summary: `sitemap now includes /blog/${post.slug}` });
+  return { published: true, post: { id: post.id, slug: post.slug, title: post.title, destination: post.destination }, social };
+}
+
+// Start the in-process scheduler (no-op on platforms that recycle processes —
+// the lazy boot/read checks cover those). unref() keeps tests exiting cleanly.
+export function startPublishingLoop() {
+  ensureDailyPublish();
+  const t = setInterval(() => ensureDailyPublish(), 6 * 3600 * 1000);
+  if (typeof t.unref === 'function') t.unref();
+  return t;
+}

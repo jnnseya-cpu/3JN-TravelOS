@@ -444,6 +444,18 @@ export function updateUser(userId, patch = {}) {
     for (const [k, v] of Object.entries(patch.travelProfile)) {
       if (typeof v === 'string') u.travelProfile[String(k).slice(0, 40)] = v.slice(0, 200);
       else if (typeof v === 'number') u.travelProfile[String(k).slice(0, 40)] = v;
+      else if (k === 'loyaltyAccounts' && Array.isArray(v)) {
+        // Loyalty programmes (BA Executive Club, Emirates Skywards, Marriott
+        // Bonvoy, Hilton Honors, IHG One Rewards, …): number, tier, expiry,
+        // status benefits — pulled automatically into flight/hotel bookings.
+        u.travelProfile.loyaltyAccounts = v.slice(0, 10).map((a) => ({
+          program: String(a.program || '').slice(0, 60),
+          membershipNumber: String(a.membershipNumber || '').slice(0, 40),
+          tier: String(a.tier || '').slice(0, 40),
+          expiry: String(a.expiry || '').slice(0, 20),
+          statusBenefits: String(a.statusBenefits || '').slice(0, 160),
+        })).filter((a) => a.program && a.membershipNumber);
+      }
     }
   }
   recordAudit({ actor: userId, role: u.role, action: 'profile.updated', entity: 'user', entityId: userId, summary: Object.keys(patch).join(', ') });
@@ -597,13 +609,15 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [] }) {
   const bookingId = id('bkg');
   const gateway = GATEWAY[paymentMethod] || 'stripe';
   const booking = {
     id: bookingId,
     quoteId,
     userId: userId || null,
+    // Airline/operator special service requests (wheelchair, meals, pets…).
+    specialRequests: (Array.isArray(specialRequests) ? specialRequests : []).map((x) => String(x).slice(0, 40)).slice(0, 17),
     option,
     instalment,
     paymentMethod,
@@ -839,6 +853,10 @@ export function createHostListing(userId, { title, city, address, propertyType =
     .map((x) => String(x).trim()).filter(Boolean).slice(0, HOST_PHOTOS_MAX + 1);
   if (pics.length < HOST_PHOTOS_MIN) return { ok: false, error: 'photos-min', message: `Hosted listings need a minimum of ${HOST_PHOTOS_MIN} pictures (you provided ${pics.length}).` };
   if (pics.length > HOST_PHOTOS_MAX) return { ok: false, error: 'photos-max', message: `Hosted listings allow a maximum of ${HOST_PHOTOS_MAX} pictures.` };
+  // Uploaded photos arrive as compressed data URLs — cap each at ~400KB.
+  if (pics.some((x) => x.startsWith('data:') && x.length > 400000)) {
+    return { ok: false, error: 'photo-too-large', message: 'One or more photos are too large — please re-add them via "Upload photos" (it compresses automatically).' };
+  }
 
   // Verification pipeline (deterministic in the prototype): identity comes from
   // the account, the property passes the 50-point integrity check, and the

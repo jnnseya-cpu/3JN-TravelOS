@@ -66,7 +66,7 @@ export const COMPLIANCE = ['PCI DSS', 'GDPR', 'KYC', 'AML', 'PSD2', 'IATA standa
 // added centrally only for international trips (see bookingRequirements), so a
 // local train/coach journey never asks for a passport.
 const DOC_BY_COMPONENT = {
-  flight: ['Photo ID (national ID for domestic, passport for international)', 'Residence permit (if applicable)'],
+  flight: ['Photo ID (national ID for domestic, passport for international)', 'Residence permit (if applicable)', 'Vaccination certificate (where required)', 'Health clearance (where required)', 'Transit visa (where required)', 'Return ticket proof (where required)', 'Travel insurance (where required)'],
   train: ['Photo ID', 'Booking reference / e-ticket', 'Railcard (if held)'],
   coach: ['Photo ID', 'Booking reference / e-ticket'],
   ferry: ['Photo ID', 'Booking reference', 'Vehicle details (if taking a car)'],

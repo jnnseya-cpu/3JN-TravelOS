@@ -865,6 +865,13 @@ window.openBooking = async (tier) => {
     <div style="margin-top:14px"><span class="eyebrow">Documents needed</span><ul class="comp-list">${docList}</ul></div>
     ${entry ? `<div style="margin-top:6px"><span class="eyebrow">Entry requirements</span>${entry}</div>` : ''}
 
+    <div style="margin-top:14px"><span class="eyebrow">Special requests (SSR)</span>
+      <div class="chips" style="margin-top:6px" id="bkSSR">
+        ${['Wheelchair', 'Infant', 'Bassinet', 'Blind passenger', 'Deaf passenger', 'Unaccompanied minor', 'Pregnant traveller', 'Medical oxygen', 'Extra seat', 'Pet in cabin', 'Pet in hold', 'Religious meal', 'Vegan meal', 'Halal meal', 'Kosher meal', 'Diabetic meal', 'Nut allergy'].map((o) => `<span class="chip" style="cursor:pointer" data-ssr="${o}" onclick="this.classList.toggle('chip-on');this.style.borderColor=this.classList.contains('chip-on')?'var(--gold)':'';this.style.color=this.classList.contains('chip-on')?'var(--gold)':''">${o}</span>`).join('')}
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Sent to the airline / operator with your booking (SSR codes).</div>
+    </div>
+
     <div class="field" style="margin-top:14px">
       <label>Payment method</label>
       <select id="payMethod" class="in">
@@ -894,6 +901,7 @@ window.confirmBooking = async () => {
   } else if ($('#bkIdNum')?.value) {
     lead.idNumber = $('#bkIdNum').value.trim();
   }
+  const specialRequests = [...document.querySelectorAll('#bkSSR .chip-on')].map((c) => c.dataset.ssr);
   // Validate traveller + documents (+ entry rules for international) BEFORE pay.
   const vbox = $('#bkValidate');
   if (vbox) vbox.innerHTML = `<div class="muted" style="font-size:12.5px;margin-top:10px"><span class="loader"></span> Validating ${international ? 'documents & entry rules' : 'traveller details'}…</div>`;
@@ -923,7 +931,7 @@ window.confirmBooking = async () => {
   }
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
@@ -1005,22 +1013,53 @@ async function renderConsole() {
 // Filled once here; every module (VisaOS application, booking, etc.) auto-fills
 // from it and writes new details back, so the user never re-types passport/DOB.
 const TRAVEL_PROFILE_FIELDS = [
-  { key: 'fullLegalName', label: 'Full legal name (passport)' },
-  { key: 'dob', label: 'Date of birth', type: 'date' },
-  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Other'] },
-  { key: 'nationality', label: 'Nationality', type: 'country' },
-  { key: 'passportNumber', label: 'Passport number' },
-  { key: 'passportExpiry', label: 'Passport expiry', type: 'date' },
-  { key: 'passportCountry', label: 'Passport issuing country', type: 'country' },
-  { key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'] },
-  { key: 'mobile', label: 'Mobile number' },
-  { key: 'residentialAddress', label: 'Residential address' },
-  { key: 'countryOfResidence', label: 'Country of residence', type: 'country' },
-  { key: 'occupation', label: 'Occupation' },
-  { key: 'employer', label: 'Employer / school' },
-  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number' },
-  { key: 'emergencyContact', label: 'Emergency contact' },
+  // Identity — exact passport spelling drives every PNR.
+  { key: 'title', label: 'Title', type: 'select', options: ['Mr', 'Mrs', 'Ms', 'Miss', 'Dr', 'Mx'], group: 'Identity' },
+  { key: 'firstName', label: 'First name (as on passport)', group: 'Identity' },
+  { key: 'middleName', label: 'Middle name(s)', group: 'Identity' },
+  { key: 'lastName', label: 'Last name (as on passport)', group: 'Identity' },
+  { key: 'fullLegalName', label: 'Full legal name (passport)', group: 'Identity' },
+  { key: 'preferredName', label: 'Preferred name', group: 'Identity' },
+  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Other'], group: 'Identity' },
+  { key: 'dob', label: 'Date of birth', type: 'date', group: 'Identity' },
+  { key: 'placeOfBirth', label: 'Place of birth', group: 'Identity' },
+  { key: 'nationality', label: 'Nationality', type: 'country', group: 'Identity' },
+  { key: 'dualNationality', label: 'Dual nationality', type: 'country', group: 'Identity' },
+  { key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'], group: 'Identity' },
+  // Passport, ID & immigration status
+  { key: 'passportNumber', label: 'Passport number', group: 'Passport & status' },
+  { key: 'passportIssue', label: 'Passport issue date', type: 'date', group: 'Passport & status' },
+  { key: 'passportExpiry', label: 'Passport expiry', type: 'date', group: 'Passport & status' },
+  { key: 'passportCountry', label: 'Passport issuing country', type: 'country', group: 'Passport & status' },
+  { key: 'nationalId', label: 'National ID number', group: 'Passport & status' },
+  { key: 'residencyStatus', label: 'Residency status', type: 'select', options: ['Citizen', 'Permanent resident', 'Temporary resident', 'Student', 'Work permit', 'Refugee', 'Other'], group: 'Passport & status' },
+  { key: 'visaStatus', label: 'Visa status (current)', group: 'Passport & status' },
+  { key: 'alienRegistrationNumber', label: 'Alien registration no. (where applicable)', group: 'Passport & status' },
+  // Airline-required / security (APIS = the passport + DOB + gender set above)
+  { key: 'frequentTravelerNumbers', label: 'Frequent traveler numbers', group: 'Airline & security' },
+  { key: 'knownTravelerNumber', label: 'Known Traveler Number (KTN)', group: 'Airline & security' },
+  { key: 'redressNumber', label: 'Redress number', group: 'Airline & security' },
+  { key: 'tsaPreCheck', label: 'TSA PreCheck', type: 'select', options: ['Yes', 'No'], group: 'Airline & security' },
+  // Contact
+  { key: 'mobile', label: 'Mobile number', group: 'Contact' },
+  { key: 'secondaryPhone', label: 'Secondary phone', group: 'Contact' },
+  { key: 'contactEmail', label: 'Booking email (if different)', group: 'Contact' },
+  { key: 'emergencyContact', label: 'Emergency contact', group: 'Contact' },
+  { key: 'emergencyContactRelation', label: 'Emergency contact relation', group: 'Contact' },
+  // Address
+  { key: 'residentialAddress', label: 'Residential address', group: 'Address' },
+  { key: 'billingAddress', label: 'Billing address', group: 'Address' },
+  { key: 'countryOfResidence', label: 'Country of residence', type: 'country', group: 'Address' },
+  { key: 'postalCode', label: 'Postal code', group: 'Address' },
+  // Livelihood (feeds visa applications)
+  { key: 'occupation', label: 'Occupation', group: 'Livelihood' },
+  { key: 'employer', label: 'Employer / school', group: 'Livelihood' },
+  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number', group: 'Livelihood' },
 ];
+
+// Loyalty programmes the profile can hold — number, tier, expiry & benefits
+// are pulled automatically into flight/hotel bookings.
+const LOYALTY_PROGRAMS = ['British Airways Executive Club', 'Emirates Skywards', 'Marriott Bonvoy', 'Hilton Honors', 'IHG One Rewards', 'Other'];
 function renderTravelProfile() {
   const el = $('#travelProfileCard');
   if (!el) return;
@@ -1033,17 +1072,73 @@ function renderTravelProfile() {
     if (f.type === 'select') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">—</option>${f.options.map((o) => `<option${o === val ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
     return `<div class="field"><label>${f.label}</label><input class="in" id="${id}" type="${f.type || 'text'}" value="${esc(val)}"></div>`;
   };
+  const groups = [...new Set(TRAVEL_PROFILE_FIELDS.map((f) => f.group))];
+  const grouped = groups.map((g) => `
+    <div style="margin-top:12px"><span class="eyebrow" style="font-size:10.5px">${g}</span>
+    <div class="composer-row" style="margin-top:6px">${TRAVEL_PROFILE_FIELDS.filter((f) => f.group === g).map(fieldHTML).join('')}</div></div>`).join('');
+
+  // Loyalty accounts (BA Executive Club, Emirates Skywards, Marriott Bonvoy,
+  // Hilton Honors, IHG One Rewards…) — number, tier, expiry, benefits.
+  const accounts = Array.isArray(tp.loyaltyAccounts) ? tp.loyaltyAccounts : [];
+  const loyaltyRow = (a, i) => `
+    <div class="composer-row" style="margin-top:6px" data-loyalty-row="${i}">
+      <div class="field"><label>Programme</label><select class="in" id="ly_prog_${i}">${LOYALTY_PROGRAMS.map((o) => `<option${o === (a.program || '') ? ' selected' : ''}>${o}</option>`).join('')}</select></div>
+      <div class="field"><label>Membership number</label><input class="in" id="ly_num_${i}" value="${esc(a.membershipNumber || '')}"></div>
+      <div class="field"><label>Tier</label><input class="in" id="ly_tier_${i}" value="${esc(a.tier || '')}" placeholder="e.g. Gold"></div>
+      <div class="field"><label>Expiry</label><input class="in" id="ly_exp_${i}" type="date" value="${esc(a.expiry || '')}"></div>
+      <div class="field"><label>Status benefits</label><input class="in" id="ly_ben_${i}" value="${esc(a.statusBenefits || '')}" placeholder="e.g. Lounge access, extra bag"></div>
+    </div>`;
+  const loyaltyHTML = `
+    <div style="margin-top:14px"><span class="eyebrow" style="font-size:10.5px">Loyalty accounts</span>
+      <div id="loyaltyRows">${accounts.map(loyaltyRow).join('') || '<p class="muted" style="font-size:12px;margin:6px 0 0">No programmes yet — add BA Executive Club, Emirates Skywards, Marriott Bonvoy, Hilton Honors, IHG One Rewards…</p>'}</div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addLoyaltyRow()">+ Add loyalty programme</button>
+    </div>`;
+
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
-      <span class="eyebrow" style="margin:0">🪪 Master Travel Profile</span>
-      <span class="muted" style="font-size:12px">${filled}/${TRAVEL_PROFILE_FIELDS.length} complete · auto-fills visa, flight, hotel & holiday</span>
+      <span class="eyebrow" style="margin:0">🪪 Master Travel Profile · Global Customer ID</span>
+      <span class="muted" style="font-size:12px">${filled}/${TRAVEL_PROFILE_FIELDS.length} complete · every booking module pulls from this one profile</span>
     </div>
-    <div class="composer-row" style="margin-top:10px">${TRAVEL_PROFILE_FIELDS.map(fieldHTML).join('')}</div>
+    ${grouped}
+    ${loyaltyHTML}
     <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="saveTravelProfile()">Save travel profile</button>`;
+  el.dataset.loyaltyCount = String(accounts.length);
 }
+window.addLoyaltyRow = () => {
+  const el = $('#travelProfileCard');
+  const rows = $('#loyaltyRows');
+  if (!el || !rows) return;
+  const i = Number(el.dataset.loyaltyCount || 0);
+  if (i >= 10) { toast('Maximum 10 loyalty programmes.'); return; }
+  if (i === 0) rows.innerHTML = '';
+  rows.insertAdjacentHTML('beforeend', `
+    <div class="composer-row" style="margin-top:6px" data-loyalty-row="${i}">
+      <div class="field"><label>Programme</label><select class="in" id="ly_prog_${i}">${LOYALTY_PROGRAMS.map((o) => `<option>${o}</option>`).join('')}</select></div>
+      <div class="field"><label>Membership number</label><input class="in" id="ly_num_${i}"></div>
+      <div class="field"><label>Tier</label><input class="in" id="ly_tier_${i}" placeholder="e.g. Gold"></div>
+      <div class="field"><label>Expiry</label><input class="in" id="ly_exp_${i}" type="date"></div>
+      <div class="field"><label>Status benefits</label><input class="in" id="ly_ben_${i}" placeholder="e.g. Lounge access"></div>
+    </div>`);
+  el.dataset.loyaltyCount = String(i + 1);
+};
 window.saveTravelProfile = async () => {
   const tp = {};
   TRAVEL_PROFILE_FIELDS.forEach((f) => { const el = $(`#tp_${f.key}`); if (el && el.value.trim()) tp[f.key] = f.type === 'number' ? Number(el.value) : el.value.trim(); });
+  // Loyalty programme rows → structured accounts.
+  const count = Number($('#travelProfileCard')?.dataset.loyaltyCount || 0);
+  const loyaltyAccounts = [];
+  for (let i = 0; i < count; i++) {
+    const num = $(`#ly_num_${i}`)?.value.trim();
+    if (!num) continue;
+    loyaltyAccounts.push({
+      program: $(`#ly_prog_${i}`)?.value || 'Other',
+      membershipNumber: num,
+      tier: $(`#ly_tier_${i}`)?.value.trim() || '',
+      expiry: $(`#ly_exp_${i}`)?.value || '',
+      statusBenefits: $(`#ly_ben_${i}`)?.value.trim() || '',
+    });
+  }
+  if (loyaltyAccounts.length) tp.loyaltyAccounts = loyaltyAccounts;
   let data; try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) }); } catch { return; }
   setUser(data.user);
   toast('✓ Travel profile saved — it now auto-fills your visa & bookings.');
@@ -2645,9 +2740,13 @@ async function openHostDashboard() {
       <div class="field" style="width:150px"><label>Nightly (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
     </div>
     <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
-    <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100 (one URL per line)</label>
-      <textarea class="in" id="hostPhotos" rows="4" placeholder="https://…/living-room.jpg&#10;… at least 10" oninput="$('#hostPhotoCount').textContent = this.value.split(/\n|,/).map(s=>s.trim()).filter(Boolean).length + ' / 10 minimum'"></textarea>
-      <div class="muted" style="font-size:11.5px;margin-top:4px" id="hostPhotoCount">0 / 10 minimum</div></div>
+    <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100</label>
+      <input type="file" id="hostPhotoFiles" accept="image/*" multiple style="display:none" onchange="hostAddPhotos(this.files)" />
+      <button class="btn btn-ghost btn-block" type="button" onclick="$('#hostPhotoFiles').click()">📷 Upload photos from this device</button>
+      <div class="muted" style="font-size:11.5px;margin-top:6px" id="hostPhotoCount">0 / 10 minimum · photos compress automatically before upload</div>
+      <div id="hostPhotoPreview" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:8px"></div>
+      <details style="margin-top:8px"><summary class="muted" style="font-size:12px;cursor:pointer">Or paste image URLs (one per line)</summary>
+        <textarea class="in" id="hostPhotos" rows="3" placeholder="https://…/living-room.jpg" style="margin-top:6px" oninput="hostPhotoRecount()"></textarea></details></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish property</button>`);
 }
 
@@ -2677,13 +2776,50 @@ window.hostToggle = async (id, status) => {
   } catch {}
 };
 
+// Uploaded property photos (compressed data URLs), collected before publish.
+let hostUploadedPhotos = [];
+window.hostPhotoRecount = () => {
+  const urls = ($('#hostPhotos')?.value || '').split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+  const n = hostUploadedPhotos.length + urls.length;
+  const el = $('#hostPhotoCount');
+  if (el) el.textContent = `${n} / 10 minimum${n > 100 ? ' — over the 100 maximum' : ''}`;
+};
+// Compress each chosen image in the browser (max 1024px, JPEG ~0.72) so a
+// phone photo of 4MB becomes ~120KB — then it uploads inside the publish call.
+window.hostAddPhotos = async (files) => {
+  for (const f of Array.from(files || [])) {
+    if (hostUploadedPhotos.length >= 100) { toast('Maximum 100 photos.'); break; }
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(f);
+        img.onload = () => {
+          const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+          const cv = document.createElement('canvas');
+          cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          URL.revokeObjectURL(url);
+          resolve(cv.toDataURL('image/jpeg', 0.72));
+        };
+        img.onerror = reject;
+        img.src = url;
+      });
+      hostUploadedPhotos.push(dataUrl);
+      $('#hostPhotoPreview')?.insertAdjacentHTML('beforeend',
+        `<img src="${dataUrl}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:1px solid var(--line)" alt="">`);
+    } catch { toast('One image could not be read — skipped.'); }
+  }
+  hostPhotoRecount();
+};
+
 window.submitHost = async () => {
   const title = $('#hostName')?.value.trim();
   const city = $('#hostCity')?.value.trim();
   const nightlyUSD = Number($('#hostRate')?.value);
   if (!title || !city || !nightlyUSD) { toast('Name, city and nightly rate are required.'); return; }
   try {
-    const photos = ($('#hostPhotos')?.value || '').split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+    const urlPhotos = ($('#hostPhotos')?.value || '').split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+    const photos = [...hostUploadedPhotos, ...urlPhotos];
     const r = await api('/api/host/listings', { method: 'POST', body: JSON.stringify({
       title, city, nightlyUSD,
       address: $('#hostAddress')?.value || '',
@@ -2692,6 +2828,7 @@ window.submitHost = async () => {
       amenities: $('#hostAmenities')?.value || '',
       photos,
     }) });
+    hostUploadedPhotos = [];
     toast(`🏠 ${r.listing.title} is verified & LIVE in ${r.listing.city} searches.`);
     openHostDashboard();
   } catch {}

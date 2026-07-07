@@ -41,15 +41,17 @@ import { runPriceGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS } from './revenue.js';
 import { gatewayStatus } from './ai-gateway.js';
-import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost } from './agents.js';
+import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-// Avatar/data-URL payloads can be ~600KB — lift the JSON limit accordingly.
-app.use(express.json({ limit: '1mb' }));
+// Payload limit: host property photos travel as compressed data URLs in JSON
+// (10–100 images ≈ 100–150KB each after client-side compression), so the body
+// cap is generous. Individual photos are size-capped again server-side.
+app.use(express.json({ limit: '30mb' }));
 
 // CORS — allows the Vercel-hosted frontend to call this API directly (or via a
 // rewrite proxy). Lock CORS_ORIGIN to your domain in production.
@@ -457,7 +459,7 @@ app.post('/api/quote', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod, lead } = req.body || {};
+  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests } = req.body || {};
   const quote = getQuote(quoteId);
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);
@@ -474,7 +476,7 @@ app.post('/api/book', safe((req, res) => {
     });
   }
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests });
   recordBehaviour(user?.id, {
     event: 'book',
     destination: quote.intent?.destination?.code || null,
@@ -776,7 +778,10 @@ app.get('/api/agents/seo', safe((req, res) => res.json({ report: seoReport() }))
 app.get('/api/agents/marketing', safe((req, res) => res.json({ report: marketingPlan() })));
 
 // ---- Blog (AI-written, hyperlinked, shareable) ---------------------------
-app.get('/api/blog', safe((req, res) => res.json({ posts: listPosts() })));
+app.get('/api/blog', safe((req, res) => {
+  ensureDailyPublish(); // autonomous daily publishing — lazy check on every read
+  res.json({ posts: listPosts() });
+}));
 app.get('/api/blog/:slug', safe((req, res) => {
   const post = getPost(req.params.slug);
   if (!post) return res.status(404).json({ error: 'not-found' });
@@ -874,6 +879,8 @@ if (isEntry && process.env.NODE_ENV !== 'test' && !process.env.FUNCTION_TARGET &
   app.listen(PORT, () => {
     console.log(`\n  3JN Travel OS running → http://localhost:${PORT}\n`);
   });
+  // Blog/SEO/Marketing agents publish autonomously every day.
+  startPublishingLoop();
 }
 
 export { app };
