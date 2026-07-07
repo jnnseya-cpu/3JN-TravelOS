@@ -603,12 +603,12 @@ app.post('/api/host/listings', safe((req, res) => {
 }));
 app.get('/api/host/listings', safe((req, res) => {
   const user = currentUser(req);
-  if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to see your listings.' });
   res.json({ listings: listHostListings(user.id) });
 }));
 app.get('/api/host/earnings', safe((req, res) => {
   const user = currentUser(req);
-  if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to see your hosting earnings.' });
   res.json(hostEarnings(user.id));
 }));
 

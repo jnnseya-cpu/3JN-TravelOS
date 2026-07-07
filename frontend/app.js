@@ -42,7 +42,8 @@ async function api(path, opts = {}) {
     throw new Error(msg);
   }
   if (!res.ok) {
-    const m = data.message || data.error || `HTTP ${res.status}`;
+    let m = data.message || data.error || `HTTP ${res.status}`;
+    if (m === 'auth-required') m = 'Sign in first — this area is tied to your account. Use Sign in (or Full Access to explore).';
     // Callers can opt out of the toast for expected failures (e.g. a stale
     // session 404) by passing { silent: true }.
     if (!opts.silent) toast(`⚠ ${m}`);
@@ -506,6 +507,11 @@ function renderOptions(data) {
       : '⭐ Direct flights only — honoured');
   }
   if (fp.departureWindow) fpBits.push(`🕑 Preferred departure: ${esc(fp.departureWindow)}`);
+  // Mode competition: the OS compared every realistic way to travel.
+  const mc = data.modeCompetition;
+  const modeNote = mc
+    ? `<div class="pill" style="margin:0 0 16px;border-color:rgba(78,161,255,0.4)">🧭 No travel mode specified — compared ${mc.map((m) => ({ flights: '✈ flights', train: '🚆 train', coach: '🚌 coach (FlixBus, Eurolines…)', ferry: '⛴ ferry' }[m] || m)).join(' vs ')} · cheapest reliable won</div>`
+    : '';
   const flightPrefNote = fpBits.length
     ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(216,180,106,0.45)' : 'rgba(70,211,154,0.35)'}">${fpBits.join(' · ')}</div>`
     : '';
@@ -526,7 +532,7 @@ function renderOptions(data) {
     psNote = `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`;
   }
 
-  $('#plannerOut').innerHTML = gateBanner + flightPrefNote + psNote + summary + scanCard + diveCard +
+  $('#plannerOut').innerHTML = gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. 3JN's 10% fee is shown openly in every breakdown.</p></div>
     <div class="opt-grid">${opts}</div>` + compareCard(data, sym);

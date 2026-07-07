@@ -568,7 +568,9 @@ export function scanTrain(intent, dest, origin) {
 // --- Coach / bus -----------------------------------------------------------
 const COACH_PROVIDERS = [
   { name: 'FlixBus', rating: 86, verified: true, mult: 1.0 },
+  { name: 'Eurolines', rating: 84, verified: true, mult: 0.95 },
   { name: 'National Express', rating: 85, verified: true, mult: 1.1 },
+  { name: 'BlaBlaCar Bus', rating: 82, verified: true, mult: 0.9 },
   { name: 'Megabus', rating: 80, verified: true, mult: 0.85 },
 ];
 export function scanCoach(intent, dest, origin) {

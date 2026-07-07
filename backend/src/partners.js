@@ -75,7 +75,9 @@ export const BRAND_URLS = {
   'Trainline': 'https://www.thetrainline.com/',
   // Coach
   'FlixBus': 'https://www.flixbus.com/',
+  'Eurolines': 'https://www.eurolines.eu/',
   'National Express': 'https://www.nationalexpress.com/',
+  'BlaBlaCar Bus': 'https://www.blablacar.com/bus',
   'Megabus': 'https://www.megabus.com/',
   // Ferry & mini cruise
   'DFDS Seaways': 'https://www.dfds.com/',

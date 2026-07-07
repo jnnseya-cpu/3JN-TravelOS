@@ -8,6 +8,7 @@
 
 import { parseIntent } from './intent.js';
 import { findDestination, originForCountry, resolveOrigin } from './destinations.js';
+import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive } from './price-dive.js';
 import { hostListingsForCity } from './store.js';
@@ -91,6 +92,29 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       origin: resolveOrigin(p.city) || origin,
     }));
   }
+  // MODE COMPETITION — when the traveller states origin + destination but
+  // names no way to travel, the OS doesn't assume a flight: every realistic
+  // mode competes and the cheapest reliable one wins. From a PORT town (Dover,
+  // Calais…) that means ferries and international coaches (Eurolines, FlixBus,
+  // BlaBlaCar…), never a fabricated flight; on short-haul routes trains and
+  // coaches challenge the plane.
+  const routeKmApprox = (() => {
+    const a = airportCoords(origin.airport);
+    const b = airportCoords(intent.destination.airport || intent.destination.code);
+    return a && b ? haversineKm(a, b) : null;
+  })();
+  let modeCompetition = null;
+  if (!intent.modesExplicit && (intent.originCity || intent.components.includes('flights'))) {
+    let modes = null;
+    if (origin.port) modes = ['ferry', 'coach', 'train'];
+    else if (routeKmApprox != null && routeKmApprox <= 900 && intent.components.includes('flights')) modes = ['flights', 'train', 'coach'];
+    if (modes && modes.length > 1) {
+      modeCompetition = modes;
+      intent.modeCompetition = modes;
+      intent.components = [...new Set([...intent.components.filter((c) => !(origin.port && c === 'flights')), ...modes])];
+    }
+  }
+
   // Community host supply: 3JN-verified listings for this destination compete
   // with hotels inside the same scan.
   const communityHosts = hostListingsForCity(intent.destination.city);
@@ -170,6 +194,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     },
     scanSummary: summariseScan(scan),
     priceDive,
+    modeCompetition,
     // 3JN VisaOS: pre-booking visa approval probability — only for an actual
     // international journey. A local trip or a utility purchase (eSIM) needs none.
     visa: (international && journey) ? approvalProbability(intent.nationality, intent.destination.city) : { ok: false, domestic: !international, utility: !journey },

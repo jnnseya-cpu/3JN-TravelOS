@@ -92,6 +92,16 @@ function byStars(list, stars) {
 }
 
 // Build a single package option for a given tier.
+// Pick the tier's best journey from a cross-mode pool; if a flight wins,
+// re-apply the traveller's flight preferences within the flight subset.
+function key0PickJourney(tier, pool, scan, intent) {
+  const pick = tier.pickPerSupplier(pool);
+  if (pick && pick.type === 'flight' && scan.flights) {
+    return tier.pickFlight(applyFlightPrefs(reliableVerified(scan.flights), intent.flightPrefs)) || pick;
+  }
+  return pick;
+}
+
 function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   const tier = TIERS[tierName];
   const selections = [];
@@ -100,7 +110,29 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   // mixed-mode / split-origin journeys — one booking either way; they lead.
   const componentOrder = ['groupTravel', 'outboundLeg', 'returnLeg', 'flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
 
+  // MODE COMPETITION: the traveller named no way to travel, so realistic modes
+  // (ferry vs coach vs train vs flight) compete and ONE wins per tier — they
+  // are alternatives, never summed into the same package.
+  const JOURNEY_MODE_KEYS = ['flights', 'train', 'coach', 'ferry'];
+  const competing = intent.modeCompetition
+    ? JOURNEY_MODE_KEYS.filter((k) => scan[k] && scan[k].length)
+    : [];
+  const skipKeys = new Set();
+  if (competing.length > 1) {
+    const pool = competing.flatMap((k) => reliableVerified(scan[k]));
+    let pick = key0PickJourney(tier, pool, scan, intent);
+    if (pick) {
+      componentsUSD += pick.priceUSD;
+      selections.push({
+        ...pick,
+        details: { ...pick.details, wonModeCompetition: competing.join(' vs ') },
+      });
+    }
+    competing.forEach((k) => skipKeys.add(k));
+  }
+
   for (const key of componentOrder) {
+    if (skipKeys.has(key)) continue;
     const offers = scan[key];
     if (!offers || !offers.length) continue;
 

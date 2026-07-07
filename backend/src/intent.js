@@ -203,7 +203,7 @@ function buildDates(monthInfo, nights, today = new Date()) {
 }
 
 // Departure city — "from London", "departing Paris", "leaving from Lagos".
-const ORIGIN_STOP = /^(to|in|for|with|on|during|next|this|and|by|the|my|our|a|an|cheapest|cheap|reliable|best|affordable|nights?|days?|weeks?|months?|please|return|one|way|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
+const ORIGIN_STOP = /^(to|in|for|with|on|during|next|this|and|by|the|my|our|a|an|cheapest|cheap|reliable|best|affordable|nights?|days?|weeks?|months?|please|return|one|way|alone|solo|myself|together|only|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
 function parseOrigin(text) {
   const m = (text || '').match(/\b(?:from|departing(?:\s+from)?|leaving(?:\s+from)?|fly(?:ing)?\s+(?:from|out\s+of)|out\s+of)\s+(.+)/i);
   if (!m) {
@@ -326,6 +326,10 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   const wantsFullPackage = /\b(holiday|holidays|package|all.?inclusive|getaway|vacation|honeymoon|full package|complete trip|everything)\b/i.test(raw);
   const travelStaySignal = /\b(\d+\s*(?:night|nights|day|days|week|weeks)|weekend|trip|travel|travelling|traveling|visit|visiting|staying|go to|going to|getaway)\b/i.test(raw);
 
+  // Did the traveller EXPLICITLY name how to travel? If not, the planner opens
+  // the journey to mode competition (ferry vs coach vs train vs flight).
+  const modesExplicit = ['flights', 'train', 'coach', 'ferry', 'cruise'].some((m) => requested.has(m));
+
   // Mixed-mode / split-origin legs (one booking, per-direction means & points).
   let legs = parseLegs(raw);
   // "back to <destination>" is a round trip, not a split return point.
@@ -365,6 +369,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     priority: wantsCheapestReliable ? 'cheapest-reliable' : 'balanced',
     nationality: ctx.country || 'GB',
     originCity, // the user's stated departure city (null if not given)
+    modesExplicit: modesExplicit || !!legs || !!groupParties, // journey mode named by the traveller
     legs, // mixed-mode / split-origin legs (null for a simple round trip)
     groupOrigins: groupParties ? { parties: groupParties } : null, // multi-origin group, one booking
     miniCruise, // short ferry-cruise rather than an ocean liner
