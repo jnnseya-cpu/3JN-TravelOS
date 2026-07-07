@@ -25,6 +25,8 @@ export const VISAOS_MANIFEST = {
     'Bribery / corruption risk', 'Human bias', 'Poor fraud detection', 'Slow background checks', 'Expensive staffing',
   ],
   vision: 'Replace slow human-heavy visa processing with AI-driven digital border intelligence and near-instant trusted decisions.',
+  worldClassPositioning: "3JN Travel OS is powered by 3JN VisaOS — the world's premier AI-driven digital visa and border intelligence infrastructure, capable of verifying applications, detecting fraud, assessing behavioural and overstay risk, and delivering trusted visa decisions in minutes while eliminating unnecessary embassy visits.",
+  building: 'The Operating System for Global Travel, Mobility and Border Intelligence.',
   sla: { decisionMinutes: 5, condition: 'after complete submission & payment, unless escalated' },
   promise: {
     prerequisites: ['Documents uploaded', 'Biometrics submitted', 'Payment confirmed'],
@@ -87,6 +89,31 @@ export const AGENT_CHECKS = {
   'Decision Agent': [
     'Aggregate all agent findings', 'Weight seven risk dimensions', 'Produce unified 0–1000 risk score',
     'Produce Visa Decision Confidence Score', 'Route: approve / conditional / human review / reject',
+  ],
+};
+
+// ---- Government revenue model (huge recurring revenue) ------------------------
+export const VISAOS_REVENUE_MODEL = [
+  { key: 'saas', name: 'SaaS License', gbp: 250000, per: 'year per authority', recurring: true },
+  { key: 'perApplication', name: 'Per Application Fee', gbp: 2.5, per: 'application', recurring: true },
+  { key: 'aiProcessing', name: 'AI Processing Fee', gbp: 1.0, per: 'AI decision run', recurring: true },
+  { key: 'biometric', name: 'Biometric Fee', gbp: 0.8, per: 'biometric verification', recurring: true },
+  { key: 'fraudIntel', name: 'Fraud Intelligence Subscription', gbp: 4999, per: 'month — fraud-network intelligence feed', recurring: true },
+  { key: 'borderApi', name: 'Border Intelligence API', gbp: 0.15, per: 'API call', recurring: true },
+];
+
+// ---- Integration with 3JN Travel OS (perfect synergy) --------------------------
+// Travel OS + VisaOS becomes unmatched: the booking flow understands the visa
+// before money moves — "Before booking: Visa approval probability: 93%".
+export const TRAVEL_OS_INTEGRATION = {
+  synergy: 'Travel OS + VisaOS becomes unmatched.',
+  bookingUnderstands: ['Visa likelihood', 'Approval probability', 'Required documents', 'Timing risk'],
+  example: 'Before booking: Visa approval probability: 93%',
+  liveWiring: [
+    'planner result.visa = approvalProbability(nationality, destination) on every international journey',
+    'Travel Intelligence Score visaScore dimension',
+    'visa-framework dynamic document checklist per country/type',
+    'booking → VisaOS prefilled-application nudge (OS synapse)',
   ],
 };
 
