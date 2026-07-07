@@ -14,7 +14,7 @@
 // runs fully offline. Provide ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY
 // (see .env.example) to route to live providers.
 
-import { ACU_ACTIONS } from '../../shared/constants.js';
+import { ACU_ACTIONS, ACU_PER_GBP } from '../../shared/constants.js';
 import { recordAiRequestCost } from './store.js';
 
 const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
@@ -105,6 +105,42 @@ export function estimateRequestCost(routeInfo) {
   const rate = PROVIDER_TOKEN_RATES[routeInfo.provider] ?? PROVIDER_TOKEN_RATES.anthropic;
   return { estimatedTokens, estimatedCostUSD: Math.round((estimatedTokens / 1e6) * rate * 10000) / 10000 };
 }
+
+// ---- Minimum AI profit margin (business rule: NEVER below 100%) ------------
+// Many AI actions are "unfunded" (customer-triggered beyond what a plan funds).
+// Every metered AI action must sell for at least (1 + MIN_AI_MARGIN)× its
+// provider cost — i.e. a 100% minimum margin. ACU sells at £1 = ACU_PER_GBP.
+export const MIN_AI_MARGIN = 1.0; // 100%
+const GBP_TO_USD = 1.27;
+// The provider cost of an action expressed in ACU (what it costs us, in ACU).
+export function providerCostInAcu(costUSD) {
+  return ((costUSD || 0) / GBP_TO_USD) * ACU_PER_GBP;
+}
+// The MINIMUM ACU an action may be charged to honour the margin floor.
+export function minAcuForMargin(costUSD, margin = MIN_AI_MARGIN) {
+  return Math.ceil(providerCostInAcu(costUSD) * (1 + margin));
+}
+// Price an action's ACU with the margin floor enforced — never charge less than
+// the floor, so profit margin is always ≥ 100%.
+export function pricedAcuForAction(acuAction, provider = DEFAULT_PROVIDER) {
+  const { estimatedCostUSD } = estimateRequestCost({ acu: acuAction, provider });
+  return Math.max(Math.round(acuAction || 0), minAcuForMargin(estimatedCostUSD));
+}
+// Margin report across every ACU action (admin/profitability): cost, price,
+// and the resulting margin — proving the 100% floor holds everywhere.
+export function aiMarginReport(provider = DEFAULT_PROVIDER) {
+  const acuGbp = 1 / ACU_PER_GBP; // sale value of 1 ACU in GBP
+  const rows = Object.entries(ACU_ACTIONS).map(([action, acu]) => {
+    const { estimatedCostUSD } = estimateRequestCost({ acu, provider });
+    const costGbp = estimatedCostUSD / GBP_TO_USD;
+    const priceGbp = acu * acuGbp;
+    const marginPct = costGbp > 0 ? Math.round(((priceGbp - costGbp) / costGbp) * 100) : Infinity;
+    const flooredAcu = pricedAcuForAction(acu, provider);
+    return { action, acu, costGbp: round4(costGbp), priceGbp: round4(priceGbp), marginPct, meetsFloor: marginPct >= MIN_AI_MARGIN * 100, flooredAcu };
+  });
+  return { provider, minMarginPct: MIN_AI_MARGIN * 100, allMeetFloor: rows.every((r) => r.meetsFloor), actions: rows };
+}
+function round4(n) { return Math.round((n || 0) * 10000) / 10000; }
 
 const DEFAULT_PROVIDER = env.AI_GATEWAY_DEFAULT_PROVIDER || 'anthropic';
 

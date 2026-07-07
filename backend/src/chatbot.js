@@ -21,7 +21,7 @@ const INTENTS = [
   { key: 'safety', escalate: true, re: /\b(emergency|stranded|accident|hospital|medical|injured|unsafe|danger|lost passport|stolen|robbed|embassy)\b/i },
   { key: 'refund', escalate: true, re: /\b(refund|money back|charged twice|double char(ge|d)|chargeback|dispute|didn'?t authori[sz]e|wrong amount|overcharged)\b/i },
   { key: 'cancel', escalate: false, re: /\b(cancel|cancellation|call off)\b/i },
-  { key: 'change', escalate: false, re: /\b(change|amend|reschedul|move (my )?(flight|booking|date)|different date|bring forward|push back|add\b.*\b(passenger|traveller|traveler|person|bag|baggage|suitcase)|extra (bag|baggage|luggage|suitcase)|checked bag)/i },
+  { key: 'change', escalate: false, re: /\b(change|amend|reschedul|move (my )?(flight|booking|date|hotel|trip)|different date|bring forward|push back|add\b.*\b(passenger|traveller|traveler|person|bag|baggage|suitcase|night)|extra (bag|baggage|luggage|suitcase|night)|checked bag|extend (my )?(stay|trip)|upgrade\b.*\broom|room upgrade|half board|full board|all[- ]inclusive)/i },
   { key: 'booking_status', escalate: false, re: /\b(where is|status|confirm(ed|ation)|e-?ticket|itinerary|my booking|booking reference|pnr|check[- ]?in)\b/i },
   { key: 'payment', escalate: false, re: /\b(pay|payment|instal?ment|deposit|card declined|how (much|do i pay)|split the cost)\b/i },
   { key: 'visa', escalate: false, re: /\b(visa|passport|eta|evisa|entry requirement|do i need a visa)\b/i },

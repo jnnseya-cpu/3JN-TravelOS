@@ -459,18 +459,27 @@ export function spendAcu(userId, amount, reason) {
 // is £1 = 100 ACU; bigger packs carry a volume bonus above the base rate, and
 // that bonus is booked as a separate BONUS transaction so wallets honestly
 // separate what was purchased from what was earned.
+// Base rate £1 = 100 ACU. The three headline top-ups reward larger buys with a
+// volume bonus: £5 none, £10 +10%, £15 +20%. The bonus is booked as a separate
+// BONUS transaction so wallets separate purchased from bonus ACU.
+//   £5  → 500  ACU  (500 base  + 0 bonus)
+//   £10 → 1,100 ACU (1,000 base + 100 bonus = 10%)
+//   £15 → 1,800 ACU (1,500 base + 300 bonus = 20%)
+export const ACU_TOPUP_BONUS = { 5: 0, 10: 0.10, 15: 0.20 };
 export const ACU_PACKS = {
-  starter: { name: 'Starter Pack', gbp: 5, acu: 500 },
-  traveller: { name: 'Traveller Pack', gbp: 15, acu: 1750 },
+  top5: { name: 'Top-up £5', gbp: 5, acu: 500, bonusPct: 0 },
+  top10: { name: 'Top-up £10 · +10%', gbp: 10, acu: 1100, bonusPct: 10 },
+  top15: { name: 'Top-up £15 · +20%', gbp: 15, acu: 1800, bonusPct: 20 },
   family: { name: 'Family Pack', gbp: 29, acu: 4000 },
   business: { name: 'Business Pack', gbp: 99, acu: 20000 },
   enterprise: { name: 'Enterprise', gbp: null, acu: null, custom: true, note: 'Custom volume & pricing — contact sales' },
   // Legacy aliases (kept for older clients).
-  smart: { name: 'Traveller Pack', gbp: 15, acu: 1750 },
-  topup5: { name: 'Starter Pack', gbp: 5, acu: 500 },
-  topup10: { name: 'Top-up £10', gbp: 10, acu: 10 * ACU_PER_GBP },
-  topup25: { name: 'Family Pack', gbp: 29, acu: 4000 },
-  topup50: { name: 'Top-up £50', gbp: 50, acu: 50 * ACU_PER_GBP },
+  starter: { name: 'Top-up £5', gbp: 5, acu: 500 },
+  traveller: { name: 'Top-up £15 · +20%', gbp: 15, acu: 1800, bonusPct: 20 },
+  smart: { name: 'Top-up £15 · +20%', gbp: 15, acu: 1800, bonusPct: 20 },
+  topup5: { name: 'Top-up £5', gbp: 5, acu: 500 },
+  topup10: { name: 'Top-up £10 · +10%', gbp: 10, acu: 1100, bonusPct: 10 },
+  topup15: { name: 'Top-up £15 · +20%', gbp: 15, acu: 1800, bonusPct: 20 },
 };
 export function buyAcu(userId, pack) {
   const p = ACU_PACKS[pack];

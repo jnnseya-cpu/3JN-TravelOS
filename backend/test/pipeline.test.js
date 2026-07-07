@@ -22,6 +22,7 @@ import { listNotifications, pushNotification, recordVisaApplication, govAnalytic
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
 import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
+import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { assist } from '../src/assistant.js';
 import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
@@ -890,13 +891,14 @@ test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU',
   assert.equal(blocked.ok, false);
   assert.equal(blocked.error, 'insufficient-acu');
 
-  // Top up £10 -> 1000 ACU, then a spend succeeds and debits.
+  // Top up £10 -> 1,100 ACU (1,000 base + 10% bonus), then a spend debits.
   const top = buyAcu(u.id, 'topup10');
   assert.equal(top.charged, 10);
-  assert.equal(top.balance, 1000);
+  assert.equal(top.balance, 1100);
+  assert.equal(top.bonusAcu, 100);
   const ok = spendAcu(u.id, 15, 'search');
   assert.equal(ok.ok, true);
-  assert.equal(ok.balance, 985);
+  assert.equal(ok.balance, 1085);
 });
 
 test('RBAC: admin & business areas reject the public and consumers, allow admins', async () => {
@@ -1908,23 +1910,21 @@ test('positioning: the savings-engine statement anchors every AI call', () => {
 // ---- ACU Marketplace (spec §5): named packs with volume bonuses --------------
 import { ACU_PACKS, acuWallet, acuTransactions, refundAcu, rewardAcu, ACU_TXN_TYPES } from '../src/store.js';
 
-test('ACU marketplace: Starter 500 · Traveller 1,750 · Family 4,000 · Business 20,000 · Enterprise custom', () => {
-  assert.equal(ACU_PACKS.starter.gbp, 5);
-  assert.equal(ACU_PACKS.starter.acu, 500);
-  assert.equal(ACU_PACKS.traveller.gbp, 15);
-  assert.equal(ACU_PACKS.traveller.acu, 1750);
-  assert.equal(ACU_PACKS.family.gbp, 29);
-  assert.equal(ACU_PACKS.family.acu, 4000);
-  assert.equal(ACU_PACKS.business.gbp, 99);
-  assert.equal(ACU_PACKS.business.acu, 20000);
+test('ACU top-ups: £5 → 500 (0%) · £10 → 1,100 (+10%) · £15 → 1,800 (+20%)', () => {
+  assert.equal(ACU_PACKS.top5.gbp, 5);
+  assert.equal(ACU_PACKS.top5.acu, 500);
+  assert.equal(ACU_PACKS.top10.gbp, 10);
+  assert.equal(ACU_PACKS.top10.acu, 1100);
+  assert.equal(ACU_PACKS.top15.gbp, 15);
+  assert.equal(ACU_PACKS.top15.acu, 1800);
   assert.equal(ACU_PACKS.enterprise.custom, true, 'Enterprise is custom-priced');
 
   const u = createUser({ name: 'Pack Buyer', email: 'packs@example.com' });
-  const r = buyAcu(u.id, 'traveller');
-  assert.equal(r.ok, true);
+  assert.equal(buyAcu(u.id, 'top5').bonusAcu, 0, '£5 has no bonus');
+  assert.equal(buyAcu(u.id, 'top10').bonusAcu, 100, '£10 = 1,000 base + 10% bonus');
+  const r = buyAcu(u.id, 'top15');
   assert.equal(r.charged, 15);
-  assert.ok(r.balance >= 1750, 'Traveller Pack credits 1,750 ACU');
-  assert.equal(r.bonusAcu, 250, '£15 buys 1,500 base + 250 volume bonus');
+  assert.equal(r.bonusAcu, 300, '£15 = 1,500 base + 20% bonus');
 
   // Enterprise never auto-charges — it routes to sales.
   const ent = buyAcu(u.id, 'enterprise');
@@ -1935,7 +1935,7 @@ test('ACU marketplace: Starter 500 · Traveller 1,750 · Family 4,000 · Busines
 // ---- ACU Economy (spec §4): wallet view + typed transaction ledger -----------
 test('ACU wallet: lifetime purchased/used/earned counters + PURCHASE/USAGE/REFUND/BONUS/REWARD types', () => {
   const u = createUser({ name: 'Wallet User', email: 'wallet@example.com' });
-  buyAcu(u.id, 'traveller');            // PURCHASE 1500 + BONUS 250
+  buyAcu(u.id, 'top15');                // PURCHASE 1500 + BONUS 300
   spendAcu(u.id, 26, 'search:smart');   // USAGE 26
   refundAcu(u.id, 26, 'search-refund'); // REFUND 26
   rewardAcu(u.id, 50, 'review-reward'); // REWARD 50
@@ -1944,9 +1944,9 @@ test('ACU wallet: lifetime purchased/used/earned counters + PURCHASE/USAGE/REFUN
   assert.equal(w.walletId, `wal_${u.id}`);
   assert.equal(w.lifetimePurchased, 1500, 'purchased counts the paid base only');
   assert.equal(w.lifetimeUsed, 26);
-  assert.equal(w.lifetimeEarned, 250 + 50, 'earned = volume bonus + reward');
+  assert.equal(w.lifetimeEarned, 300 + 50, 'earned = volume bonus + reward');
   assert.equal(w.lifetimeRefunded, 26);
-  assert.equal(w.currentBalance, 1750 - 26 + 26 + 50);
+  assert.equal(w.currentBalance, 1800 - 26 + 26 + 50);
   assert.equal(w.status, 'active');
 
   const txns = acuTransactions(u.id);
@@ -3008,4 +3008,32 @@ test('assistant cancels with a policy-based refund quote', () => {
   assert.ok(/CONFIRM/i.test(assist('cancel my booking', u.id).reply), 'quotes cancellation and asks to confirm');
   assist('confirm', u.id);
   assert.equal(b.status, 'cancelled', 'booking is cancelled');
+});
+
+test('assistant operates on hotels too (add nights, upgrade room/board)', () => {
+  const u = createUser({ email: 'htlop@x.co', name: 'Hotel Op' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1200 } }, totalUSD: 1524, travellers: { total: 2 }, components: [
+    { type: 'flight', supplier: 'BA', live: false, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' }, inbound: { from: 'DXB', to: 'LHR', date: '2027-10-10' } } },
+    { type: 'hotel', supplier: 'Rove', stars: 4, details: { nights: 7, rooms: 1, nightlyUSD: 127, board: 'Room only', roomType: 'Superior Double', checkIn: '2027-10-03', checkOut: '2027-10-10' } },
+  ] }, userId: u.id });
+  // Add nights
+  assert.ok(/CONFIRM/i.test(assist('add 2 nights to my hotel', u.id).reply));
+  assist('confirm', u.id);
+  assert.equal(b.option.components[1].details.nights, 9, 'stay extended by 2 nights');
+  assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 200), '2 × £100/night charged');
+  // Whole-trip date change moves flight AND hotel
+  assist('move my trip to 15 November 2027', u.id);
+  assist('confirm', u.id);
+  assert.equal(b.option.components[0].details.outbound.date, '2027-11-15', 'flight moved');
+  assert.equal(b.option.components[1].details.checkIn, '2027-11-15', 'hotel moved with it');
+});
+
+test('minimum AI profit margin is enforced at 100% across every action', () => {
+  const rep = aiMarginReport();
+  assert.equal(rep.minMarginPct, 100);
+  assert.equal(rep.allMeetFloor, true, 'every AI action clears the 100% margin floor');
+  assert.ok(rep.actions.every((a) => a.marginPct >= 100));
+  // The floor never lets an action be charged below 2× its provider cost.
+  assert.ok(minAcuForMargin(0.01) >= 1);
+  assert.ok(pricedAcuForAction(1) >= 1);
 });

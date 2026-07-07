@@ -56,7 +56,7 @@ import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE } from './revenue.js';
-import { gatewayStatus, PROVIDER_TOKEN_RATES } from './ai-gateway.js';
+import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
@@ -488,6 +488,12 @@ app.post('/api/deposits/:id/refund', safe((req, res) => {
 app.get('/api/admin/ai-costs', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json(aiCostReport());
+}));
+// Minimum AI profit margin (business rule: never below 100%) — proves every
+// metered AI action sells for at least 2× its provider cost.
+app.get('/api/admin/ai-margin', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ minMarginPct: MIN_AI_MARGIN * 100, ...aiMarginReport(req.query.provider) });
 }));
 
 // Live-supplier status: is Duffel connected, and is it a TEST or LIVE key?

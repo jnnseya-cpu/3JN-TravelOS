@@ -224,13 +224,21 @@ function isConfirmation(message) {
 // Parse a change request into a structured change. Returns null if unclear.
 function parseChange(message) {
   const t = String(message || '');
+  // Hotel: add nights to the stay.
+  const nightM = t.match(/\b(?:add|extra|more|another|extend)\b[^.]*\bnight/i);
+  if (nightM) { const n = (t.match(/\b(\d+)\s*(?:extra\s*)?night/i) || [])[1]; return { kind: 'nights', nights: Math.max(1, Number(n) || 1) }; }
+  // Hotel: board-basis upgrade.
+  const boardM = t.match(/\b(half board|full board|all[- ]inclusive|bed (?:and|&) breakfast|breakfast included)\b/i);
+  if (boardM) { const b = { 'half board': 'Half board', 'full board': 'Full board', 'all inclusive': 'All inclusive', 'all-inclusive': 'All inclusive', 'bed and breakfast': 'Bed & breakfast', 'bed & breakfast': 'Bed & breakfast', 'breakfast included': 'Bed & breakfast' }[boardM[1].toLowerCase()] || 'Half board'; return { kind: 'board', board: b }; }
+  // Hotel: room upgrade.
+  if (/\b(upgrade|better|bigger|change)\b[^.]*\broom\b|\broom\b[^.]*\bupgrade\b/i.test(t)) return { kind: 'room' };
   // Add checked baggage.
   const bagM = t.match(/\b(?:add|extra|another|more)\b[^.]*\bbag(?:gage|s)?\b/i) || t.match(/\bbaggage\b/i);
   if (bagM) { const n = (t.match(/\b(\d+)\s*(?:bag|checked)/i) || [])[1]; return { kind: 'baggage', bags: Math.max(1, Number(n) || 1) }; }
   // Add a passenger/traveller.
   const paxM = t.match(/\b(?:add|extra|another)\b[^.]*\b(passenger|traveller|traveler|person|adult|child)\b/i);
   if (paxM) { const n = (t.match(/\b(\d+)\s*(?:passenger|traveller|traveler|person|adult|child)/i) || [])[1]; return { kind: 'passenger', passengers: Math.max(1, Number(n) || 1) }; }
-  // Change the travel date.
+  // Change the travel date (moves the whole trip — flights + stay).
   if (/\b(change|move|reschedul|shift|new date|different date|bring forward|push back)\b/i.test(t)) {
     const dates = safe(() => parseExplicitDates(t, new Date()));
     if (dates?.checkIn) return { kind: 'date', newDate: dates.checkIn, newReturnDate: dates.checkOut || null };

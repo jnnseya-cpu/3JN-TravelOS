@@ -2718,9 +2718,10 @@ window.buyAcuFlow = () => {
   modal(`
     <span class="eyebrow">ACU Marketplace · bigger packs earn bonus ACUs</span>
     <h3 style="margin:6px 0">Top up AI Compute Units</h3>
-    <p class="muted" style="font-size:13px">ACUs power your AI searches. Members auto-fund ACUs from 10% of their plan each month; larger packs include a volume bonus above the £1 = 100 ACU base rate.</p>
-    ${[['starter', 'Starter · £5', '500'], ['traveller', 'Traveller · £15', '1,750'], ['family', 'Family · £29', '4,000'], ['business', 'Business · £99', '20,000']]
-      .map(([id, gbp, acu]) => `<div class="kv"><span>${acu} ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}
+    <p class="muted" style="font-size:13px">ACUs power your AI searches and actions at £1 = 100 ACU. Members auto-fund ACUs from 10% of their plan each month; top up any time — bigger top-ups earn a bonus.</p>
+    ${[['top5', '£5', '500', ''], ['top10', '£10', '1,100', '+10% bonus'], ['top15', '£15', '1,800', '+20% bonus']]
+      .map(([id, gbp, acu, bonus]) => `<div class="kv"><span>${acu} ACU ${bonus ? `<span style="color:var(--green);font-size:11px">${bonus}</span>` : ''}</span><button class="btn ${id === 'top15' ? 'btn-gold' : 'btn-ghost'} btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}
+    <div class="kv" style="opacity:.8"><span>Family · 4,000 ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('family')">£29</button></div>
     <div class="kv"><span>Enterprise · custom volume</span><a class="btn btn-ghost btn-sm" href="mailto:sales@3jntravel.com">Contact sales</a></div>`);
 };
 window.buyAcu = async (pack) => {
