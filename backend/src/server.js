@@ -32,6 +32,7 @@ import {
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
+  createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -452,6 +453,71 @@ app.post('/api/admin/listings/:id/review', safe((req, res) => {
   res.json(result);
 }));
 
+// ---- Request Exact Quote (real revenue capture on estimated options) --------
+// A customer on an estimated flight/hotel option requests the exact bookable
+// price. We capture the lead + deposit intent; an agent (or the live supplier)
+// confirms the real price; the customer then pays it for real.
+app.post('/api/quote-request', safe((req, res) => {
+  const { option, intent, contact, depositIntentGBP, note } = req.body || {};
+  const user = currentUser(req);
+  const result = createQuoteRequest({ userId: user?.id || null, option, intent, contact, depositIntentGBP, note });
+  if (!result.ok) return res.status(400).json(result);
+  // Notify the team by email so no lead is missed (no-op if email disabled).
+  const r = result.request;
+  sendMail({
+    to: MAIN_CONTACT,
+    subject: `New exact-quote request — ${r.destination} (${r.tier})`,
+    text: `Lead: ${r.contact.name} <${r.contact.email}> ${r.contact.phone}
+Trip: ${r.tier} to ${r.destination}
+Estimated total: ${r.symbol}${r.estimatedTotalLocal}
+Deposit intent: £${r.depositIntentGBP}
+Note: ${r.note}
+Request id: ${r.id}`,
+    html: `<p><strong>${r.contact.name}</strong> &lt;${r.contact.email}&gt; ${r.contact.phone}</p><p>${r.tier} → ${r.destination}. Est ${r.symbol}${r.estimatedTotalLocal}. Deposit intent £${r.depositIntentGBP}.</p><p>${r.note || ''}</p><p>ID: ${r.id}</p>`,
+  }).catch(() => {});
+  res.json(result);
+}));
+app.get('/api/quote-requests', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ requests: listQuoteRequests({ userId: user.id }) });
+}));
+// Admin: see and price every quote request.
+app.get('/api/admin/quote-requests', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ requests: listQuoteRequests({ status: req.query.status || null }) });
+}));
+app.post('/api/admin/quote-requests/:id/confirm', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { confirmedTotalLocal, supplierRef } = req.body || {};
+  const result = confirmQuoteRequest(req.params.id, { confirmedTotalLocal, confirmedBy: currentUser(req).id, supplierRef });
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+// Pay a CONFIRMED quote for real (Stripe). The price is now bookable, so this
+// is lawful real payment — the same rail flights use once Duffel is live.
+app.post('/api/quote-request/:id/pay', safe(async (req, res) => {
+  if (!stripeEnabled()) return res.status(400).json({ error: 'stripe-not-configured' });
+  const qr = getQuoteRequest(req.params.id);
+  if (!qr) return res.status(404).json({ error: 'not-found' });
+  if (qr.status !== 'priced' || !(qr.confirmedTotalLocal > 0)) {
+    return res.status(409).json({ error: 'not-yet-priced', message: 'This quote has not been confirmed with an exact bookable price yet.' });
+  }
+  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const session = await createCheckoutSession({
+    amountMinor: Math.round(qr.confirmedTotalLocal * 100),
+    currency: qr.currency,
+    description: `3JN Travel OS — ${qr.tier} to ${qr.destination} (confirmed quote)`,
+    bookingId: qr.id,
+    userId: qr.userId || '',
+    customerEmail: qr.contact?.email,
+    successUrl: `${origin}/console?quotePaid=1&qr=${qr.id}`,
+    cancelUrl: `${origin}/console?quotePaid=0&qr=${qr.id}`,
+  });
+  if (!session.ok) return res.status(400).json(session);
+  res.json(session);
+}));
+
 // ---- Guaranteed Savings Engine (USP #2) -------------------------------------
 // "If we cannot beat or match your current quote, we refund your search
 // credits." Compares the competing quote to our floor and refunds the ACUs.
@@ -840,7 +906,11 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
   if (event.type === 'checkout.session.completed') {
     const meta = event.data?.object?.metadata || {};
     const amountMinor = event.data?.object?.amount_total || 0;
-    if (meta.bookingId) {
+    if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
+      // A confirmed exact-quote was paid.
+      markQuoteRequestPaid(meta.bookingId, { amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
+      if (meta.userId) pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Your ${(amountMinor / 100).toFixed(2)} payment is confirmed — your trip is booked at the exact quoted price.` });
+    } else if (meta.bookingId) {
       const booking = recordPayment(meta.bookingId, { type: 'stripe-checkout', amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
       if (booking && meta.userId) {
         pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Card payment of ${(amountMinor / 100).toFixed(2)} confirmed via Stripe — your booking is secured.` });

@@ -2605,3 +2605,69 @@ test('legal safety: estimated-price bookings can NEVER take real money', async (
   const liveBooking = createBooking({ quoteId: q2.id, option: liveOption, instalment: null, userId: null });
   assert.equal(liveBooking.priceBasis, 'live', 'all-live components -> live basis, real payment allowed');
 });
+
+// ================= Request Exact Quote (real revenue capture) ==================
+import { createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests } from '../src/store.js';
+
+test('exact-quote flow: estimated option → lead + deposit intent → confirmed bookable price → payable', () => {
+  const r = plan({ text: 'Tokyo from London in September, flights and hotel for 2 adults, 6 nights', context: GB });
+  assert.equal(r.stage, 'options');
+  const option = r.packages.options[0];
+  // Without live suppliers this option is estimated — not real-payment bookable.
+  assert.equal(option.priceBasis, 'estimated');
+  assert.equal(option.bookableForRealPayment, false);
+
+  const user = createUser({ name: 'Quote Seeker', email: 'quote.seeker@example.com' });
+  const req = createQuoteRequest({
+    userId: user.id, option, intent: r.intent,
+    contact: { name: 'Quote Seeker', email: 'quote.seeker@example.com', phone: '+4477000000' },
+    depositIntentGBP: 20, note: 'Dates flexible ±2 days',
+  });
+  assert.equal(req.ok, true);
+  assert.equal(req.request.status, 'requested');
+  assert.equal(req.request.depositIntentGBP, 20);
+  assert.equal(req.request.priceBasis, 'estimated');
+  assert.ok(listQuoteRequests({ userId: user.id }).length === 1);
+
+  // An agent (or live supplier) confirms the EXACT bookable price → now live.
+  const priced = confirmQuoteRequest(req.request.id, { confirmedTotalLocal: 2480.5, confirmedBy: 'agent_1', supplierRef: 'DUFFEL-ABC123' });
+  assert.equal(priced.ok, true);
+  assert.equal(priced.request.status, 'priced');
+  assert.equal(priced.request.confirmedTotalLocal, 2480.5);
+  assert.equal(priced.request.priceBasis, 'live', 'confirmed quote is now a real bookable price');
+
+  // The customer pays the exact confirmed amount → booked.
+  const paid = markQuoteRequestPaid(req.request.id, { amount: 2480.5, gateway: 'stripe', reference: 'cs_live_1' });
+  assert.equal(paid.request.status, 'paid');
+  assert.equal(paid.request.depositPaid, true);
+});
+
+test('exact-quote endpoints: request public, confirm admin-gated, pay refuses un-priced', async () => {
+  const server = http.createServer(app);
+  await new Promise((res) => server.listen(0, res));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const rr = plan({ text: 'Nairobi from London, flights and hotel for 2, 5 nights', context: GB });
+    const option = rr.packages.options[0];
+    // Public can request a quote.
+    const reqRes = await fetch(`${base}/api/quote-request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ option, intent: rr.intent, contact: { name: 'A B', email: 'ab@example.com' }, depositIntentGBP: 20 }),
+    });
+    assert.equal(reqRes.status, 200);
+    const { request } = await reqRes.json();
+    // Admin gate on confirm.
+    assert.equal((await fetch(`${base}/api/admin/quote-requests`)).status, 403);
+    const admin = createUser({ name: 'Admin', role: 'admin' });
+    const confRes = await fetch(`${base}/api/admin/quote-requests/${request.id}/confirm`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': admin.id },
+      body: JSON.stringify({ confirmedTotalLocal: 1990 }),
+    });
+    assert.equal(confRes.status, 200);
+    // Pay needs Stripe; without it the endpoint reports not-configured (never a false charge).
+    const payRes = await fetch(`${base}/api/quote-request/${request.id}/pay`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.ok([400, 409].includes(payRes.status));
+  } finally {
+    server.close();
+  }
+});

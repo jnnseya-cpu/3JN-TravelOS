@@ -707,7 +707,11 @@ function optionCard(o, sym, intent) {
         <tr><td>3JN commission (10%)</td><td>${money2(p.local.commission, sym)}</td></tr>
         <tr class="total"><td>Total</td><td>${money2(p.local.total, sym)}</td></tr>
       </table>
-      <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:16px" onclick="openBooking('${o.tier}')">Quote & ${intent.wantsInstalments ? 'pay in instalments' : 'book'}</button>
+      ${o.bookableForRealPayment
+        ? `<div class="save-tag" style="color:#79d99b;border-color:rgba(121,217,155,.4)">✓ Live bookable price</div>
+           <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="openBooking('${o.tier}')">Quote & ${intent.wantsInstalments ? 'pay in instalments' : 'book'}</button>`
+        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(216,180,106,.4)">Estimated — request your exact price</div>
+           <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="requestExactQuote('${o.tier}')">Request exact quote</button>`}
     </div>`;
 }
 
@@ -855,6 +859,50 @@ window.showComponentInfo = (tier, idx) => {
 };
 
 // ---- Booking + instalments ------------------------------------------------
+// ---- Request Exact Quote (estimated options → real revenue capture) --------
+window.payExactQuote = async (id) => {
+  try {
+    const st = await api('/api/pay/stripe/status', { silent: true });
+    if (!st.enabled) { toast('Card payment goes live once Stripe is connected. Our team will confirm your booking meanwhile.'); return; }
+    const sess = await api(`/api/quote-request/${id}/pay`, { method: 'POST', body: '{}' });
+    if (sess.url) { toast('💳 Opening secure checkout…'); window.location.href = sess.url; }
+  } catch (e) { toast(e.message || 'Could not start payment.'); }
+};
+window.requestExactQuote = (tier) => {
+  const o = window.__options?.[tier];
+  if (!o) return;
+  const sym = o.pricing.symbol;
+  const est = o.pricing.local.total;
+  const u = state.user || {};
+  modal(`
+    <span class="eyebrow">Request your exact price</span>
+    <h3 style="margin:6px 0 4px">${esc(tier)} · ${esc(o.pricing ? (window.__intent?.destination?.city || '') : '')}</h3>
+    <p class="muted" style="font-size:13px">This price is an estimate. We'll confirm the exact bookable fare with the live supplier and send you the precise amount to approve — <strong>no charge until you accept it</strong>.</p>
+    <div class="kv" style="margin-top:8px"><span>Estimated total</span><span>${money(est, sym)}</span></div>
+    <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="qrName" value="${esc(u.name || '')}" placeholder="Full name"></div>
+    <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="qrEmail" value="${esc(u.email || '')}" placeholder="you@email.com"></div>
+    <div class="field" style="margin-top:10px"><label>Phone / WhatsApp</label><input class="in" id="qrPhone" placeholder="+44…"></div>
+    <div class="field" style="margin-top:10px"><label>Anything we should know? (optional)</label><textarea class="in" id="qrNote" style="min-height:52px" placeholder="Dates flexible ±2 days, window seat, etc."></textarea></div>
+    <label class="kv" style="margin-top:10px;cursor:pointer"><span>Reserve my price with a £20 refundable deposit intent</span><input type="checkbox" id="qrDeposit" checked></label>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitExactQuote('${tier}')">Request exact quote</button>
+    <p class="muted center" style="font-size:11.5px;margin-top:8px">🔒 Fully refundable. We only take payment once you approve the exact confirmed price.</p>`);
+};
+window.submitExactQuote = async (tier) => {
+  const o = window.__options?.[tier];
+  if (!o) return;
+  const contact = { name: $('#qrName')?.value.trim(), email: $('#qrEmail')?.value.trim(), phone: $('#qrPhone')?.value.trim() };
+  if (!contact.name || !contact.email) { toast('Please add your name and email so we can send your exact price.'); return; }
+  const body = { option: o, intent: window.__intent || null, contact, depositIntentGBP: $('#qrDeposit')?.checked ? 20 : 0, note: $('#qrNote')?.value.trim() };
+  try {
+    const d = await api('/api/quote-request', { method: 'POST', body: JSON.stringify(body) });
+    closeModal();
+    modal(`<div class="center" style="padding:8px"><div style="font-size:40px">📝</div>
+      <h3 style="margin:10px 0 6px">Request received</h3>
+      <p class="muted" style="font-size:14px">We're confirming the exact bookable price for your <strong>${esc(tier)}</strong> trip. You'll get the precise amount by email and in your Console — approve it there to pay securely. Reference <strong>${esc(d.request.id)}</strong>.</p>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="closeModal();nav('console')">Go to my Console</button></div>`);
+  } catch (e) { toast(e.message || 'Could not send your request — please try again.'); }
+};
+
 window.openBooking = async (tier) => {
   const option = window.__options[tier];
   const intent = window.__intent;
@@ -1041,6 +1089,8 @@ async function renderConsole() {
   }
   const u = data.user;
   const bookings = data.bookings || [];
+  let quoteReqs = [];
+  try { quoteReqs = (await api('/api/quote-requests', { silent: true })).requests || []; } catch { /* optional */ }
 
   const profile = `
     <div class="card pad">
@@ -1083,8 +1133,18 @@ async function renderConsole() {
     ${u.allAccess || ['executive', 'business', 'admin'].includes(u.role) || u.tier === 'Elite' || u.tier === 'Nomad' ? '<div id="expenseCard" class="card pad" style="margin-top:16px"></div>' : ''}
     ${u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
 
-  const cards = bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
-    `<div class="card pad center muted">No bookings yet. <button class="btn btn-ghost btn-sm" data-nav="planner">Plan a trip</button></div>`;
+  const quoteCards = quoteReqs.length ? `<div class="card pad" style="margin-bottom:16px"><span class="eyebrow">Exact-quote requests</span>${quoteReqs.map((q) => {
+    const badge = q.status === 'paid' ? '<span class="tag-confirmed">✓ paid & booked</span>'
+      : q.status === 'priced' ? '<span class="chip" style="border-color:rgba(121,217,155,.4);color:#79d99b">exact price ready</span>'
+      : '<span class="chip" style="border-color:rgba(216,180,106,.4);color:var(--gold)">confirming price…</span>';
+    const priceLine = q.confirmedTotalLocal ? `<strong style="color:var(--gold)">${q.symbol}${q.confirmedTotalLocal}</strong> confirmed` : `est ${q.symbol}${q.estimatedTotalLocal}`;
+    const payBtn = q.status === 'priced' ? `<button class="btn btn-gold btn-sm" style="margin-top:8px" onclick="payExactQuote('${q.id}')">Pay ${q.symbol}${q.confirmedTotalLocal} & book</button>` : '';
+    return `<div style="padding:10px 0;border-bottom:1px solid rgba(223,229,238,.07)">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><span><strong>${esc(q.tier)}</strong> · ${esc(q.destination)}</span>${badge}</div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">${priceLine} · ref ${esc(q.id)}</div>${payBtn}</div>`;
+  }).join('')}</div>` : '';
+  const cards = quoteCards + (bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
+    `<div class="card pad center muted">No bookings yet. <button class="btn btn-ghost btn-sm" data-nav="planner">Plan a trip</button></div>`);
 
   out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
@@ -1628,6 +1688,8 @@ async function renderAdmin() {
   let profit = null, uh = null;
   try { profit = await api('/api/admin/profitability'); } catch { /* optional panel */ }
   try { uh = await api('/api/admin/users-hosts'); } catch { /* optional panel */ }
+  let qr = null;
+  try { qr = await api('/api/admin/quote-requests'); } catch { /* optional panel */ }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -1693,6 +1755,17 @@ async function renderAdmin() {
           </div>
         </div>`;
     })() : ''}
+    ${qr && qr.requests?.length ? `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Exact-quote requests — confirm real bookable prices</h2></div>
+      <div class="card pad">${qr.requests.map((r) => `
+        <div style="padding:12px 0;border-bottom:1px solid rgba(223,229,238,.07)">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><strong>${esc(r.tier)} · ${esc(r.destination)}</strong>
+            <span class="chip" style="font-size:10px">${r.status}</span></div>
+          <div class="muted" style="font-size:12.5px;margin-top:3px">${esc(r.contact.name)} &lt;${esc(r.contact.email)}&gt; ${esc(r.contact.phone || '')} · est ${r.symbol}${r.estimatedTotalLocal} · deposit intent £${r.depositIntentGBP}${r.note ? ' · “' + esc(r.note) + '”' : ''}</div>
+          ${r.status === 'requested' ? `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+            <input class="in" id="qrc-${r.id}" placeholder="Exact confirmed ${r.symbol} total" style="max-width:200px" inputmode="decimal">
+            <button class="btn btn-gold btn-sm" onclick="confirmQuote('${r.id}','${r.symbol}')">Confirm price → notify customer</button></div>`
+            : r.confirmedTotalLocal ? `<div style="margin-top:4px;color:#79d99b;font-size:12.5px">Confirmed ${r.symbol}${r.confirmedTotalLocal}${r.status === 'paid' ? ' · PAID' : ' · awaiting customer payment'}</div>` : ''}
+        </div>`).join('')}</div>` : ''}
     <div class="console-grid" style="margin-top:20px">
       <div>
         <div class="card pad"><span class="eyebrow">AI Gateway · Model Router</span><p class="muted" style="font-size:12.5px;margin:6px 0 8px">Default: ${g.defaultProvider}. Providers route by task; local fallback when no key.</p>${providers}
@@ -2732,6 +2805,14 @@ window.doLogin = async () => {
   setUser(d.user); closeModal(); toast(`✓ Welcome back, ${d.user.name}!`); nav('console');
 };
 
+window.confirmQuote = async (id, sym) => {
+  const val = Number(($(`#qrc-${id}`)?.value || '').replace(/[^0-9.]/g, ''));
+  if (!(val > 0)) { toast('Enter the exact confirmed total.'); return; }
+  try { await api(`/api/admin/quote-requests/${id}/confirm`, { method: 'POST', body: JSON.stringify({ confirmedTotalLocal: val }) }); }
+  catch (e) { toast(e.message || 'Confirm failed.'); return; }
+  toast(`✓ ${sym}${val} confirmed — customer notified to pay.`);
+  renderAdmin();
+};
 window.reviewListing = async (id, decision) => {
   let reason = '';
   if (decision === 'reject') { reason = prompt('Reason for rejection (sent to the host):') || 'Did not pass review'; }

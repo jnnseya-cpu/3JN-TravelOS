@@ -36,6 +36,7 @@ const db = {
   aiRequestCosts: [], // ai_request_costs ledger — estimated vs actual AI spend per request
   searchDeposits: [], // refundable search deposits (deep £5 / luxury £20 / corporate £50)
   visaChain: [], // hash-chained (blockchain-style) audit trail of visa decisions
+  quoteRequests: [], // exact-quote requests on estimated options (lead + deposit intent)
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -1199,12 +1200,84 @@ function nowISO() {
 function round2(n) { return Math.round(n * 100) / 100; }
 function round4(n) { return Math.round(n * 10000) / 10000; }
 
+// ---- Request Exact Quote (real revenue capture before live suppliers) --------
+// An estimated flight/hotel option cannot take real money (legal-safety gate).
+// Instead the customer requests the EXACT quote: we capture the lead + a
+// refundable deposit INTENT. An agent (or the live supplier once connected)
+// confirms the real bookable price; the customer then pays that exact amount.
+// This converts estimated results into real, lawful revenue capture.
+export function createQuoteRequest({ userId = null, option, intent, contact = {}, depositIntentGBP = 0, note = '' } = {}) {
+  if (!option) return { ok: false, error: 'option-required' };
+  const est = option?.pricing?.local?.total || 0;
+  const req = {
+    id: `qr_${db.quoteRequests.length + 1}_${Date.now().toString(36)}`,
+    userId,
+    status: 'requested',               // requested → priced → paid | cancelled
+    tier: option.tier,
+    destination: intent?.destination?.city || intent?.destination?.code || '',
+    components: (option.components || []).map((c) => ({ type: c.type, supplier: c.supplier, priceUSD: c.priceUSD, live: !!c.live })),
+    estimatedTotalLocal: est,
+    currency: option?.pricing?.currency || 'GBP',
+    symbol: option?.pricing?.symbol || '£',
+    priceBasis: option?.priceBasis || 'estimated',
+    contact: {
+      name: String(contact.name || '').slice(0, 80),
+      email: String(contact.email || '').slice(0, 120),
+      phone: String(contact.phone || '').slice(0, 40),
+    },
+    depositIntentGBP: Math.max(0, Math.round(Number(depositIntentGBP) || 0)),
+    depositPaid: false,
+    note: String(note || '').slice(0, 400),
+    confirmedTotalLocal: null,         // the real bookable price, set by an agent/supplier
+    confirmedBy: null,
+    quotedAt: null,
+    createdAt: nowISO(),
+  };
+  db.quoteRequests.push(req);
+  recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'quote.requested', entity: 'quoteRequest', entityId: req.id, summary: `${req.tier} · ${req.destination} · est ${req.symbol}${est}` });
+  if (userId) pushNotification(userId, { type: 'info', icon: '📝', title: 'Exact quote requested', body: `We're confirming the live bookable price for your ${req.tier} ${req.destination} trip. You'll get the exact amount to approve — no charge until you do.` });
+  return { ok: true, request: req };
+}
+// Agent/supplier confirms the real price. Once set, the customer can pay it
+// for real (Stripe) because it is now a bookable, held quote.
+export function confirmQuoteRequest(requestId, { confirmedTotalLocal, confirmedBy = 'agent', supplierRef = '' } = {}) {
+  const r = db.quoteRequests.find((x) => x.id === requestId);
+  if (!r) return { ok: false, error: 'not-found' };
+  const amt = Math.round(Number(confirmedTotalLocal) * 100) / 100;
+  if (!(amt > 0)) return { ok: false, error: 'invalid-amount' };
+  r.confirmedTotalLocal = amt;
+  r.confirmedBy = confirmedBy;
+  r.supplierRef = String(supplierRef || '').slice(0, 60);
+  r.priceBasis = 'live';               // now a real, bookable price
+  r.status = 'priced';
+  r.quotedAt = nowISO();
+  recordAudit({ actor: confirmedBy, role: 'agent', action: 'quote.confirmed', entity: 'quoteRequest', entityId: r.id, summary: `confirmed ${r.symbol}${amt}` });
+  if (r.userId) pushNotification(r.userId, { type: 'success', icon: '✅', title: 'Your exact price is ready', body: `${r.destination} ${r.tier}: ${r.symbol}${amt} confirmed and bookable. Open your Console to pay securely and lock it in.` });
+  return { ok: true, request: r };
+}
+export function markQuoteRequestPaid(requestId, { amount, gateway = 'stripe', reference = '' } = {}) {
+  const r = db.quoteRequests.find((x) => x.id === requestId);
+  if (!r) return { ok: false, error: 'not-found' };
+  r.status = 'paid';
+  r.depositPaid = true;
+  r.payment = { amount, gateway, reference, at: nowISO() };
+  recordAudit({ actor: r.userId || 'guest', role: 'consumer', action: 'quote.paid', entity: 'quoteRequest', entityId: r.id, summary: `${gateway} ${r.symbol}${amount}` });
+  return { ok: true, request: r };
+}
+export function listQuoteRequests({ userId = null, status = null } = {}) {
+  let out = db.quoteRequests;
+  if (userId) out = out.filter((r) => r.userId === userId);
+  if (status) out = out.filter((r) => r.status === status);
+  return [...out].reverse();
+}
+export function getQuoteRequest(id) { return db.quoteRequests.find((r) => r.id === id) || null; }
+
 // ---- Persistence snapshot / hydrate (for Firebase RTDB / Firestore) -------
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests'];
 
 export function snapshot() {
   const out = { counter };
