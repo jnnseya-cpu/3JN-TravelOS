@@ -44,6 +44,13 @@ export const PARTNERS = {
   searadar: { id: 'searadar', name: 'Searadar', type: 'affiliate', url: 'https://searadar.com/', fulfils: ['boat'], regions: ['*'] },
   ticketnetwork: { id: 'ticketnetwork', name: 'TicketNetwork', type: 'affiliate', url: 'https://www.ticketnetwork.com/', fulfils: ['tickets'], regions: ['*'] },
   compensair: { id: 'compensair', name: 'Compensair', type: 'disruption', url: 'https://www.compensair.com/', fulfils: ['disruption'], regions: ['*'] },
+  // Ground & sea journey aggregators — every travel mode gets a booking route,
+  // not just flights. Brand-direct links (BRAND_URLS) win when the offer's
+  // supplier is itself bookable; these are the fallback fulfilment partners.
+  omio: { id: 'omio', name: 'Omio', type: 'affiliate', url: 'https://www.omio.com/', fulfils: ['train', 'coach', 'ferry'], regions: ['*'] },
+  directferries: { id: 'directferries', name: 'Direct Ferries', type: 'affiliate', url: 'https://www.directferries.com/', fulfils: ['ferry'], regions: ['*'] },
+  cruisedirect: { id: 'cruisedirect', name: 'CruiseDirect', type: 'affiliate', url: 'https://www.cruisedirect.com/', fulfils: ['cruise'], regions: ['*'] },
+  discovercars: { id: 'discovercars', name: 'Discover Cars', type: 'affiliate', url: 'https://www.discovercars.com/', fulfils: ['carhire'], regions: ['*'] },
 };
 
 // Some suppliers ARE the bookable brand (the eSIM provider, the airline). When
@@ -62,6 +69,25 @@ export const BRAND_URLS = {
   'Sixt': 'https://www.sixt.com/',
   'AXA Travel': 'https://www.axa-travelinsurance.com/',
   'Allianz Assistance': 'https://www.allianz-assistance.com/',
+  // Rail
+  'Eurostar': 'https://www.eurostar.com/',
+  'Rail Europe': 'https://www.raileurope.com/',
+  'Trainline': 'https://www.thetrainline.com/',
+  // Coach
+  'FlixBus': 'https://www.flixbus.com/',
+  'National Express': 'https://www.nationalexpress.com/',
+  'Megabus': 'https://www.megabus.com/',
+  // Ferry & mini cruise
+  'DFDS Seaways': 'https://www.dfds.com/',
+  'P&O Ferries': 'https://www.poferries.com/',
+  'Brittany Ferries': 'https://www.brittany-ferries.co.uk/',
+  'DFDS Mini Cruise': 'https://www.dfds.com/en-gb/mini-cruises',
+  'P&O Mini Cruise': 'https://www.poferries.com/en/mini-cruises',
+  'Fjord Line Mini Cruise': 'https://www.fjordline.com/',
+  // Cruise lines
+  'MSC Cruises': 'https://www.msccruises.com/',
+  'Royal Caribbean': 'https://www.royalcaribbean.com/',
+  'Costa Cruises': 'https://www.costacruises.com/',
 };
 
 // Optional per-partner affiliate / agent tracking ids (kept out of code; in a

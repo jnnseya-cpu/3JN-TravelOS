@@ -276,7 +276,15 @@ export function extractDestination(text) {
   let tail = null;
   const parts = t.split(/\sto\s/i);
   if (parts.length > 1) tail = parts[parts.length - 1];
-  else { const m = t.match(/\b(?:visit(?:ing)?|destination|holiday\s+in|vacation\s+in|getaway\s+to|\bin)\s+(.+)/i); tail = m ? m[1] : null; }
+  else {
+    // Leading "<Destination> from <origin>" / "<Destination> by ferry" — the
+    // sentence opens with the place itself ("Amsterdam from Newcastle by
+    // ferry"). Only a capitalised opener counts, never a sentence starter.
+    const STARTERS = /^(i|we|my|our|please|can|could|would|book|find|get|plan|show|looking|want|need|give|help|hi|hello|the|a|an|cheap|cheapest|mini|direct|return|one)$/i;
+    const lead = (text || '').trim().match(/^([A-ZÀ-Þ][A-Za-zÀ-ÿ'’\-]*(?:\s+[A-ZÀ-Þ][A-Za-zÀ-ÿ'’\-]*){0,2})\s+(?:from|by|in|for|with|on|next|this|during)\b/);
+    if (lead && !STARTERS.test(lead[1].split(/\s+/)[0])) tail = lead[1] + ' ';
+    if (!tail) { const m = t.match(/\b(?:visit(?:ing)?|destination|holiday\s+in|vacation\s+in|getaway\s+to|\bin)\s+(.+)/i); tail = m ? m[1] : null; }
+  }
   if (!tail) return null;
   const words = tail.trim().split(/\s+/);
   const out = [];

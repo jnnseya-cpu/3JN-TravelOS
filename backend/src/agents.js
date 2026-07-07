@@ -66,6 +66,7 @@ export function seoReport(baseUrl = 'https://3jntravel.com') {
     'cheapest reliable flights and hotel package', 'AI travel planner', 'pay monthly holidays',
     'Dubai family holiday deals', 'visa approval probability', 'African diaspora travel',
     'instalment travel booking', 'eSIM for travel', 'AI visa decision', 'unbeatable travel prices',
+    'ferry crossings and mini cruises', 'train and coach travel packages', 'cruise holidays pay monthly',
   ];
   const titles = DESTS.map((d) => `Cheapest reliable ${d} holiday packages — flights, hotel, visa & transfers | 3JN Travel OS`);
   return {
