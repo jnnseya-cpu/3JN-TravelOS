@@ -194,6 +194,17 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 
 ---
 
+# SECTION 05 — CORE AI AGENT ARCHITECTURE
+*The Travel Intelligence Mesh — 10 specialised agents + enterprise workforce*
+
+## 5. AI Agent Architecture
+
+3JN Travel OS operates a proprietary **Travel Intelligence Mesh** — a coordinated network of specialised AI agents orchestrated via LangGraph, each with defined inputs, outputs, permissions, escalation rules, and commercial KPIs. Agents communicate through a shared event bus and maintain shared vector memory for cross-agent learning.
+
+*(Prototype anchors: the agent roster and per-agent ACU budgets live in `backend/src/ai-gateway.js` (`TASK_ROUTES`, `AGENT_BUDGETS`); the deterministic worker implementations live in `planner.js`, `price-dive.js`, `visaos.js`, `monitor.js`, `agents.js`; the production mesh promotes these to LangGraph workers per the Gap Register (§0.3 G6).)*
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
