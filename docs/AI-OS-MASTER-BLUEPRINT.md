@@ -331,6 +331,19 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 
 *(Prototype anchors: the Merchant/BitriPay portal, payment links + QR, settlement view and API keys already run in `store.js` (`createPaymentLink`, `settlePaymentLink`, `merchantSettlement`, `createApiKey` with sandbox/production environments) and the Merchant Portal UI — this section is their production promotion.)*
 
+### 7.2 Supported Payment Methods via BitriPay
+
+| Method | Region | Currency | Settlement Time |
+|---|---|---|---|
+| **BitriPay Wallet** | Pan-Africa, UK, EU | Multi-currency | Instant |
+| **M-Pesa** | Kenya, DRC, Tanzania | KES, CDF, TZS | T+1 |
+| **Airtel Money** | DRC, Zambia, Uganda | CDF, ZMW, UGX | T+1 |
+| **Orange Money** | DRC, West Africa | CDF, XOF | T+1 |
+| **Africell Money** | DRC, Sierra Leone, Gambia | CDF, SLL, GMD | T+1 |
+| **Bank Transfer (SEPA)** | EU | EUR | T+1 |
+| **Card (Visa/Mastercard)** | Global | Multi | T+2 |
+| **QR Payment** | In-store / kiosk | Multi-currency | Instant |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
