@@ -8,6 +8,8 @@
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/", "destination": "/landing.html" },
+    { "source": "/app", "destination": "/index.html" },
     { "source": "/how-it-works", "destination": "/index.html" },
     { "source": "/api-portal", "destination": "/index.html" },
     { "source": "/membership", "destination": "/index.html" },

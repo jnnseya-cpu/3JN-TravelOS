@@ -316,7 +316,7 @@ async function populateShowcase() {
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
 function applyDeepLink() {
   const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'api', 'console', 'business', 'admin']);
-  const pathMap = { '': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
+  const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
   let target = '';
   const qv = new URLSearchParams(location.search).get('view');
   if (qv && views.has(qv)) target = qv;
