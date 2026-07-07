@@ -20,6 +20,11 @@ import { routeFareBaseUSD } from './airports.js';
 
 const env = process.env;
 const TIMEOUT_MS = Number(env.LIVE_SUPPLIERS_TIMEOUT_MS) || 6000;
+// Flight fare searches (Duffel offer_requests) are the heaviest call — busy
+// routes return hundreds of offers. Give them a longer deadline so major
+// departure points (London, Birmingham, Manchester) come back live instead of
+// timing out and falling back to the estimator like the quieter regional ones.
+const FLIGHT_TIMEOUT_MS = Number(env.LIVE_FLIGHTS_TIMEOUT_MS) || 9000;
 
 const DUFFEL_TOKEN = env.DUFFEL_TOKEN || env.DUFFEL_API_KEY || '';
 const DUFFEL_BASE = env.DUFFEL_BASE_URL || 'https://api.duffel.com';
@@ -57,10 +62,13 @@ const PREMIUM_CARRIERS = new Set(['EK', 'QR', 'SQ', 'EY', 'CX', 'QF', 'NH']);
 function carrierName(iata) { return CARRIER_NAMES[iata] || (iata ? `${iata} (airline)` : 'Airline'); }
 
 // ---- low-level fetch with timeout -----------------------------------------
+// `opts.timeoutMs` overrides the default deadline — busy routes (e.g. LHR) return
+// far larger offer sets than regional airports and need longer than the 6s used
+// for quick calls, or they abort mid-response and silently fall back to estimates.
 async function httpJSON(url, opts = {}) {
   if (typeof fetch !== 'function') return null;
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const t = setTimeout(() => ctrl.abort(), opts.timeoutMs || TIMEOUT_MS);
   try {
     const r = await fetch(url, { ...opts, signal: ctrl.signal });
     const ct = r.headers.get('content-type') || '';
@@ -309,6 +317,7 @@ export async function fetchLiveFlights(intent, dest, origin) {
 
   const res = await httpJSON(`${DUFFEL_BASE}/air/offer_requests?return_offers=true`, {
     method: 'POST',
+    timeoutMs: FLIGHT_TIMEOUT_MS,
     headers: {
       Authorization: `Bearer ${DUFFEL_TOKEN}`,
       'Duffel-Version': DUFFEL_VERSION,

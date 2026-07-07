@@ -153,10 +153,26 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Provenance, read from the actual offers used. Price-live = a real fare
   // (Duffel/Amadeus); schedule-live = a real operated schedule (OAG) priced by
   // the estimator. Flights can be schedule-live but price-estimated.
-  const flightOffers = scan.flights || [];
+  // For a multi-origin group the single-origin scan.flights is replaced by
+  // scan.groupTravel (one set of offers per departure party) — provenance must
+  // be read per PARTY so a group where some parties are live and others fell
+  // back to the estimator reports 'partial', not a misleading 'estimated'.
+  const flightOffers = (scan.groupTravel && scan.groupTravel.length) ? scan.groupTravel : (scan.flights || []);
   const hotelOffers = scan.hotel || [];
+  let flightsProvenance;
+  let flightPartiesLive = null;
+  if (scan.groupTravel && scan.groupTravel.length) {
+    const partyIdx = [...new Set(scan.groupTravel.map((o) => o.details?.partyIndex))];
+    const liveParties = partyIdx.filter((idx) => scan.groupTravel.some((o) => o.details?.partyIndex === idx && o.live));
+    flightPartiesLive = { live: liveParties.length, total: partyIdx.length };
+    flightsProvenance = liveParties.length === 0 ? 'estimated'
+      : liveParties.length === partyIdx.length ? 'live' : 'partial';
+  } else {
+    flightsProvenance = flightOffers.some((f) => f.live) ? 'live' : 'estimated';
+  }
   const priceSource = {
-    flights: flightOffers.some((f) => f.live) ? 'live' : 'estimated',
+    flights: flightsProvenance,
+    flightPartiesLive, // {live,total} for a group, else null
     hotel: hotelOffers.some((h) => h.live) ? 'live' : 'estimated',
   };
   const scheduleSource = {

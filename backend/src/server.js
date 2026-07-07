@@ -737,9 +737,16 @@ app.post('/api/plan', safe(async (req, res) => {
       let live;
       // MULTI-ORIGIN GROUP: fetch live fares for EACH party's own departure
       // city so every leg in the one booking is a real bookable fare.
-      if (intent.groupOrigins && intent.groupOrigins.length && liveFlightsEnabled()) {
-        const groupFlights = await Promise.all(intent.groupOrigins.map(async (party, idx) => {
-          const origin = resolveOrigin(party.city) || result.origin;
+      // NOTE: intent.groupOrigins is { parties, resolved } — an OBJECT, not an
+      // array. Iterate .parties (with each party's resolved airport). The old
+      // guard tested `.length`/`.map` on the object, so this branch never ran
+      // and every party silently fell back to the estimator.
+      const groupParties = intent.groupOrigins && Array.isArray(intent.groupOrigins.parties)
+        ? intent.groupOrigins.parties : null;
+      if (groupParties && groupParties.length && liveFlightsEnabled()) {
+        const resolved = intent.groupOrigins.resolved || [];
+        const groupFlights = await Promise.all(groupParties.map(async (party, idx) => {
+          const origin = resolved[idx]?.origin || resolveOrigin(party.city) || result.origin;
           const partyIntent = { ...intent, travellers: { adults: party.count, children: 0, childAges: [], total: party.count } };
           const offers = await fetchLiveFlights(partyIntent, dest, origin).catch(() => null);
           return { partyIndex: idx, city: party.city, offers: (offers && offers.length) ? offers : null };

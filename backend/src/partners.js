@@ -34,7 +34,10 @@ export const PARTNERS = {
     agentId: RAYNA_AGENT.agentId,  // 3JN agent account — used to book at net rates
     agentNetDiscount: 0.18,        // ~18% below public — the agent net rate
     fulfils: ['activities', 'tickets', 'transfer', 'visa', 'boat'],
-    regions: ['AE'],               // Dubai / Abu Dhabi specialism
+    // Rayna Tours' ACTUAL operating countries (their published destination
+    // network). Outside these the agent account cannot be used — never claim a
+    // Rayna net rate for e.g. Canada or the UK.
+    regions: ['AE', 'AZ', 'DE', 'AM', 'ID', 'KZ', 'TH', 'PH', 'LK', 'VN', 'KG', 'TR', 'SA', 'MY', 'OM', 'SG', 'UZ', 'GE'],
   },
   kiwi: { id: 'kiwi', name: 'Kiwi.com', type: 'affiliate', url: 'https://www.kiwi.com/', fulfils: ['flights'], regions: ['*'] },
   trip: { id: 'trip', name: 'Trip.com', type: 'affiliate', url: 'https://uk.trip.com/', fulfils: ['hotel', 'flights'], regions: ['*'] },
@@ -117,11 +120,16 @@ function canonicalType(t) {
 export function partnerFor(componentType, destCountry) {
   const ct = canonicalType(componentType);
   const candidates = Object.values(PARTNERS).filter((p) => p.fulfils.includes(ct));
-  // Agent account in-region first.
-  const agentInRegion = candidates.find((p) => p.type === 'agent' && p.regions.includes(destCountry));
+  // An agent account may ONLY be used where it actually operates. Rayna Tours is
+  // a Dubai/UAE land agent — it cannot book a Canadian transfer or a Turkish
+  // visa. Never fall back to an out-of-region agent: that put "Rayna Tours" on
+  // components in countries it doesn't serve. Match on the agent's regions
+  // (a global agent would carry '*').
+  const agentInRegion = candidates.find((p) => p.type === 'agent' && (p.regions.includes('*') || p.regions.includes(destCountry)));
   if (agentInRegion) return agentInRegion;
-  // Otherwise any agent, then any affiliate.
-  return candidates.find((p) => p.type === 'agent') || candidates[0] || null;
+  // No in-region agent → a global/affiliate partner (or Direct). We forgo the
+  // agent net-rate rather than claim a supplier that doesn't operate there.
+  return candidates.find((p) => p.type !== 'agent') || null;
 }
 
 // Build a booking deep-link for a component (would carry tracking ids live).

@@ -2828,3 +2828,22 @@ test('live overlay is never masked by a cached estimated result', () => {
   const legs = withLive.packages.options[0].components.filter((c) => c.type === 'flight');
   assert.ok(legs.length && legs.every((c) => c.live && c.supplier === 'Air Canada'), 'live fares win over the cached estimate');
 });
+
+test('suppliers & agents must actually operate at the destination', () => {
+  // Regression: Careem (MENA/Pakistan only) was offered for Canada/Turkey, and
+  // Rayna Tours (a Dubai land agent) was attached as the booking agent for
+  // components in countries it does not serve — a realism/credibility bug.
+  const comps = (r) => r.packages.options.flatMap((o) => o.components);
+  const ott = comps(plan({ text: '2 adults to Ottawa for 5 nights in October, flights hotel transfer visa', context: GB, user: null }));
+  assert.ok(!ott.some((c) => c.supplier === 'Careem'), 'Careem never offered for Canada');
+  assert.ok(!ott.some((c) => c.sourcedVia === 'Rayna Tours'), 'Rayna never the agent for Canada');
+  assert.ok(ott.some((c) => c.type === 'transfer'), 'a global transfer provider still covers Canada');
+
+  const ist = comps(plan({ text: '2 adults to Istanbul for 5 nights in October, flights hotel transfer visa', context: GB, user: null }));
+  assert.ok(!ist.some((c) => c.supplier === 'Careem'), 'Careem never offered for Turkey (MENA/Pakistan only)');
+  // Rayna DOES operate in Turkey, so it is a valid in-region agent there.
+  assert.ok(ist.some((c) => c.sourcedVia === 'Rayna Tours' && c.agent), 'Rayna IS a valid agent for Turkey');
+
+  const dxb = comps(plan({ text: '2 adults to Dubai for 5 nights in October, flights hotel transfer visa', context: GB, user: null }));
+  assert.ok(dxb.some((c) => c.sourcedVia === 'Rayna Tours' && c.agent), 'Rayna IS the in-region agent for the UAE');
+});

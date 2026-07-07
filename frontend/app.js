@@ -588,9 +588,14 @@ function renderOptions(data) {
   const liveBits = [];
   if (ps.flights === 'live') liveBits.push('flight fares');
   if (ps.hotel === 'live') liveBits.push('hotel rates');
+  const pl = ps.flightPartiesLive; // {live,total} on a multi-origin group
   let psNote = '';
   if (liveBits.length) {
     psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Live prices · ${liveBits.join(' + ')} from connected providers</div>`;
+  } else if (ps.flights === 'partial') {
+    // Group with some parties live, some estimated — say so precisely.
+    const n = pl ? `${pl.live} of ${pl.total}` : 'some';
+    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.4)">🟡 ${n} departure fares are live &amp; bookable (Duffel) · the rest are indicative until we confirm live availability for those airports</div>`;
   } else if (ss.flights === 'live') {
     psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Real flight schedules (OAG) · live carriers, times &amp; non-stops — fares indicative until a fare provider is connected</div>`;
   } else if (ps.flights || ps.hotel) {

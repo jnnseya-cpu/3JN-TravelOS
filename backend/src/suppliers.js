@@ -127,10 +127,15 @@ const INSURERS = [
   { name: 'WorldNomads', rating: 86, verified: true, perDay_USD: 3.9 },
 ];
 
+// Transfer providers are geographically scoped — a ride-hailing/chauffeur brand
+// must actually operate at the destination. `regions: ['*']` = global coverage;
+// otherwise an ISO country-code allow-list. Careem is MENA/Pakistan only, so it
+// must never be offered for Canada, Turkey, Europe, etc.
 const TRANSFER_PROVIDERS = [
-  { name: 'Blacklane', rating: 93, verified: true, mult: 1.0 },
-  { name: 'Welcome Pickups', rating: 88, verified: true, mult: 0.8 },
-  { name: 'Careem', rating: 84, verified: true, mult: 0.6 },
+  { name: 'Blacklane', rating: 93, verified: true, mult: 1.0, regions: ['*'] },        // global chauffeur network
+  { name: 'Welcome Pickups', rating: 88, verified: true, mult: 0.8, regions: ['*'] },  // 100+ cities worldwide
+  { name: 'Careem', rating: 84, verified: true, mult: 0.6, regions: ['AE', 'SA', 'EG', 'PK', 'QA', 'JO', 'KW', 'BH', 'OM', 'MA', 'IQ'] }, // MENA + Pakistan
+  { name: 'Bolt', rating: 85, verified: true, mult: 0.62, regions: ['TR', 'GB', 'FR', 'DE', 'PT', 'PL', 'RO', 'NL', 'SE', 'ZA', 'NG', 'KE', 'GH'] }, // Europe + Africa (incl. Turkey)
 ];
 
 const ACTIVITY_CATALOG = [
@@ -538,7 +543,12 @@ export function scanInsurance(intent) {
 // --- Airport transfers -----------------------------------------------------
 export function scanTransfers(intent, dest) {
   const rnd = seeded(`trf-${dest.code}-${intent.dates.checkIn}`);
-  return TRANSFER_PROVIDERS.map((t) => ({
+  // Only providers that actually operate at the destination. Global providers
+  // (Blacklane, Welcome Pickups) always qualify, so every destination keeps at
+  // least two verified options even when the regional brand doesn't serve it.
+  const country = dest.country || '';
+  const providers = TRANSFER_PROVIDERS.filter((t) => t.regions.includes('*') || t.regions.includes(country));
+  return providers.map((t) => ({
     type: 'transfer',
     supplier: t.name,
     verified: t.verified,
