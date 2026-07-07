@@ -54,7 +54,7 @@ export const HOLIDAY_TYPES = ['Luxury', 'Family', 'Honeymoon', 'Solo', 'Group', 
 
 // ---- 9/10. Insurance + ancillaries ----------------------------------------
 export const INSURANCE = { coverage: ['Medical', 'Cancellation', 'Delay', 'Lost baggage', 'Death', 'Repatriation', 'Legal assistance'], collect: ['dob', 'preExistingConditions', 'tripDuration', 'destinationRisk'] };
-export const ANCILLARIES = ['Airport transfer', 'Lounge access', 'Extra baggage', 'Seat selection', 'Fast-track security', 'Chauffeur', 'SIM / eSIM', 'Forex', 'Visa support', 'Concierge', 'Car rental'];
+export const ANCILLARIES = ['Airport transfer', 'Lounge access', 'Extra baggage', 'Seat selection', 'Fast-track security', 'Chauffeur', 'SIM / eSIM', 'Forex', 'Visa support', 'Concierge', 'Car rental', 'Premium itinerary upgrade'];
 export const ANCILLARY_SUPPLIERS = ['Hertz', 'Avis Budget Group', 'Uber Technologies'];
 
 // ---- 5. Payment & guarantee ------------------------------------------------
