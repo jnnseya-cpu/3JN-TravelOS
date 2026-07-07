@@ -2753,3 +2753,21 @@ test('apply & re-search: shiftDays and originAirport re-run the search for real 
   const bad = plan({ text: 'Dubai from London in August, flights only for 2 adults, 7 nights', context: GB, overrides: { originAirport: 'not-a-code' } });
   assert.notEqual(bad.origin.airport, 'not-a-code');
 });
+
+// ================= Real booking route in ALL means (deep-links) ================
+test('every travel mode carries a real supplier booking route (bookingUrl)', () => {
+  const cases = [
+    { text: 'Dubai from London in August, flights and hotel for 2 adults, 7 nights', want: ['flight', 'hotel'] },
+    { text: 'Paris from Dover in August for 2 adults, 3 nights', want: ['ferry', 'coach'] },
+    { text: 'ocean cruise from Southampton in August for 2 adults', want: ['cruise'] },
+  ];
+  for (const cse of cases) {
+    const r = plan({ text: cse.text, context: GB });
+    if (r.stage !== 'options') continue;
+    const comps = r.packages.options.flatMap((o) => o.components);
+    for (const mode of cse.want) {
+      const c = comps.find((x) => x.type === mode);
+      if (c) assert.ok(c.bookingUrl && /^https?:\/\//.test(c.bookingUrl), `${mode} has a real booking URL (${c.supplier} → ${c.bookingUrl})`);
+    }
+  }
+});

@@ -742,9 +742,31 @@ function optionCard(o, sym, intent) {
       ${o.bookableForRealPayment
         ? `<div class="save-tag" style="color:#79d99b;border-color:rgba(121,217,155,.4)">✓ Live bookable price</div>
            <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="openBooking('${o.tier}')">Quote & ${intent.wantsInstalments ? 'pay in instalments' : 'book'}</button>`
-        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(216,180,106,.4)">Estimated — request your exact price</div>
-           <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="requestExactQuote('${o.tier}')">Request exact quote</button>`}
+        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(216,180,106,.4)">Estimated — book real prices below</div>
+           <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="requestExactQuote('${o.tier}')">Ask us to book it (exact quote)</button>
+           ${bookDirectRoutes(o)}`}
     </div>`;
+}
+
+// Real booking route for every mode NOW: components with a supplier deep-link
+// let the customer complete a REAL booking on the supplier's own site at the
+// live price (their merchant record, our affiliate/agent commission, zero
+// liability). Shown on estimated options so all means are bookable today.
+const MODE_ICON = { flight: '✈', hotel: '🏨', host: '🏡', train: '🚆', coach: '🚌', ferry: '⛴', cruise: '🛳', carhire: '🚗', transfer: '🚙', activity: '🎟', activities: '🎟', tickets: '🎫', esim: '📶', insurance: '🛡', visa: '🛂', boat: '⛵' };
+function bookDirectRoutes(o) {
+  const rows = (o.components || []).filter((c) => c.bookingUrl).map((c) => {
+    const ico = MODE_ICON[c.type] || '•';
+    return `<a href="${esc(c.bookingUrl)}" target="_blank" rel="noopener" class="kv" style="cursor:pointer;text-decoration:none">
+      <span>${ico} ${esc(labelForType(c.type))} <span class="muted">· ${esc(c.supplier)}</span></span>
+      <span style="color:var(--blue-bright)">Book direct ↗</span></a>`;
+  }).join('');
+  if (!rows) return '';
+  return `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px;color:var(--muted)">Or book each part directly at the live price ↗</summary>
+    <div style="margin-top:6px">${rows}</div>
+    <p class="muted" style="font-size:11px;margin-top:6px">You book and pay on each supplier's own site at their real price. 3JN earns a partner commission — no extra cost to you.</p></details>`;
+}
+function labelForType(t) {
+  return ({ flight: 'Flight', hotel: 'Hotel', host: 'Private host', train: 'Train', coach: 'Coach', ferry: 'Ferry', cruise: 'Cruise', carhire: 'Car hire', transfer: 'Transfer', activities: 'Activities', tickets: 'Tickets', esim: 'eSIM', insurance: 'Insurance', visa: 'Visa', boat: 'Boat charter' }[t] || t);
 }
 
 function labelFor(c) {
