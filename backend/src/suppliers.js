@@ -633,6 +633,27 @@ export function scanCruise(intent, dest, origin) {
   }));
 }
 
+// Convert a return-trip offer into a single one-way leg for mixed-mode /
+// split-origin journeys. Returns price at ~52% of the round trip (a return
+// is usually a little cheaper than two one-ways), relabels the basis, and
+// carries an explicit leg + route so the UI shows direction per component.
+export function toOneWayLeg(offer, leg, fromCity, toCity) {
+  const d = offer.details || {};
+  const details = {
+    ...d,
+    leg, // 'outbound' | 'return'
+    oneWay: true,
+    basis: (d.basis || 'per person').replace(/return[^·]*/i, 'one-way'),
+    route: `${fromCity} → ${toCity}`,
+  };
+  // A one-way flight leg keeps only its own direction's schedule.
+  if (offer.type === 'flight') {
+    if (leg === 'outbound') details.inbound = null;
+    else if (d.inbound) { details.outbound = d.inbound; details.inbound = null; }
+  }
+  return { ...offer, priceUSD: round(offer.priceUSD * 0.52), details };
+}
+
 // Run a full scan across every requested component. Returns a map of
 // component -> array of supplier offers (or a single offer for visa).
 export function scanAll(intent, dest, origin, live = null) {
@@ -651,6 +672,30 @@ export function scanAll(intent, dest, origin, live = null) {
   if (wanted.has('coach')) scan.coach = scanCoach(intent, dest, origin);
   if (wanted.has('ferry')) scan.ferry = scanFerry(intent, dest, origin);
   if (wanted.has('cruise')) scan.cruise = scanCruise(intent, dest, origin);
+
+  // Mixed-mode / split-origin legs: one booking, per-direction means & points.
+  // Each direction is scanned with its OWN mode and origin, converted to a
+  // one-way leg, and packaged together — "train out from London, ferry back
+  // into Newcastle" yields two leg components in the same package.
+  if (intent.legs && intent.legs.resolved) {
+    const { out: outOrigin, back: backOrigin } = intent.legs.resolved;
+    const outMode = intent.legs.out.mode;
+    const backMode = intent.legs.back.mode;
+    const scanMode = (mode, o) => ({
+      flights: () => scanFlights(intent, dest, o),
+      train: () => scanTrain(intent, dest, o),
+      coach: () => scanCoach(intent, dest, o),
+      ferry: () => scanFerry(intent, dest, o),
+      cruise: () => scanCruise(intent, dest, o),
+    }[mode] || (() => []))();
+    scan.outboundLeg = scanMode(outMode, outOrigin)
+      .map((o) => toOneWayLeg(o, 'outbound', outOrigin.city, dest.city));
+    scan.returnLeg = scanMode(backMode, backOrigin)
+      .map((o) => toOneWayLeg(o, 'return', dest.city, backOrigin.city));
+    // The legs replace whole-journey return scans of the same modes.
+    delete scan[outMode === 'flights' ? 'flights' : outMode];
+    delete scan[backMode === 'flights' ? 'flights' : backMode];
+  }
   if (wanted.has('activities')) scan.activities = scanActivities(intent, dest);
   if (wanted.has('visa')) scan.visa = [scanVisa(intent, dest)];
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);

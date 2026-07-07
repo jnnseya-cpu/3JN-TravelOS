@@ -96,7 +96,9 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   const tier = TIERS[tierName];
   const selections = [];
   let componentsUSD = 0;
-  const componentOrder = ['flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
+  // outboundLeg/returnLeg carry mixed-mode / split-origin journeys (one booking,
+  // per-direction means & departure points) — they lead the package.
+  const componentOrder = ['outboundLeg', 'returnLeg', 'flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
 
   for (const key of componentOrder) {
     const offers = scan[key];
