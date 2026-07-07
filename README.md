@@ -153,6 +153,10 @@ so the browser reads the same constants — frontend and backend never drift.
 
 ## Documentation
 
+- **[`docs/REVENUE-PROTECTION-SPEC.md`](docs/REVENUE-PROTECTION-SPEC.md)** — **Revenue Protection, Cost Control & Multi-Income Engine.**
+  The complete developer-ready commercial specification — the ACPE gate (10-point checklist, ×10 formula,
+  ACU pre-approval, per-agent budgets, free-tier caps, abuse throttle, cache-first), all 16 revenue streams,
+  and the master rule — every line mapped to its implementing symbol and pinned by the test suite.
 - **[`docs/AI-OS-MASTER-BLUEPRINT.md`](docs/AI-OS-MASTER-BLUEPRINT.md)** — **Master Blueprint v2 (forensic upgrade).**
   The production build specification: a forensic gap register (technical/commercial/scalability/security/operational/AI)
   with proven-pattern remedies, then all 17 required sections + the enterprise multi-agent workforce, self-managing
