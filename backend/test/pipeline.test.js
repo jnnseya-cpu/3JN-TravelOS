@@ -1203,6 +1203,8 @@ test('host marketplace: a community listing goes live and competes in searches',
   const created = createHostListing(host.id, {
     title: 'Marina View Apartment', city: 'Dubai', propertyType: 'Entire apartment',
     nightlyUSD: 38, sleeps: 5, amenities: 'Full kitchen, WiFi, Washer',
+    address: '14 Marina Walk, Dubai Marina, Dubai',
+    photos: Array.from({ length: 12 }, (_, i) => `https://photos.example.com/marina/${i + 1}.jpg`),
   });
   assert.equal(created.ok, true);
   assert.equal(created.listing.status, 'live');
@@ -1229,12 +1231,50 @@ test('host marketplace: validation + auth guards', () => {
   const u = createUser({ name: 'H2', email: 'h2@example.com' });
   assert.equal(createHostListing(u.id, { title: '', city: 'Dubai', nightlyUSD: 10 }).ok, false);
   assert.equal(createHostListing(u.id, { title: 'No Rate', city: 'Dubai', nightlyUSD: 0 }).ok, false);
+  const tenPics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/${i}.jpg`);
+  // Address is mandatory — guests verify the property online by name + address.
+  const noAddr = createHostListing(u.id, { title: 'No Address', city: 'Dubai', nightlyUSD: 30, photos: tenPics });
+  assert.equal(noAddr.ok, false);
+  assert.equal(noAddr.error, 'address-required');
+  // Photos: minimum 10 …
+  const few = createHostListing(u.id, { title: 'Few Pics', city: 'Dubai', nightlyUSD: 30, address: '1 Palm Street, Dubai', photos: tenPics.slice(0, 9) });
+  assert.equal(few.ok, false);
+  assert.equal(few.error, 'photos-min');
+  // … maximum 100.
+  const many = createHostListing(u.id, { title: 'Too Many', city: 'Dubai', nightlyUSD: 30, address: '1 Palm Street, Dubai', photos: Array.from({ length: 101 }, (_, i) => `https://p.example.com/${i}.jpg`) });
+  assert.equal(many.ok, false);
+  assert.equal(many.error, 'photos-max');
+  // Exactly 10 with an address → live.
+  const ok = createHostListing(u.id, { title: 'Just Right', city: 'Dubai', nightlyUSD: 30, address: '1 Palm Street, Dubai', photos: tenPics });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.listing.photos.length, 10);
+});
+
+test('stays carry name + address so travellers can verify them online', () => {
+  const r = plan({ text: 'Istanbul from London in August for 5 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  for (const o of r.packages.options) {
+    const stay = o.components.find((c) => c.type === 'hotel' || c.type === 'host');
+    if (!stay) continue;
+    assert.ok(stay.supplier, 'stay has a name');
+    assert.ok(stay.details.address && stay.details.address.length >= 8, `${stay.supplier} has a street address (${stay.details.address})`);
+  }
+  // Hosted community listings additionally carry their photo set (10–100).
+  const rd = plan({ text: 'Dubai from London in August for 7 nights, hotel only for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const community = rd.packages.options.flatMap((o) => o.components).find((c) => c.details?.community);
+  assert.ok(community, 'a community listing competes');
+  assert.ok(community.details.photos.length >= 10 && community.details.photos.length <= 100);
+  assert.ok(community.details.address, 'hosted stay also has an address');
 });
 
 test('host marketplace: earnings pay the host 90%, 3JN keeps 10%', () => {
   const host = createUser({ name: 'Omar Host', email: 'omar.host@example.com' });
   // $20/night — deterministically the cheapest reliable stay in Dubai.
-  createHostListing(host.id, { title: 'Souk Riad', city: 'Dubai', nightlyUSD: 20, sleeps: 4 });
+  createHostListing(host.id, {
+    title: 'Souk Riad', city: 'Dubai', nightlyUSD: 20, sleeps: 4,
+    address: '7 Old Souk Lane, Deira, Dubai',
+    photos: Array.from({ length: 10 }, (_, i) => `https://photos.example.com/riad/${i + 1}.jpg`),
+  });
   const guest = createUser({ name: 'Guest', email: 'guest.hh@example.com' });
   const r = plan({ text: 'Dubai from London in August for 7 nights, hotel only for 2 adults', context: GB, user: null, searchTier: 'smart' });
   const opt = r.packages.options.find((o) => o.tier === 'Standard');

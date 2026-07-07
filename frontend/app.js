@@ -756,8 +756,10 @@ window.showComponentInfo = (tier, idx) => {
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
     return;
   }
-  // Hotel / host — we don't show stock photos we can't verify (that would be
-  // misleading); a clean branded property header represents the stay honestly.
+  // Hotel / host — external properties get NO stock photos (we can't verify
+  // them); instead they carry name + street address so the traveller verifies
+  // the place on the internet. Properties hosted on OUR marketplace are the
+  // exception: hosts must supply 10–100 real photos, which we show.
   const stars = '★'.repeat(c.stars || 0);
   const amen = (d.amenities || []).map((a) => `<span class="chip">${esc(a)}</span>`).join('');
   modal(`<span class="eyebrow">${c.type === 'host' ? 'Private host' : 'Hotel'} details</span>
@@ -766,7 +768,15 @@ window.showComponentInfo = (tier, idx) => {
       <div><div style="font-family:'Space Grotesk';font-weight:700;font-size:17px">${esc(c.supplier)}</div>
         <div style="font-size:13px"><span style="color:var(--gold)">${stars}</span> <span class="muted">· ${esc(d.area || '')}</span></div></div>
     </div>
-    <div class="muted" style="font-size:12.5px;margin-top:8px">${esc(d.propertyType || '')} · ${d.distanceToCentreKm}km to centre · ${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
+    <div class="muted" style="font-size:12.5px;margin-top:8px">${esc(d.propertyType || '')} · ${d.distanceToCentreKm ? d.distanceToCentreKm + 'km to centre · ' : ''}${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
+    ${d.address ? `<div class="kv" style="margin-top:8px"><span>📍 Address</span><span style="text-align:right">${esc(d.address)} · <a href="https://www.google.com/search?q=${encodeURIComponent(c.supplier + ' ' + d.address)}" target="_blank" rel="noopener" style="color:var(--blue-bright);text-decoration:underline">verify on the web ↗</a></span></div>` : ''}
+    ${(d.photos || []).length ? `
+      <div style="margin-top:12px"><span class="eyebrow">Photos · ${d.photos.length} provided by the host</span>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
+          ${d.photos.slice(0, 8).map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener" style="display:block;aspect-ratio:4/3;border-radius:8px;overflow:hidden;border:1px solid var(--line)"><img src="${esc(u)}" alt="Property photo" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'"></a>`).join('')}
+        </div>
+        ${d.photos.length > 8 ? `<div class="muted" style="font-size:11.5px;margin-top:6px">+ ${d.photos.length - 8} more photos</div>` : ''}
+      </div>` : ''}
     ${d.verifiedBadge ? `<div class="verified-tag" style="margin-top:8px">✓ ${esc(d.verifiedBadge)}</div>` : ''}
     <p class="muted" style="font-size:13px;margin:10px 0">${esc(d.description || '')}</p>
 
@@ -2589,12 +2599,16 @@ async function openHostStudio() {
     ${rows ? `<div style="margin:12px 0 4px">${rows}</div>${earnings}<hr style="border-color:var(--line);margin:14px 0">` : ''}
     <div class="field" style="margin-top:8px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
     <div class="field" style="margin-top:10px"><label>City</label><input class="in" id="hostCity" placeholder="e.g. Dubai" /></div>
+    <div class="field" style="margin-top:10px"><label>Street address (shown to guests — they verify you online)</label><input class="in" id="hostAddress" placeholder="e.g. 14 Marina Walk, Dubai Marina" /></div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <div class="field" style="flex:1"><label>Type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
       <div class="field" style="width:110px"><label>Sleeps</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="20" /></div>
       <div class="field" style="width:150px"><label>Nightly (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
     </div>
     <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
+    <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100 (one URL per line)</label>
+      <textarea class="in" id="hostPhotos" rows="5" placeholder="https://…/living-room.jpg&#10;https://…/bedroom-1.jpg&#10;… at least 10" oninput="$('#hostPhotoCount').textContent = this.value.split(/\n|,/).map(s=>s.trim()).filter(Boolean).length + ' / 10 minimum'"></textarea>
+      <div class="muted" style="font-size:11.5px;margin-top:4px" id="hostPhotoCount">0 / 10 minimum</div></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish listing</button>
     <p class="muted" style="font-size:11.5px;margin-top:8px">Listings pass the 50-point integrity check, start at reliability 82, and live or die by guest reviews — exactly like every other supplier in the OS.</p>`);
 }
@@ -2605,11 +2619,14 @@ window.submitHost = async () => {
   const nightlyUSD = Number($('#hostRate')?.value);
   if (!title || !city || !nightlyUSD) { toast('Name, city and nightly rate are required.'); return; }
   try {
+    const photos = ($('#hostPhotos')?.value || '').split(/\n|,/).map((x) => x.trim()).filter(Boolean);
     const r = await api('/api/host/listings', { method: 'POST', body: JSON.stringify({
       title, city, nightlyUSD,
+      address: $('#hostAddress')?.value || '',
       propertyType: $('#hostType')?.value,
       sleeps: Number($('#hostSleeps')?.value) || 2,
       amenities: $('#hostAmenities')?.value || '',
+      photos,
     }) });
     closeModal();
     toast(`🏠 ${r.listing.title} is verified & LIVE — it now competes in ${r.listing.city} searches.`);

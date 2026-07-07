@@ -800,13 +800,25 @@ export { db };
 // transparent pricing. 3JN keeps the standard 10% commission; hosts keep 90%.
 const HOST_COMMISSION = 0.10;
 
-export function createHostListing(userId, { title, city, propertyType = 'Entire apartment', nightlyUSD, sleeps = 2, amenities = [] } = {}) {
+export const HOST_PHOTOS_MIN = 10;
+export const HOST_PHOTOS_MAX = 100;
+
+export function createHostListing(userId, { title, city, address, propertyType = 'Entire apartment', nightlyUSD, sleeps = 2, amenities = [], photos = [] } = {}) {
   const u = userId ? db.users.get(userId) : null;
   if (!u) return { ok: false, error: 'auth-required' };
   const t = String(title || '').trim().slice(0, 80);
   const c = String(city || '').trim().slice(0, 60);
   const rate = Math.round(Number(nightlyUSD) || 0);
   if (!t || !c || rate <= 0) return { ok: false, error: 'invalid-listing', message: 'Title, city and a nightly rate are required.' };
+  // Every stay on the OS carries a street address so guests can verify it on
+  // the internet — hosted properties are no exception.
+  const addr = String(address || '').trim().slice(0, 160);
+  if (addr.length < 8) return { ok: false, error: 'address-required', message: 'A full street address is required — guests verify your property online by name + address.' };
+  // Hosted-by-us properties must SHOW the place: minimum 10 photos, maximum 100.
+  const pics = (Array.isArray(photos) ? photos : String(photos).split(/[\n,]+/))
+    .map((x) => String(x).trim()).filter(Boolean).slice(0, HOST_PHOTOS_MAX + 1);
+  if (pics.length < HOST_PHOTOS_MIN) return { ok: false, error: 'photos-min', message: `Hosted listings need a minimum of ${HOST_PHOTOS_MIN} pictures (you provided ${pics.length}).` };
+  if (pics.length > HOST_PHOTOS_MAX) return { ok: false, error: 'photos-max', message: `Hosted listings allow a maximum of ${HOST_PHOTOS_MAX} pictures.` };
 
   // Verification pipeline (deterministic in the prototype): identity comes from
   // the account, the property passes the 50-point integrity check, and the
@@ -819,6 +831,8 @@ export function createHostListing(userId, { title, city, propertyType = 'Entire 
     city: c,
     propertyType: String(propertyType).slice(0, 40),
     nightlyUSD: rate,
+    address: addr,
+    photos: pics,
     sleeps: Math.max(1, Math.min(20, Math.round(Number(sleeps) || 2))),
     amenities: (Array.isArray(amenities) ? amenities : String(amenities).split(',')).map((a) => String(a).trim()).filter(Boolean).slice(0, 12),
     verified: true,

@@ -328,7 +328,13 @@ function hotelExtras(rnd, dest, intent, stars, type) {
   const checkIn = type === 'host' ? 'Self check-in from 15:00' : '15:00';
   const exp = destExperiences(dest.code);
   const landmarks = (exp.length ? exp : [`${dest.city} City Centre`, `${dest.city} Old Town`, `${dest.city} Waterfront`]).slice(0, 3);
+  // We don't show property photos we can't verify — instead every stay carries
+  // its NAME + STREET ADDRESS so the traveller can look it up on the internet
+  // themselves (deterministic street in the prototype; the real feed supplies it).
+  const streets = ['Corniche Road', 'Palm Avenue', 'Harbour Street', 'Garden Boulevard', 'Old Market Lane', 'Union Square', 'Bay View Drive'];
+  const address = `${3 + Math.floor(rnd() * 220)} ${streets[Math.floor(rnd() * streets.length)]}, ${dest.city}`;
   return {
+    address,
     propertyType,
     checkInTime: checkIn,
     checkOutTime: type === 'host' ? '11:00' : '12:00',
@@ -688,6 +694,9 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
           sleeps: l.sleeps,
           roomType: `${l.propertyType} · sleeps ${l.sleeps}`,
           area: l.city,
+          address: l.address,
+          photos: l.photos, // hosted by US → real photos (min 10, max 100)
+          photoCount: Array.isArray(l.photos) ? l.photos.length : 0,
           amenities: l.amenities,
           guestRating: Math.round(l.reliabilityScore) / 10,
           community: true,
