@@ -10,6 +10,7 @@ import { parseIntent } from './intent.js';
 import { findDestination, originForCountry, resolveOrigin } from './destinations.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive } from './price-dive.js';
+import { hostListingsForCity } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
@@ -90,7 +91,10 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
       origin: resolveOrigin(p.city) || origin,
     }));
   }
-  const scan = scanAll(intent, intent.destination, origin, live);
+  // Community host supply: 3JN-verified listings for this destination compete
+  // with hotels inside the same scan.
+  const communityHosts = hostListingsForCity(intent.destination.city);
+  const scan = scanAll(intent, intent.destination, origin, live, communityHosts);
   const expectedBookingUSD = roughTotal(scan);
 
   // International = the journey crosses a border. Domestic only when we KNOW both

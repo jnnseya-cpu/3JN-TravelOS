@@ -1194,3 +1194,58 @@ test('price dive: skipped for utility-only purchases (no journey)', () => {
   const r = plan({ text: 'esim for Dubai', context: GB, user: null, searchTier: 'smart' });
   if (r.stage === 'options') assert.equal(r.priceDive, null);
 });
+
+// ---- Community Host Marketplace: anyone can host, inside the OS -------------
+import { createHostListing, listHostListings, hostListingsForCity, hostEarnings } from '../src/store.js';
+
+test('host marketplace: a community listing goes live and competes in searches', () => {
+  const host = createUser({ name: 'Fatima Host', email: 'fatima.host@example.com' });
+  const created = createHostListing(host.id, {
+    title: 'Marina View Apartment', city: 'Dubai', propertyType: 'Entire apartment',
+    nightlyUSD: 38, sleeps: 5, amenities: 'Full kitchen, WiFi, Washer',
+  });
+  assert.equal(created.ok, true);
+  assert.equal(created.listing.status, 'live');
+  assert.equal(created.listing.verified, true);
+  assert.ok(listHostListings(host.id).length === 1);
+  assert.ok(hostListingsForCity('Dubai').some((l) => l.title === 'Marina View Apartment'));
+
+  // The listing competes with hotels in a real search for its city — and at
+  // $38/night it wins the Standard (cheapest reliable) tier.
+  const r = plan({
+    text: 'Dubai from London in August for 7 nights, flights and hotel for 2 adults',
+    context: GB, user: null, searchTier: 'smart',
+  });
+  assert.equal(r.stage, 'options');
+  const standard = r.packages.options.find((o) => o.tier === 'Standard');
+  const stay = standard.components.find((c) => c.type === 'host' || c.type === 'hotel');
+  assert.equal(stay.supplier, 'Marina View Apartment', 'community listing won the cheapest-reliable pick');
+  assert.equal(stay.details.community, true);
+  assert.equal(stay.details.hostName, 'Fatima Host');
+});
+
+test('host marketplace: validation + auth guards', () => {
+  assert.equal(createHostListing(null, { title: 'X', city: 'Y', nightlyUSD: 10 }).ok, false);
+  const u = createUser({ name: 'H2', email: 'h2@example.com' });
+  assert.equal(createHostListing(u.id, { title: '', city: 'Dubai', nightlyUSD: 10 }).ok, false);
+  assert.equal(createHostListing(u.id, { title: 'No Rate', city: 'Dubai', nightlyUSD: 0 }).ok, false);
+});
+
+test('host marketplace: earnings pay the host 90%, 3JN keeps 10%', () => {
+  const host = createUser({ name: 'Omar Host', email: 'omar.host@example.com' });
+  // $20/night — deterministically the cheapest reliable stay in Dubai.
+  createHostListing(host.id, { title: 'Souk Riad', city: 'Dubai', nightlyUSD: 20, sleeps: 4 });
+  const guest = createUser({ name: 'Guest', email: 'guest.hh@example.com' });
+  const r = plan({ text: 'Dubai from London in August for 7 nights, hotel only for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options.find((o) => o.tier === 'Standard');
+  const stay = opt.components.find((c) => c.type === 'host' || c.type === 'hotel');
+  assert.equal(stay.supplier, 'Souk Riad', 'cheapest reliable stay is the host listing');
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id, paymentMethod: 'card' });
+  const earn = hostEarnings(host.id);
+  assert.equal(earn.rows.length, 1, 'the stay is on the host ledger');
+  assert.ok(earn.totals.netUSD > 0);
+  assert.ok(Math.abs(earn.totals.grossUSD - earn.totals.netUSD - earn.totals.commissionUSD) < 0.02);
+  assert.ok(Math.abs(earn.totals.commissionUSD / earn.totals.grossUSD - 0.10) < 0.001, '10% commission');
+  assert.ok(earn.listings >= 1);
+});

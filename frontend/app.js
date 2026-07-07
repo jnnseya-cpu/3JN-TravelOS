@@ -2565,21 +2565,55 @@ window.sendContact = async () => {
 };
 
 // ---- Become a Host --------------------------------------------------------
-$('#hostLink')?.addEventListener('click', () => {
+// ---- Community Host Marketplace (Airbnb-style, 3JN-powered) ----------------
+// Anyone can host. A verified listing competes with hotels inside package
+// options — with 3JN reliability scoring, the price guard, instalments and
+// group stays wrapped around every stay. Hosts keep 90%; 3JN keeps 10%.
+$('#hostLink')?.addEventListener('click', () => openHostStudio());
+
+async function openHostStudio() {
+  if (!state.user) { toast('Sign in first — hosting is tied to your account.'); return; }
+  let mine = { listings: [] }; let earn = null;
+  try { mine = await api('/api/host/listings'); earn = await api('/api/host/earnings'); } catch {}
+  const rows = (mine.listings || []).map((l) => `
+    <div class="kv"><span>🏠 ${esc(l.title)} <span class="muted" style="font-size:11.5px">· ${esc(l.city)} · sleeps ${l.sleeps}</span></span>
+    <span><span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">● ${esc(l.status)}</span> $${l.nightlyUSD}/night</span></div>`).join('');
+  const earnings = earn && earn.rows.length
+    ? `<div class="kv" style="font-weight:700"><span>Earnings (${earn.rows.length} stay${earn.rows.length > 1 ? 's' : ''})</span><span style="color:var(--gold)">net $${earn.totals.netUSD}</span></div>
+       <p class="muted" style="font-size:11.5px;margin:4px 0 0">Gross $${earn.totals.grossUSD} · 3JN 10% $${earn.totals.commissionUSD} · you keep 90%</p>`
+    : '<p class="muted" style="font-size:12px;margin:6px 0 0">No stays booked yet — your listing sells inside package options the moment a search matches your city.</p>';
   modal(`
-    <span class="eyebrow">Host Programme</span>
-    <h3 style="margin:6px 0">Become a 3JN Verified Host</h3>
-    <p class="muted" style="font-size:13.5px">List your apartment or villa to travellers worldwide. Verified hosts appear inside package options alongside hotels — you earn on every stay, 3JN handles pricing, payments and the price guard.</p>
-    <div class="field" style="margin-top:12px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
+    <span class="eyebrow">Host Studio · Community Marketplace</span>
+    <h3 style="margin:6px 0">Host on 3JN — Airbnb power, OS intelligence</h3>
+    <p class="muted" style="font-size:13px">Your place is verified, reliability-scored, price-guarded and sold with instalments inside full travel packages — flights, visa and transfers around it. You keep <strong>90%</strong> of every stay.</p>
+    ${rows ? `<div style="margin:12px 0 4px">${rows}</div>${earnings}<hr style="border-color:var(--line);margin:14px 0">` : ''}
+    <div class="field" style="margin-top:8px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
     <div class="field" style="margin-top:10px"><label>City</label><input class="in" id="hostCity" placeholder="e.g. Dubai" /></div>
-    <div class="field" style="margin-top:10px"><label>Nightly rate (your currency)</label><input class="in" id="hostRate" placeholder="e.g. 120" /></div>
-    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Apply to host</button>`);
-});
-window.submitHost = () => {
-  const name = $('#hostName')?.value.trim();
-  if (!name) { toast('Enter a property name.'); return; }
-  closeModal();
-  toast(`✓ ${name} submitted for 50-point verification. We'll be in touch (prototype).`);
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <div class="field" style="flex:1"><label>Type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
+      <div class="field" style="width:110px"><label>Sleeps</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="20" /></div>
+      <div class="field" style="width:150px"><label>Nightly (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish listing</button>
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Listings pass the 50-point integrity check, start at reliability 82, and live or die by guest reviews — exactly like every other supplier in the OS.</p>`);
+}
+
+window.submitHost = async () => {
+  const title = $('#hostName')?.value.trim();
+  const city = $('#hostCity')?.value.trim();
+  const nightlyUSD = Number($('#hostRate')?.value);
+  if (!title || !city || !nightlyUSD) { toast('Name, city and nightly rate are required.'); return; }
+  try {
+    const r = await api('/api/host/listings', { method: 'POST', body: JSON.stringify({
+      title, city, nightlyUSD,
+      propertyType: $('#hostType')?.value,
+      sleeps: Number($('#hostSleeps')?.value) || 2,
+      amenities: $('#hostAmenities')?.value || '',
+    }) });
+    closeModal();
+    toast(`🏠 ${r.listing.title} is verified & LIVE — it now competes in ${r.listing.city} searches.`);
+  } catch (e) { toast('Could not publish: ' + (e.message || 'sign in first')); }
 };
 
 boot();
