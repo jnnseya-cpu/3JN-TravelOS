@@ -1229,3 +1229,20 @@ export function grantComplimentaryElite(adminId, targetEmail) {
   recordAudit({ actor: admin.id, role: 'admin', action: 'membership.comp-elite.granted', entity: 'user', entityId: target.id, summary: `${target.email} · slot ${compEliteCount()}/${COMP_ELITE_LIMIT}` });
   return { ok: true, user: publicUser(target), slotsUsed: compEliteCount(), slotsLeft: COMP_ELITE_LIMIT - compEliteCount() };
 }
+
+// ---- Usage telemetry (abuse prevention) ---------------------------------------
+// Real counters from the behaviour log: searches today / this week, prior
+// bookings, and same-destination repetition — feed the Cost Protection Gate.
+export function usageStats(userId) {
+  if (!userId) return { searchesToday: 0, recentSearches: 0, priorBookings: 0, sameDestinationRepeats: 0 };
+  const now = Date.now();
+  const DAY = 24 * 3600 * 1000;
+  const mine = db.behaviour.filter((b) => b.userId === userId && (b.event === 'search' || b.event === 'plan'));
+  const today = mine.filter((b) => now - Date.parse(b.at || 0) < DAY);
+  const week = mine.filter((b) => now - Date.parse(b.at || 0) < 7 * DAY);
+  const destCounts = {};
+  for (const b of week) if (b.destination) destCounts[b.destination] = (destCounts[b.destination] || 0) + 1;
+  const sameDestinationRepeats = Math.max(0, ...Object.values(destCounts));
+  const priorBookings = [...db.bookings.values()].filter((b) => b.userId === userId).length;
+  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats };
+}
