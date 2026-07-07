@@ -163,9 +163,40 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       cabin: offer.slices?.[0]?.segments?.[0]?.passengers?.[0]?.cabin_class_marketing_name || 'Economy',
       baggage: 'As per fare rules',
       offerId: offer.id,
+      // Real-money safety: a Duffel offer is only ticketable until it expires,
+      // and can reprice. Store both so payment can RE-VALIDATE before charging.
+      offerExpiresAt: offer.expires_at || null,
+      liveAmount: offer.total_amount || null,
+      liveCurrency: offer.total_currency || null,
     },
     priceUSD,
   };
+}
+
+// Re-validate a Duffel offer at PAYMENT time: is it still live, and at the same
+// price? Prevents charging a customer for a stale/repriced fare we can't ticket.
+// Returns { ok, live, expired, priceUSD, currency } or { ok:false } offline.
+export async function validateDuffelOffer(offerId) {
+  if (!liveFlightsEnabled() || !offerId) return { ok: false, reason: 'not-configured' };
+  const res = await httpJSON(`${DUFFEL_BASE}/air/offers/${encodeURIComponent(offerId)}`, {
+    headers: {
+      Authorization: `Bearer ${DUFFEL_TOKEN}`,
+      'Duffel-Version': DUFFEL_VERSION,
+      Accept: 'application/json',
+    },
+  });
+  const offer = res?.data;
+  if (!offer) return { ok: true, live: false, expired: true, reason: 'offer-gone' };
+  const expired = offer.expires_at ? (Date.parse(offer.expires_at) < Date.now()) : false;
+  const usd = await toUSD(offer.total_amount, offer.total_currency);
+  return { ok: true, live: !expired, expired, priceUSD: usd, amount: offer.total_amount, currency: offer.total_currency, expiresAt: offer.expires_at };
+}
+
+// A tiny connectivity self-test for admin: confirms the Duffel token works and
+// whether it is a TEST or LIVE key (test tokens start with 'duffel_test').
+export function duffelMode() {
+  if (!DUFFEL_TOKEN) return 'off';
+  return /test/i.test(DUFFEL_TOKEN) ? 'test' : 'live';
 }
 
 // Fetch live flights from Duffel. Returns an array of normalised offers, or

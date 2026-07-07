@@ -43,7 +43,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled } from './live-suppliers.js';
+import { fetchLiveOffers, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -405,6 +405,19 @@ app.post('/api/deposits/:id/refund', safe((req, res) => {
 app.get('/api/admin/ai-costs', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json(aiCostReport());
+}));
+
+// Live-supplier status: is Duffel connected, and is it a TEST or LIVE key?
+app.get('/api/admin/live-status', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({
+    flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode() },
+    hotels: { provider: 'Amadeus', enabled: liveHotelsEnabled() },
+    schedules: { provider: 'OAG', enabled: oagScheduleEnabled() },
+    note: duffelMode() === 'test'
+      ? 'Duffel is in TEST mode — searches return test offers and no real tickets are issued. Switch to a live Duffel token to sell real fares.'
+      : duffelMode() === 'live' ? 'Duffel LIVE — real fares. Fares are re-validated at payment; ticketing (order creation) is the final step to wire.' : 'Duffel not configured.',
+  });
 }));
 
 // ---- Profitability Dashboard (spec §17): real-time money view --------------
@@ -877,6 +890,23 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
       priceBasis: booking.priceBasis || 'estimated',
       message: 'This quote is estimated — live supplier fares are not connected yet, so we do not take real payment for it. Connect live inventory (Duffel/Amadeus) to enable secure card checkout at the exact bookable price.',
     });
+  }
+  // FRESH-FARE GUARD: a live Duffel flight offer expires and can reprice. Before
+  // charging, re-validate it against Duffel. If it expired or moved, refuse and
+  // ask the traveller to re-search — never charge a fare we can no longer ticket.
+  const flightComp = (booking.option?.components || []).find((c) => c.type === 'flight' && c.details?.offerId && c.live);
+  if (flightComp && liveFlightsEnabled()) {
+    const check = await validateDuffelOffer(flightComp.details.offerId);
+    if (check.ok && (check.expired || check.live === false)) {
+      return res.status(409).json({ error: 'fare-expired', message: 'This live fare has expired since your search — please re-search so we quote and charge the current bookable price.' });
+    }
+    if (check.ok && typeof check.priceUSD === 'number') {
+      const shown = flightComp.priceUSD || 0;
+      const drift = shown > 0 ? Math.abs(check.priceUSD - shown) / shown : 0;
+      if (drift > 0.02) {
+        return res.status(409).json({ error: 'fare-changed', message: 'The airline price changed since your search — please re-search to see and confirm the current fare before paying.', wasUSD: shown, nowUSD: check.priceUSD });
+      }
+    }
   }
   const cur = booking.option?.pricing?.currency || 'GBP';
   const total = booking.instalment?.deposit && kind !== 'full'
