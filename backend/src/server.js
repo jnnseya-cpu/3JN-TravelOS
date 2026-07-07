@@ -29,7 +29,7 @@ import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../s
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability } from './visaos.js';
-import { visaFramework, buildChecklist, assessApplication } from './visa-framework.js';
+import { visaFramework, buildChecklist, assessApplication, validateApplicant } from './visa-framework.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
@@ -538,6 +538,13 @@ app.get('/api/visa/framework', safe((req, res) => {
 app.post('/api/visa/checklist', safe((req, res) => {
   const { country, visaType, applicant } = req.body || {};
   res.json(buildChecklist({ country, visaType, applicant: applicant || {} }));
+}));
+// Validate the applicant record against a destination's requirements — the
+// UK 10-year-history / US social-handle / declaration-detail rules — before
+// documents are even uploaded. Returns missing fields + completeness %.
+app.post('/api/visa/validate-applicant', safe((req, res) => {
+  const { applicant, country } = req.body || {};
+  res.json({ report: validateApplicant(applicant || {}, country || null) });
 }));
 app.post('/api/visa/assess-application', safe((req, res) => {
   const { applicant, country, visaType, providedDocuments } = req.body || {};

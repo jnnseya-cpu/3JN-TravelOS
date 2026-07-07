@@ -46,8 +46,11 @@ export const APPLICANT_FIELDS = [
   { group: 'Background & history', fields: [
     { key: 'travelHistory', label: 'Travel history (last 10 years)', type: 'text' },
     { key: 'previousRefusals', label: 'Previous visa refusals', type: 'select', options: ['None', 'Yes — declared'] },
+    { key: 'previousRefusalsDetails', label: 'Refusal details (country, year, reason)', type: 'text' },
     { key: 'criminalHistory', label: 'Criminal history declaration', type: 'select', options: ['None', 'Yes — declared'] },
+    { key: 'criminalHistoryDetails', label: 'Criminal history details (offence, country, year)', type: 'text' },
     { key: 'overstayHistory', label: 'Immigration breach / overstay history', type: 'select', options: ['None', 'Yes — declared'] },
+    { key: 'overstayDetails', label: 'Breach / overstay details (country, year)', type: 'text' },
     { key: 'familyInDestination', label: 'Family members in destination country', type: 'text' },
     { key: 'socialHandles', label: 'Social media / online identifiers (where required)', type: 'text' },
   ] },
@@ -63,12 +66,17 @@ export const APPLICANT_FIELDS = [
 ];
 
 // ---- 2. Core documents required for almost every visa ---------------------
+// The global default checklist. Schengen baseline honoured: signed application,
+// passport no older than 10 years with 2+ blank visa pages and validity 3+
+// months after leaving the zone, photo, insurance and declarations.
 export const CORE_DOCUMENTS = [
-  'Valid passport (6+ months, 2 blank pages)', 'Passport biodata page scan', 'Previous passports',
+  'Valid passport (≤10 years old, 6+ months validity, 2 blank pages)', 'Passport biodata page scan',
+  'Passport cover page (where required)', 'Previous passports',
   'Recent biometric passport photo', 'Completed visa application form', 'Signed declaration of truth',
   'Visa fee payment receipt', 'Appointment confirmation', 'Travel itinerary', 'Return or onward ticket',
-  'Hotel / accommodation proof', 'Travel & medical insurance', 'Bank statements (3–6 months)',
-  'Proof of income', 'Employment letter', 'Proof of home ties / assets',
+  'Hotel booking / accommodation proof', 'Travel & medical insurance', 'Bank statements (3–6 months)',
+  'Proof of income', 'Employment letter', 'Recent payslips (3 months)', 'Tax returns',
+  'Proof of property / assets', 'Family ties evidence',
   'Certified translations for non-accepted languages',
 ];
 
@@ -84,7 +92,7 @@ export const VISA_TYPES = [
 ];
 
 export const TYPE_DOCUMENTS = {
-  tourist: ['Purpose of visit statement', 'Day-by-day travel plan', 'Approved leave letter', 'Proof of family/property ties', 'Invitation letter (if visiting)', 'Host immigration status & proof of address'],
+  tourist: ['Purpose of visit statement', 'Day-by-day travel plan', 'Flight reservation', 'Employment confirmation', 'Approved leave letter', 'Proof of home ties', 'Family ties evidence', 'Property ownership proof', 'Business ownership proof', 'Invitation letter (if visiting)', 'Host immigration status & proof of address', 'Host financial support letter', 'Previous visas & travel stamps'],
   business: ['Business invitation letter', 'Conference / trade-fair registration', 'Meeting agenda', 'Company introduction letter', 'Employer approval letter', 'Business registration', 'Proof of commercial relationship', 'Evidence applicant will not work illegally'],
   student: ['Admission / acceptance letter (CAS / I-20 / LOA)', 'SEVIS / provincial attestation (PAL/TAL/CAQ) where required', 'Tuition payment receipt', 'Proof of funds', 'Academic transcripts & certificates', 'English-test certificate', 'Study plan / statement of purpose', 'Parental consent + birth certificate (minors)'],
   work: ['Job offer & employment contract', 'Certificate of Sponsorship / work-permit approval', 'Sponsor licence number & occupation code', 'CV & qualification certificates', 'Professional licences', 'Work-experience letters', 'English-language proof', 'Police clearance', 'Proof of maintenance funds'],
@@ -101,7 +109,16 @@ function conditionalDocs(applicant) {
   if (/married/i.test(applicant.maritalStatus || '')) out.push('Marriage certificate');
   if (/divorced/i.test(applicant.maritalStatus || '')) out.push('Divorce certificate');
   if (/widow/i.test(applicant.maritalStatus || '')) out.push('Death certificate of spouse');
-  if (/self|freelan|own/i.test(applicant.occupation || '')) out.push('Business registration (self-employed)', 'Tax returns');
+  if (/self|freelan|own/i.test(applicant.occupation || '')) out.push('Business registration (self-employed)', 'Tax returns (self-employed)');
+  if (/student/i.test(applicant.occupation || '')) out.push('Student enrolment letter');
+  // Sponsor-funded trips: the sponsor must be evidenced too.
+  if (/sponsor|family|scholarship|employer/i.test(applicant.fundingSource || '')) {
+    out.push('Sponsor ID / passport / residence permit', 'Sponsor bank statements', 'Proof of relationship to sponsor');
+  }
+  // Visiting someone (host declared): invitation + host status.
+  if (!isBlank(applicant.sponsorDetails) || !isBlank(applicant.familyInDestination)) {
+    out.push('Invitation letter from host');
+  }
   return out;
 }
 
@@ -109,7 +126,7 @@ function conditionalDocs(applicant) {
 export const COUNTRY_MODULES = [
   { code: 'SCHENGEN', name: 'Schengen / EU', flag: '🇪🇺', system: 'VFS / consulate', notes: 'Passport ≤10y, valid 3+ months after exit, 2 blank pages, mandatory travel insurance.', docs: ['Schengen application form', 'Travel insurance €30,000 cover'] },
   { code: 'GB', name: 'United Kingdom', flag: '🇬🇧', system: 'UKVI online', notes: '10-year travel history, employer & sponsor/payment details, family in the UK.', docs: ['10-year travel history', 'Sponsor/payment details'] },
-  { code: 'US', name: 'United States', flag: '🇺🇸', system: 'DS-160 + interview', notes: 'DS-160 confirmation, interview, social-media handles (vetting).', docs: ['DS-160 confirmation', 'Interview appointment', 'Social-media identifiers'] },
+  { code: 'US', name: 'United States', flag: '🇺🇸', system: 'DS-160 + interview', notes: 'DS-160 confirmation, interview, social-media handles (vetting).', docs: ['DS-160 confirmation', 'MRV visa fee receipt', 'Interview appointment', 'Social-media identifiers'] },
   { code: 'CA', name: 'Canada', flag: '🇨🇦', system: 'IRCC online', notes: 'Personalised document checklist by nationality & purpose; biometrics.', docs: ['IRCC personalised checklist', 'Biometrics'] },
   { code: 'AU', name: 'Australia', flag: '🇦🇺', system: 'ImmiAccount', notes: 'Online lodgement; health & character requirements.', docs: ['Health examination', 'Character declaration'] },
   { code: 'NZ', name: 'New Zealand', flag: '🇳🇿', system: 'Immigration NZ online', notes: 'Online system with document-based checks by nationality.', docs: ['Online application'] },
@@ -248,6 +265,12 @@ export function assessApplication({ applicant = {}, country, visaType = 'tourist
   const risk = assessVisa(riskInput);
   const docs = runDocumentVerification(applicant);
   const fraud = runFraudChecks(applicant);
+  const applicantValidation = validateApplicant(applicant, country);
+  // Only declared-but-undetailed conditionals block the decision (e.g. a
+  // criminal/refusal/overstay declaration with no details, or a sponsor-funded
+  // trip with no sponsor evidence). Base-profile completeness is surfaced in
+  // applicantValidation for the officer but does not force a downgrade.
+  const missingCritical = applicantValidation.missing.filter((k) => (FIELD_RULES[k] || {}).requiredIf);
 
   // Completeness: how many checklist documents were supplied.
   const required = checklist.totalDocuments;
@@ -258,7 +281,7 @@ export function assessApplication({ applicant = {}, country, visaType = 'tourist
   let recommendation;
   if (risk.decision === 'Auto Rejection' || fraud.flags.some((f) => /sanction|watchlist|pep/i.test(f.category))) {
     recommendation = 'Refuse';
-  } else if (!complete || !docs.allClear) {
+  } else if (!complete || !docs.allClear || missingCritical.length > 0) {
     recommendation = 'Request more info';
   } else if (risk.decision === 'Human Review' || fraud.flagCount >= 3) {
     recommendation = 'Escalate to human';
@@ -276,16 +299,125 @@ export function assessApplication({ applicant = {}, country, visaType = 'tourist
     documentVerification: docs,
     fraud,
     risk,
+    applicantValidation,
     completeness: { required, supplied, complete },
     recommendation,
     decisionReadyMinutes: recommendation === 'Escalate to human' ? 'escalated' : 5,
   };
 }
 
+// ---- 1b. Field governance: sensitivity, per-country requirements, conditionals
+//
+// sensitivity drives log redaction + access control:
+//   restricted   = special-category / high-harm (criminal, refusal, overstay)
+//   confidential = strong PII (passport, national ID, financials, address)
+//   internal     = ordinary PII (name, DOB, contact) — the default
+// requiredBy    = country codes that force an otherwise-optional field
+//   (UK visitor: 10-year travel history + employer; US vetting: social handles)
+// requiredIf    = the field becomes mandatory when another field has a value
+export const FIELD_RULES = {
+  passportNumber: { sensitivity: 'confidential' },
+  passportIssue: { sensitivity: 'confidential' },
+  passportExpiry: { sensitivity: 'confidential' },
+  passportCountry: { sensitivity: 'confidential' },
+  nationalId: { sensitivity: 'confidential' },
+  address: { sensitivity: 'confidential' },
+  monthlyIncome: { sensitivity: 'confidential' },
+  employer: { sensitivity: 'confidential', requiredBy: ['GB'] },
+  travelHistory: { sensitivity: 'confidential', requiredBy: ['GB', 'US', 'CA', 'AU'] },
+  familyInDestination: { sensitivity: 'confidential' },
+  socialHandles: { sensitivity: 'confidential', requiredBy: ['US'] },
+  sponsorDetails: { sensitivity: 'confidential', requiredIf: { field: 'fundingSource', in: ['Sponsor', 'Employer', 'Family', 'Scholarship'] } },
+  accommodation: { sensitivity: 'confidential' },
+  emergencyContact: { sensitivity: 'confidential' },
+  previousRefusals: { sensitivity: 'restricted' },
+  previousRefusalsDetails: { sensitivity: 'restricted', requiredIf: { field: 'previousRefusals', in: ['Yes — declared'] } },
+  criminalHistory: { sensitivity: 'restricted' },
+  criminalHistoryDetails: { sensitivity: 'restricted', requiredIf: { field: 'criminalHistory', in: ['Yes — declared'] } },
+  overstayHistory: { sensitivity: 'restricted' },
+  overstayDetails: { sensitivity: 'restricted', requiredIf: { field: 'overstayHistory', in: ['Yes — declared'] } },
+};
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_RE = /^\+?[0-9\s().-]{6,20}$/;
+const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+
+function allApplicantFields() {
+  return APPLICANT_FIELDS.flatMap((g) => g.fields.map((fld) => ({ ...fld, group: g.group })));
+}
+
+// The exact field keys mandatory for this applicant in this country —
+// base `required` flags + country escalations + declaration conditionals.
+export function requiredFieldsFor(country, applicant = {}) {
+  const keys = [];
+  for (const fld of allApplicantFields()) {
+    const rule = FIELD_RULES[fld.key] || {};
+    let required = !!fld.required;
+    if (rule.requiredBy && rule.requiredBy.includes(country)) required = true;
+    if (rule.requiredIf && rule.requiredIf.in.includes(String(applicant[rule.requiredIf.field] || ''))) required = true;
+    if (required) keys.push(fld.key);
+  }
+  return keys;
+}
+
+// Validate the applicant record for a destination country. Format checks only
+// run on present values; completeness counts required fields only.
+export function validateApplicant(applicant = {}, country = null) {
+  const errors = [];
+  const required = requiredFieldsFor(country, applicant);
+  const missing = required.filter((k) => isBlank(applicant[k]));
+  const labels = new Map(allApplicantFields().map((fld) => [fld.key, fld.label]));
+  for (const k of missing) errors.push({ field: k, message: `${labels.get(k) || k} is required.` });
+
+  const a = applicant;
+  if (!isBlank(a.email) && !EMAIL_RE.test(String(a.email).trim())) errors.push({ field: 'email', message: 'Enter a valid email address.' });
+  if (!isBlank(a.phone) && !PHONE_RE.test(String(a.phone).trim())) errors.push({ field: 'phone', message: 'Enter a valid phone number.' });
+  const t = (d) => { const n = Date.parse(d); return Number.isNaN(n) ? null : n; };
+  const now = Date.now();
+  if (!isBlank(a.dob)) {
+    const d = t(a.dob);
+    if (d === null) errors.push({ field: 'dob', message: 'Date of birth is not a valid date.' });
+    else if (d > now) errors.push({ field: 'dob', message: 'Date of birth must be in the past.' });
+  }
+  if (!isBlank(a.passportExpiry)) {
+    const d = t(a.passportExpiry);
+    if (d === null) errors.push({ field: 'passportExpiry', message: 'Passport expiry is not a valid date.' });
+    else {
+      if (d < now) errors.push({ field: 'passportExpiry', message: 'Passport has expired.' });
+      const iss = isBlank(a.passportIssue) ? null : t(a.passportIssue);
+      if (iss !== null && iss !== undefined && iss >= d) errors.push({ field: 'passportExpiry', message: 'Passport expiry must be after its issue date.' });
+    }
+  }
+  if (!isBlank(a.arrival) && !isBlank(a.departure)) {
+    const ar = t(a.arrival); const dep = t(a.departure);
+    if (ar !== null && dep !== null && dep <= ar) errors.push({ field: 'departure', message: 'Departure must be after arrival.' });
+  }
+
+  const present = required.length - missing.length;
+  const completeness = required.length === 0 ? 100 : Math.round((present / required.length) * 100);
+  return { country, valid: errors.length === 0, errors, missing, required, completeness };
+}
+
+// Log/analytics-safe copy: restricted values fully masked, confidential values
+// truncated to a ••••-prefixed tail, internal values kept. Applications must
+// never reach logs or audit summaries in the clear.
+export function redactApplicant(applicant = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(applicant)) {
+    const sens = (FIELD_RULES[k] || {}).sensitivity || 'internal';
+    if (sens === 'restricted') out[k] = '‹restricted›';
+    else if (sens === 'confidential') {
+      out[k] = isBlank(v) ? v : `••••${String(v).replace(/\s/g, '').slice(-2)}`;
+    } else out[k] = v;
+  }
+  return out;
+}
+
 // Metadata bundle for the UI (schema + catalogues).
 export function visaFramework() {
   return {
     applicantFields: APPLICANT_FIELDS,
+    fieldRules: FIELD_RULES,
     visaTypes: VISA_TYPES,
     countries: COUNTRY_MODULES,
     coreDocuments: CORE_DOCUMENTS,
