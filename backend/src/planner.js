@@ -198,7 +198,13 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // serve threshold the answer is served with NO AI COST; the free tier serves
   // any age. The checked sources: historical results, popular routes, past
   // bookings, cached prices, destination intelligence, supplier deals.
-  {
+  // NEVER serve from cache when a live supplier overlay is being applied: the
+  // caller fetched real Duffel/Amadeus fares and is re-planning to fold them in.
+  // A cache hit here would return the earlier ESTIMATED result and silently
+  // discard the live fares — the exact bug that kept prices "estimated" after
+  // the live key went in. When `live` is present we compute fresh and (below)
+  // overwrite the cache with the live result for the next traveller.
+  if (!live) {
     const hit = getCachedSearch(cacheKey);
     const confidence = cacheConfidence(hit);
     if (hit && (effectiveTier === 'free' || confidence > CACHE_SERVE_CONFIDENCE)) {

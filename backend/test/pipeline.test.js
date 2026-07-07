@@ -2809,3 +2809,22 @@ test('group booking uses LIVE per-party fares when the flight provider is on', (
   assert.ok(legs.every((c) => c.live && c.supplier === 'Air Canada'), 'both party legs are the live fare');
   assert.ok(legs.some((c) => c.details.route === 'London → Ottawa') && legs.some((c) => c.details.route === 'Manchester → Ottawa'));
 });
+
+test('live overlay is never masked by a cached estimated result', () => {
+  // Regression: /api/plan runs plan() once (may cache an ESTIMATED result), then
+  // re-runs plan() with live fares. If the second, live-carrying call served the
+  // cached estimate, live fares would be silently discarded — the bug that kept
+  // prices "estimated" after the live key went in.
+  const text = 'group of 4 to Ottawa on 07/november/2026, 2 from London and 2 from Manchester, flights and hotel, 5 days';
+  // 1) First pass with NO live data — this caches an estimated result.
+  const estimated = plan({ text, context: GB });
+  assert.equal(estimated.stage, 'options');
+  assert.ok(!estimated.packages.options[0].components.some((c) => c.type === 'flight' && c.live), 'first pass is estimated');
+  // 2) Second pass with live fares for the SAME request — must NOT serve cache.
+  const fakeOffer = (from) => ({ type: 'flight', supplier: 'Air Canada', verified: true, reliabilityScore: 90, live: true, sourcedVia: 'Duffel (live)', details: { outbound: { from, to: 'YOW', depart: '10:00', arrive: '13:00', stops: 0, stopLabel: 'Direct' }, inbound: { from: 'YOW', to: from, depart: '15:00', arrive: '18:00', stops: 0 }, offerId: 'off_' + from, offerExpiresAt: new Date(Date.now() + 3600000).toISOString(), liveAmount: '880.00', liveCurrency: 'GBP' }, priceUSD: 1100 });
+  const live = { groupFlights: [{ partyIndex: 0, offers: [fakeOffer('LHR')] }, { partyIndex: 1, offers: [fakeOffer('MAN')] }] };
+  const withLive = plan({ text, context: GB, live });
+  assert.ok(!withLive.cached, 'a live-carrying re-plan is never served from cache');
+  const legs = withLive.packages.options[0].components.filter((c) => c.type === 'flight');
+  assert.ok(legs.length && legs.every((c) => c.live && c.supplier === 'Air Canada'), 'live fares win over the cached estimate');
+});
