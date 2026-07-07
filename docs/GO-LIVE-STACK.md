@@ -29,6 +29,45 @@ Firebase is faster for all of this. **Current wiring:** `backend/src/persistence
 
 Neon's serverless Postgres (autoscaling, monitoring, connection pooling) is excellent for structured business data — but it doesn't give you auth, storage, notifications or realtime out of the box, and a fast travel-OS launch needs those immediately.
 
+## Clear recommendation (locked)
+
+**Phase 1 — MVP / Go Live (fastest and safest route):**
+Hostinger Domain · Vercel Frontend · Firebase Backend · Stripe Payments · AI APIs.
+
+**Phase 2 — Serious commercial platform:** add **Neon/Postgres** and use it for:
+ACU ledger · payment reconciliation · booking accounting · supplier commissions · corporate travel · government visa decisions · fraud/risk scoring logs · audit trail.
+
+**Phase 3 — Enterprise / VisaOS:** move critical decision records to structured SQL.
+Use **Firebase for speed · Neon/Postgres for governance · BigQuery/Data Warehouse for analytics**.
+
+**Final answer:** start with **Vercel + Firebase**; add Postgres when the platform needs stronger financial control, reporting, audits and enterprise-grade decision records. Speed now, serious scalability later.
+
+### One long-term recommendation (locked)
+
+Hostinger domain + Vercel frontend + **Google Cloud/Firebase backend** + Google Cloud Storage + **Postgres later inside Google Cloud (Cloud SQL)** — not Neon as the main backend.
+
+```
+Claude Build
+   ↓
+GitHub
+   ↓
+Vercel Frontend
+   ↓
+Firebase Auth
+   ↓
+Google Cloud Run / Cloud Functions Backend
+   ↓
+Firestore — app activity + realtime status
+   ↓
+Google Cloud Storage — visa documents
+   ↓
+Cloud SQL PostgreSQL — payments, audit, visa decisions, financial records
+   ↓
+Stripe / payment gateway
+   ↓
+AI agent layer
+```
+
 ## Best long-term architecture — hybrid (do not choose only one forever)
 
 | Layer | Technology | Responsibility |
