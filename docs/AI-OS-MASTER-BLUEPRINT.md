@@ -716,6 +716,36 @@ The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, pr
 | **Admin Panel (v1)** | User list, booking list, basic revenue metrics | Next.js + PostgreSQL |
 | **Deployment Infrastructure** | GCP GKE, Cloud SQL, Redis, Kafka, CI/CD pipeline | GCP + GitHub Actions + Terraform |
 
+### Phase 2 — Beta
+**COMMERCIAL OBJECTIVE: 5,000 paid members + first business clients + African market activation**
+
+| Deliverable | Description |
+|---|---|
+| **Savings Guard Agent** | Post-booking 24/7 price monitor with alert + rebooking recommendation |
+| **Visa Automation Agent (v1)** | Eligibility check + VisaHQ integration + status tracking |
+| **Risk Intelligence Agent** | FCO feed + WHO health advisories + push alerts |
+| **eSIM Intelligence Agent** | Airalo + Holafly integration + auto-recommend on booking |
+| **Loyalty Aggregation Agent (v1)** | Manual loyalty account linking + points balance display |
+| **BitriPay Full Integration** | QR payments, mobile money (M-Pesa, Airtel, Orange, Africell), CDF settlement |
+| **Business Portal (v1)** | Team travel management, basic policy controls, expense export |
+| **Transfer Logistics Agent** | Mozio + Cartrawler integration + flight status sync |
+| **Android + iOS Apps** | React Native MVP — core booking + Universal Console |
+
+### Phase 3 — Commercial Launch
+**COMMERCIAL OBJECTIVE: £1M ARR + 20,000 paid members + first white-label client**
+
+| Deliverable | Description |
+|---|---|
+| **AI Chief of Staff (v2)** | Full conversational journey planning + proactive daily briefings |
+| **ACU Billing System** | Full ACU metering, ledger, top-up, and overage billing |
+| **API Developer Portal** | Public API + developer centre + SDK release (JS, Python) |
+| **White-Label Framework** | Configurable branding, custom domain, reseller commission engine |
+| **Enterprise Command Centre** | Full duty of care, approval workflows, supplier contracts, analytics |
+| **Fraud Intelligence Upgrade** | Seon integration + ML fraud model trained on platform transaction data |
+| **Full Compliance Suite** | GDPR automation, SAR workflow, AML/KYC Tier 2, FCA readiness |
+| **Coworking Intelligence Agent** | Destination coworking space API (Coworker.com) + calendar sync |
+| **Private Aviation Agent (Elite)** | Charter quote API + fractional jet + helicopter transfer booking |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
