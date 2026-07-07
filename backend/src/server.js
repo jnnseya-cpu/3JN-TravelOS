@@ -30,12 +30,12 @@ import {
   grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT, usageStats,
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
-  profitabilityDashboard, claimSavingsGuarantee,
+  profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
 } from './store.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
-import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS } from './visaos.js';
+import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS, ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication, validateApplicant } from './visa-framework.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { liveShowcase } from './showcase.js';
@@ -720,7 +720,12 @@ app.get('/api/visaos/government', safe((req, res) => {
 // The module manifest: positioning, problems solved, SLA, promise and the
 // per-agent forensic checklists — the GovTech sales sheet, from the engine.
 app.get('/api/visaos/manifest', safe((req, res) => {
-  res.json({ ...VISAOS_MANIFEST, agentChecks: AGENT_CHECKS });
+  res.json({ ...VISAOS_MANIFEST, agentChecks: AGENT_CHECKS, zeroTrust: ZERO_TRUST, antiCorruption: ANTI_CORRUPTION, digitalJourney: DIGITAL_JOURNEY });
+}));
+// Blockchain audit trail: tamper-evident hash chain of every visa event.
+app.get('/api/visaos/audit-chain', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
+  res.json({ integrity: verifyVisaChain(), blocks: visaChainBlocks(Number(req.query.limit) || 20) });
 }));
 
 // ---- 3JN Host Marketplace ---------------------------------------------------

@@ -37,6 +37,31 @@ Ten specialised agents run simultaneously (`assessVisa` → `agents[]`, each wit
 | 9 | **Border Risk** — the national security layer | criminal databases · terrorism watchlists · sanctions · extremist networks · trafficking indicators · smuggling signals |
 | 10 | **Decision Agent** — the master AI | aggregates all intelligence · weights the seven risk dimensions · unified 0–1000 risk score · **Visa Decision Confidence Score** · routes approve / conditional / human review / reject |
 
+## Fraud-Free Architecture — Zero Trust
+
+**Trust nothing by default. Everything must be verified.** Six mandatory security layers wrap every application (each assessment returns their per-application status in `zeroTrust.layers`):
+
+| Layer | Stops |
+|---|---|
+| Biometric Liveness | Impersonation |
+| Device Fingerprinting | Fraud devices |
+| IP Intelligence | Suspicious geographies |
+| Metadata Analysis | Manipulated files |
+| Blockchain Audit Trail | Decisions altered secretly — every visa event is sealed into a SHA-256 **hash chain** (`sealVisaBlock`); any tamper breaks the chain and `verifyVisaChain()` exposes exactly where. `GET /api/visaos/audit-chain` (embassy/consulate/admin) |
+| Immutable Logs | Unrecorded actions — the append-only audit log records every action |
+
+## Anti-Corruption Layer
+
+**No manual officer can secretly approve a fraudulent application.** Approving against the AI's high-risk verdict is an **override** and is refused unless it carries: a written **reason**, an **approval chain** (a second approver — no single officer can do it alone), and it lands in both the immutable **audit log** and the hash-chained audit trail. This reduces bribery. (`decideVisaApplication`: `override-requires-reason` / `override-requires-approval-chain`.)
+
+## Physical Embassy Elimination — the key USP
+
+Old model: Apply → Queue → Appointment → Wait → Interview → Decision.
+**3JN VisaOS: Apply Online → AI Verification → Risk Scoring → Decision in Minutes.**
+
+Physical appearance only if: biometrics required · security escalation · suspicious case · random audit · final interview.
+**Target: 90–95% of applications fully digital. Embassy queues collapse.** (Live metric: `govAnalytics().autoDigitalRate` vs `digitalTargetPct`.)
+
 ## Where it lives
 
 `backend/src/visaos.js` (`VISAOS_MANIFEST`, `AGENT_CHECKS`, `assessVisa`, `approvalProbability`) · `backend/src/visa-framework.js` (11-stage flow: Applicant Profile → Visa Type → Country Rules → Dynamic Checklist → Document Upload → AI Verification → Risk Score → Payment → Final Review → Decision → eVisa/Refusal/Escalation) · API: `/api/visaos/assess`, `/api/visaos/manifest`, `/api/visaos/probability`, `/api/visaos/government` · consulate/embassy/admin role gates.

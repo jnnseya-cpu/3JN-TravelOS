@@ -2,6 +2,7 @@
 // with Postgres/Firestore; the interface here is intentionally small so it
 // could be swapped out. All state lives for the lifetime of the process.
 
+import { createHash } from 'node:crypto';
 import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD } from '../../shared/constants.js';
 
@@ -34,6 +35,7 @@ const db = {
   commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
   aiRequestCosts: [], // ai_request_costs ledger — estimated vs actual AI spend per request
   searchDeposits: [], // refundable search deposits (deep £5 / luxury £20 / corporate £50)
+  visaChain: [], // hash-chained (blockchain-style) audit trail of visa decisions
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -149,7 +151,35 @@ export function recordVisaApplication(assessment) {
   const rec = { id: id('visa'), ...assessment, at: nowISO() };
   db.visaApps.push(rec);
   recordAudit({ actor: 'visaos', role: 'agent', action: `visa.${assessment.decision.replace(/\s+/g, '-').toLowerCase()}`, entity: 'visa_application', entityId: rec.id, summary: `${assessment.applicant.nationality}→${assessment.applicant.destination} score ${assessment.totalScore}` });
+  rec.auditBlock = sealVisaBlock('assessment', { id: rec.id, decision: assessment.decision, totalScore: assessment.totalScore });
   return rec;
+}
+
+// ---- Blockchain Audit Trail (VisaOS Zero Trust layer) -------------------------
+// Every visa event is sealed into a hash chain: each block's hash covers its
+// payload AND the previous block's hash, so no past decision can be altered
+// secretly — any tamper breaks the chain and verifyVisaChain() exposes it.
+export function sealVisaBlock(event, payload = {}) {
+  const prevHash = db.visaChain.length ? db.visaChain[db.visaChain.length - 1].hash : 'genesis';
+  const body = JSON.stringify({ event, ...payload });
+  const hash = createHash('sha256').update(prevHash + body).digest('hex');
+  const block = { index: db.visaChain.length, event, payload: body, prevHash, hash, at: nowISO() };
+  db.visaChain.push(block);
+  return { index: block.index, hash, prevHash };
+}
+export function verifyVisaChain() {
+  let prev = 'genesis';
+  for (const b of db.visaChain) {
+    const expect = createHash('sha256').update(prev + b.payload).digest('hex');
+    if (b.hash !== expect || b.prevHash !== prev) {
+      return { ok: false, tamperedAtIndex: b.index, event: b.event };
+    }
+    prev = b.hash;
+  }
+  return { ok: true, blocks: db.visaChain.length, head: prev };
+}
+export function visaChainBlocks(limit = 20) {
+  return db.visaChain.slice(-limit).reverse();
 }
 // Store a FULL visa application — the robust list of information + documents the
 // applicant provided, plus the AI decision file. This is what the embassy
@@ -188,14 +218,35 @@ export function listVisaApplicationsForUser(userId) {
 export function getVisaApplication(appId) {
   return db.visaApps.find((a) => a.id === appId) || null;
 }
-export function decideVisaApplication(appId, { decision, reason, officerId } = {}) {
+export function decideVisaApplication(appId, { decision, reason, officerId, secondApproverId } = {}) {
   const a = db.visaApps.find((x) => x.id === appId);
   if (!a) return { ok: false, error: 'not-found' };
   const allowed = ['Approved', 'Refused', 'More info requested', 'Escalated'];
   if (!allowed.includes(decision)) return { ok: false, error: 'invalid-decision' };
-  a.embassyDecision = { decision, reason: (reason || '').slice(0, 500), officerId: officerId || 'embassy', at: nowISO() };
+
+  // ---- Anti-Corruption Layer ----------------------------------------------
+  // No manual officer can secretly approve a fraudulent application. Approving
+  // AGAINST the AI's high-risk verdict is an OVERRIDE and requires a written
+  // reason AND a second approver (approval chain); everything lands in the
+  // immutable audit log and the hash-chained audit trail. This reduces bribery.
+  const aiSaysHighRisk = ['High Risk', 'Reject'].includes(a.band) || ['Human Review', 'Auto Rejection'].includes(a.decision) || (a.totalScore || 0) > 450;
+  const isOverride = decision === 'Approved' && aiSaysHighRisk;
+  if (isOverride) {
+    if (!reason || !reason.trim()) {
+      return { ok: false, error: 'override-requires-reason', message: 'Approving against the AI risk verdict is an override — a written reason is mandatory.' };
+    }
+    if (!secondApproverId) {
+      return { ok: false, error: 'override-requires-approval-chain', message: 'Overrides require a second approver (approval chain) — no single officer can approve a high-risk application alone.' };
+    }
+  }
+
+  a.embassyDecision = {
+    decision, reason: (reason || '').slice(0, 500), officerId: officerId || 'embassy', at: nowISO(),
+    ...(isOverride ? { override: true, approvalChain: [officerId || 'embassy', secondApproverId] } : {}),
+  };
   a.status = decision === 'More info requested' ? 'awaiting-applicant' : 'decided';
-  recordAudit({ actor: officerId || 'embassy', role: 'embassy', action: `visa.embassy.${decision.replace(/\s+/g, '-').toLowerCase()}`, entity: 'visa_application', entityId: appId, summary: `${decision}${reason ? ' — ' + reason.slice(0, 60) : ''}` });
+  recordAudit({ actor: officerId || 'embassy', role: 'embassy', action: `visa.embassy.${decision.replace(/\s+/g, '-').toLowerCase()}${isOverride ? '.override' : ''}`, entity: 'visa_application', entityId: appId, summary: `${decision}${isOverride ? ' (OVERRIDE, 2nd: ' + secondApproverId + ')' : ''}${reason ? ' — ' + reason.slice(0, 60) : ''}` });
+  a.embassyDecision.auditBlock = sealVisaBlock('embassy-decision', { id: appId, decision, officerId: officerId || 'embassy', override: isOverride, ...(isOverride ? { approvalChain: [officerId || 'embassy', secondApproverId] } : {}) });
   if (a.userId) pushNotification(a.userId, { type: 'info', icon: '🛂', title: `Visa: ${decision}`, body: reason || `Your application was ${decision.toLowerCase()} by the embassy.` });
   return { ok: true, application: a };
 }
@@ -219,7 +270,11 @@ export function govAnalytics() {
     approvalRate: apps.length ? Math.round((approved / apps.length) * 100) : 0,
     decisions,
     fraudAttempts,
+    // Physical Embassy Elimination: share of applications decided fully
+    // digitally (no human review / physical appearance) — target 90–95%.
     autoDigitalRate: apps.length ? Math.round((by((a) => a.decision !== 'Human Review') / apps.length) * 100) : 0,
+    digitalTargetPct: [90, 95],
+    auditChain: verifyVisaChain(),
     avgScore: apps.length ? Math.round(totalScore / apps.length) : 0,
     topCountries: Object.entries(byCountry).sort((x, y) => y[1] - x[1]).slice(0, 6).map(([k, v]) => ({ country: k, count: v })),
     recent: apps.slice(-8).reverse().map((a) => ({ id: a.id, nationality: a.applicant.nationality, destination: a.applicant.destination, decision: a.decision, score: a.totalScore, band: a.band })),
@@ -1101,7 +1156,7 @@ function round4(n) { return Math.round(n * 10000) / 10000; }
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain'];
 
 export function snapshot() {
   const out = { counter };
