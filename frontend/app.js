@@ -2327,7 +2327,7 @@ window.buyAcuFlow = () => {
     <span class="eyebrow">Top up ACUs · £1 = 100 ACU</span>
     <h3 style="margin:6px 0">Top up AI Compute Units</h3>
     <p class="muted" style="font-size:13px">ACUs power your AI searches. Members auto-fund ACUs from 10% of their plan each month; top up any time at a flat £1 = 100 ACU.</p>
-    ${[['topup5', '£5', '500'], ['topup10', '£10', '1,000'], ['topup25', '£25', '2,500'], ['topup50', '£50', '5,000']]
+    ${[['starter', 'Starter · £5', '500'], ['smart', 'Smart Traveller · £15', '1,500'], ['family', 'Family Travel · £29', '2,900'], ['business', 'Business Travel · £99', '9,900']]
       .map(([id, gbp, acu]) => `<div class="kv"><span>${acu} ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}`);
 };
 window.buyAcu = async (pack) => {

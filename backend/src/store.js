@@ -349,12 +349,17 @@ export function spendAcu(userId, amount, reason) {
   return { ok: true, balance: u.acuBalance };
 }
 
-// Top-up ACU packs — all priced at the customer rate of £1 = 100 ACU.
+// Paid ACU packs — the named catalogue (all at the customer rate £1 = 100 ACU).
 export const ACU_PACKS = {
-  topup5: { gbp: 5, acu: 5 * ACU_PER_GBP },
-  topup10: { gbp: 10, acu: 10 * ACU_PER_GBP },
-  topup25: { gbp: 25, acu: 25 * ACU_PER_GBP },
-  topup50: { gbp: 50, acu: 50 * ACU_PER_GBP },
+  starter: { name: 'Starter Pack', gbp: 5, acu: 5 * ACU_PER_GBP },
+  smart: { name: 'Smart Traveller Pack', gbp: 15, acu: 15 * ACU_PER_GBP },
+  family: { name: 'Family Travel Pack', gbp: 29, acu: 29 * ACU_PER_GBP },
+  business: { name: 'Business Travel Pack', gbp: 99, acu: 99 * ACU_PER_GBP },
+  // Legacy top-up aliases (kept for older clients).
+  topup5: { name: 'Starter Pack', gbp: 5, acu: 5 * ACU_PER_GBP },
+  topup10: { name: 'Top-up £10', gbp: 10, acu: 10 * ACU_PER_GBP },
+  topup25: { name: 'Family Travel Pack', gbp: 25, acu: 25 * ACU_PER_GBP },
+  topup50: { name: 'Top-up £50', gbp: 50, acu: 50 * ACU_PER_GBP },
 };
 export function buyAcu(userId, pack) {
   const p = ACU_PACKS[pack];

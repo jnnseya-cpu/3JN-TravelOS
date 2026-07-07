@@ -34,14 +34,29 @@ export function liveShowcase(context) {
     const savingsUSD = lines.savingsVsMarketUSD;
     const savingsPct = lines.marketRefUSD > 0 ? Math.round((savingsUSD / lines.marketRefUSD) * 100) : 0;
 
-    // Per-component savings (real): each component's wholesale-to-retail gap.
+    // Per-component savings — ACCURATE by construction: the NET trip saving
+    // (market price minus our final total, commission included) is distributed
+    // across components in proportion to each one's wholesale-to-retail gap,
+    // in LOCAL currency, with the rounding remainder folded into the largest
+    // line — so the lines always sum EXACTLY to the displayed total.
     const byType = {};
     for (const c of rec.components) byType[c.type] = (byType[c.type] || 0) + c.priceUSD;
-    savingsBreakdown = Object.entries(byType)
-      .map(([type, usd]) => ({ label: groupLabel(type), savedUSD: Math.round(usd * (marketMultiplier - 1)) }))
-      .filter((x) => x.savedUSD > 0)
-      .sort((a, b) => b.savedUSD - a.savedUSD)
-      .map((x) => ({ label: x.label, saved: `${sym}${local(x.savedUSD).toLocaleString()}` }));
+    const gaps = Object.entries(byType)
+      .map(([type, usd]) => ({ type, gap: usd * (marketMultiplier - 1) }))
+      .filter((g) => g.gap > 0)
+      .sort((a, b) => b.gap - a.gap);
+    const gapSum = gaps.reduce((t, g) => t + g.gap, 0);
+    const totalSavedLocal = local(savingsUSD);
+    let allocated = 0;
+    const rows = gaps.map((g, i) => {
+      const share = gapSum > 0 ? Math.round(totalSavedLocal * (g.gap / gapSum)) : 0;
+      allocated += share;
+      return { type: g.type, savedLocal: share };
+    });
+    if (rows.length) rows[0].savedLocal += totalSavedLocal - allocated; // exact sum
+    savingsBreakdown = rows
+      .filter((x) => x.savedLocal > 0)
+      .map((x) => ({ label: groupLabel(x.type), saved: `${sym}${x.savedLocal.toLocaleString()}`, savedLocal: x.savedLocal }));
 
     // Real negotiation outcomes derived from what's actually in the package.
     const types = new Set(rec.components.map((c) => c.type));

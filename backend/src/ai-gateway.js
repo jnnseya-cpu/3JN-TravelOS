@@ -28,6 +28,9 @@ export const SYSTEM_PROMPT = [
   'structured and tied to the goal — never generic. Autosave everything. Respect permissions,',
   'roles, data boundaries, confidentiality and compliance. Never expose the underlying AI',
   'provider or internal logic to end users — they see clarity, speed, control and intelligence.',
+  'Positioning: 3JN Travel OS is NOT free AI travel search. It is the AI-powered travel savings',
+  'engine that finds cheaper global prices, protects customers from overpaying, and only charges',
+  'when real value is created.',
 ].join(' ');
 
 // The structured answer format every agent uses where relevant.
@@ -58,6 +61,32 @@ export const TASK_ROUTES = {
   behaviourLearning: { provider: 'anthropic', acuAction: 'intent', why: 'behavioural profiling + pattern mining' },
   recommendation: { provider: 'openai', acuAction: 'intent', why: 'personalised journey recommendation' },
 };
+
+// Per-agent ACU budgets — hard ceilings per request/session. Once an agent's
+// budget is reached the gateway STOPS and asks for approval instead of running.
+export const AGENT_BUDGETS = {
+  flightSearch: 20,   // Flight Agent
+  hotelSearch: 20,    // Hotel Agent
+  visaCheck: 10,      // Visa Agent
+  coworking: 15,      // Itinerary Agent (itinerary task route)
+  riskBriefing: 25,   // Savings/Risk Agent
+  intent: 10,
+  chiefOfStaff: 20,
+  expense: 10,
+  priceMonitor: 10,
+  privateAviation: 25,
+};
+export function checkAgentBudget(acuAction, spentThisSession = 0) {
+  const budget = AGENT_BUDGETS[acuAction] ?? 15;
+  const cost = ACU_ACTIONS[acuAction] || 0;
+  const withinBudget = spentThisSession + cost <= budget;
+  return {
+    acuAction, budget, cost, spentThisSession,
+    allowed: withinBudget,
+    requiresApproval: !withinBudget,
+    message: withinBudget ? null : `The ${acuAction} agent reached its ${budget} ACU budget this session — approve more ACU to continue.`,
+  };
+}
 
 const DEFAULT_PROVIDER = env.AI_GATEWAY_DEFAULT_PROVIDER || 'anthropic';
 
@@ -92,8 +121,14 @@ export function route(task) {
 //   localFn — deterministic fallback that produces the result offline
 // Returns { result, meta } where meta records the provider, model, acu and mode.
 // Never throws: a live-call failure degrades to localFn.
-export async function run({ task, payload, localFn }) {
+export async function run({ task, payload, localFn, spentThisSession = 0 }) {
   const r = route(task);
+  // Agent budget guard: once the per-agent ACU budget is reached, STOP and
+  // ask for approval — never silently keep spending.
+  const budget = checkAgentBudget(r.acuAction, spentThisSession);
+  if (budget.requiresApproval) {
+    return { result: null, meta: { task, provider: r.provider, mode: 'budget-stop', acu: 0, budget } };
+  }
   let result;
   let mode = r.mode;
   let error = null;

@@ -1838,3 +1838,54 @@ test('accounts: consulate role exists; every seeded type fully dressed', () => {
   assert.match(consulate.email, /consulate@/);
   assert.ok(consulate.accessLevel.some((a) => /consular caseload/i.test(a)));
 });
+
+// ---- Landing accuracy: savings lines sum EXACTLY to the total ----------------
+import { liveShowcase } from '../src/showcase.js';
+
+test('showcase: per-component savings sum exactly to the Total Trip Saving', () => {
+  const s = liveShowcase({ country: 'GB', currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } });
+  assert.ok(s.example && s.savingsBreakdown.length > 0);
+  const linesSum = s.savingsBreakdown.reduce((t, b) => t + b.savedLocal, 0);
+  assert.equal(linesSum, s.example.savedLocal, `lines (£${linesSum}) must equal the total (£${s.example.savedLocal})`);
+});
+
+// ---- Per-agent ACU budgets (part 8) + positioning (part 9) -------------------
+import { AGENT_BUDGETS, checkAgentBudget, run as gatewayRun, SYSTEM_PROMPT } from '../src/ai-gateway.js';
+
+test('agent budgets: hard ceilings per agent; budget reached → stop & ask', async () => {
+  assert.equal(AGENT_BUDGETS.flightSearch, 20);
+  assert.equal(AGENT_BUDGETS.hotelSearch, 20);
+  assert.equal(AGENT_BUDGETS.visaCheck, 10);
+  assert.equal(AGENT_BUDGETS.coworking, 15, 'Itinerary Agent 15');
+  assert.equal(AGENT_BUDGETS.riskBriefing, 25, 'Savings Agent 25');
+  // Within budget → allowed.
+  assert.equal(checkAgentBudget('flightSearch', 0).allowed, true);
+  // Budget reached → requires approval, and the gateway refuses to run.
+  const over = checkAgentBudget('flightSearch', 19);
+  assert.equal(over.requiresApproval, true);
+  const stopped = await gatewayRun({ task: 'intentExtraction', payload: {}, localFn: () => 'x', spentThisSession: 99 });
+  assert.equal(stopped.meta.mode, 'budget-stop');
+  assert.equal(stopped.meta.acu, 0, 'no ACU spent past the budget');
+  assert.ok(stopped.meta.budget.message.includes('budget'));
+});
+
+test('positioning: the savings-engine statement anchors every AI call', () => {
+  assert.match(SYSTEM_PROMPT, /NOT free AI travel search/);
+  assert.match(SYSTEM_PROMPT, /only charges.*when real value is created/i);
+});
+
+// ---- Named ACU packs (Starter / Smart Traveller / Family / Business) ---------
+import { ACU_PACKS } from '../src/store.js';
+
+test('ACU packs: the named catalogue at £1 = 100 ACU', () => {
+  assert.equal(ACU_PACKS.starter.gbp, 5);
+  assert.equal(ACU_PACKS.smart.gbp, 15);
+  assert.equal(ACU_PACKS.family.gbp, 29);
+  assert.equal(ACU_PACKS.business.gbp, 99);
+  for (const key of ['starter', 'smart', 'family', 'business']) {
+    assert.equal(ACU_PACKS[key].acu, ACU_PACKS[key].gbp * 100, `${key}: £1 = 100 ACU`);
+  }
+  const u = createUser({ name: 'Pack Buyer', email: 'packs@example.com' });
+  const r = buyAcu(u.id, 'smart');
+  assert.ok(r.balance >= 1500, 'Smart Traveller Pack credits 1,500 ACU');
+});
