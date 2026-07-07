@@ -240,6 +240,15 @@ The Universal Console is the primary interface for all consumer tiers. It is not
 | **Identity Agent** | MFA enforcement, session monitoring, access anomaly detection | Auth events, device data, location data, time patterns | Access allow/deny, MFA challenge trigger, alert | Every auth event |
 | **Vulnerability Agent** | Continuous code + infrastructure vulnerability scanning | Codebase, infrastructure config, dependency manifest | CVE report, priority remediation list, auto-patch | Scheduled + deploy trigger |
 
+#### 5.2.3 Revenue & Commercial Agents
+
+| Agent | Core Capability | Inputs | Outputs | Trigger |
+|---|---|---|---|---|
+| **Pricing Agent** | Dynamic ACU pricing, subscription optimisation, tier conversion logic | Usage data, market benchmarks, elasticity models | Price recommendations, discount triggers, upsell prompts | Real-time + weekly |
+| **Upsell Agent** | In-journey upsell identification and delivery | Current booking, traveller profile, savings history | Personalised upsell offer, timing recommendation | Post-booking, T-48h, in-trip |
+| **Churn Prevention Agent** | Early churn signal detection with intervention playbooks | Engagement metrics, last activity, support tickets | Churn risk score, intervention campaign trigger | Daily + inactivity event |
+| **Monetisation Agent** | Platform-wide revenue mix optimisation | All revenue streams, cost data, user behaviour | Revenue optimisation recommendations, A/B test suggestions | Weekly |
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
