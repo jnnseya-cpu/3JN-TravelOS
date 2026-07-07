@@ -635,6 +635,32 @@ Every AI-powered action within 3JN Travel OS is metered in **ACU (AI Credits Uni
 
 ---
 
+# SECTION 13 — SECURITY, COMPLIANCE & RISK
+*GDPR, PCI-DSS, KYC/AML, FCA, ATOL, and data governance*
+
+## 13. Security, Compliance & Risk Framework
+
+### 13.1 Regulatory Compliance Matrix
+
+| Regulation | Jurisdiction | Scope | Key Requirements | Owner |
+|---|---|---|---|---|
+| **GDPR** | UK/EU | All user data processing | Consent management, DPA, DSAR fulfilment, breach 72h notification | GDPR Agent + DPO |
+| **PCI-DSS v4.0** | Global (card payments) | All card transaction processing | SAQ D compliance, tokenisation, WAF, pen testing annual | Security + CTO |
+| **FCA EME Licence** | UK | Electronic Money Institution activities | Capital requirements, safeguarding, reporting | CFO + Compliance Officer |
+| **ATOL/ABTA** | UK | Flight + package holiday booking | Financial protection bonding, consumer disclosure | Regulatory Agent |
+| **AML/CTF** | UK (MLR 2017) | All transactions | Customer risk scoring, suspicious activity reporting, sanctions screening | AML Agent + MLRO |
+| **BCC Instruction n°58** | DRC | BitriPay DRC operations | Mobile money compliance, CDF settlement reporting | BitriPay + Compliance |
+| **Data Localisation** | DRC | DRC user data | DRC user data must reside on DRC/Africa-region infrastructure | CTO + DevOps |
+
+### 13.2 KYC/AML Process
+
+1. **Tier 1 (Standard — all users):** Email + phone verification at registration. Sumsub ID document check + selfie liveness. Sanctions list screening via ComplyAdvantage.
+2. **Tier 2 (Enhanced — Elite + Business):** Source of funds declaration. Enhanced due diligence document upload. Manual review queue for flagged accounts.
+3. **Tier 3 (Ongoing Monitoring):** Transaction monitoring against behavioural baseline. AML Agent continuous screening. Periodic re-verification every 12 months.
+4. **SAR Process:** AML Agent generates draft SAR. MLRO reviews and submits to National Crime Agency (UK) / FIU (DRC) within 24 hours of confirmation.
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
