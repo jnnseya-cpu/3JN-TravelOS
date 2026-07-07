@@ -981,6 +981,12 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     refundPolicy: buildRefundPolicyLocal(option),
     // Supply-side earnings: 3JN earns from suppliers even on the cheapest deal.
     supplierEarnings: bookingSupplierCommissionLocal(option),
+    // LIVE INVENTORY GATE: a booking is only 'live' when every priced journey
+    // and stay component came from a real supplier feed (Duffel/Amadeus…).
+    // Estimated-price bookings can NEVER take real money (see /api/pay/stripe).
+    priceBasis: (option?.components || [])
+      .filter((c) => ['flight', 'hotel', 'host', 'train', 'coach', 'ferry', 'cruise'].includes(c.type))
+      .every((c) => c.live) && (option?.components || []).some((c) => c.live) ? 'live' : 'estimated',
     // Optional Booking Protection (£5–£50 by trip value) — six benefits.
     protection: protection || null,
     option,

@@ -2556,3 +2556,41 @@ test('demo accounts: seed-roles returns fully loaded accounts for every role', a
     server.close();
   }
 });
+
+// ================= LIVE INVENTORY GATE (legal-safety rule) =====================
+test('legal safety: estimated-price bookings can NEVER take real money', async () => {
+  // Without live supplier feeds every booking is stamped 'estimated'.
+  const r = plan({ text: 'Weekend in Rome from London, 2 nights', context: GB });
+  assert.equal(r.stage, 'options');
+  const option = r.packages.options[0];
+  const q = saveQuote({ option, intent: r.intent });
+  const booking = createBooking({ quoteId: q.id, option, instalment: null, userId: null });
+  assert.equal(booking.priceBasis, 'estimated', 'no live feed -> estimated basis stamped on the booking');
+
+  // The Stripe session endpoint refuses it with the legal-safety error —
+  // even if Stripe keys were configured.
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const prevKey = process.env.STRIPE_SECRET_KEY;
+  process.env.STRIPE_SECRET_KEY = 'sk_live_dummy_for_gate_test';
+  try {
+    const res = await fetch(`${base}/api/pay/stripe/session`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bookingId: booking.id }),
+    });
+    assert.equal(res.status, 409, 'real payment refused for estimated pricing');
+    const body = await res.json();
+    assert.equal(body.error, 'payment-blocked-estimated-pricing');
+    assert.match(body.message, /estimated/i);
+  } finally {
+    if (prevKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = prevKey;
+    server.close();
+  }
+
+  // A booking whose priced components are all LIVE is stamped 'live' and passes the gate.
+  const liveOption = { ...option, components: option.components.map((c) => ({ ...c, live: true })) };
+  const q2 = saveQuote({ option: liveOption, intent: r.intent });
+  const liveBooking = createBooking({ quoteId: q2.id, option: liveOption, instalment: null, userId: null });
+  assert.equal(liveBooking.priceBasis, 'live', 'all-live components -> live basis, real payment allowed');
+});

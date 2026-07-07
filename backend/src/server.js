@@ -784,6 +784,20 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
   const { bookingId, kind } = req.body || {};
   const booking = getBooking(bookingId);
   if (!booking) return res.status(404).json({ error: 'booking-not-found' });
+  // ---- LIVE INVENTORY GATE (legal-safety rule, never to be weakened) -------
+  // Real money may ONLY be taken for LIVE supplier fares that can actually be
+  // fulfilled at the shown price. An estimated-price booking gets a quote, a
+  // deposit-free hold and honest labelling — never a real charge. Charging for
+  // inventory we never held is a legal and reputational red line.
+  // Override for Stripe TEST-mode demos only via ALLOW_TEST_PAYMENTS=true.
+  const testMode = process.env.ALLOW_TEST_PAYMENTS === 'true' && String(process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test');
+  if (booking.priceBasis !== 'live' && !testMode) {
+    return res.status(409).json({
+      error: 'payment-blocked-estimated-pricing',
+      priceBasis: booking.priceBasis || 'estimated',
+      message: 'This quote is estimated — live supplier fares are not connected yet, so we do not take real payment for it. Connect live inventory (Duffel/Amadeus) to enable secure card checkout at the exact bookable price.',
+    });
+  }
   const cur = booking.option?.pricing?.currency || 'GBP';
   const total = booking.instalment?.deposit && kind !== 'full'
     ? booking.instalment.deposit

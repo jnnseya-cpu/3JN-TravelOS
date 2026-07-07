@@ -1004,7 +1004,20 @@ window.confirmBooking = async () => {
         const sess = await api('/api/pay/stripe/session', { method: 'POST', body: JSON.stringify({ bookingId: data.booking.id }) });
         if (sess.url) { window.location.href = sess.url; return; }
       }
-    } catch { /* fall through to the recorded flow */ }
+    } catch (e) {
+      // LIVE INVENTORY GATE: estimated quotes never take real money.
+      if (/estimated/i.test(String(e?.message || ''))) {
+        toast('📋 Quote saved — this is an ESTIMATED price. No payment was taken; we only charge when live bookable fares are connected.');
+        nav('console');
+        return;
+      }
+      /* other errors fall through to the recorded flow */
+    }
+  }
+  if (data.booking?.priceBasis === 'estimated') {
+    toast('📋 Quote reserved at an estimated price — no real payment taken. Final price is confirmed with live suppliers before any charge.');
+    nav('console');
+    return;
   }
   const rail = paymentMethod === 'card' ? 'Stripe' : paymentMethod === 'bitripay' ? 'BitriPay Wallet' : 'BitriPay Mobile Money';
   toast(`✓ Documents validated · booking confirmed — deposit paid via ${rail}.`);
@@ -1491,7 +1504,7 @@ function bookingCard(b) {
   return `
     <div class="card booking-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span></div>
+        <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(216,180,106,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'}</div>
         <strong style="font-family:'Space Grotesk'">${money2(o.pricing.local.total, sym)}</strong>
       </div>
       <p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>
