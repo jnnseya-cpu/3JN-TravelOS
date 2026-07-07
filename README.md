@@ -153,7 +153,12 @@ so the browser reads the same constants — frontend and backend never drift.
 
 ## Documentation
 
-- **[`docs/AI-OS-ARCHITECTURE.md`](docs/AI-OS-ARCHITECTURE.md)** — production-grade AI Infrastructure
+- **[`docs/AI-OS-MASTER-BLUEPRINT.md`](docs/AI-OS-MASTER-BLUEPRINT.md)** — **Master Blueprint v2 (forensic upgrade).**
+  The production build specification: a forensic gap register (technical/commercial/scalability/security/operational/AI)
+  with proven-pattern remedies, then all 17 required sections + the enterprise multi-agent workforce, self-managing
+  platform layer, Cybersecurity Command Centre, AI Data Intelligence layer, agent runtime, production DB DDL, `/api/v1`
+  spec, and PRR gates — every claim anchored to a real file/endpoint/entity in this repo. Supersedes v1 (nothing removed).
+- **[`docs/AI-OS-ARCHITECTURE.md`](docs/AI-OS-ARCHITECTURE.md)** — v1 baseline: production-grade AI Infrastructure
   OS architecture (17 sections: vision, market gap, user ecosystem, AI command centres, the full
   multi-agent workforce + self-managing layer, cybersecurity command centre, data-intelligence
   layer, BitriPay gateway, connector ecosystem, architecture, ERD, API spec, monetisation,
