@@ -467,6 +467,19 @@ BitriPay is the **primary payment infrastructure layer for all African market tr
 | **Event Store** | Kafka + BigQuery sink | Complete event history for audit and ML |
 | **Search** | Elasticsearch (Elastic Cloud) | Hotel/destination search, supplier search, knowledge base |
 
+### 9.4 AI Orchestration Layer
+
+The AI Orchestration Layer is the **neural centre of 3JN Travel OS**. It is built on LangGraph for stateful, cyclical agent workflows and LangChain for model-agnostic LLM interaction. Every agent is defined as a LangGraph node with explicit state, transitions, tool bindings, and memory configuration.
+
+- **Agent Graph**: 10 core agents + 40+ enterprise agents all defined as LangGraph StateGraph nodes
+- **Model Router**: dynamically routes to Claude, GPT-4o, or Gemini based on task type and cost optimisation *(prototype: `ai-gateway.js` `TASK_ROUTES` + `route()`)*
+- **Tool Registry**: every agent has a declared tool set (GDS API, BitriPay, Visa API, FCO feed, etc.)
+- **Shared Memory Bus**: Pinecone vector store for cross-agent long-term memory
+- **Session Memory**: Redis-backed short-term context per user session
+- **Escalation Bus**: any agent can publish to escalation Kafka topic for human review
+- **AI Governance Layer**: instruction templates, model parameters, permission scopes — all admin-configurable
+- **ACU Metering**: every LLM call is metered, attributed to user/tenant, and billed via ACU system *(prototype: `AGENT_BUDGETS` + `recordAiRequestCost` ledger + ACU pre-approval)*
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
