@@ -1,5 +1,20 @@
 // AI Cost Protection Engine (ACPE) + revenue model.
 //
+// ============================ FINAL BUSINESS POSITION ========================
+// 3JN Travel OS does not sell "cheap searches." It sells AI-powered travel
+// savings with controlled ACU usage, booking deposits, partner commissions,
+// and 10% final-payment revenue.
+//
+// THE CORE RULE (never to be weakened):
+//   AI work starts only when the platform is protected by ACUs, a deposit,
+//   strong booking intent, supplier commission, or expected 10% final-payment
+//   revenue. The platform must never allow users to burn ACUs freely.
+//
+// Enforced below by costProtectionGate(): funding checks, the x10 formula,
+// aiCostCap (5-10% of expected profit), the free-tier daily cap, the abuse
+// throttle, ACU pre-approval, and the cache-first downgrade path.
+// =============================================================================
+//
 // The platform's locked rule (from the spec): no costly AI/search runs unless
 // the action is funded — by ACU balance, a search deposit, an active
 // subscription, supplier-commission opportunity, or expected 10% booking
