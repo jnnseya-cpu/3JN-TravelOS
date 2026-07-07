@@ -697,6 +697,27 @@ The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, pr
 
 ---
 
+# SECTION 15 — DEVELOPER BUILD ROADMAP
+*Phase-by-phase delivery from MVP to global scale*
+
+## 15. Developer Build Roadmap
+
+### Phase 1 — MVP
+**COMMERCIAL OBJECTIVE: First paying subscribers + first verified bookings**
+
+| Deliverable | Description | Tech Stack |
+|---|---|---|
+| **Core Auth + Onboarding** | Sign-up, email/phone verify, KYC (Tier 1), plan selection | Auth0 + Sumsub + Next.js |
+| **Flight Intelligence Agent (v1)** | Natural language intent → Amadeus GDS search → results | LangGraph + Amadeus API + Claude Haiku |
+| **Hotel Negotiation Agent (v1)** | Destination + dates → Hotelbeds wholesale → results | LangGraph + Hotelbeds API |
+| **Booking Engine (v1)** | Select → confirm → pay (Stripe + BitriPay) → PNR issued | NestJS + Stripe + BitriPay |
+| **Universal Console (v1)** | Trip list, e-ticket vault, basic alerts | Next.js + Firestore |
+| **Membership Billing** | Stripe Billing for 4 tiers + trial logic + dunning | Stripe Billing + NestJS |
+| **Admin Panel (v1)** | User list, booking list, basic revenue metrics | Next.js + PostgreSQL |
+| **Deployment Infrastructure** | GCP GKE, Cloud SQL, Redis, Kafka, CI/CD pipeline | GCP + GitHub Actions + Terraform |
+
+---
+
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
 > **Companion docs:** `docs/BLUEPRINT.md` (base platform), `docs/MASTER_AI_PROMPT.md` (platform system prompt).
 > **Ground truth:** every claim in this document is anchored to a real file, endpoint, entity, or constant already in this repository. File references use `path:symbol` so an engineer can open the exact source.
