@@ -746,6 +746,18 @@ The Admin Super Control Centre is the **operational brain of 3JN Travel OS**, pr
 | **Coworking Intelligence Agent** | Destination coworking space API (Coworker.com) + calendar sync |
 | **Private Aviation Agent (Elite)** | Charter quote API + fractional jet + helicopter transfer booking |
 
+### Phase 4 — Enterprise & Global Scale
+**COMMERCIAL OBJECTIVE: £10M ARR + 150,000 members + 3 white-label partners + DRC market leader**
+
+- Full multi-agent enterprise workforce deployed (all 40+ agents)
+- Self-healing infrastructure: Auto-Repair Agent, Infrastructure Optimisation Agent
+- AI Governance Framework: full agent permission model, instruction versioning, policy enforcement
+- Data Intelligence product: anonymised travel trend reports for B2B sale
+- Marketplace layer: curated travel experiences, activities, and services from verified suppliers
+- DRC/Kinshasa specific features: CDF-native booking, local supplier network, Lingala language support
+- Predictive rebooking: ML model trained on 12 months of price data for proactive savings
+- Global expansion: additional language packs, regional compliance modules, new GDS connections
+
 ---
 
 > **Status:** Developer-ready. **Supersedes:** `docs/AI-OS-ARCHITECTURE.md` (v1 baseline, retained — nothing removed).
