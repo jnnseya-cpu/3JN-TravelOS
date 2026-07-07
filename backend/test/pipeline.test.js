@@ -22,6 +22,8 @@ import { listNotifications, pushNotification, recordVisaApplication, govAnalytic
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
 import { createSupportTicket, supportTicketsForUser, resolveSupportTicket } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
+import { assist } from '../src/assistant.js';
+import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
@@ -2937,4 +2939,31 @@ test('support escalation opens a ticket and notifies the customer', () => {
   assert.ok(supportTicketsForUser(u.id).some((x) => x.id === t.id));
   const r = resolveSupportTicket(t.id, { note: 'Refund processed', agent: 'Amara' });
   assert.ok(r.ok && r.ticket.status === 'resolved');
+});
+
+// ---- 3JN Assistant (deep, system-aware agent) -----------------------------
+test('assistant resolves with the user\'s real system data before escalating', () => {
+  const u = createUser({ email: 'agent@x.co', name: 'Alan Turing' });
+  getUserRaw(u.id).travelProfile = { nationality: 'GB' };
+  const option = { tier: 'Standard', destination: 'Dubai', travellers: { total: 2 }, totalUSD: 1200, pricing: { symbol: '£', local: { total: 950 }, revenue: { commissionUSD: 95 } }, components: [{ type: 'flight', supplier: 'Emirates', live: true }] };
+  const b = createBooking({ option, userId: u.id, instalment: { deposit: 200, schedule: [{ due: '2026-08-01', amount: 200, status: 'paid' }, { due: '2026-09-01', amount: 375, status: 'pending' }] } });
+
+  const status = assist('where is my booking and e-ticket', u.id);
+  assert.equal(status.resolved, true);
+  assert.ok(status.reply.includes(b.id), 'quotes the real booking reference');
+
+  const pay = assist('when is my next payment due', u.id);
+  assert.ok(pay.reply.includes('375') && pay.reply.includes('2026-09-01'), 'quotes the real next instalment');
+
+  const visa = assist('do I need a visa for Dubai', u.id);
+  assert.equal(visa.resolved, true);
+  assert.ok(/visa-free/i.test(visa.reply), 'GB passport is visa-free for Dubai');
+
+  const rewards = assist('how many referrals do I have', u.id);
+  assert.equal(rewards.resolved, true);
+
+  // Refund escalates BUT with the real booking attached as diagnostic context.
+  const refund = assist('I want a refund', u.id);
+  assert.equal(refund.escalate, true);
+  assert.ok(refund.diagnostic && refund.diagnostic.id === b.id, 'escalation carries the booking diagnostic');
 });

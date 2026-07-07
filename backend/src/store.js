@@ -1304,6 +1304,16 @@ export function latestBookingForUser(userId) {
   const mine = [...db.bookings.values()].filter((b) => b.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return mine[0] || null;
 }
+// All of a user's bookings, newest first (the assistant reads these to resolve).
+export function bookingsForUser(userId) {
+  return [...db.bookings.values()].filter((b) => b.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+// Find one of a user's bookings by reference (booking id or airline PNR).
+export function findUserBookingByRef(userId, ref) {
+  if (!ref) return null;
+  const r = String(ref).trim().toLowerCase();
+  return bookingsForUser(userId).find((b) => b.id.toLowerCase() === r || (b.fulfilment?.pnr || '').toLowerCase() === r) || null;
+}
 
 // Admin / profitability snapshot.
 export function revenueSnapshot() {

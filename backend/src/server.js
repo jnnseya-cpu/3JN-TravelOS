@@ -40,6 +40,7 @@ import {
 } from './store.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { supportRespond } from './chatbot.js';
+import { assist } from './assistant.js';
 import { bookingDocument } from './documents.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
@@ -1177,15 +1178,22 @@ app.post('/api/admin/rewards/influencer/:userId/decide', safe((req, res) => {
 app.post('/api/support/chat', safe((req, res) => {
   const { message } = req.body || {};
   const user = currentUser(req);
-  const booking = user ? latestBookingForUser(user.id) : null;
-  const out = supportRespond(message, { name: user?.name, booking });
+  // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
+  // e-tickets, wallet, rewards and visa rules; escalates only when a human must
+  // authorise an action — and hands the human a full diagnostic.
+  const out = assist(message, user?.id);
   let ticket = null;
   if (out.escalate) {
-    ticket = createSupportTicket({ userId: user?.id, intent: out.intent, message, reason: out.reason });
+    ticket = createSupportTicket({
+      userId: user?.id, intent: out.intent, message, reason: out.reason,
+      // Attach what the agent already established so the specialist starts warm.
+      transcript: out.diagnostic ? [{ role: 'assistant-diagnostic', booking: out.diagnostic }] : [],
+    });
   }
   res.json({
     reply: out.reply,
     intent: out.intent,
+    resolved: out.resolved,
     escalated: out.escalate,
     reason: out.reason,
     ticketId: ticket?.id || null,

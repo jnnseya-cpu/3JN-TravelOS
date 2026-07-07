@@ -25,7 +25,7 @@ const INTENTS = [
   { key: 'booking_status', escalate: false, re: /\b(where is|status|confirm(ed|ation)|e-?ticket|itinerary|my booking|booking reference|pnr|check[- ]?in)\b/i },
   { key: 'payment', escalate: false, re: /\b(pay|payment|instal?ment|deposit|card declined|how (much|do i pay)|split the cost)\b/i },
   { key: 'visa', escalate: false, re: /\b(visa|passport|eta|evisa|entry requirement|do i need a visa)\b/i },
-  { key: 'rewards', escalate: false, re: /\b(acu|reward|refer|referral|influencer|ambassador|points|loyalty|cashback|commission)\b/i },
+  { key: 'rewards', escalate: false, re: /\b(acu|acus|reward|rewards|refer|refers|referral|referrals|influencer|ambassador|points|loyalty|cashback|commission|earnings)\b/i },
   { key: 'booking_new', escalate: false, re: /\b(book|quote|price|cheap|deal|holiday|flight|hotel|package|plan (a )?trip)\b/i },
   { key: 'greeting', escalate: false, re: /\b(hi|hello|hey|good (morning|afternoon|evening)|help|support)\b/i },
 ];
