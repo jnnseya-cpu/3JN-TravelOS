@@ -2535,6 +2535,9 @@ async function renderVisaGov() {
     <div class="kv"><span>Sealed blocks</span><span>${chain?.integrity?.blocks ?? g.auditChain?.blocks ?? 0}</span></div>
     ${(chain?.blocks || []).slice(0, 5).map((b) => `<div class="kv"><span class="muted" style="font-size:11px">#${b.index} ${esc(b.event)}</span><span class="muted" style="font-size:11px">${esc((b.hash || '').slice(0, 14))}…</span></div>`).join('')}`;
   out.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <button class="btn btn-ghost btn-sm" onclick="openEmbassySettings()">⚙ Embassy settings · criteria, branding, fees</button>
+    </div>
     <div class="kpi-grid">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
       <div>
@@ -2556,9 +2559,13 @@ async function renderVisaGov() {
 }
 
 // Embassy: open the full application — robust info + every document provided + AI.
-window.openVisaApp = (id) => {
+window.openVisaApp = async (id) => {
   const a = window.__visaApps?.[id];
   if (!a) return;
+  // The AI PROPOSAL, banded by THIS embassy's configured criteria, plus the
+  // embassy's refusal-reason and visa-condition templates for the officer.
+  let prop = null;
+  try { prop = await api(`/api/embassy/applications/${id}/proposal`); } catch { /* defaults apply */ }
   const fa = a.fullApplicant || a.applicant || {};
   const infoRows = Object.entries(fa)
     .filter(([k, v]) => v !== '' && v != null && typeof v !== 'object')
@@ -2584,12 +2591,31 @@ window.openVisaApp = (id) => {
             <div class="kv"><span>Fraud battery</span><span>${fraud}</span></div>
           </div></div>
       </div>
+      ${prop?.proposal ? `
+      <div class="card pad" style="margin-top:14px;border-color:rgba(78,161,255,0.35)">
+        <span class="eyebrow">AI proposal · banded by your embassy criteria</span>
+        <div style="margin-top:6px"><strong style="color:${prop.proposal.proposal === 'Approved' ? 'var(--green)' : prop.proposal.proposal === 'Refused' ? '#ff8a8a' : 'var(--gold)'}">${esc(prop.proposal.proposal)}</strong>
+        <span class="muted" style="font-size:12.5px"> — ${esc(prop.proposal.why)}</span></div>
+      </div>` : ''}
       ${dec
-        ? `<div class="card pad" style="margin-top:14px;border-color:rgba(70,211,154,0.3)"><strong>Embassy decision: ${esc(dec.decision)}</strong><div class="muted" style="font-size:12.5px;margin-top:4px">${esc(dec.reason || '')} · ${new Date(dec.at).toLocaleString()}</div></div>`
-        : `<div style="margin-top:14px"><span class="eyebrow">Officer decision</span>
-            <textarea class="in" id="embReason" placeholder="Reason / notes (recorded in the audit log)" style="width:100%;min-height:54px;margin-top:6px"></textarea>
+        ? `<div class="card pad" style="margin-top:14px;border-color:rgba(70,211,154,0.3)"><strong>Embassy decision: ${esc(dec.decision)}</strong>
+            <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(dec.reason || '')}${(dec.conditions || []).length ? '<br>Conditions: ' + dec.conditions.map(esc).join(' · ') : ''} · ${new Date(dec.at).toLocaleString()}</div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="viewVisaLetter('${a.id}')">📄 Embassy decision letter</button></div>`
+        : `<div style="margin-top:14px"><span class="eyebrow">Officer decision · confirm or override the AI proposal</span>
+            ${prop?.templates?.refusalReasons?.length ? `
+            <div class="field" style="margin-top:8px"><label>Reason template (or write your own below)</label>
+              <select class="in" id="embReasonTpl" onchange="if(this.value)$('#embReason').value=this.value">
+                <option value="">— pick a configured reason —</option>
+                ${prop.templates.refusalReasons.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
+              </select></div>` : ''}
+            <textarea class="in" id="embReason" placeholder="Reason / notes (recorded in the audit log and shown on the decision letter)" style="width:100%;min-height:54px;margin-top:6px"></textarea>
+            ${prop?.templates?.approvalConditions?.length ? `
+            <div style="margin-top:8px"><span class="t-label">Visa conditions (attached to an approval)</span>
+              ${prop.templates.approvalConditions.map((c, i) => `<label style="display:block;font-size:12.5px;margin:3px 0"><input type="checkbox" class="embCond" value="${esc(c)}"> ${esc(c)}</label>`).join('')}
+            </div>` : ''}
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-              <button class="btn btn-gold btn-sm" onclick="decideVisa('${a.id}','Approved')">✓ Approve</button>
+              ${prop?.proposal ? `<button class="btn btn-gold btn-sm" onclick="decideVisa('${a.id}','${esc(prop.proposal.proposal)}')">✓ Confirm AI proposal (${esc(prop.proposal.proposal)})</button>` : ''}
+              <button class="btn ${prop?.proposal?.proposal === 'Approved' ? 'btn-ghost' : 'btn-gold'} btn-sm" onclick="decideVisa('${a.id}','Approved')">✓ Approve</button>
               <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','More info requested')">Request more info</button>
               <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','Escalated')">Escalate</button>
               <button class="btn btn-ghost btn-sm" onclick="decideVisa('${a.id}','Refused')" style="color:#ff8a8a">✕ Refuse</button>
@@ -2599,9 +2625,10 @@ window.openVisaApp = (id) => {
 };
 window.decideVisa = async (id, decision, secondApproverId) => {
   const reason = $('#embReason')?.value || '';
+  const conditions = [...document.querySelectorAll('.embCond:checked')].map((el) => el.value);
   let d;
   try {
-    d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason, secondApproverId }) });
+    d = await api(`/api/visaos/applications/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason, secondApproverId, conditions }) });
   } catch (e) {
     // Anti-corruption layer: approving against a high-risk AI verdict is an
     // override — it needs a written reason AND a second approver.
@@ -2618,6 +2645,73 @@ window.decideVisa = async (id, decision, secondApproverId) => {
   const o = d.application?.embassyDecision;
   toast(o?.override ? `✓ OVERRIDE recorded with approval chain [${o.approvalChain.join(' → ')}] — sealed in the audit trail.` : `✓ Decision recorded: ${decision}`);
   renderVisaGov();
+};
+// Embassy-branded decision letter (opens in a new tab; applicant sees the same).
+window.viewVisaLetter = async (id) => {
+  try {
+    const headers = {};
+    if (state.user) headers['x-user-id'] = state.user.id;
+    if (state.staffPin) headers['x-staff-pin'] = state.staffPin;
+    const res = await fetch(API_BASE + `/api/visaos/applications/${id}/letter`, { headers });
+    if (!res.ok) { toast('Letter not available yet.'); return; }
+    const html = await res.text();
+    const w = window.open('', '_blank');
+    if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+  } catch { toast('Could not open the letter.'); }
+};
+
+// ---- Embassy settings: criteria · branding · language · fees · templates ---
+window.openEmbassySettings = async () => {
+  let cfg;
+  try { cfg = (await api('/api/embassy/config')).config; } catch { toast('Could not load embassy settings.'); return; }
+  const feeRow = (type, f) => `<div class="kv"><span style="text-transform:capitalize">${type}</span>
+    <span>£<input class="in" id="fee-${type}" type="number" min="0" value="${f.amountGBP}" style="width:80px;display:inline-block;padding:4px 8px"> ·
+    <input class="in" id="days-${type}" type="number" min="0" value="${f.processingDays}" style="width:56px;display:inline-block;padding:4px 8px">d</span></div>`;
+  modal(`
+    <span class="eyebrow">Embassy settings · ${esc(cfg.country)}</span>
+    <h3 style="margin:6px 0 4px">Govern how VisaOS works for your country</h3>
+    <div class="field" style="margin-top:8px"><label>Embassy name (appears on every decision letter)</label><input class="in" id="embName" value="${esc(cfg.embassyName)}"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <div class="field" style="flex:1;min-width:110px"><label>Seal (emoji)</label><input class="in" id="embSeal" value="${esc(cfg.branding.seal)}" maxlength="4"></div>
+      <div class="field" style="flex:1;min-width:110px"><label>Primary colour</label><input class="in" id="embColor1" type="color" value="${esc(cfg.branding.primaryColor)}"></div>
+      <div class="field" style="flex:1;min-width:110px"><label>Accent colour</label><input class="in" id="embColor2" type="color" value="${esc(cfg.branding.accentColor)}"></div>
+      <div class="field" style="flex:1;min-width:130px"><label>Letter language</label>
+        <select class="in" id="embLang">${['en', 'fr', 'ar', 'es'].map((l) => `<option value="${l}" ${cfg.language === l ? 'selected' : ''}>${{ en: 'English', fr: 'Français', ar: 'العربية', es: 'Español' }[l]}</option>`).join('')}</select></div>
+    </div>
+    <span class="eyebrow" style="margin-top:14px;display:block">Decision criteria · the AI proposes against these</span>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:130px"><label>Auto-approve ≤ score</label><input class="in" id="crAppr" type="number" value="${cfg.criteria.autoApproveMaxScore}"></div>
+      <div class="field" style="flex:1;min-width:130px"><label>Auto-refuse ≥ score</label><input class="in" id="crRej" type="number" value="${cfg.criteria.autoRejectMinScore}"></div>
+      <div class="field" style="flex:1;min-width:130px"><label>Security ceiling</label><input class="in" id="crSec" type="number" value="${cfg.criteria.securityRiskMax}"></div>
+    </div>
+    <label style="font-size:12.5px;display:block;margin-top:4px"><input type="checkbox" id="crDocs" ${cfg.criteria.requireDocsComplete ? 'checked' : ''}> Incomplete documents force "More info requested"</label>
+    <span class="eyebrow" style="margin-top:14px;display:block">Visa fees · the price of an application (per type)</span>
+    ${Object.entries(cfg.fees).map(([t, f]) => feeRow(t, f)).join('')}
+    <span class="eyebrow" style="margin-top:14px;display:block">Refusal reason templates (one per line)</span>
+    <textarea class="in" id="embRefusals" style="width:100%;min-height:80px">${esc(cfg.refusalReasons.join('\n'))}</textarea>
+    <span class="eyebrow" style="margin-top:10px;display:block">Visa condition templates (one per line)</span>
+    <textarea class="in" id="embConds" style="width:100%;min-height:80px">${esc(cfg.approvalConditions.join('\n'))}</textarea>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveEmbassySettings('${esc(cfg.country)}')">Save embassy settings</button>`);
+};
+window.saveEmbassySettings = async (country) => {
+  const lines = (id) => ($(id)?.value || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const fees = {};
+  document.querySelectorAll('[id^="fee-"]').forEach((el) => {
+    const type = el.id.slice(4);
+    fees[type] = { amountGBP: Number(el.value) || 0, processingDays: Number($(`#days-${type}`)?.value) || 0 };
+  });
+  const patch = {
+    country,
+    embassyName: $('#embName')?.value || undefined,
+    language: $('#embLang')?.value || 'en',
+    branding: { seal: $('#embSeal')?.value || '🛂', primaryColor: $('#embColor1')?.value, accentColor: $('#embColor2')?.value },
+    criteria: { autoApproveMaxScore: Number($('#crAppr')?.value) || 220, autoRejectMinScore: Number($('#crRej')?.value) || 451, securityRiskMax: Number($('#crSec')?.value) || 60, requireDocsComplete: $('#crDocs')?.checked ?? true },
+    fees,
+    refusalReasons: lines('#embRefusals'),
+    approvalConditions: lines('#embConds'),
+  };
+  try { await api('/api/embassy/config', { method: 'POST', body: JSON.stringify(patch) }); toast('✓ Embassy settings saved — criteria, branding, fees and templates now govern every review.'); closeModal(); renderVisaGov(); }
+  catch { toast('Could not save settings.'); }
 };
 
 // ---- Communication Event Architecture (admin) -----------------------------

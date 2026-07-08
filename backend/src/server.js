@@ -39,7 +39,9 @@ import {
   createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, latestBookingForUser,
   applyVendor, getVendorProfile, decideVendor, vendorDashboard, vendorLeaderboard,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
+  getEmbassyConfig, saveEmbassyConfig,
 } from './store.js';
+import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { supportRespond } from './chatbot.js';
@@ -1417,10 +1419,49 @@ app.get('/api/visaos/applications/:id', safe((req, res) => {
 }));
 app.post('/api/visaos/applications/:id/decide', safe((req, res) => {
   if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
-  const { decision, reason, secondApproverId } = req.body || {};
-  const result = decideVisaApplication(req.params.id, { decision, reason, secondApproverId, officerId: currentUser(req)?.id });
+  const { decision, reason, secondApproverId, conditions } = req.body || {};
+  const result = decideVisaApplication(req.params.id, { decision, reason, secondApproverId, conditions, officerId: currentUser(req)?.id });
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
+}));
+
+// ---- Embassy governance: criteria, branding, language, fees, templates -----
+// The embassy CONFIGURES how VisaOS works for its country; the AI proposes
+// against those criteria; officers confirm/override with reasons + conditions.
+app.get('/api/embassy/config', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
+  const country = req.query.country || currentUser(req)?.embassyCountry || 'DEFAULT';
+  res.json({ config: getEmbassyConfig(country) });
+}));
+app.post('/api/embassy/config', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
+  const { country, ...patch } = req.body || {};
+  res.json(saveEmbassyConfig(country || currentUser(req)?.embassyCountry || 'DEFAULT', patch, currentUser(req)?.id));
+}));
+// The AI proposal for one application, banded by THIS embassy's criteria.
+app.get('/api/embassy/applications/:id/proposal', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
+  const application = getVisaApplication(req.params.id);
+  if (!application) return res.status(404).json({ error: 'not-found' });
+  const config = getEmbassyConfig(req.query.country || currentUser(req)?.embassyCountry || 'DEFAULT');
+  res.json({ proposal: embassyProposal(application, config), templates: { refusalReasons: config.refusalReasons, approvalConditions: config.approvalConditions } });
+}));
+// Embassy-branded decision letter (in the embassy's configured language).
+app.get('/api/visaos/applications/:id/letter', safe((req, res) => {
+  const application = getVisaApplication(req.params.id);
+  if (!application) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  const isOfficer = user && (user.allAccess || ['embassy', 'consulate', 'admin'].includes(user.role));
+  if (!isOfficer && application.userId !== user?.id) return res.status(403).json({ error: 'forbidden' });
+  if (!application.embassyDecision) return res.status(409).json({ error: 'not-decided', message: 'No decision has been issued yet.' });
+  const config = getEmbassyConfig(application.country || application.applicant?.destination || 'DEFAULT');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(visaDecisionLetter(application, config));
+}));
+// Public visa fee card (the price the embassy set, by visa type).
+app.get('/api/visa/fees', safe((req, res) => {
+  const config = getEmbassyConfig(req.query.country || 'DEFAULT');
+  res.json({ country: config.country, embassyName: config.embassyName, fees: config.fees });
 }));
 
 app.get('/api/visaos/probability', safe((req, res) => {

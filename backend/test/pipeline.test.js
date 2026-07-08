@@ -24,6 +24,8 @@ import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recor
 import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
+import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
+import { saveEmbassyConfig, getEmbassyConfig } from '../src/store.js';
 import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
 import { db } from '../src/store.js';
 import { assist } from '../src/assistant.js';
@@ -3161,4 +3163,34 @@ test('LIVE_MODE: no free AI for guests; demo accounts fail closed', async () => 
       assert.equal((await post('/api/account/test', {})).status, 403);
     } finally { server.close(); }
   } finally { delete process.env.LIVE_MODE; }
+});
+
+// ---- Embassy governance ------------------------------------------------------
+test('embassy sets criteria/fees/templates; AI proposal follows THEIR thresholds; letter is branded', () => {
+  // Configure a strict embassy: approve only very low scores; custom fee + name.
+  const saved = saveEmbassyConfig('AE', {
+    embassyName: 'Embassy of the United Arab Emirates — London',
+    language: 'en',
+    criteria: { autoApproveMaxScore: 100, autoRejectMinScore: 300 },
+    fees: { tourist: { amountGBP: 199, processingDays: 3 } },
+    refusalReasons: ['Custom refusal A'],
+    approvalConditions: ['Single entry · 30 days'],
+  }, 'officer-1');
+  assert.ok(saved.ok && saved.config.fees.tourist.amountGBP === 199, 'embassy sets its own visa price');
+  const cfg = getEmbassyConfig('AE');
+  assert.equal(cfg.embassyName.includes('United Arab Emirates'), true);
+  // A mid-score application: default criteria would approve (<=220), but THIS
+  // embassy's stricter criteria demand human review.
+  const midApp = { totalScore: 180, risk: { security: 10 }, missingDocuments: [] };
+  assert.equal(embassyProposal(midApp, cfg).proposal, 'Escalated', 'proposal follows the embassy criteria, not defaults');
+  assert.equal(embassyProposal({ totalScore: 80, risk: { security: 5 }, missingDocuments: [] }, cfg).proposal, 'Approved');
+  assert.equal(embassyProposal({ totalScore: 500, risk: { security: 5 }, missingDocuments: [] }, cfg).proposal, 'Refused');
+  // Decision letter carries the embassy branding, reason and conditions.
+  const appRec = recordVisaApplication(assessVisa({ name: 'Amina K', nationality: 'NG', destination: 'Dubai', visaType: 'tourist' }));
+  const decided = decideVisaApplication(appRec.id, { decision: 'Approved', reason: 'Meets all criteria', conditions: ['Single entry · 30 days'], officerId: 'officer-1' });
+  assert.ok(decided.ok);
+  const letter = visaDecisionLetter(decided.application, cfg);
+  assert.ok(letter.includes('United Arab Emirates'), 'letter carries the embassy name');
+  assert.ok(letter.includes('VISA APPROVED') && letter.includes('Single entry'), 'letter shows decision + conditions');
+  assert.ok(letter.includes('199'), 'letter shows the embassy-set fee');
 });

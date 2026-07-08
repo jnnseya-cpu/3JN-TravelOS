@@ -12,6 +12,7 @@ import {
 } from './rewards.js';
 import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
+import { resolveEmbassyConfig } from './embassy.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -48,6 +49,7 @@ const db = {
   revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
   rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
   supportTickets: [], // AI Support Concierge escalations to a human { id, userId, intent, message, reason, status, transcript }
+  embassyConfigs: new Map(), // Embassy governance: country -> { embassyName, branding, language, criteria, fees, templates }
   vendorProfiles: new Map(), // Vendor Partner Programme: userId -> { tier, status, vendorCode, riskReview, ... }
   vendorSales: [], // { id, vendorId, bookingId, saleGbp, vendorGbp, platformKeepsGbp, status, flags..., at }
   vendorPayouts: [], // weekly Friday payout batches { id, vendorId, amountGbp, saleIds, status, at }
@@ -233,7 +235,28 @@ export function listVisaApplicationsForUser(userId) {
 export function getVisaApplication(appId) {
   return db.visaApps.find((a) => a.id === appId) || null;
 }
-export function decideVisaApplication(appId, { decision, reason, officerId, secondApproverId } = {}) {
+// ---- Embassy governance: per-country configuration --------------------------
+// Criteria/branding/language/fees/templates a government sets for ITS visas.
+export function getEmbassyConfig(country = 'DEFAULT') {
+  const key = String(country || 'DEFAULT').toUpperCase();
+  return resolveEmbassyConfig(db.embassyConfigs.get(key) || db.embassyConfigs.get('DEFAULT'));
+}
+export function saveEmbassyConfig(country, patch, officerId) {
+  const key = String(country || 'DEFAULT').toUpperCase();
+  const current = db.embassyConfigs.get(key) || {};
+  const next = {
+    ...current, ...patch, country: key,
+    branding: { ...(current.branding || {}), ...(patch?.branding || {}) },
+    criteria: { ...(current.criteria || {}), ...(patch?.criteria || {}) },
+    fees: { ...(current.fees || {}), ...(patch?.fees || {}) },
+    updatedAt: nowISO(), updatedBy: officerId || 'embassy',
+  };
+  db.embassyConfigs.set(key, next);
+  recordAudit({ actor: officerId || 'embassy', role: 'embassy', action: 'embassy.config.updated', entity: 'embassy', entityId: key, summary: Object.keys(patch || {}).join(', ') });
+  return { ok: true, config: resolveEmbassyConfig(next) };
+}
+
+export function decideVisaApplication(appId, { decision, reason, officerId, secondApproverId, conditions } = {}) {
   const a = db.visaApps.find((x) => x.id === appId);
   if (!a) return { ok: false, error: 'not-found' };
   const allowed = ['Approved', 'Refused', 'More info requested', 'Escalated'];
@@ -257,6 +280,9 @@ export function decideVisaApplication(appId, { decision, reason, officerId, seco
 
   a.embassyDecision = {
     decision, reason: (reason || '').slice(0, 500), officerId: officerId || 'embassy', at: nowISO(),
+    // Visa conditions attached to an approval (picked from the embassy's
+    // configured templates and/or written by the officer).
+    conditions: (Array.isArray(conditions) ? conditions : []).map((c) => String(c).slice(0, 160)).slice(0, 10),
     ...(isOverride ? { override: true, approvalChain: [officerId || 'embassy', secondApproverId] } : {}),
   };
   a.status = decision === 'More info requested' ? 'awaiting-applicant' : 'decided';
@@ -1786,7 +1812,7 @@ export function searchToBookStats() {
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts'];
 
 export function snapshot() {
