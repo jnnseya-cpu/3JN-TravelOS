@@ -36,6 +36,12 @@ const COMPONENT_TRIGGERS = {
   tickets: ['event ticket', 'concert', 'show ticket', 'match ticket', 'attraction ticket', 'theatre', 'sports ticket'],
   boat: ['yacht', 'boat', 'sailing', 'catamaran', 'dhow', 'yacht charter'],
   insurance: ['insurance', 'cover', 'protection'],
+  // Marketplace basket services — every add-on chip is a REAL searchable component.
+  photographer: ['photographer', 'photo shoot', 'photoshoot', 'photography'],
+  guide: ['tour guide', 'local guide', 'private guide', 'guide'],
+  restaurant: ['restaurant', 'restaurants', 'dinner reservation', 'table booking', 'fine dining'],
+  translator: ['translator', 'interpreter', 'translation'],
+  driver: ['local driver', 'private driver', 'driver for the day', 'day driver', 'personal driver'],
 };
 
 function parseTravellers(text) {

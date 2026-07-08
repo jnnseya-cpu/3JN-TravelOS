@@ -1459,7 +1459,10 @@ app.get('/api/embassy/config', safe((req, res) => {
   res.json({ config: getEmbassyConfig(country) });
 }));
 app.post('/api/embassy/config', safe((req, res) => {
-  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
+  // POLICY IS EMBASSY-LEVEL: only the embassy (or admin) sets criteria, fees,
+  // branding and templates. A CONSULATE processes applications UNDER that
+  // policy — it can read the config but never change it.
+  if (!requireRole(req, res, ['embassy', 'admin'])) return;
   const { country, ...patch } = req.body || {};
   res.json(saveEmbassyConfig(country || currentUser(req)?.embassyCountry || 'DEFAULT', patch, currentUser(req)?.id));
 }));

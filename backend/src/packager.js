@@ -145,7 +145,7 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   let componentsUSD = 0;
   // groupTravel carries multi-origin group parties; outboundLeg/returnLeg carry
   // mixed-mode / split-origin journeys — one booking either way; they lead.
-  const componentOrder = ['groupTravel', 'outboundLeg', 'returnLeg', 'flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
+  const componentOrder = ['groupTravel', 'outboundLeg', 'returnLeg', 'flights', 'train', 'coach', 'ferry', 'cruise', 'hotel', 'activities', 'photographer', 'guide', 'restaurant', 'translator', 'driver', 'visa', 'insurance', 'transfer', 'carhire', 'tickets', 'boat', 'esim'];
 
   // MODE COMPETITION: the traveller named no way to travel, so realistic modes
   // (ferry vs coach vs train vs flight) compete and ONE wins per tier — they

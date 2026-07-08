@@ -771,7 +771,7 @@ function labelFor(c) {
   const cruiseLabel = c.details?.miniCruise ? '🛳 Mini cruise' : '🛳 Cruise';
   // Generic mode names — the supplier is shown separately on the line, so don't
   // repeat it here (avoids "Fjord Line Mini Cruise · Fjord Line Mini Cruise").
-  const map = { flight: '✈ Flights', train: '🚆 Train', coach: '🚌 Coach', ferry: '⛴ Ferry', cruise: cruiseLabel, hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM' };
+  const map = { flight: '✈ Flights', train: '🚆 Train', coach: '🚌 Coach', ferry: '⛴ Ferry', cruise: cruiseLabel, hotel: '🏨 Hotel', host: '🏡 Private host', activity: '🎟 ' + s, visa: '🛂 Visa', insurance: '🛡 Insurance', transfer: '🚘 Transfer', carhire: '🚗 Car/bike hire', tickets: '🎫 ' + s, boat: '⛵ ' + s, esim: '📶 eSIM', photographer: '📸 Photographer', guide: '🧭 Local guide', restaurant: '🍽 Restaurant booking', translator: '🗣 Translator', driver: '🚙 Local driver' };
   return map[c.type] || esc(c.type);
 }
 
@@ -2169,13 +2169,35 @@ async function renderMarketplace() {
     <div class="dest-grid">${cards}</div>
     <div class="card pad" style="margin-top:24px">
       <span class="eyebrow">Every trip is a marketplace basket</span>
-      <div class="chips" style="margin-top:10px">${(data.addOns || []).map((a) => `<span class="chip">＋ ${a}</span>`).join('')}</div>
+      <div class="chips" style="margin-top:10px">${(data.addOns || []).map((a) => `<span class="chip" style="cursor:pointer" title="Add to your next trip search" onclick="addBasketAddon('${esc(a)}')">＋ ${a}</span>`).join('')}</div>
+      <p class="muted" style="font-size:11.5px;margin-top:6px">Tap any add-on to drop it into your trip — it's searched, priced and booked inside the same package.</p>
     </div>`;
 }
 window.planDest = (city) => {
   $('#intentInput').value = `I want to travel to ${city} with my family for 7 nights with flights, hotel, activities, transfer and eSIM — the cheapest reliable price.`;
   nav('planner');
   runPlan();
+};
+// Marketplace basket: every ＋ add-on chip is ACTIVE — tapping it drops the
+// service into the trip sentence, and the engine searches & prices it as a
+// real component inside the same package.
+const BASKET_PHRASES = {
+  'Tours': 'tours', 'Local drivers': 'a local driver', 'Photographers': 'a photographer',
+  'Guides': 'a local guide', 'Restaurant bookings': 'restaurant reservations',
+  'Event tickets': 'event tickets', 'Airport pickup': 'airport transfer',
+  'Translators': 'a translator', 'eSIM data': 'an eSIM', 'Travel insurance': 'travel insurance',
+};
+window.addBasketAddon = (label) => {
+  const phrase = BASKET_PHRASES[label] || label.toLowerCase();
+  nav('planner');
+  const input = $('#intentInput');
+  if (input) {
+    const t = input.value.trim();
+    if (!t) input.value = `Trip to Dubai for 5 nights, 2 adults, flights and hotel, with ${phrase}`;
+    else if (!t.toLowerCase().includes(phrase)) input.value = t.replace(/\.?\s*$/, '') + `, with ${phrase}`;
+    input.focus();
+  }
+  toast(`＋ ${label} added to your trip — hit Search and it's priced inside the package.`);
 };
 
 // ---- 3JN VisaOS -----------------------------------------------------------
@@ -2627,14 +2649,22 @@ async function renderVisaGov() {
   const chainBadge = `<div class="kv"><span>Chain integrity</span><span style="color:${chainOk ? 'var(--green)' : '#ff6b6b'}">${chainOk ? '✓ Intact' : '✕ TAMPERED — investigate'}</span></div>
     <div class="kv"><span>Sealed blocks</span><span>${chain?.integrity?.blocks ?? g.auditChain?.blocks ?? 0}</span></div>
     ${(chain?.blocks || []).slice(0, 5).map((b) => `<div class="kv"><span class="muted" style="font-size:11px">#${b.index} ${esc(b.event)}</span><span class="muted" style="font-size:11px">${esc((b.hash || '').slice(0, 14))}…</span></div>`).join('')}`;
+  // EMBASSY vs CONSULATE: the embassy SETS the country's policy (criteria,
+  // fees, branding, templates); a consulate PROCESSES applications under that
+  // policy — full decision powers on its queue, no policy control.
+  const isConsulate = state.user?.role === 'consulate' && !state.user?.allAccess;
   out.innerHTML = `
     <div class="card pad" style="border-color:rgba(216,180,106,.45);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
-        <span class="eyebrow">🛡 Embassy Decision Command Centre</span>
-        <div style="font-family:'Space Grotesk';font-weight:700;font-size:17px;margin-top:2px">You hold full decision authority.</div>
-        <p class="muted" style="font-size:12.5px;margin:4px 0 0;max-width:620px">The AI screens every file and proposes against <strong>your</strong> criteria — you confirm, override, refuse or request more. Applicants see <strong>nothing</strong> until you release the decision. You set the visa fees, the refusal reasons, the visa conditions, and the letter carries your embassy's name, seal and language.</p>
+        <span class="eyebrow">${isConsulate ? '🛂 Consulate eVisa Processing Centre' : '🛡 Embassy Decision Command Centre'}</span>
+        <div style="font-family:'Space Grotesk';font-weight:700;font-size:17px;margin-top:2px">${isConsulate ? 'You process and decide — under the Embassy\'s policy.' : 'You hold full policy and decision authority.'}</div>
+        <p class="muted" style="font-size:12.5px;margin:4px 0 0;max-width:620px">${isConsulate
+          ? 'The AI screens every file and proposes against the <strong>Embassy\'s</strong> criteria. You confirm, refuse or request more on your queue; high-risk overrides need the approval chain. The Embassy sets the criteria, fees, branding and letter language — you work within them; every action is sealed in the audit chain.'
+          : 'The AI screens every file and proposes against <strong>your</strong> criteria — you confirm, override, refuse or request more. Applicants see <strong>nothing</strong> until you release the decision. You set the visa fees, the refusal reasons, the visa conditions, and the letter carries your embassy\'s name, seal and language.'}</p>
       </div>
-      <button class="btn btn-gold btn-sm" onclick="openEmbassySettings()">⚙ Set criteria · fees · branding · language</button>
+      ${isConsulate
+        ? '<span class="chip" style="color:var(--gold);border-color:rgba(216,180,106,.4)">🔒 Policy set by the Embassy</span>'
+        : '<button class="btn btn-gold btn-sm" onclick="openEmbassySettings()">⚙ Set criteria · fees · branding · language</button>'}
     </div>
     <div class="kpi-grid">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
@@ -3295,7 +3325,7 @@ const DEMO_ROLE_META = {
   partner: { icon: '🤝', label: 'Agency Partner', view: 'console', blurb: 'RESELLS the OS: white-label production API key · revenue share on every booking through it' },
   consumer: { icon: '🧳', label: 'Test Traveller', view: 'console', blurb: 'LIVES the customer journey: paid Dubai booking with e-ticket · Travel+ Family plan · 1,930 ACU · savings pot · visa application AWAITING the embassy\'s decision' },
   embassy: { icon: '🏛', label: 'Embassy Officer', view: 'visaos', blurb: 'DECIDES visas with full authority: sets the country\'s criteria, fees & letter branding · sees the AI\'s confidential verdict on 3 pending files · approves, refuses or overrides with reasons & conditions · RELEASES the decision when ready' },
-  consulate: { icon: '🛂', label: 'Consulate eVisa Officer', view: 'visaos', blurb: 'PROCESSES eVisas end-to-end: same full decision powers on the eVisa queue · every action sealed in the tamper-proof audit chain' },
+  consulate: { icon: '🛂', label: 'Consulate eVisa Officer', view: 'visaos', blurb: 'PROCESSES applications UNDER the Embassy\'s policy: decides its own queue (approve/refuse/more-info) but CANNOT change criteria, fees or branding — that\'s embassy-level. High-risk overrides need the approval chain; every action sealed in the audit chain' },
 };
 const demoMetaFor = (a) => DEMO_ACCOUNT_META[a.email] || DEMO_ROLE_META[a.role] || { icon: '👤', label: a.role, view: 'console', blurb: '' };
 window.openDemoAccounts = async () => {

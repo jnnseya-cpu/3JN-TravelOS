@@ -3320,3 +3320,14 @@ test('host payout is captured at registration, validated per method, and masked'
   assert.equal(up.ok, true);
   assert.ok(up.payout.paypalEmail.includes('•••'), 'paypal email masked');
 });
+
+test('marketplace basket add-ons are REAL components: photographer, guide, restaurant, translator, driver', () => {
+  const r = plan({ text: 'Trip to Dubai for 5 nights, 2 adults, flights and hotel, with a photographer, a local guide, restaurant reservations, a translator and a local driver', context: GB, user: null });
+  assert.equal(r.stage, 'options');
+  const types = new Set(r.packages.options[0].components.map((c) => c.type));
+  for (const t of ['photographer', 'guide', 'restaurant', 'translator', 'driver']) {
+    assert.ok(types.has(t), `${t} is searched, priced and packaged`);
+  }
+  const rest = r.packages.options[0].components.find((c) => c.type === 'restaurant');
+  assert.ok(rest.priceUSD > 0 && rest.verified, 'restaurant booking is a priced, verified component');
+});
