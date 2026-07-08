@@ -25,6 +25,7 @@ import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
 import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
+import { db } from '../src/store.js';
 import { assist } from '../src/assistant.js';
 import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
@@ -3087,4 +3088,27 @@ test('vendor protections: self-referral earns nothing; flagged sales are not pai
   flagVendorSale(r.sale.id, 'refunded');
   const run = runWeeklyVendorPayouts();
   assert.ok(!run.batches.some((x) => x.saleIds.includes(r.sale.id)), 'refunded sale excluded from payout');
+});
+
+test('vendor commission is HELD until the trip completes (departure/checkout passed)', () => {
+  const v = createUser({ email: 'vhold@x.co', name: 'Hold V' });
+  const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@h'], businessHistory: true });
+  const cust = createUser({ email: 'vhc@x.co', name: 'C' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1000 } }, totalUSD: 1270, travellers: { total: 1 }, components: [
+    { type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2097-10-03' }, inbound: { from: 'DXB', to: 'LHR', date: '2097-10-10' } } },
+    { type: 'hotel', supplier: 'Rove', details: { nights: 7, checkIn: '2097-10-03', checkOut: '2097-10-10' } },
+  ] }, userId: cust.id, vendorCode: appd.profile.vendorCode });
+  recordPayment(b.id, { type: 'deposit', amount: 200 });
+  const sale = db.vendorSales.find((s) => s.vendorId === v.id);
+  assert.equal(sale.serviceDate, '2097-10-10', 'service date = latest of return flight / checkout');
+  // Friday run BEFORE travel: nothing released; dashboard shows it as held.
+  const before = runWeeklyVendorPayouts();
+  assert.ok(!before.batches.some((x) => x.vendorId === v.id), 'no payout before the trip completes');
+  const dash = vendorDashboard(v.id);
+  assert.equal(dash.heldUntilTravelGbp, 30, '£30 held until travel');
+  assert.equal(dash.pendingPayoutGbp, 0);
+  // After the trip completes → next Friday run releases it.
+  sale.serviceDate = '2020-01-01';
+  const after = runWeeklyVendorPayouts();
+  assert.ok(after.batches.some((x) => x.vendorId === v.id && x.amountGbp === 30), 'released after travel completed');
 });

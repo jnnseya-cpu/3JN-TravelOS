@@ -1757,7 +1757,7 @@ async function renderVendors() {
 
   const portal = mine ? `
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:22px">
-      ${[['Status', mine.status], ['Rate', mine.commissionRatePct + '%' + (mine.topSellerBonusActive ? ' 🏆' : '')], ['Sales', mine.totalSales], ['Sales value', '£' + mine.salesValueGbp.toLocaleString()], ['Earned', '£' + mine.commissionEarnedGbp.toLocaleString()], ['Pending payout', '£' + mine.pendingPayoutGbp.toLocaleString()]]
+      ${[['Status', mine.status], ['Rate', mine.commissionRatePct + '%' + (mine.topSellerBonusActive ? ' 🏆' : '')], ['Sales', mine.totalSales], ['Earned', '£' + mine.commissionEarnedGbp.toLocaleString()], ['Held until travel', '£' + (mine.heldUntilTravelGbp || 0).toLocaleString()], ['Ready for Friday', '£' + mine.pendingPayoutGbp.toLocaleString()]]
         .map(([l, v]) => `<div class="card pad" style="text-align:center"><div class="t-label">${l}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${v}</div></div>`).join('')}
     </div>
     <div class="card pad" style="margin-top:14px"><span class="eyebrow">Your sell link</span>

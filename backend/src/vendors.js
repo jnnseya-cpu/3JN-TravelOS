@@ -54,7 +54,12 @@ export function commissionSplit(saleGbp, tierKey, { hasBonus = false } = {}) {
 }
 
 // §3/§7 — is a recorded sale releasable in a weekly payout run?
-export function saleIsPayable(sale) {
+// `todayISO` gates on SERVICE COMPLETION: commission on a flight releases only
+// after the departure/return date has PASSED, a stay only after checkout, etc.
+// A sale with no travel date (eSIM, visa service — consumed immediately) has no
+// serviceDate and releases on the next run. This protects the platform from
+// paying commission on trips that could still cancel, refund or charge back.
+export function saleIsPayable(sale, todayISO) {
   if (!sale) return false;
   if (sale.status !== 'confirmed') return false;              // sale confirmed
   if (!sale.paymentCleared) return false;                     // payment cleared
@@ -62,7 +67,28 @@ export function saleIsPayable(sale) {
   if (!sale.validated) return false;                          // booking validated
   if (sale.complianceHold) return false;                      // compliance passed
   if (sale.paidOut) return false;                             // not already paid
+  if (sale.serviceDate && todayISO && sale.serviceDate >= todayISO) return false; // travel not completed yet
   return true;
+}
+
+// The date the SERVICE completes for a booking — the latest dated moment across
+// every component: return/outbound flight date, stay checkout, transfer date…
+// Null when nothing is dated (immediately-consumed services).
+export function serviceCompletionDate(booking) {
+  const dates = [];
+  for (const c of booking?.option?.components || []) {
+    const d = c.details || {};
+    if (d.inbound?.date) dates.push(d.inbound.date);
+    if (d.outbound?.date) dates.push(d.outbound.date);
+    if (d.checkOut) dates.push(d.checkOut);
+    else if (d.checkIn && d.nights) {
+      const end = new Date(`${d.checkIn}T00:00:00Z`);
+      end.setUTCDate(end.getUTCDate() + Number(d.nights || 0));
+      dates.push(end.toISOString().slice(0, 10));
+    } else if (d.checkIn) dates.push(d.checkIn);
+    if (d.date && !d.outbound) dates.push(d.date);
+  }
+  return dates.length ? dates.sort().pop() : null;
 }
 
 // §2 — pick the top seller of a month from the sales ledger (by eligible sale
@@ -145,10 +171,13 @@ export function vendorRiskReview(application = {}) {
 }
 
 // ---- §5/§7 portal metrics ---------------------------------------------------
-export function deriveVendorMetrics({ sales = [], payouts = [], tier = 'independent', hasBonus = false, rank = null } = {}) {
+export function deriveVendorMetrics({ sales = [], payouts = [], tier = 'independent', hasBonus = false, rank = null, todayISO = null } = {}) {
   const eligible = sales.filter((s) => !s.refunded && !s.chargeback && !s.fraudFlag);
   const earned = round2(eligible.reduce((s, x) => s + (x.vendorGbp || 0), 0));
   const paid = round2(payouts.filter((p) => p.status === 'paid').reduce((s, p) => s + (p.amountGbp || 0), 0));
+  // Held until the trip completes (departure/checkout not yet passed).
+  const held = round2(eligible.filter((s) => !s.paidOut && s.serviceDate && todayISO && s.serviceDate >= todayISO)
+    .reduce((s, x) => s + (x.vendorGbp || 0), 0));
   const monthKey = (sales.map((s) => (s.at || '').slice(0, 7)).sort().pop()) || '';
   const thisMonth = eligible.filter((s) => (s.at || '').slice(0, 7) === monthKey);
   const t = VENDOR_TIERS[tier] || VENDOR_TIERS.independent;
@@ -160,7 +189,8 @@ export function deriveVendorMetrics({ sales = [], payouts = [], tier = 'independ
     salesValueGbp: round2(eligible.reduce((s, x) => s + (x.saleGbp || 0), 0)),
     commissionEarnedGbp: earned,
     commissionPaidGbp: paid,
-    pendingPayoutGbp: round2(Math.max(0, earned - paid)),
+    pendingPayoutGbp: round2(Math.max(0, earned - paid - held)),
+    heldUntilTravelGbp: held, // releases the first Friday after the trip completes
     thisMonthSalesGbp: round2(thisMonth.reduce((s, x) => s + (x.saleGbp || 0), 0)),
     leaderboardRank: rank,
     payoutDay: 'Friday (automatic, weekly)',

@@ -11,7 +11,7 @@ import {
   AI_GROWTH_TOOLS, REFERRAL_ACU, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK,
 } from './rewards.js';
 import { quoteChange, applyChange, quoteCancellation } from './operator.js';
-import { VENDOR_TIERS, commissionSplit, saleIsPayable, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
+import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -1466,9 +1466,14 @@ export function recordVendorSale({ vendorId, bookingId, saleGbp, customerId }) {
   if (customerId && customerId === vendorId) return { ok: false, error: 'self-referral' };
   const monthKey = nowISO().slice(0, 7);
   const split = commissionSplit(saleGbp, p.tier, { hasBonus: p.topSellerMonth === monthKey });
+  // Service-completion gate: commission releases only AFTER the trip happened —
+  // the flight's departure/return date passed, the stay checked out, etc.
+  const booking = bookingId ? db.bookings.get(bookingId) : null;
+  const serviceDate = booking ? serviceCompletionDate(booking) : null;
   const sale = {
     id: id('vsl'), vendorId, bookingId: bookingId || null, customerId: customerId || null,
     ...split, status: 'confirmed', paymentCleared: true, validated: true,
+    serviceDate, // null = immediately-consumed service (eSIM, visa)
     refunded: false, chargeback: false, fraudFlag: false, complianceHold: false,
     paidOut: false, at: nowISO(),
   };
@@ -1488,9 +1493,10 @@ export function flagVendorSale(saleId, flag) {
 // §3 — the automatic weekly payout run (Fridays). Releases every payable sale
 // per vendor as one batch. Idempotent: paid sales never pay twice.
 export function runWeeklyVendorPayouts() {
+  const todayISO = nowISO().slice(0, 10);
   const byVendor = new Map();
   for (const s of db.vendorSales) {
-    if (!saleIsPayable(s)) continue;
+    if (!saleIsPayable(s, todayISO)) continue;
     if (!byVendor.has(s.vendorId)) byVendor.set(s.vendorId, []);
     byVendor.get(s.vendorId).push(s);
   }
@@ -1549,7 +1555,7 @@ export function vendorDashboard(userId) {
   const monthKey = nowISO().slice(0, 7);
   const board = vendorLeaderboard(1000);
   const rank = board.findIndex((e) => e.vendorId === userId);
-  const metrics = deriveVendorMetrics({ sales, payouts, tier: p.tier, hasBonus: p.topSellerMonth === monthKey, rank: rank === -1 ? null : rank + 1 });
+  const metrics = deriveVendorMetrics({ sales, payouts, tier: p.tier, hasBonus: p.topSellerMonth === monthKey, rank: rank === -1 ? null : rank + 1, todayISO: nowISO().slice(0, 10) });
   return {
     ...metrics, status: p.status, vendorCode: p.vendorCode,
     sellLink: `https://3jntravel.com/?vendor=${p.vendorCode}`,

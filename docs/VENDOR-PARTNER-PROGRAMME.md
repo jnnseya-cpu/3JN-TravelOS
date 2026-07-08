@@ -26,7 +26,11 @@ Each month's best-performing seller earns **+1%** for the **following month only
 ## 3. Automatic Weekly Payments
 All approved vendors/agents are paid **automatically every Friday**. A commission
 is released only after: sale confirmed · payment cleared · no refund/chargeback/
-fraud flag · booking validated · compliance checks passed.
+fraud flag · booking validated · compliance checks passed · **and the service has
+been delivered** — a flight releases only after its departure/return date has
+passed, accommodation after checkout, and every other dated service after its
+date. Undated, immediately-consumed services (eSIM, visa service) release on the
+next run. Until then the commission shows in the portal as "held until travel".
 
 ## 4. Strict Registration & AI Risk Review
 Access is not automatic. AI agents + compliance review screen every applicant:
