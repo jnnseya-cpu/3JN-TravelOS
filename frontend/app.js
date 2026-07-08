@@ -699,6 +699,42 @@ function compareCard(data, sym) {
   </div>`;
 }
 
+// Kiwi-grade flight itinerary block ON the result card: per leg the date,
+// cabin, carrier, times (+1), stops, airport codes, duration, WHERE it
+// connects and the transfer type; then baggage per person and the per-person
+// fare. A customer must never have to open a modal to learn the basics.
+function flightItinBlock(c, o, sym, intent) {
+  const d = c.details || {};
+  const p = o.pricing;
+  const rate = p.local.total / p.lines.totalUSD;
+  const pax = d.passengers || intent?.travellers?.total || 1;
+  const perPax = money2((c.priceUSD / pax) * rate, sym);
+  const dateNice = (iso) => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${+m[3]} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m[2]-1]}` : ''; };
+  const legRow = (l, title) => {
+    if (!l) return '';
+    const via = (l.layovers || []).length
+      ? l.layovers.map((v) => `${esc(v.city || v.airport)} (${esc(v.airport)})${v.durationLabel ? ' · ' + esc(v.durationLabel) + ' wait' : ''}${v.overnight ? ' · overnight' : ''}${v.tight ? ' · ⚠ tight' : ''}`).join(', ')
+      : l.via ? `${esc(l.via.city || l.via.airport)} (${esc(l.via.airport)})` : '';
+    const flights = (l.segments || []).map((s) => esc(s.flightNumber)).filter(Boolean).join(' + ');
+    return `<div style="padding:8px 0;border-top:1px dashed rgba(223,229,238,.12)">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;font-size:12px">
+        <span><strong>${title}</strong> · ${esc(dateNice(l.date))} · ${esc(d.cabin || 'Economy')} · ${esc(c.supplier)}${flights ? ` · ${flights}` : ''}</span>
+        <span class="muted">${l.stops ? `${l.stops} stop${l.stops > 1 ? 's' : ''}` : '⭐ Direct'}</span></div>
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-top:3px">
+        <span style="font-family:'Space Grotesk';font-weight:700;font-size:16px">${esc(l.depart)} – ${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</span>
+        <span class="muted" style="font-size:12px">${esc(l.from)} – ${esc(l.to)} · ${esc(l.durationLabel || '')}</span></div>
+      ${l.stops ? `<div style="font-size:11.5px;margin-top:3px;color:var(--green)">🔗 Protected transfer${via ? ' · via ' + via : ''} — one ticket, bags checked through, free rebooking if a delay breaks the connection</div>` : ''}
+    </div>`;
+  };
+  return `<div style="margin:6px 0 2px">
+    ${legRow(d.outbound, 'Outbound')}${legRow(d.inbound, 'Return')}
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;padding:7px 0 2px;border-top:1px dashed rgba(223,229,238,.12);font-size:11.5px">
+      <span class="muted">🧳 ${esc(d.baggage || 'Baggage per fare rules')} <span style="opacity:.75">· per person</span></span>
+      <span><strong style="color:var(--gold)">${perPax}</strong> <span class="muted">per person${pax > 1 ? ` · ${pax} travellers` : ''}</span></span>
+    </div>
+  </div>`;
+}
+
 function optionCard(o, sym, intent) {
   const p = o.pricing;
   const comps = o.components.map((c, i) => {
@@ -732,8 +768,13 @@ function optionCard(o, sym, intent) {
     const modeTag = ['cruise', 'train', 'coach', 'ferry'].includes(c.type)
       ? `${c.details?.nights ? ` <span class="ch-chip">${c.details.nights} night${c.details.nights > 1 ? 's' : ''}</span>` : ''}${c.details?.cabin ? ` <span class="ch-chip">${esc(c.details.cabin.split('·')[0].trim())}</span>` : ''}${c.details?.travelClass ? ` <span class="ch-chip">${esc(c.details.travelClass)}</span>` : ''}`
       : (c.type === 'esim' && c.details?.planLabel ? ` <span class="ch-chip">${esc(c.details.planLabel)}</span>` : '');
+    // Flights carry the FULL itinerary on the card (dates, times, stops, via,
+    // baggage, per-person fare); other components stay one-line summaries.
+    const itin = c.type === 'flight' && c.details?.outbound ? flightItinBlock(c, o, sym, intent) : '';
+    // With the itinerary block the stop/baggage chips are redundant noise.
+    const chips = itin ? `${legTag}${partyTag}` : `${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag}`;
     return `
-    <li><span class="cs">${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag} ${src}${more}</span><span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span></li>`;
+    <li ${itin ? 'style="display:block"' : ''}><span class="cs" ${itin ? 'style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px"' : ''}>${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${chips} ${src}${more}${itin ? `<span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span>` : ''}</span>${itin || `<span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span>`}</li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">

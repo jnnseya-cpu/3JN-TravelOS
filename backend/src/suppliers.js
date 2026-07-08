@@ -65,11 +65,11 @@ export function supplierIntegrity(offer) {
 // route non-stop only when one end is its home country or its hub airport — so
 // Emirates is non-stop Birmingham→Dubai, but Lufthansa connects via Frankfurt.
 const AIRLINES = [
-  { name: 'Emirates', rating: 96, verified: true, premium: true, hubCountry: 'AE', hubAirport: 'DXB' },
-  { name: 'Qatar Airways', rating: 95, verified: true, premium: true, hubCountry: 'QA', hubAirport: 'DOH' },
-  { name: 'British Airways', rating: 88, verified: true, premium: false, hubCountry: 'GB', hubAirport: 'LHR' },
-  { name: 'Turkish Airlines', rating: 90, verified: true, premium: false, hubCountry: 'TR', hubAirport: 'IST' },
-  { name: 'Lufthansa', rating: 89, verified: true, premium: false, hubCountry: 'DE', hubAirport: 'FRA' },
+  { name: 'Emirates', rating: 96, verified: true, premium: true, hubCountry: 'AE', hubAirport: 'DXB', hubCity: 'Dubai' },
+  { name: 'Qatar Airways', rating: 95, verified: true, premium: true, hubCountry: 'QA', hubAirport: 'DOH', hubCity: 'Doha' },
+  { name: 'British Airways', rating: 88, verified: true, premium: false, hubCountry: 'GB', hubAirport: 'LHR', hubCity: 'London' },
+  { name: 'Turkish Airlines', rating: 90, verified: true, premium: false, hubCountry: 'TR', hubAirport: 'IST', hubCity: 'Istanbul' },
+  { name: 'Lufthansa', rating: 89, verified: true, premium: false, hubCountry: 'DE', hubAirport: 'FRA', hubCity: 'Frankfurt' },
   { name: 'Wizz Air', rating: 74, verified: true, premium: false, lcc: true }, // intra-Europe point-to-point
   { name: 'SkyValue Air', rating: 61, verified: false, premium: false, lcc: true }, // unreliable — filtered out
 ];
@@ -247,6 +247,10 @@ export function scanFlights(intent, dest, origin) {
     const inStops = realistic != null ? realistic : (a.premium ? 0 : (rnd() > 0.55 ? 1 : 0));
     const outDepartMin = (5 + Math.floor(rnd() * 16)) * 60 + Math.floor(rnd() * 12) * 5; // 05:00–21:55
     const inDepartMin = (6 + Math.floor(rnd() * 15)) * 60 + Math.floor(rnd() * 12) * 5;
+    // A network carrier connecting on this route connects over its own hub —
+    // say so ("via Frankfurt (FRA)") instead of a bare "1 stop".
+    const via = a.hubAirport && a.hubAirport !== origin.airport && a.hubAirport !== (dest.airport || dest.code)
+      ? { airport: a.hubAirport, city: a.hubCity } : null;
     return {
       type: 'flight',
       supplier: a.name,
@@ -254,8 +258,8 @@ export function scanFlights(intent, dest, origin) {
       reliabilityScore: a.rating,
       premium: a.premium,
       details: {
-        outbound: leg(origin.airport, origin.city, dest.airport, dest.city, intent.dates.checkIn, outDepartMin, durationMins + outStops * 80, outStops, outboundPerSeat),
-        inbound: leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + inStops * 80, inStops, inboundPerSeat),
+        outbound: leg(origin.airport, origin.city, dest.airport, dest.city, intent.dates.checkIn, outDepartMin, durationMins + outStops * 80, outStops, outboundPerSeat, via),
+        inbound: leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + inStops * 80, inStops, inboundPerSeat, via),
         passengers: pax,
         cabin: a.premium ? 'Economy (upgradable)' : 'Economy',
         baggage: a.premium ? '2 x 30kg checked + cabin' : '1 x 23kg checked + cabin',
@@ -277,14 +281,16 @@ function fmtMin(total) {
   const m = ((total % 1440) + 1440) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
-function leg(fromAirport, fromCity, toAirport, toCity, date, departMin, durationMin, stops, perSeatUSD) {
+function leg(fromAirport, fromCity, toAirport, toCity, date, departMin, durationMin, stops, perSeatUSD, via = null) {
   const arriveMin = departMin + durationMin;
   const nextDay = arriveMin >= 1440;
+  const viaLabel = stops > 0 && via ? ` · via ${via.city || via.airport} (${via.airport})` : '';
   return {
     from: fromAirport, fromCity, to: toAirport, toCity, date,
     depart: fmtMin(departMin), arrive: fmtMin(arriveMin), arriveNextDay: nextDay,
     durationMins: durationMin, durationLabel: `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`,
-    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop`, perSeatUSD,
+    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${viaLabel}`, perSeatUSD,
+    via: stops > 0 ? via : null,
   };
 }
 
