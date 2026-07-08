@@ -52,5 +52,5 @@ held). No surprise fees at check-in. 3JN keeps 10% (host fee); hosts keep 90%.
 - Guest-side services fee (platform already charges the transparent 10%).
 - Booking-form field hiding (guests/children), no-login guest checkout.
 - Instant Booking marketing page copy.
-- Taxonomy pages (type/room type/city/state/country/area) layout, featured-on-top
-  default ordering, listings-per-page count.
+- Taxonomy pages (type/room type/language/city/state/country/area) layout for
+  BOTH listings and experiences, featured-on-top / date ordering, per-page counts.
