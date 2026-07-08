@@ -11,7 +11,7 @@ import { findDestination, originForCountry, resolveOrigin } from './destinations
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive, farePrediction } from './price-dive.js';
-import { hostListingsForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
+import { hostListingsForCity, hostExperiencesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
@@ -113,6 +113,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Community host supply: 3JN-verified listings for this destination compete
   // with hotels inside the same scan (fetched early: it keys the cache too).
   const communityHosts = hostListingsForCity(intent.destination.city);
+  const communityExperiences = hostExperiencesForCity(intent.destination.city);
 
   // MODE COMPETITION — when the traveller states origin + destination but
   // names no way to travel, the OS doesn't assume a flight: every realistic
@@ -137,7 +138,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     }
   }
 
-  const scan = scanAll(intent, intent.destination, origin, live, communityHosts);
+  const scan = scanAll(intent, intent.destination, origin, live, communityHosts, communityExperiences);
   const expectedBookingUSD = roughTotal(scan);
 
   // International = the journey crosses a border. Domestic only when we KNOW both

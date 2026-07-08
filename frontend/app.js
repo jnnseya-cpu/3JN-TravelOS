@@ -905,6 +905,19 @@ window.showComponentInfo = (tier, idx) => {
     ${(d.paymentOptions || []).length ? `<div class="kv"><span>Payment</span><span style="font-size:12px;text-align:right">${d.paymentOptions.map(esc).join(' · ')}</span></div>` : ''}
     ${d.taxesNote ? `<div class="muted" style="font-size:11.5px;margin-top:6px">${esc(d.taxesNote)}</div>` : ''}
 
+    ${(d.priceLines || []).length ? `<div style="margin-top:12px"><span class="eyebrow">Prices — full breakdown, no surprise fees</span>
+      ${d.priceLines.map((l) => `<div class="kv"><span>${esc(l.label)}</span><span>${toLocal(l.amountUSD)}</span></div>`).join('')}
+      ${d.securityDepositUSD ? `<div class="kv"><span>Security deposit (held, refundable)</span><span>${toLocal(d.securityDepositUSD)}</span></div>` : ''}</div>` : ''}
+    ${d.community ? `<div style="margin-top:12px"><span class="eyebrow">Terms & rules</span>
+      ${d.cancellationPolicy ? `<div class="kv"><span>Cancellation</span><span style="font-size:12px;text-align:right">${esc(d.cancellationPolicy)}</span></div>` : ''}
+      ${d.checkInAfter ? `<div class="kv"><span>Check-in after</span><span>${esc(d.checkInAfter)}</span></div>` : ''}
+      ${d.checkOutBefore ? `<div class="kv"><span>Check-out before</span><span>${esc(d.checkOutBefore)}</span></div>` : ''}
+      ${d.houseRules ? `<div class="kv"><span>House rules</span><span style="font-size:12px;text-align:right">${esc(d.houseRules)}</span></div>` : ''}
+      ${d.instantBooking ? '<div class="kv"><span>Instant booking</span><span style="color:var(--green)">✓ Yes</span></div>' : ''}</div>` : ''}
+    ${(d.facilities || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Facilities</span><div class="chips" style="margin-top:6px">${d.facilities.map((f) => `<span class="chip">${esc(f)}</span>`).join('')}</div></div>` : ''}
+    ${(d.services || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Services (optional, paid)</span>${d.services.map((s) => `<div class="kv"><span>${esc(s.name)}${s.description ? ` <span class="muted" style="font-size:11px">· ${esc(s.description)}</span>` : ''}</span><span>${toLocal(s.priceUSD)}</span></div>`).join('')}</div>` : ''}
+    ${d.hostName ? `<div class="kv" style="margin-top:10px"><span>Hosted by</span><span>${esc(d.hostName)} · <span style="color:var(--green)">✓ Verified</span></span></div>` : ''}
+    ${d.videoUrl ? `<div class="kv"><span>Video</span><span><a href="${esc(d.videoUrl)}" target="_blank" rel="noopener" style="color:var(--blue-bright)">Watch ↗</a></span></div>` : ''}
     <div class="kv" style="margin-top:12px;font-weight:700"><span>Total stay</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);
 };
@@ -3605,6 +3618,7 @@ async function renderHosting() {
         <label class="muted" style="font-size:12px">Nightly (USD)</label>
         <input class="in" id="price_${l.id}" type="number" value="${l.nightlyUSD}" style="width:100px" />
         <button class="btn btn-ghost btn-sm" onclick="hostSetPrice('${l.id}')">Update price</button>
+        <button class="btn btn-ghost btn-sm" onclick="openHostCalendar('${l.id}')">📅 Calendar & special prices</button>
         ${l.status !== 'pending-review' ? `<button class="btn btn-ghost btn-sm" onclick="hostToggle('${l.id}','${l.status === 'live' ? 'paused' : 'live'}')">${l.status === 'live' ? '⏸ Pause listing' : '▶ Go live'}</button>` : '<span class="muted" style="font-size:11.5px">Goes live automatically once 3JN approves it.</span>'}
       </div>
     </div>`).join('') || '<p class="muted" style="font-size:12.5px">No properties yet — publish your first on the right. It goes through AI verification + admin review, then sells inside packages automatically.</p>';
@@ -3630,29 +3644,122 @@ async function renderHosting() {
       </div>
       <div>
         <div class="card pad">
-        <span class="eyebrow">Publish a new property</span>
-        <div class="field" style="margin-top:8px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
+        <span class="eyebrow">Publish a new listing</span>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-gold btn-sm" id="kindStay" onclick="setHostKind('stay')">🏠 Property / stay</button>
+          <button class="btn btn-ghost btn-sm" id="kindExp" onclick="setHostKind('experience')">🎟 Experience</button>
+        </div>
+        <div class="field" style="margin-top:10px"><label id="lblTitle">Title</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
+        <div class="field" style="margin-top:10px"><label>Description</label><textarea class="in" id="hostDesc" rows="3" placeholder="About this listing — what makes it special"></textarea></div>
         <div class="field" style="margin-top:10px"><label>City</label><input class="in" id="hostCity" placeholder="e.g. Dubai" /></div>
         <div class="field" style="margin-top:10px"><label>Street address (guests verify you online by name + address)</label><input class="in" id="hostAddress" placeholder="e.g. 14 Marina Walk, Dubai Marina" /></div>
         <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
-          <div class="field" style="flex:1;min-width:140px"><label>Type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
-          <div class="field" style="width:100px"><label>Sleeps</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="20" /></div>
-          <div class="field" style="width:130px"><label>Nightly (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
+          <div class="field" style="flex:1;min-width:140px" id="typeWrap"><label>Listing type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
+          <div class="field" style="width:100px"><label id="lblGuests">Guests</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="40" /></div>
+          <div class="field" style="width:140px"><label id="lblRate">Price (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
+          <div class="field" style="width:130px" id="rateUnitWrap"><label>Priced per</label><select class="in" id="hostRateUnit"><option value="night">Night</option><option value="day">Day</option><option value="hour">Hour</option><option value="week">Week</option><option value="month">Month</option><option value="stay">Stay</option></select></div>
         </div>
-        <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
-        <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100</label>
+
+        <details class="hostSec" data-kind="stay" style="margin-top:10px"><summary style="cursor:pointer;font-weight:600">Information — rooms & size</summary>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            ${[['hostBedrooms', 'Bedrooms', 2], ['hostBeds', 'Beds', 3], ['hostBaths', 'Bathrooms', 1], ['hostRooms', 'Rooms', 3], ['hostSize', 'Size (m²)', 80]].map(([id, l, v]) => `<div class="field" style="flex:1;min-width:90px"><label>${l}</label><input class="in" id="${id}" type="number" min="0" value="${v}" /></div>`).join('')}
+          </div>
+          <div class="field" style="margin-top:8px"><label>Bedrooms detail — one per line: Name | guests | beds | bed type</label><textarea class="in" id="hostBedroomsDetail" rows="2" placeholder="Master | 2 | 1 | King&#10;Second | 2 | 2 | Twin"></textarea></div>
+        </details>
+
+        <details class="hostSec" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Pricing — weekends, long-term, instant booking</summary>
+          <label style="font-size:12.5px;display:block;margin-top:8px"><input type="checkbox" id="hostInstant"> Instant booking (no approval needed per reservation)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px" data-kind="stay" class="hostSec">
+            <div class="field" style="flex:1;min-width:120px"><label>Weekend price (USD)</label><input class="in" id="hostWeekend" type="number" min="0" placeholder="optional" /></div>
+            <div class="field" style="flex:1;min-width:140px"><label>Weekly rate — 7+ nights (per night)</label><input class="in" id="hostWeekly" type="number" min="0" placeholder="optional" /></div>
+            <div class="field" style="flex:1;min-width:140px"><label>Monthly rate — 30+ nights (per night)</label><input class="in" id="hostMonthly" type="number" min="0" placeholder="optional" /></div>
+          </div>
+        </details>
+
+        <details class="hostSec" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Additional costs — fees, deposit, tax</summary>
+          <label style="font-size:12.5px;display:block;margin-top:8px"><input type="checkbox" id="hostAllowExtra"> Allow additional guests</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <div class="field" style="flex:1;min-width:110px"><label>Included guests</label><input class="in" id="hostIncGuests" type="number" min="1" value="2" /></div>
+            <div class="field" style="flex:1;min-width:120px"><label>Extra guest fee /night</label><input class="in" id="hostExtraFee" type="number" min="0" placeholder="0" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label>Cleaning fee</label><input class="in" id="hostCleaning" type="number" min="0" placeholder="0" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label>City fee /night</label><input class="in" id="hostCityFee" type="number" min="0" placeholder="0" /></div>
+            <div class="field" style="flex:1;min-width:120px"><label>Security deposit</label><input class="in" id="hostDeposit" type="number" min="0" placeholder="0" /></div>
+            <div class="field" style="flex:1;min-width:90px"><label>Tax % (your country's law)</label><input class="in" id="hostTax" type="number" min="0" max="40" placeholder="0" /></div>
+          </div>
+        </details>
+
+        <details class="hostSec" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Features & media</summary>
+          <div class="field" style="margin-top:8px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
+          <div class="field" style="margin-top:8px"><label>Facilities (comma-separated)</label><input class="in" id="hostFacilities" placeholder="Pool, Gym, Parking" /></div>
+          <div class="field" style="margin-top:8px"><label>Video URL (YouTube/Vimeo)</label><input class="in" id="hostVideo" placeholder="https://…" /></div>
+          <div class="field" style="margin-top:8px"><label>Services offered — one per line: Name | price | description</label><textarea class="in" id="hostServices" rows="2" placeholder="Airport pickup | 35 | Meet & greet at arrivals"></textarea></div>
+        </details>
+
+        <details class="hostSec" data-kind="experience" style="margin-top:8px;display:none"><summary style="cursor:pointer;font-weight:600">Experience details — what you provide</summary>
+          <div class="field" style="margin-top:8px"><label>Experience type</label><input class="in" id="expType" placeholder="Food tour, Desert safari, Yoga class…" /></div>
+          <div class="field" style="margin-top:8px"><label>Describe yourself and your qualifications</label><textarea class="in" id="expQualifications" rows="2" placeholder="Licensed guide, 8 years leading tours…"></textarea></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <div class="field" style="flex:1;min-width:150px"><label>Languages (comma-separated)</label><input class="in" id="expLanguages" placeholder="English, Arabic" /></div>
+            <div class="field" style="width:130px"><label>Duration (hours)</label><input class="in" id="expDuration" type="number" min="0" value="3" /></div>
+          </div>
+          <div class="field" style="margin-top:8px"><label>What I will provide (one per line)</label><textarea class="in" id="expProvided" rows="2" placeholder="Cold water&#10;Tastings"></textarea></div>
+          <div class="field" style="margin-top:8px"><label>What you will bring (one per line)</label><textarea class="in" id="expBring" rows="2" placeholder="Comfortable shoes&#10;Yoga mat"></textarea></div>
+        </details>
+
+        <details class="hostSec" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Terms & rules — cancellation, stay limits, house rules</summary>
+          <div class="field" style="margin-top:8px"><label>Cancellation policy</label><select class="in" id="hostCancel"><option>Flexible — full refund until 24h before</option><option>Moderate — full refund until 5 days before</option><option>Strict — 50% refund until 7 days before</option><option>Non-refundable</option></select></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <div class="field" style="flex:1;min-width:100px"><label>Min stay</label><input class="in" id="hostMinStay" type="number" min="0" placeholder="1" /></div>
+            <div class="field" style="flex:1;min-width:100px"><label>Max stay</label><input class="in" id="hostMaxStay" type="number" min="0" placeholder="365" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label>Check-in after</label><input class="in" id="hostCheckin" value="15:00" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label>Check-out before</label><input class="in" id="hostCheckout" value="11:00" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label>Deposit at booking %</label><input class="in" id="hostDepositPct" type="number" min="0" max="100" value="10" /></div>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12.5px">
+            <label><input type="checkbox" id="ruleSmoking"> Smoking allowed</label>
+            <label><input type="checkbox" id="rulePets"> Pets allowed</label>
+            <label><input type="checkbox" id="ruleParty"> Parties allowed</label>
+            <label><input type="checkbox" id="ruleChildren" checked> Children allowed</label>
+          </div>
+          <div class="field" style="margin-top:8px"><label>Additional rules (optional)</label><textarea class="in" id="hostRules" rows="2" placeholder="Quiet hours after 22:00…"></textarea></div>
+        </details>
+
+        <details class="hostSec" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Opening hours</summary>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <div class="field" style="flex:1;min-width:120px"><label>Mon – Fri</label><input class="in" id="hoursMF" value="08:00–20:00" /></div>
+            <div class="field" style="flex:1;min-width:120px"><label>Saturday</label><input class="in" id="hoursSat" value="09:00–18:00" /></div>
+            <div class="field" style="flex:1;min-width:120px"><label>Sunday</label><input class="in" id="hoursSun" value="10:00–16:00" /></div>
+          </div>
+        </details>
+
+        <div class="field" style="margin-top:10px"><label>Photos — minimum 10 (5 for an experience), maximum 100</label>
           <input type="file" id="hostPhotoFiles" accept="image/*" multiple style="display:none" onchange="hostAddPhotos(this.files)" />
           <button class="btn btn-ghost btn-block" type="button" onclick="$('#hostPhotoFiles').click()">📷 Upload photos from this device</button>
           <div class="muted" style="font-size:11.5px;margin-top:6px" id="hostPhotoCount">0 / 10 minimum · photos compress automatically before upload</div>
           <div id="hostPhotoPreview" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:8px"></div>
           <details style="margin-top:8px"><summary class="muted" style="font-size:12px;cursor:pointer">Or paste image URLs (one per line)</summary>
             <textarea class="in" id="hostPhotos" rows="3" placeholder="https://…/living-room.jpg" style="margin-top:6px" oninput="hostPhotoRecount()"></textarea></details></div>
-        <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish property</button>
-        <p class="muted" style="font-size:11px;margin-top:8px">Every property passes the 50-point integrity check, AI security verification and 3JN admin review before going live. Guests book through 3JN; you're paid your 90% per stay.</p>
+        <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish</button>
+        <p class="muted" style="font-size:11px;margin-top:8px">Every listing passes the 50-point integrity check, AI security verification and 3JN admin review before going live. Guests book through 3JN; you're paid your 90%.</p>
         </div>
       </div>
     </div>`;
 }
+// Toggle between publishing a stay and an experience (per-person pricing).
+window.setHostKind = (kind) => {
+  window.__hostKind = kind;
+  const stay = kind === 'stay';
+  $('#kindStay')?.classList.toggle('btn-gold', stay); $('#kindStay')?.classList.toggle('btn-ghost', !stay);
+  $('#kindExp')?.classList.toggle('btn-gold', !stay); $('#kindExp')?.classList.toggle('btn-ghost', stay);
+  document.querySelectorAll('.hostSec[data-kind]').forEach((el) => { el.style.display = el.dataset.kind === kind ? '' : 'none'; });
+  const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
+  set('#lblTitle', stay ? 'Title' : 'Experience title');
+  set('#lblRate', stay ? 'Price (USD)' : 'Price per person (USD)');
+  set('#lblGuests', stay ? 'Guests' : 'Max guests');
+  const tw = $('#typeWrap'); if (tw) tw.style.display = stay ? '' : 'none';
+  const ru = $('#rateUnitWrap'); if (ru) ru.style.display = stay ? '' : 'none';
+  const pc = $('#hostPhotoCount'); if (pc) pc.textContent = `${hostUploadedPhotos.length} / ${stay ? 10 : 5} minimum · photos compress automatically before upload`;
+};
 
 window.hostRegister = async () => {
   try {
@@ -3717,25 +3824,102 @@ window.hostAddPhotos = async (files) => {
 };
 
 window.submitHost = async () => {
+  const kind = window.__hostKind || 'stay';
   const title = $('#hostName')?.value.trim();
   const city = $('#hostCity')?.value.trim();
   const nightlyUSD = Number($('#hostRate')?.value);
-  if (!title || !city || !nightlyUSD) { toast('Name, city and nightly rate are required.'); return; }
+  if (!title || !city || !nightlyUSD) { toast(`Title, city and ${kind === 'experience' ? 'per-person price' : 'price'} are required.`); return; }
+  const v = (id) => $(id)?.value || '';
+  const nv = (id) => Number($(id)?.value) || 0;
+  const ck = (id) => !!$(id)?.checked;
+  // Bedrooms/services rows: "Name | n | n | type" one per line.
+  const rows = (id, map) => v(id).split('\n').map((line) => line.split('|').map((x) => x.trim())).filter((p) => p[0]).map(map);
   try {
     const urlPhotos = ($('#hostPhotos')?.value || '').split(/\n|,/).map((x) => x.trim()).filter(Boolean);
     const photos = [...hostUploadedPhotos, ...urlPhotos];
     const r = await api('/api/host/listings', { method: 'POST', body: JSON.stringify({
-      title, city, nightlyUSD,
-      address: $('#hostAddress')?.value || '',
-      propertyType: $('#hostType')?.value,
-      sleeps: Number($('#hostSleeps')?.value) || 2,
-      amenities: $('#hostAmenities')?.value || '',
-      photos,
+      kind, title, city, nightlyUSD, photos,
+      description: v('#hostDesc'),
+      address: v('#hostAddress'),
+      propertyType: v('#hostType'),
+      sleeps: nv('#hostSleeps') || 2,
+      amenities: v('#hostAmenities'),
+      // Information
+      bedrooms: nv('#hostBedrooms'), beds: nv('#hostBeds'), bathrooms: nv('#hostBaths'), rooms: nv('#hostRooms'), sizeSqm: nv('#hostSize'),
+      bedroomsDetail: rows('#hostBedroomsDetail', (p) => ({ name: p[0], guests: Number(p[1]) || 0, beds: Number(p[2]) || 0, bedType: p[3] || 'Double' })),
+      // Pricing
+      rateUnit: v('#hostRateUnit') || 'night', instantBooking: ck('#hostInstant'),
+      weekendPriceUSD: nv('#hostWeekend'), weeklyRateUSD: nv('#hostWeekly'), monthlyRateUSD: nv('#hostMonthly'),
+      // Additional costs
+      allowAdditionalGuests: ck('#hostAllowExtra'), includedGuests: nv('#hostIncGuests') || 2, additionalGuestFeeUSD: nv('#hostExtraFee'),
+      cleaningFeeUSD: nv('#hostCleaning'), cityFeeUSD: nv('#hostCityFee'), securityDepositUSD: nv('#hostDeposit'), taxPct: nv('#hostTax'),
+      // Features & media
+      facilities: v('#hostFacilities'), videoUrl: v('#hostVideo'),
+      services: rows('#hostServices', (p) => ({ name: p[0], priceUSD: Number(p[1]) || 0, description: p[2] || '' })),
+      // Experience-specific
+      experienceType: v('#expType'), hostQualifications: v('#expQualifications'),
+      hostLanguages: v('#expLanguages'), durationHours: nv('#expDuration'),
+      whatProvided: v('#expProvided'), whatToBring: v('#expBring'),
+      // Terms & rules + reservation policy
+      cancellationPolicy: v('#hostCancel'), minStay: nv('#hostMinStay'), maxStay: nv('#hostMaxStay'),
+      checkInAfter: v('#hostCheckin'), checkOutBefore: v('#hostCheckout'), depositPct: nv('#hostDepositPct') || 10,
+      smokingAllowed: ck('#ruleSmoking'), petsAllowed: ck('#rulePets'), partyAllowed: ck('#ruleParty'), childrenAllowed: ck('#ruleChildren'),
+      additionalRules: v('#hostRules'),
+      openingHours: { monFri: v('#hoursMF'), sat: v('#hoursSat'), sun: v('#hoursSun') },
     }) });
     hostUploadedPhotos = [];
-    toast(`🏠 ${r.listing.title} is verified & LIVE in ${r.listing.city} searches.`);
-    openHostDashboard();
+    toast(`${kind === 'experience' ? '🎟' : '🏠'} ${r.listing.title} submitted — it goes live in ${r.listing.city} once 3JN review approves it.`);
+    renderHosting();
   } catch {}
+};
+
+// ---- Availability calendar: block dates · per-date prices -------------------
+// Shows 8 weeks; click a date to BLOCK/unblock it. Set a per-date price for
+// events/high season below. Weekend pricing comes from the listing's settings.
+window.openHostCalendar = async (listingId) => {
+  const d = await api('/api/host/dashboard').catch(() => null);
+  const l = d?.listings?.find((x) => x.id === listingId);
+  if (!l) { toast('Listing not found.'); return; }
+  const av = l.availability || { blocked: [], priceOverridesUSD: {} };
+  const blocked = new Set(av.blocked || []);
+  const overrides = av.priceOverridesUSD || {};
+  const start = new Date(); start.setUTCHours(0, 0, 0, 0);
+  const cells = [];
+  for (let i = 0; i < 56; i++) {
+    const dt = new Date(start); dt.setUTCDate(dt.getUTCDate() + i);
+    const iso = dt.toISOString().slice(0, 10);
+    const isBlocked = blocked.has(iso);
+    const ov = overrides[iso];
+    cells.push(`<div onclick="hostCalToggle('${listingId}','${iso}')" title="${iso}${ov ? ' · $' + ov : ''}" style="cursor:pointer;padding:6px 2px;border-radius:6px;text-align:center;font-size:11px;border:1px solid ${isBlocked ? 'rgba(255,107,107,.5)' : ov ? 'rgba(216,180,106,.5)' : 'var(--line)'};background:${isBlocked ? 'rgba(255,107,107,.15)' : ov ? 'rgba(216,180,106,.12)' : 'transparent'}">
+      ${dt.getUTCDate()}${dt.getUTCDate() === 1 || i === 0 ? `<div style="font-size:9px;color:var(--muted)">${dt.toLocaleString('en', { month: 'short', timeZone: 'UTC' })}</div>` : ''}${ov ? `<div style="font-size:9px;color:var(--gold)">$${ov}</div>` : ''}${isBlocked ? '<div style="font-size:9px;color:#ff8a8a">✕</div>' : ''}</div>`);
+  }
+  modal(`
+    <span class="eyebrow">📅 Availability & calendar pricing · ${esc(l.title)}</span>
+    <p class="muted" style="font-size:12px;margin:6px 0">Tap a date to <strong style="color:#ff8a8a">block/unblock</strong> it (blocked dates never sell). Set a <strong style="color:var(--gold)">special price</strong> for event dates below. Weekend pricing is in your listing settings.</p>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;font-size:10px;color:var(--muted);text-align:center">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((w) => `<div>${w}</div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:4px">${'<div></div>'.repeat(start.getUTCDay())}${cells.join('')}</div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field" style="flex:1;min-width:130px"><label>Date</label><input class="in" id="calDate" type="date" /></div>
+      <div class="field" style="width:120px"><label>Price (USD)</label><input class="in" id="calPrice" type="number" min="0" placeholder="e.g. 250" /></div>
+      <button class="btn btn-gold btn-sm" onclick="hostCalPrice('${listingId}')">Set price</button>
+      <button class="btn btn-ghost btn-sm" onclick="hostCalPrice('${listingId}', true)">Clear price</button>
+    </div>`);
+  window.__hostCal = { listingId, blocked: [...blocked], overrides: { ...overrides } };
+};
+window.hostCalToggle = async (listingId, iso) => {
+  const s = window.__hostCal; if (!s || s.listingId !== listingId) return;
+  s.blocked = s.blocked.includes(iso) ? s.blocked.filter((x) => x !== iso) : [...s.blocked, iso];
+  await api(`/api/host/listings/${listingId}`, { method: 'PATCH', body: JSON.stringify({ availability: { blocked: s.blocked, priceOverridesUSD: s.overrides } }) }).catch(() => toast('Could not save.'));
+  openHostCalendar(listingId);
+};
+window.hostCalPrice = async (listingId, clear = false) => {
+  const s = window.__hostCal; if (!s) return;
+  const dt = $('#calDate')?.value; const price = Number($('#calPrice')?.value);
+  if (!dt) { toast('Pick a date.'); return; }
+  if (clear) delete s.overrides[dt]; else if (price > 0) s.overrides[dt] = price; else { toast('Enter a price.'); return; }
+  await api(`/api/host/listings/${listingId}`, { method: 'PATCH', body: JSON.stringify({ availability: { blocked: s.blocked, priceOverridesUSD: s.overrides } }) }).catch(() => toast('Could not save.'));
+  toast(clear ? '✓ Special price cleared' : `✓ ${dt} priced at $${price}`);
+  openHostCalendar(listingId);
 };
 
 boot();

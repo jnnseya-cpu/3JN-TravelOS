@@ -10,6 +10,7 @@
 // brief requires "cheapest *reliable*" and "only verified packages".
 
 import { visaRule, destExperiences } from './destinations.js';
+import { stayQuote, stayIsAvailable } from './host-listing.js';
 import { routeFareBaseUSD, marketFactor, airportCoords, haversineKm } from './airports.js';
 import { applySourcing } from './partners.js';
 import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
@@ -771,7 +772,7 @@ export function toOneWayLeg(offer, leg, fromCity, toCity) {
 
 // Run a full scan across every requested component. Returns a map of
 // component -> array of supplier offers (or a single offer for visa).
-export function scanAll(intent, dest, origin, live = null, communityHosts = null) {
+export function scanAll(intent, dest, origin, live = null, communityHosts = null, communityExperiences = null) {
   const scan = {};
   const wanted = new Set(intent.components);
 
@@ -787,33 +788,58 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
     // (reliability floor, sourcing, price guard, instalments, group stays).
     if (Array.isArray(communityHosts) && communityHosts.length) {
       const nights = intent.nights;
-      const fits = communityHosts.filter((l) => l.sleeps >= intent.travellers.total);
-      scan.hotel = scan.hotel.concat(fits.map((l) => ({
-        type: 'host',
-        supplier: l.title,
-        verified: !!l.verified,
-        reliabilityScore: l.reliabilityScore,
-        stars: 4,
-        details: {
-          nights,
-          rooms: 1,
-          nightlyUSD: l.nightlyUSD,
-          board: 'Self-catering',
-          freeCancellation: true,
-          sleeps: l.sleeps,
-          roomType: `${l.propertyType} · sleeps ${l.sleeps}`,
-          area: l.city,
-          address: l.address,
-          photos: l.photos, // hosted by US → real photos (min 10, max 100)
-          photoCount: Array.isArray(l.photos) ? l.photos.length : 0,
-          amenities: l.amenities,
-          guestRating: Math.round(l.reliabilityScore) / 10,
-          community: true,
-          hostName: l.hostName,
-          description: `${l.title} — a 3JN-verified community host property in ${l.city}, hosted by ${l.hostName}.`,
-        },
-        priceUSD: Math.round(l.nightlyUSD * nights),
-      })));
+      const guests = intent.travellers.total;
+      // AVAILABILITY: a listing whose host blocked any date of this stay never
+      // appears — the calendar is the source of truth.
+      const fits = communityHosts.filter((l) => l.sleeps >= guests && stayIsAvailable(l, intent.dates?.checkIn, nights));
+      scan.hotel = scan.hotel.concat(fits.map((l) => {
+        // The FULL listing schema prices the stay: long-term rates auto-apply
+        // (7+/30+ nights), per-date calendar prices & weekend pricing apply,
+        // cleaning/city fees and tax are included upfront — the guest sees one
+        // honest total, never surprise fees at check-in.
+        const quote = stayQuote(l, nights, guests, intent.dates?.checkIn);
+        const ld = l.details || {};
+        return {
+          type: 'host',
+          supplier: l.title,
+          verified: !!l.verified,
+          reliabilityScore: l.reliabilityScore,
+          stars: 4,
+          details: {
+            nights,
+            rooms: 1,
+            nightlyUSD: quote.nightlyUSD,
+            rateUnit: quote.rateUnit,
+            priceLines: quote.lines, // transparent fee breakdown
+            securityDepositUSD: quote.depositUSD, // held, not charged
+            board: 'Self-catering',
+            freeCancellation: /flexible|moderate/i.test(ld.cancellationPolicy || ''),
+            cancellationPolicy: ld.cancellationPolicy,
+            checkIn: intent.dates?.checkIn, checkOut: intent.dates?.checkOut,
+            checkInAfter: ld.checkInAfter, checkOutBefore: ld.checkOutBefore,
+            sleeps: l.sleeps,
+            roomType: `${l.propertyType} · sleeps ${l.sleeps}`,
+            bedrooms: ld.bedrooms || null, beds: ld.beds || null, bathrooms: ld.bathrooms || null,
+            bedConfiguration: (ld.bedroomsDetail || []).map((b) => `${b.name}: ${b.beds} × ${b.bedType}`).join(' · ') || undefined,
+            roomSizeSqm: ld.sizeSqm || undefined,
+            houseRules: [ld.smokingAllowed ? 'Smoking allowed' : 'No smoking', ld.petsAllowed ? 'Pets allowed' : 'No pets', ld.partyAllowed ? 'Parties allowed' : 'No parties', ld.childrenAllowed === false ? 'No children' : 'Children welcome'].join(' · '),
+            services: ld.services || [],
+            instantBooking: !!ld.instantBooking,
+            area: ld.area || l.city,
+            address: l.address,
+            photos: l.photos, // hosted by US → real photos (min 10, max 100)
+            photoCount: Array.isArray(l.photos) ? l.photos.length : 0,
+            videoUrl: ld.videoUrl || undefined,
+            amenities: l.amenities,
+            facilities: ld.facilities || [],
+            guestRating: Math.round(l.reliabilityScore) / 10,
+            community: true,
+            hostName: l.hostName,
+            description: ld.description || `${l.title} — a 3JN-verified community host property in ${l.city}, hosted by ${l.hostName}.`,
+          },
+          priceUSD: quote.totalUSD,
+        };
+      }));
     }
   }
   if (wanted.has('train')) scan.train = scanTrain(intent, dest, origin);
@@ -886,7 +912,37 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
     delete scan[outMode === 'flights' ? 'flights' : outMode];
     delete scan[backMode === 'flights' ? 'flights' : backMode];
   }
-  if (wanted.has('activities')) scan.activities = scanActivities(intent, dest);
+  if (wanted.has('activities')) {
+    scan.activities = scanActivities(intent, dest);
+    // Community EXPERIENCES (host-run tours, priced per person) compete inside
+    // the activities scan exactly as community stays compete with hotels.
+    if (Array.isArray(communityExperiences) && communityExperiences.length) {
+      const people = intent.travellers.total;
+      scan.activities = scan.activities.concat(communityExperiences.map((l) => {
+        const ld = l.details || {};
+        return {
+          type: 'activities',
+          supplier: l.title,
+          verified: !!l.verified,
+          reliabilityScore: l.reliabilityScore,
+          details: {
+            community: true, experience: true,
+            experienceType: ld.experienceType || 'Local experience',
+            hostName: l.hostName, hostLanguages: ld.hostLanguages || [],
+            durationHours: ld.durationHours || undefined,
+            perPersonUSD: l.nightlyUSD, people,
+            whatProvided: ld.whatProvided || [], whatToBring: ld.whatToBring || [],
+            instantBooking: !!ld.instantBooking,
+            openingHours: ld.openingHours,
+            cancellationPolicy: ld.cancellationPolicy,
+            photos: l.photos, address: l.address, area: ld.area || l.city,
+            description: ld.description || `${l.title} — a 3JN-verified host-run experience in ${l.city}.`,
+          },
+          priceUSD: Math.round(l.nightlyUSD * people * 100) / 100,
+        };
+      }));
+    }
+  }
   if (wanted.has('visa')) { const v = scanVisa(intent, dest); scan.visa = v ? [v] : []; }
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);
   if (wanted.has('transfer')) scan.transfer = scanTransfers(intent, dest);

@@ -13,6 +13,7 @@ import {
 import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 import { resolveEmbassyConfig } from './embassy.js';
+import { sanitizeListingDetails } from './host-listing.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -1906,22 +1907,25 @@ export function registerHost(userId, { displayName, payoutMethod = 'Bank transfe
 export const HOST_PHOTOS_MIN = 10;
 export const HOST_PHOTOS_MAX = 100;
 
-export function createHostListing(userId, { title, city, address, propertyType = 'Entire apartment', nightlyUSD, sleeps = 2, amenities = [], photos = [] } = {}) {
+export function createHostListing(userId, { title, city, address, propertyType = 'Entire apartment', nightlyUSD, sleeps = 2, amenities = [], photos = [], kind = 'stay', ...fullSchema } = {}) {
   const u = userId ? db.users.get(userId) : null;
   if (!u) return { ok: false, error: 'auth-required' };
   if (!u.host || !u.hostProfile) return { ok: false, error: 'host-registration-required', message: 'Register as a host first — your dashboard unlocks publishing.' };
   const t = String(title || '').trim().slice(0, 80);
   const c = String(city || '').trim().slice(0, 60);
+  const isExperience = kind === 'experience'; // priced PER PERSON
   const rate = Math.round(Number(nightlyUSD) || 0);
-  if (!t || !c || rate <= 0) return { ok: false, error: 'invalid-listing', message: 'Title, city and a nightly rate are required.' };
+  if (!t || !c || rate <= 0) return { ok: false, error: 'invalid-listing', message: `Title, city and a ${isExperience ? 'per-person price' : 'nightly rate'} are required.` };
   // Every stay on the OS carries a street address so guests can verify it on
   // the internet — hosted properties are no exception.
   const addr = String(address || '').trim().slice(0, 160);
   if (addr.length < 8) return { ok: false, error: 'address-required', message: 'A full street address is required — guests verify your property online by name + address.' };
-  // Hosted-by-us properties must SHOW the place: minimum 10 photos, maximum 100.
+  // Hosted-by-us properties must SHOW the place: minimum 10 photos (5 for an
+  // experience), maximum 100.
+  const minPics = isExperience ? 5 : HOST_PHOTOS_MIN;
   const pics = (Array.isArray(photos) ? photos : String(photos).split(/[\n,]+/))
     .map((x) => String(x).trim()).filter(Boolean).slice(0, HOST_PHOTOS_MAX + 1);
-  if (pics.length < HOST_PHOTOS_MIN) return { ok: false, error: 'photos-min', message: `Hosted listings need a minimum of ${HOST_PHOTOS_MIN} pictures (you provided ${pics.length}).` };
+  if (pics.length < minPics) return { ok: false, error: 'photos-min', message: `Hosted ${isExperience ? 'experiences' : 'listings'} need a minimum of ${minPics} pictures (you provided ${pics.length}).` };
   if (pics.length > HOST_PHOTOS_MAX) return { ok: false, error: 'photos-max', message: `Hosted listings allow a maximum of ${HOST_PHOTOS_MAX} pictures.` };
   // Uploaded photos arrive as compressed data URLs — cap each at ~400KB.
   if (pics.some((x) => x.startsWith('data:') && x.length > 400000)) {
@@ -1935,14 +1939,22 @@ export function createHostListing(userId, { title, city, address, propertyType =
     id: `hst_${db.hostListings.length + 1}_${Date.now().toString(36)}`,
     hostId: u.id,
     hostName: u.name,
+    kind: isExperience ? 'experience' : 'stay',
     title: t,
     city: c,
     propertyType: String(propertyType).slice(0, 40),
-    nightlyUSD: rate,
+    nightlyUSD: rate, // for an experience this is the PER-PERSON price
     address: addr,
     photos: pics,
     sleeps: Math.max(1, Math.min(20, Math.round(Number(sleeps) || 2))),
     amenities: (Array.isArray(amenities) ? amenities : String(amenities).split(',')).map((a) => String(a).trim()).filter(Boolean).slice(0, 12),
+    // The COMPLETE listing schema (information · pricing units · long-term
+    // rates · additional costs · features · media · location · bedrooms ·
+    // services · terms & rules · opening hours) — sanitized in one place.
+    // Experiences take FULL payment at booking; stays take the deposit %.
+    details: sanitizeListingDetails({ ...fullSchema, propertyType, depositPct: isExperience ? 100 : fullSchema.depositPct }),
+    // Availability calendar: dates the host blocked + per-date price overrides.
+    availability: { blocked: [], priceOverridesUSD: {} },
     verified: false,           // becomes true only on admin approval
     reliabilityScore: 82,
     // MODERATION GATE: no property goes online for public booking until AI
@@ -2032,7 +2044,15 @@ export function listHostListings(userId) {
 export function hostListingsForCity(cityText) {
   const needle = String(cityText || '').toLowerCase();
   if (!needle) return [];
-  return db.hostListings.filter((l) => l.status === 'live' && l.verified
+  return db.hostListings.filter((l) => l.status === 'live' && l.verified && (l.kind || 'stay') === 'stay'
+    && (l.city.toLowerCase().includes(needle) || needle.includes(l.city.toLowerCase())));
+}
+// Community EXPERIENCES (host-run tours/activities) live for a city — they
+// compete inside the activities scan the same way stays compete with hotels.
+export function hostExperiencesForCity(cityText) {
+  const needle = String(cityText || '').toLowerCase();
+  if (!needle) return [];
+  return db.hostListings.filter((l) => l.status === 'live' && l.verified && l.kind === 'experience'
     && (l.city.toLowerCase().includes(needle) || needle.includes(l.city.toLowerCase())));
 }
 
@@ -2072,6 +2092,24 @@ export function updateHostListing(userId, listingId, patch = {}) {
   }
   if (patch.sleeps !== undefined) l.sleeps = Math.max(1, Math.min(20, Math.round(Number(patch.sleeps) || l.sleeps)));
   if (patch.title !== undefined && String(patch.title).trim()) l.title = String(patch.title).trim().slice(0, 80);
+  // Full-schema detail update: re-sanitize the merged detail so bounds hold.
+  if (patch.details !== undefined && typeof patch.details === 'object') {
+    l.details = sanitizeListingDetails({ ...(l.details || {}), ...patch.details });
+  }
+  // Availability calendar: toggle blocked dates / set per-date price overrides.
+  if (patch.availability !== undefined && typeof patch.availability === 'object') {
+    l.availability = l.availability || { blocked: [], priceOverridesUSD: {} };
+    if (Array.isArray(patch.availability.blocked)) {
+      l.availability.blocked = [...new Set(patch.availability.blocked.map((d) => String(d).slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].slice(0, 730);
+    }
+    if (patch.availability.priceOverridesUSD && typeof patch.availability.priceOverridesUSD === 'object') {
+      const clean = {};
+      for (const [dt, usd] of Object.entries(patch.availability.priceOverridesUSD).slice(0, 730)) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dt) && Number(usd) > 0) clean[dt] = Math.round(Number(usd) * 100) / 100;
+      }
+      l.availability.priceOverridesUSD = clean;
+    }
+  }
   if (patch.address !== undefined) {
     const addr = String(patch.address).trim().slice(0, 160);
     if (addr.length < 8) return { ok: false, error: 'address-required', message: 'A full street address is required.' };

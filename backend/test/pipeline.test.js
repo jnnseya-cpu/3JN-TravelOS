@@ -3265,3 +3265,35 @@ test('hotel holds the privilege; a private host earns it only via reviews + secu
   const pricier = { ...strong, priceUSD: 800 };
   assert.equal(std(mkScan(pricier)).supplier, 'City Hotel', 'without a better price the hotel stays privileged');
 });
+
+// ---- Host listing full schema: calendar, per-date pricing, availability ----
+test('host calendar: blocked dates hide the listing; per-date + weekend prices apply', async () => {
+  const { stayQuote, stayIsAvailable } = await import('../src/host-listing.js');
+  const u = createUser({ email: 'cal@x.co', name: 'Cal Host' });
+  registerHost(u.id, { displayName: 'Cal' });
+  const r = createHostListing(u.id, { title: 'Calendar Flat', city: 'Lisbon', address: '1 Rua Alegre, Lisbon', nightlyUSD: 100, sleeps: 4, photos: Array.from({ length: 10 }, (_, i) => `https://x/${i}.jpg`), weekendPriceUSD: 150, weekendDays: ['Fri', 'Sat'] });
+  assert.ok(r.ok);
+  // Block a date inside the stay → the listing is unavailable for that stay.
+  updateHostListing(u.id, r.listing.id, { availability: { blocked: ['2027-05-03'], priceOverridesUSD: { '2027-05-01': 300 } } });
+  assert.equal(stayIsAvailable(r.listing, '2027-05-01', 5), false, 'stay covering a blocked date is unavailable');
+  assert.equal(stayIsAvailable(r.listing, '2027-05-10', 3), true, 'other dates unaffected');
+  // Calendar pricing: 2027-05-01 is a Saturday with a $300 override; the
+  // override wins; Sunday 05-02 uses the base $100 (not weekend).
+  const q = stayQuote(r.listing, 2, 2, '2027-05-01');
+  assert.equal(q.lines[0].amountUSD, 400, 'override $300 + base $100');
+  // Weekend pricing without an override: Fri 2027-05-07 → $150, Sun 05-09 → $100.
+  const q2 = stayQuote(r.listing, 2, 2, '2027-05-07');
+  assert.equal(q2.lines[0].amountUSD, 300, 'Fri $150 + Sat $150 — weekend pricing on both nights');
+});
+
+test('host experiences: published per-person, compete in the activities scan', () => {
+  const u = createUser({ email: 'exp@x.co', name: 'Exp Host' });
+  registerHost(u.id, { displayName: 'Exp' });
+  const e = createHostListing(u.id, { kind: 'experience', title: 'Alfama Food Walk', city: 'Barcelona', address: 'Gothic Quarter, Barcelona', nightlyUSD: 40, sleeps: 10, photos: Array.from({ length: 5 }, (_, i) => `https://x/e${i}.jpg`), experienceType: 'Food tour', durationHours: 3, whatProvided: 'Tastings', whatToBring: 'Comfortable shoes' });
+  assert.ok(e.ok && e.listing.kind === 'experience');
+  assert.equal(e.listing.details.depositPct, 100, 'experiences take full payment at booking');
+  reviewHostListing(e.listing.id, { decision: 'approve', reviewerId: 'admin_test' });
+  const r = plan({ text: 'holiday to Barcelona for 4 nights, 2 adults, flights hotel activities', context: GB, user: null });
+  const acts = r.packages.options.flatMap((o) => o.components).filter((c) => c.type === 'activities');
+  assert.ok(acts.some((a) => a.supplier === 'Alfama Food Walk' || a.details?.experience), 'community experience competes in the activities scan');
+});
