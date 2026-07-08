@@ -256,6 +256,49 @@ export function saveEmbassyConfig(country, patch, officerId) {
   return { ok: true, config: resolveEmbassyConfig(next) };
 }
 
+// ---- Confidentiality: the AI result is OFFICER-ONLY until released ----------
+// The applicant runs the AI by submitting, but sees NOTHING of the outcome —
+// no score, band, recommendation, fraud checks or officer decision — until the
+// officer explicitly RELEASES it. Their own submitted data stays visible.
+export function redactVisaForApplicant(a) {
+  if (!a) return null;
+  const released = !!a.embassyDecision?.released;
+  return {
+    id: a.id,
+    at: a.at,
+    country: a.country || a.applicant?.destination || null,
+    visaType: a.visaType || a.applicant?.visaType || null,
+    applicant: a.applicant || null,           // their own data
+    fullApplicant: a.fullApplicant || null,   // their own data
+    documents: a.documents || [],             // their own uploads
+    missingDocuments: a.missingDocuments || [], // helps them complete the file
+    status: released ? 'decided' : 'under-review',
+    // The decision appears ONLY after the officer releases it — and even then
+    // only the human decision (reason/conditions), never the AI internals.
+    decision: released ? {
+      decision: a.embassyDecision.decision,
+      reason: a.embassyDecision.reason || '',
+      conditions: a.embassyDecision.conditions || [],
+      at: a.embassyDecision.releasedAt || a.embassyDecision.at,
+    } : null,
+  };
+}
+
+// Officer releases the decision to the applicant: only now do they find out.
+export function releaseVisaDecision(appId, officerId) {
+  const a = db.visaApps.find((x) => x.id === appId);
+  if (!a) return { ok: false, error: 'not-found' };
+  if (!a.embassyDecision) return { ok: false, error: 'not-decided', message: 'Decide the application before releasing.' };
+  if (a.embassyDecision.released) return { ok: true, alreadyReleased: true, application: a };
+  a.embassyDecision.released = true;
+  a.embassyDecision.releasedAt = nowISO();
+  a.embassyDecision.releasedBy = officerId || 'embassy';
+  recordAudit({ actor: officerId || 'embassy', role: 'embassy', action: 'visa.decision.released', entity: 'visa_application', entityId: appId, summary: a.embassyDecision.decision });
+  a.embassyDecision.releaseBlock = sealVisaBlock('decision-released', { id: appId, decision: a.embassyDecision.decision, by: officerId || 'embassy' });
+  if (a.userId) pushNotification(a.userId, { type: 'info', icon: '🛂', title: `Visa decision: ${a.embassyDecision.decision}`, body: `The embassy has issued its decision on application ${a.id}. Your official decision letter is available in your Console.` });
+  return { ok: true, application: a };
+}
+
 export function decideVisaApplication(appId, { decision, reason, officerId, secondApproverId, conditions } = {}) {
   const a = db.visaApps.find((x) => x.id === appId);
   if (!a) return { ok: false, error: 'not-found' };
@@ -288,7 +331,9 @@ export function decideVisaApplication(appId, { decision, reason, officerId, seco
   a.status = decision === 'More info requested' ? 'awaiting-applicant' : 'decided';
   recordAudit({ actor: officerId || 'embassy', role: 'embassy', action: `visa.embassy.${decision.replace(/\s+/g, '-').toLowerCase()}${isOverride ? '.override' : ''}`, entity: 'visa_application', entityId: appId, summary: `${decision}${isOverride ? ' (OVERRIDE, 2nd: ' + secondApproverId + ')' : ''}${reason ? ' — ' + reason.slice(0, 60) : ''}` });
   a.embassyDecision.auditBlock = sealVisaBlock('embassy-decision', { id: appId, decision, officerId: officerId || 'embassy', override: isOverride, ...(isOverride ? { approvalChain: [officerId || 'embassy', secondApproverId] } : {}) });
-  if (a.userId) pushNotification(a.userId, { type: 'info', icon: '🛂', title: `Visa: ${decision}`, body: reason || `Your application was ${decision.toLowerCase()} by the embassy.` });
+  // CONFIDENTIALITY: the applicant is NOT notified here. The decision stays
+  // officer-only until releaseVisaDecision() — only then does the applicant
+  // learn the outcome and receive the letter.
   return { ok: true, application: a };
 }
 

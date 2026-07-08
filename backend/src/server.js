@@ -39,7 +39,7 @@ import {
   createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, latestBookingForUser,
   applyVendor, getVendorProfile, decideVendor, vendorDashboard, vendorLeaderboard,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
-  getEmbassyConfig, saveEmbassyConfig,
+  getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
 } from './store.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
@@ -1367,9 +1367,15 @@ app.get('/api/risk/:destination', safe(async (req, res) => {
 
 // ---- 3JN VisaOS — AI visa decision engine ---------------------------------
 app.post('/api/visaos/assess', safe((req, res) => {
+  // The AI runs on submission, but its verdict is OFFICER-ONLY: the applicant
+  // gets a receipt, never the score/band/recommendation. They learn the outcome
+  // only when the officer RELEASES the decision.
   const assessment = assessVisa(req.body || {});
-  recordVisaApplication(assessment);
-  res.json({ assessment });
+  const record = recordVisaApplication(assessment);
+  res.json({
+    ok: true, applicationId: record?.id || null, status: 'under-review',
+    message: 'Application received. It is being reviewed by the embassy — you will be notified when a decision is issued.',
+  });
 }));
 
 // ---- Global Visa Intelligence Framework -----------------------------------
@@ -1393,17 +1399,32 @@ app.post('/api/visa/assess-application', safe((req, res) => {
   const { applicant, country, visaType, providedDocuments } = req.body || {};
   const file = assessApplication({ applicant: applicant || {}, country, visaType, providedDocuments });
   const user = currentUser(req);
-  // Persist the FULL application (information + documents + decision file) so the
-  // applicant and the embassy can both review exactly what was provided.
+  // Persist the FULL application (information + documents + decision file). The
+  // full file is OFFICER-ONLY: the applicant receives a receipt plus their own
+  // checklist feedback (what's missing) — never the AI verdict or fraud checks.
   const record = recordVisaFile({ applicant, country, visaType, documents: providedDocuments || [], file, userId: user?.id });
-  res.json({ file, applicationId: record.id });
+  res.json({
+    ok: true, applicationId: record.id, status: 'under-review',
+    received: (providedDocuments || []).length,
+    missingDocuments: file?.checklist?.missing || record.missingDocuments || [],
+    message: 'Application received and under embassy review. You will be notified when the decision is issued.',
+  });
 }));
 
-// Applicant: my submitted applications (full info + documents I provided).
+// Applicant: my submitted applications — REDACTED (own data + status only; the
+// AI result and officer decision appear only after the officer releases it).
 app.get('/api/visaos/my-applications', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
-  res.json({ applications: listVisaApplicationsForUser(user.id) });
+  res.json({ applications: listVisaApplicationsForUser(user.id).map(redactVisaForApplicant) });
+}));
+
+// Officer: release the decision to the applicant (only now do they find out).
+app.post('/api/visaos/applications/:id/release', safe((req, res) => {
+  if (!requireRole(req, res, ['embassy', 'consulate', 'admin'])) return;
+  const result = releaseVisaDecision(req.params.id, currentUser(req)?.id);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
 }));
 
 // ---- Embassy / Government workspace (embassy or admin only) ----------------
@@ -1454,6 +1475,10 @@ app.get('/api/visaos/applications/:id/letter', safe((req, res) => {
   const isOfficer = user && (user.allAccess || ['embassy', 'consulate', 'admin'].includes(user.role));
   if (!isOfficer && application.userId !== user?.id) return res.status(403).json({ error: 'forbidden' });
   if (!application.embassyDecision) return res.status(409).json({ error: 'not-decided', message: 'No decision has been issued yet.' });
+  // Applicants can only read the letter once the officer has RELEASED it.
+  if (!isOfficer && !application.embassyDecision.released) {
+    return res.status(409).json({ error: 'not-released', message: 'Your application is still under review — the decision has not been issued yet.' });
+  }
   const config = getEmbassyConfig(application.country || application.applicant?.destination || 'DEFAULT');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(visaDecisionLetter(application, config));

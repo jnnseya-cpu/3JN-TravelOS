@@ -26,7 +26,7 @@ import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } fr
 import { commissionSplit } from '../src/vendors.js';
 import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
 import { bookingDocument } from '../src/documents.js';
-import { saveEmbassyConfig, getEmbassyConfig } from '../src/store.js';
+import { saveEmbassyConfig, getEmbassyConfig, redactVisaForApplicant, releaseVisaDecision } from '../src/store.js';
 import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
 import { db } from '../src/store.js';
 import { assist } from '../src/assistant.js';
@@ -3214,4 +3214,26 @@ test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insur
   assert.ok(bookingDocument(held, {}).includes('Issued automatically on final instalment'), 'held state is explained');
   // Same booking always renders the same confirmation refs (stable reprints).
   assert.equal(bookingDocument(b, {}), html, 'documents are deterministic');
+});
+
+test('visa AI result is officer-only until the officer RELEASES the decision', () => {
+  const applicant = createUser({ email: 'vconf@x.co', name: 'Confidential Applicant' });
+  const rec = recordVisaApplication({ ...assessVisa({ name: 'Confidential Applicant', nationality: 'NG', destination: 'Dubai', purpose: 'tourism' }), userId: applicant.id });
+  const seen = redactVisaForApplicant(rec);
+  // Applicant sees their OWN data + status — never the AI verdict.
+  assert.equal(seen.status, 'under-review');
+  assert.equal(seen.decision, null, 'no decision visible before release');
+  assert.ok(!('totalScore' in seen) && !('band' in seen) && !('recommendation' in seen) && !('file' in seen) && !('risk' in seen), 'AI internals are stripped');
+  // Officer decides — applicant STILL sees nothing.
+  decideVisaApplication(rec.id, { decision: 'Refused', reason: 'Insufficient funds evidence', officerId: 'officer-1' });
+  assert.equal(redactVisaForApplicant(rec).decision, null, 'decision stays confidential until released');
+  const before = listNotifications(applicant.id).filter((n) => /visa decision/i.test(n.title)).length;
+  // Release: only now the applicant learns the outcome and is notified.
+  const rel = releaseVisaDecision(rec.id, 'officer-1');
+  assert.ok(rel.ok);
+  const after = redactVisaForApplicant(rec);
+  assert.equal(after.status, 'decided');
+  assert.equal(after.decision.decision, 'Refused');
+  assert.equal(after.decision.reason, 'Insufficient funds evidence');
+  assert.ok(listNotifications(applicant.id).filter((n) => /visa decision/i.test(n.title)).length > before, 'applicant notified on release, not before');
 });

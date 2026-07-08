@@ -2407,7 +2407,17 @@ async function submitVisa() {
       body: JSON.stringify({ applicant, country: $('#vCountry').value, visaType: $('#vType').value, providedDocuments }),
     });
   } catch { return; }
-  renderVisaFile(data.file);
+  // CONFIDENTIAL: the AI's verdict goes to the EMBASSY OFFICER only. The
+  // applicant gets a receipt — they learn the outcome when the officer
+  // releases the decision (notification + official letter).
+  $('#visaDecision').innerHTML = `
+    <div class="card pad" style="border-color:rgba(78,161,255,0.35)">
+      <span class="eyebrow">Application submitted</span>
+      <h3 style="margin:8px 0 4px">Under embassy review</h3>
+      <p class="muted" style="font-size:13.5px">Your application <strong style="color:var(--gold)">${esc(data.applicationId || '')}</strong> and ${data.received || 0} document${(data.received || 0) === 1 ? '' : 's'} have been received and passed to the embassy. Decisions are made by an authorised officer — you'll be notified here and by email the moment your decision letter is issued.</p>
+      ${(data.missingDocuments || []).length ? `<div style="margin-top:8px"><span class="t-label">Still missing (submitting these speeds up review)</span>${data.missingDocuments.map((m) => `<div class="x-line">• ${esc(m)}</div>`).join('')}</div>` : ''}
+      <p class="muted" style="font-size:11.5px;margin-top:10px">Track status in Console → My visa applications.</p>
+    </div>`;
   // Save captured identity back to the Master Travel Profile (retrieved
   // automatically next time across visa & bookings).
   if (state.user) {
@@ -2599,8 +2609,12 @@ window.openVisaApp = async (id) => {
       </div>` : ''}
       ${dec
         ? `<div class="card pad" style="margin-top:14px;border-color:rgba(70,211,154,0.3)"><strong>Embassy decision: ${esc(dec.decision)}</strong>
+            <span class="chip" style="font-size:10.5px;margin-left:8px;color:${dec.released ? 'var(--green)' : 'var(--gold)'};border-color:${dec.released ? 'rgba(70,211,154,.4)' : 'rgba(216,180,106,.4)'}">${dec.released ? '✓ RELEASED to applicant' : '🔒 CONFIDENTIAL — applicant not yet informed'}</span>
             <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(dec.reason || '')}${(dec.conditions || []).length ? '<br>Conditions: ' + dec.conditions.map(esc).join(' · ') : ''} · ${new Date(dec.at).toLocaleString()}</div>
-            <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="viewVisaLetter('${a.id}')">📄 Embassy decision letter</button></div>`
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+              ${!dec.released ? `<button class="btn btn-gold btn-sm" onclick="releaseVisa('${a.id}')">📤 Release decision to applicant</button>` : ''}
+              <button class="btn btn-ghost btn-sm" onclick="viewVisaLetter('${a.id}')">📄 Embassy decision letter</button>
+            </div></div>`
         : `<div style="margin-top:14px"><span class="eyebrow">Officer decision · confirm or override the AI proposal</span>
             ${prop?.templates?.refusalReasons?.length ? `
             <div class="field" style="margin-top:8px"><label>Reason template (or write your own below)</label>
@@ -2644,6 +2658,13 @@ window.decideVisa = async (id, decision, secondApproverId) => {
   }
   const o = d.application?.embassyDecision;
   toast(o?.override ? `✓ OVERRIDE recorded with approval chain [${o.approvalChain.join(' → ')}] — sealed in the audit trail.` : `✓ Decision recorded: ${decision}`);
+  renderVisaGov();
+};
+// Officer releases the decision — ONLY now does the applicant learn the outcome.
+window.releaseVisa = async (id) => {
+  try { await api(`/api/visaos/applications/${id}/release`, { method: 'POST', body: JSON.stringify({}) }); }
+  catch { toast('Could not release the decision.'); return; }
+  toast('✓ Decision released — the applicant has been notified and can now open their letter.');
   renderVisaGov();
 };
 // Embassy-branded decision letter (opens in a new tab; applicant sees the same).
