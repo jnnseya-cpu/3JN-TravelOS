@@ -445,7 +445,9 @@ function fullyLoadDemoAccounts() {
   if (!h) { step('host: account created', () => createUser({ name: 'Demo Host', email: 'host@3jntravel.com', role: 'consumer' })); h = byEmail('host@3jntravel.com'); }
   if (h && listHostListings(h.id).length === 0) {
     step('host: registered + listing published (12 photos)', () => {
-      registerHost(h.id, { displayName: 'Demo Host', payoutMethod: 'BitriPay wallet', payout: { walletId: 'BTP-DEMO-884421' } });
+      // Stripe is the live payout rail until BitriPay ships, so the demo host
+      // registers with bank details (paid out via Stripe).
+      registerHost(h.id, { displayName: 'Demo Host', payoutMethod: 'Bank transfer', payout: { accountHolder: 'Demo Host', accountNumber: 'GB29DEMO60161331926819', bankName: 'Demo Bank UK', sortOrSwift: '601613', currency: 'GBP' } });
       const demoListing = createHostListing(h.id, {
         title: 'The Palm Residence — Marina View Apartment',
         city: 'Dubai',

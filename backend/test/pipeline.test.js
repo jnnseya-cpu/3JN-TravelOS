@@ -517,6 +517,21 @@ test('white-label payout is 90/10 split', () => {
   assert.equal(p.platformShareUSD, 1000);
 });
 
+test('payment rail policy: Stripe carries all money in until BitriPay ships', () => {
+  const user = createUser({ name: 'Rail Test' });
+  const option = { totalUSD: 500, pricing: { lines: { totalUSD: 500 }, local: { total: 395 }, revenue: { commissionUSD: 50, savingsShareUSD: 5 } } };
+  const quote = saveQuote({ option, intent: { dates: { checkIn: '2026-09-01' } } });
+  // A BitriPay/mobile-money selection must settle on Stripe while the rail
+  // is unfinished — money in defaults to Stripe, no exceptions.
+  for (const method of ['bitripay', 'mpesa', 'airtel', 'orange', 'africell']) {
+    const b = createBooking({ quoteId: quote.id, option, instalment: null, userId: user.id, paymentMethod: method });
+    assert.equal(b.gateway, 'stripe', `${method} settles on Stripe until BitriPay launches`);
+  }
+  // Card stays Stripe, as ever.
+  const card = createBooking({ quoteId: quote.id, option, instalment: null, userId: user.id, paymentMethod: 'card' });
+  assert.equal(card.gateway, 'stripe');
+});
+
 test('price guard refunds the difference when price drops', () => {
   const user = createUser({ name: 'Test' });
   const option = { totalUSD: 1000, pricing: { lines: { totalUSD: 1000 }, local: { total: 790 }, revenue: { commissionUSD: 100, savingsShareUSD: 10 } } };
@@ -1225,8 +1240,13 @@ test('host marketplace: a community listing goes live and competes in searches',
   const gate = createHostListing(host.id, { title: 'X', city: 'Dubai', nightlyUSD: 30 });
   assert.equal(gate.error, 'host-registration-required');
   // Registration REQUIRES payout details — without them the host can't be paid.
-  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet' }).ok, false, 'no payout details → refused');
-  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet', payout: { walletId: 'BTP-778812' } }).ok, true);
+  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'Bank transfer' }).ok, false, 'no payout details → refused');
+  // PAYMENT RAIL POLICY: BitriPay payouts are refused (coming soon) until the
+  // rail is complete — Stripe carries all money in and out for now.
+  const btp = registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet', payout: { walletId: 'BTP-778812' } });
+  assert.equal(btp.ok, false);
+  assert.equal(btp.error, 'bitripay-coming-soon');
+  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'Bank transfer', payout: { accountHolder: 'Fatima H', accountNumber: 'GB29NWBK60161331926819', bankName: 'NatWest', sortOrSwift: '601613' } }).ok, true);
   const created = createHostListing(host.id, {
     title: 'Marina View Apartment', city: 'Dubai', propertyType: 'Entire apartment',
     nightlyUSD: 38, sleeps: 5, amenities: 'Full kitchen, WiFi, Washer',

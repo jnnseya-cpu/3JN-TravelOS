@@ -1030,12 +1030,13 @@ window.openBooking = async (tier) => {
       <label>Payment method</label>
       <select id="payMethod" class="in">
         <option value="card">💳 Card (Visa / Mastercard) — via Stripe</option>
-        <option value="bitripay">🅱 BitriPay Wallet — instant</option>
-        <option value="mpesa">📱 M-Pesa (CDF / KES)</option>
-        <option value="airtel">📱 Airtel Money (CDF)</option>
-        <option value="orange">📱 Orange Money (CDF / XOF)</option>
-        <option value="africell">📱 Africell Money (CDF)</option>
+        <option value="bitripay" disabled>🅱 BitriPay Wallet — coming soon</option>
+        <option value="mpesa" disabled>📱 M-Pesa — coming soon via BitriPay</option>
+        <option value="airtel" disabled>📱 Airtel Money — coming soon via BitriPay</option>
+        <option value="orange" disabled>📱 Orange Money — coming soon via BitriPay</option>
+        <option value="africell" disabled>📱 Africell Money — coming soon via BitriPay</option>
       </select>
+      <div class="muted" style="font-size:11px;margin-top:4px">All payments run on Stripe today. BitriPay Wallet &amp; mobile money unlock automatically the day BitriPay launches.</div>
     </div>
     <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.35)">
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
@@ -1578,7 +1579,8 @@ async function renderBitriPay() {
       <span>${money(p.amountMinor)} · ${p.status === 'settled' ? '✓ settled' : `<a onclick="settleLink('${p.id}')" style="color:var(--gold);cursor:pointer">mark paid</a>`} <a onclick="showQR('${p.ref}','${p.qrData}')" style="cursor:pointer" title="QR">▦</a></span>
     </div>`).join('') || '<div class="muted" style="font-size:13px">No payment links yet.</div>';
   el.innerHTML = `
-    <span class="eyebrow">BitriPay · Payment Links &amp; Settlement</span>
+    <span class="eyebrow">BitriPay · Payment Links &amp; Settlement <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">SANDBOX — launching soon</span></span>
+    <div class="muted" style="font-size:11.5px;margin:4px 0 6px">BitriPay is completing certification. Live customer payments run on <strong>Stripe</strong> today; this portal is a sandbox preview — links here don't move real money yet.</div>
     <div class="kv"><span>Settled / pending</span><span>${s.settled || 0} / ${s.pending || 0}</span></div>
     <div class="kv"><span>Gross settled</span><span>${money(s.grossMinor)}</span></div>
     <div class="kv"><span>Gateway fee (~1.2%)</span><span>-${money(s.feeMinor)}</span></div>
@@ -2961,7 +2963,7 @@ async function renderBusiness() {
         <div class="card pad"><span class="eyebrow">Travel Policy</span>
           <div class="kv"><span>Max trip value (auto-approve)</span><span>$4,000</span></div>
           <div class="kv"><span>Cabin (long-haul)</span><span>Economy / Premium</span></div>
-          <div class="kv"><span>Preferred payment</span><span>BitriPay / Card</span></div>
+          <div class="kv"><span>Preferred payment</span><span>Card via Stripe (BitriPay coming soon)</span></div>
           <div class="kv"><span>Cheapest compliant fare</span><span style="color:var(--green)">enforced</span></div>
         </div>
         <div class="card pad" style="margin-top:16px"><span class="eyebrow">Duty of Care · live</span><div class="chips" style="margin-top:10px">${duty}</div></div>
@@ -3313,7 +3315,7 @@ const DEMO_ACCOUNT_META = {
 const DEMO_ROLE_META = {
   admin: { icon: '🛡', label: 'Platform Admin', view: 'admin', blurb: 'RULES the platform: all 3JN income & AI-margin panels · approves/suspends vendors, influencers & host listings · sees every user, booking & support ticket · 10,500 ACU, Elite' },
   business: { icon: '🏢', label: 'Corporate Manager', view: 'business', blurb: 'CONTROLS company travel: approves/declines trip requests against policy · duty-of-care map · team bookings · 5,250 ACU float' },
-  merchant: { icon: '💳', label: 'BitriPay Merchant', view: 'console', blurb: 'MOVES money: creates payment links & QR invoices (£420 demo live) · tracks settlement to the penny' },
+  merchant: { icon: '💳', label: 'BitriPay Merchant', view: 'console', blurb: 'BitriPay SANDBOX preview: payment links & QR invoices (£420 demo) · settlement to the penny · live money runs on Stripe until BitriPay ships' },
   partner: { icon: '🤝', label: 'Agency Partner', view: 'console', blurb: 'RESELLS the OS: white-label production API key · revenue share on every booking through it' },
   consumer: { icon: '🧳', label: 'Test Traveller', view: 'console', blurb: 'LIVES the customer journey: paid Dubai booking with e-ticket · Travel+ Family plan · 1,930 ACU · savings pot · visa application AWAITING the embassy\'s decision' },
   embassy: { icon: '🏛', label: 'Embassy Officer', view: 'visaos', blurb: 'DECIDES visas with full authority: sets the country\'s criteria, fees & letter branding · sees the AI\'s confidential verdict on 3 pending files · approves, refuses or overrides with reasons & conditions · RELEASES the decision when ready' },
@@ -3619,7 +3621,8 @@ async function renderHosting() {
       <p class="muted" style="font-size:13px">One registration unlocks everything: publish properties, set your prices, pause or resume listings, manage bookings and payouts. You keep <strong>90%</strong> of every stay; 3JN keeps 10%.</p>
       <div class="field" style="margin-top:12px"><label>Host display name (shown to guests)</label><input class="in" id="hostRegName" value="${esc(state.user.name || '')}" /></div>
       <div class="field" style="margin-top:10px"><label>Payout method — where we send your 90%</label>
-        <select class="in" id="hostRegPayout" onchange="hostPayoutFields(this.value)"><option>Bank transfer</option><option>BitriPay wallet</option><option>PayPal</option></select></div>
+        <select class="in" id="hostRegPayout" onchange="hostPayoutFields(this.value)"><option>Bank transfer</option><option>PayPal</option><option value="BitriPay wallet" disabled>BitriPay wallet — coming soon</option></select></div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Payouts run on Stripe (bank transfer) or PayPal today. BitriPay wallet unlocks the day BitriPay launches.</div>
       <div id="hostPayoutFields">${payoutFieldsHTML('Bank transfer')}</div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="hostRegister()">Register & open my dashboard</button>
       <p class="muted" style="font-size:11.5px;margin-top:8px">Payout details are required — we can't pay you without them. They're stored securely, shown masked (last 4 digits only), and verified before your first payout. Identity comes from your 3JN account; properties pass the 50-point integrity check + AI security verification + admin review before going live.</p>
@@ -3835,7 +3838,8 @@ window.openPayoutUpdate = async () => {
     <p class="muted" style="font-size:12px;margin:6px 0">Current: ${esc(method)} ${d?.profile?.payoutMasked ? '· ' + esc(d.profile.payoutMasked.accountNumber || d.profile.payoutMasked.walletId || d.profile.payoutMasked.paypalEmail || '') : ''} ${d?.profile?.payoutMasked?.verified ? '<span style="color:var(--green)">✓ verified</span>' : '<span style="color:var(--gold)">verification pending</span>'}</p>
     <div class="field"><label>Payout method</label>
       <select class="in" id="pu_method" onchange="hostPayoutFields(this.value, '#pu_fields', 'pu')">
-        ${['Bank transfer', 'BitriPay wallet', 'PayPal'].map((m) => `<option ${m === method ? 'selected' : ''}>${m}</option>`).join('')}
+        ${['Bank transfer', 'PayPal'].map((m) => `<option ${m === method ? 'selected' : ''}>${m}</option>`).join('')}
+        <option value="BitriPay wallet" disabled ${method === 'BitriPay wallet' ? 'selected' : ''}>BitriPay wallet — coming soon</option>
       </select></div>
     <div id="pu_fields">${payoutFieldsHTML(method, 'pu')}</div>
     <button class="btn btn-gold btn-block" style="margin-top:12px" onclick="savePayoutUpdate()">Save payout details</button>

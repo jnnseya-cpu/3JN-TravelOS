@@ -12,7 +12,7 @@
 | **Classification** | CONFIDENTIAL — Proprietary |
 | **Target Markets** | UK, EU, Pan-Africa, DRC/Kinshasa, Global Diaspora Corridors |
 | **Primary Currency** | GBP (Secondary: USD, EUR, CDF) |
-| **Payment Rail** | BitriPay (Primary African Rail) + Stripe + Adyen |
+| **Payment Rail** | **Stripe (live default — all money in & out)** · BitriPay (African rail, launching — sandbox only until `BITRIPAY_ENABLED=true`) · Adyen (roadmap) |
 | **Architecture** | AI-Native • Event-Driven • Microservices • Zero-Trust |
 | **Build Stack** | NestJS • Next.js • PostgreSQL • Firestore • GCP • LangGraph |
 

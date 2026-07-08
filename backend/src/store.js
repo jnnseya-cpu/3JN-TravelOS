@@ -1060,7 +1060,12 @@ const GATEWAY = {
 
 export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null }) {
   const bookingId = id('bkg');
-  const gateway = GATEWAY[paymentMethod] || 'stripe';
+  // PAYMENT RAIL POLICY: until BitriPay completes, Stripe is the ONLY live
+  // money-in rail. Any BitriPay/mobile-money selection settles on Stripe.
+  const requestedGateway = GATEWAY[paymentMethod] || 'stripe';
+  const bitripayLive = PAYMENT_RAIL.bitripayEnabled();
+  const gateway = !bitripayLive && requestedGateway.startsWith('bitripay') ? 'stripe' : requestedGateway;
+  if (gateway !== requestedGateway) paymentMethod = 'card';
   const booking = {
     id: bookingId,
     quoteId,
@@ -1361,6 +1366,11 @@ function rewardsLeaderboardRank(userId) {
 export function requestWithdrawal(userId, { amountGbp, method = 'bank' } = {}) {
   const p = ensurePartner(userId);
   if (p.standing !== 'good') return { ok: false, error: 'account-not-in-good-standing' };
+  // Money OUT rides Stripe (bank) until BitriPay is complete — same policy
+  // as host/vendor payouts.
+  if (/bitripay/i.test(String(method)) && !PAYMENT_RAIL.bitripayEnabled()) {
+    return { ok: false, error: 'bitripay-coming-soon', message: 'BitriPay is completing certification — withdrawals are paid by bank transfer (via Stripe) for now.' };
+  }
   const lifetime = db.revshareLedger.filter((r) => r.partnerId === userId).reduce((s, r) => s + (r.amountGbp || 0), 0);
   const drawn = db.rewardWithdrawals.filter((w) => w.partnerId === userId && w.status !== 'rejected').reduce((s, w) => s + (w.amountGbp || 0), 0);
   const available = Math.round((lifetime - drawn) * 100) / 100;
@@ -1893,9 +1903,16 @@ const HOST_COMMISSION = 0.10;
 // A host cannot be PAID without real payout details, so registration requires
 // them. Validated per method; stored server-side; every read is MASKED (last 4
 // only) so full account numbers never travel back to the browser.
+// PAYMENT RAIL POLICY: Stripe is the default for ALL money in and out until
+// BitriPay completes. Bank-transfer payouts run over Stripe; BitriPay wallet
+// stays visible as "coming soon" but is REFUSED until BITRIPAY_ENABLED=true.
+export const PAYMENT_RAIL = { default: 'stripe', bitripayEnabled: () => process.env.BITRIPAY_ENABLED === 'true' };
 export const HOST_PAYOUT_METHODS = ['Bank transfer', 'BitriPay wallet', 'PayPal'];
 function validateHostPayout(method, p = {}) {
   const s = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+  if (method === 'BitriPay wallet' && !PAYMENT_RAIL.bitripayEnabled()) {
+    return { ok: false, error: 'bitripay-coming-soon', message: 'BitriPay is completing certification — payouts run on Stripe (bank transfer) for now. Choose Bank transfer or PayPal; you can switch to BitriPay the day it launches.' };
+  }
   if (method === 'Bank transfer') {
     const accountHolder = s(p.accountHolder, 80);
     const accountNumber = s(p.accountNumber || p.iban, 42).replace(/\s+/g, '');
