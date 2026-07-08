@@ -3596,9 +3596,11 @@ async function renderHosting() {
       <h3 style="margin:6px 0">Open your Host Dashboard</h3>
       <p class="muted" style="font-size:13px">One registration unlocks everything: publish properties, set your prices, pause or resume listings, manage bookings and payouts. You keep <strong>90%</strong> of every stay; 3JN keeps 10%.</p>
       <div class="field" style="margin-top:12px"><label>Host display name (shown to guests)</label><input class="in" id="hostRegName" value="${esc(state.user.name || '')}" /></div>
-      <div class="field" style="margin-top:10px"><label>Payout method</label><select class="in" id="hostRegPayout"><option>Bank transfer</option><option>BitriPay wallet</option><option>PayPal</option></select></div>
+      <div class="field" style="margin-top:10px"><label>Payout method — where we send your 90%</label>
+        <select class="in" id="hostRegPayout" onchange="hostPayoutFields(this.value)"><option>Bank transfer</option><option>BitriPay wallet</option><option>PayPal</option></select></div>
+      <div id="hostPayoutFields">${payoutFieldsHTML('Bank transfer')}</div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="hostRegister()">Register & open my dashboard</button>
-      <p class="muted" style="font-size:11.5px;margin-top:8px">Identity comes from your 3JN account; properties pass the 50-point integrity check + AI security verification + admin review before going live.</p>
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Payout details are required — we can't pay you without them. They're stored securely, shown masked (last 4 digits only), and verified before your first payout. Identity comes from your 3JN account; properties pass the 50-point integrity check + AI security verification + admin review before going live.</p>
     </div>`;
     return;
   }
@@ -3634,7 +3636,8 @@ async function renderHosting() {
       ${[['Properties', (d.listings || []).length], ['Live now', (d.listings || []).filter((l) => l.status === 'live').length], ['Reservations', (d.bookings || []).length], ['Gross', '$' + (e ? e.totals.grossUSD : 0)], ['Your 90%', '$' + (e ? e.totals.netUSD : 0)]]
         .map(([k, v]) => `<div class="card pad" style="text-align:center"><div class="t-label">${k}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${v}</div></div>`).join('')}
     </div>
-    <p class="muted center" style="font-size:12px;margin:8px 0 14px">Host: <strong style="color:var(--gold)">${esc(d.profile.displayName)}</strong> · payouts via ${esc(d.profile.payoutMethod)} · you keep 90% of every stay</p>
+    <p class="muted center" style="font-size:12px;margin:8px 0 14px">Host: <strong style="color:var(--gold)">${esc(d.profile.displayName)}</strong> · payouts via ${esc(d.profile.payoutMethod)}${d.profile.payoutMasked ? ` (${esc(d.profile.payoutMasked.accountNumber || d.profile.payoutMasked.walletId || d.profile.payoutMasked.paypalEmail || '')}) ${d.profile.payoutMasked.verified ? '<span style="color:var(--green)">✓ verified</span>' : '<span style="color:var(--gold)">verification pending</span>'}` : ''} · you keep 90% of every stay
+      · <a style="color:var(--blue-bright);cursor:pointer;text-decoration:underline" onclick="openPayoutUpdate()">update payout details</a></p>
     <div class="console-grid">
       <div>
         <span class="eyebrow">My properties · price, pause, publish</span>
@@ -3761,14 +3764,68 @@ window.setHostKind = (kind) => {
   const pc = $('#hostPhotoCount'); if (pc) pc.textContent = `${hostUploadedPhotos.length} / ${stay ? 10 : 5} minimum · photos compress automatically before upload`;
 };
 
+// Per-method payout detail fields (bank / BitriPay / PayPal).
+function payoutFieldsHTML(method, idPrefix = 'hp') {
+  if (method === 'BitriPay wallet') {
+    return `<div class="field" style="margin-top:8px"><label>BitriPay wallet ID or registered phone</label><input class="in" id="${idPrefix}Wallet" placeholder="BTP-… or +44…" /></div>`;
+  }
+  if (method === 'PayPal') {
+    return `<div class="field" style="margin-top:8px"><label>PayPal email</label><input class="in" id="${idPrefix}Paypal" type="email" placeholder="you@email.com" /></div>`;
+  }
+  return `
+    <div class="field" style="margin-top:8px"><label>Account holder name (exactly as the bank knows it)</label><input class="in" id="${idPrefix}Holder" placeholder="e.g. Jean N Bankwa" /></div>
+    <div class="field" style="margin-top:8px"><label>IBAN or account number</label><input class="in" id="${idPrefix}Account" placeholder="GB29 NWBK 6016 1331 9268 19" /></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <div class="field" style="flex:1;min-width:140px"><label>Bank name</label><input class="in" id="${idPrefix}Bank" placeholder="e.g. NatWest" /></div>
+      <div class="field" style="flex:1;min-width:120px"><label>Sort code / SWIFT</label><input class="in" id="${idPrefix}Sort" placeholder="60-16-13 or NWBKGB2L" /></div>
+      <div class="field" style="width:90px"><label>Currency</label><input class="in" id="${idPrefix}Cur" value="GBP" maxlength="3" /></div>
+    </div>`;
+}
+window.hostPayoutFields = (method, targetId = '#hostPayoutFields', idPrefix = 'hp') => {
+  const el = $(targetId); if (el) el.innerHTML = payoutFieldsHTML(method, idPrefix);
+};
+function collectPayout(idPrefix = 'hp') {
+  const v = (id) => $(`#${idPrefix}${id}`)?.value || '';
+  return {
+    accountHolder: v('Holder'), accountNumber: v('Account'), bankName: v('Bank'),
+    sortOrSwift: v('Sort'), currency: v('Cur'),
+    walletId: v('Wallet'), paypalEmail: v('Paypal'),
+  };
+}
 window.hostRegister = async () => {
   try {
-    await api('/api/host/register', { method: 'POST', body: JSON.stringify({
-      displayName: $('#hostRegName')?.value, payoutMethod: $('#hostRegPayout')?.value,
+    const r = await api('/api/host/register', { method: 'POST', body: JSON.stringify({
+      displayName: $('#hostRegName')?.value,
+      payoutMethod: $('#hostRegPayout')?.value,
+      payout: collectPayout('hp'),
     }) });
-    toast('🏠 Host account active — welcome to your dashboard.');
-    openHostDashboard();
-  } catch {}
+    if (!r.ok) { toast(r.message || 'Check your payout details.'); return; }
+    toast('🏠 Host account active — payout set up. Welcome to your dashboard.');
+    renderHosting();
+  } catch (e) { toast(e?.message || 'Check your payout details — they are required to pay you.'); }
+};
+// Update payout details later (dashboard) — masked display, full re-entry.
+window.openPayoutUpdate = async () => {
+  const d = await api('/api/host/dashboard').catch(() => null);
+  const method = d?.profile?.payoutMethod || 'Bank transfer';
+  modal(`
+    <span class="eyebrow">💷 Payout details · where your 90% goes</span>
+    <p class="muted" style="font-size:12px;margin:6px 0">Current: ${esc(method)} ${d?.profile?.payoutMasked ? '· ' + esc(d.profile.payoutMasked.accountNumber || d.profile.payoutMasked.walletId || d.profile.payoutMasked.paypalEmail || '') : ''} ${d?.profile?.payoutMasked?.verified ? '<span style="color:var(--green)">✓ verified</span>' : '<span style="color:var(--gold)">verification pending</span>'}</p>
+    <div class="field"><label>Payout method</label>
+      <select class="in" id="pu_method" onchange="hostPayoutFields(this.value, '#pu_fields', 'pu')">
+        ${['Bank transfer', 'BitriPay wallet', 'PayPal'].map((m) => `<option ${m === method ? 'selected' : ''}>${m}</option>`).join('')}
+      </select></div>
+    <div id="pu_fields">${payoutFieldsHTML(method, 'pu')}</div>
+    <button class="btn btn-gold btn-block" style="margin-top:12px" onclick="savePayoutUpdate()">Save payout details</button>
+    <p class="muted" style="font-size:11px;margin-top:8px">Changed details are re-verified before the next Friday payout run — this protects you from account-takeover fraud.</p>`);
+};
+window.savePayoutUpdate = async () => {
+  try {
+    const r = await api('/api/host/payout', { method: 'PATCH', body: JSON.stringify({ payoutMethod: $('#pu_method')?.value, payout: collectPayout('pu') }) });
+    if (!r.ok) { toast(r.message || 'Check the details.'); return; }
+    toast('✓ Payout details updated — re-verification before the next payout.');
+    closeModal(); renderHosting();
+  } catch (e) { toast(e?.message || 'Could not save payout details.'); }
 };
 
 window.hostSetPrice = async (id) => {

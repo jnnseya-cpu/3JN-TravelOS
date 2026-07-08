@@ -1889,19 +1889,87 @@ const HOST_COMMISSION = 0.10;
 
 // Step 1 — registration. Hosting is an account capability: register once,
 // then the dashboard unlocks. Listings cannot be created without it.
-export function registerHost(userId, { displayName, payoutMethod = 'Bank transfer' } = {}) {
+// ---- Host payout details -----------------------------------------------------
+// A host cannot be PAID without real payout details, so registration requires
+// them. Validated per method; stored server-side; every read is MASKED (last 4
+// only) so full account numbers never travel back to the browser.
+export const HOST_PAYOUT_METHODS = ['Bank transfer', 'BitriPay wallet', 'PayPal'];
+function validateHostPayout(method, p = {}) {
+  const s = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+  if (method === 'Bank transfer') {
+    const accountHolder = s(p.accountHolder, 80);
+    const accountNumber = s(p.accountNumber || p.iban, 42).replace(/\s+/g, '');
+    const bankName = s(p.bankName, 80);
+    const sortOrSwift = s(p.sortOrSwift, 20).replace(/\s+/g, '');
+    if (accountHolder.length < 3) return { ok: false, error: 'payout-account-holder', message: 'Enter the account holder name exactly as the bank knows it.' };
+    if (accountNumber.length < 8) return { ok: false, error: 'payout-account-number', message: 'Enter a valid IBAN or account number (min 8 characters).' };
+    if (!bankName) return { ok: false, error: 'payout-bank-name', message: 'Enter the bank name.' };
+    return { ok: true, payout: { accountHolder, accountNumber, bankName, sortOrSwift, currency: s(p.currency, 3).toUpperCase() || 'GBP' } };
+  }
+  if (method === 'BitriPay wallet') {
+    const walletId = s(p.walletId || p.phone, 40);
+    if (walletId.length < 6) return { ok: false, error: 'payout-wallet', message: 'Enter your BitriPay wallet ID or registered phone number.' };
+    return { ok: true, payout: { walletId } };
+  }
+  if (method === 'PayPal') {
+    const paypalEmail = s(p.paypalEmail, 120).toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(paypalEmail)) return { ok: false, error: 'payout-paypal', message: 'Enter a valid PayPal email address.' };
+    return { ok: true, payout: { paypalEmail } };
+  }
+  return { ok: false, error: 'payout-method', message: 'Choose a payout method.' };
+}
+const mask = (v) => { const x = String(v || ''); return x.length <= 4 ? x : '•••• ' + x.slice(-4); };
+export function maskedHostPayout(profile) {
+  const p = profile?.payout; if (!p) return null;
+  return {
+    method: profile.payoutMethod,
+    accountHolder: p.accountHolder || undefined,
+    bankName: p.bankName || undefined,
+    accountNumber: p.accountNumber ? mask(p.accountNumber) : undefined,
+    sortOrSwift: p.sortOrSwift ? mask(p.sortOrSwift) : undefined,
+    currency: p.currency || undefined,
+    walletId: p.walletId ? mask(p.walletId) : undefined,
+    paypalEmail: p.paypalEmail ? p.paypalEmail.replace(/^(..).*(@.*)$/, '$1•••$2') : undefined,
+    verified: !!profile.payoutVerified,
+  };
+}
+
+export function registerHost(userId, { displayName, payoutMethod = 'Bank transfer', payout = {} } = {}) {
   const u = userId ? db.users.get(userId) : null;
   if (!u) return { ok: false, error: 'auth-required', message: 'Sign in to register as a host.' };
   if (u.host && u.hostProfile) return { ok: true, alreadyRegistered: true, profile: u.hostProfile };
+  const method = HOST_PAYOUT_METHODS.includes(payoutMethod) ? payoutMethod : 'Bank transfer';
+  // Registration REQUIRES real payout details — without them we can't pay the
+  // host their 90%, so the account must not exist half-configured.
+  const pv = validateHostPayout(method, payout);
+  if (!pv.ok) return pv;
   u.host = true;
   u.hostProfile = {
     displayName: String(displayName || u.name || 'Host').trim().slice(0, 60),
-    payoutMethod: ['Bank transfer', 'BitriPay wallet', 'PayPal'].includes(payoutMethod) ? payoutMethod : 'Bank transfer',
+    payoutMethod: method,
+    payout: pv.payout,
+    payoutVerified: false, // first payout run verifies with a micro-deposit/KYC
     registeredAt: new Date().toISOString(),
   };
-  recordAudit({ actor: u.id, role: 'host', action: 'host.registered', entity: 'user', entityId: u.id, summary: `${u.hostProfile.displayName} · ${u.hostProfile.payoutMethod}` });
-  pushNotification(u.id, { type: 'success', icon: '🏠', title: 'Host account active', body: 'Your Host Dashboard is ready — publish your first property.' });
+  recordAudit({ actor: u.id, role: 'host', action: 'host.registered', entity: 'user', entityId: u.id, summary: `${u.hostProfile.displayName} · ${method} (payout captured)` });
+  pushNotification(u.id, { type: 'success', icon: '🏠', title: 'Host account active', body: `Your Host Dashboard is ready and your ${method} payout is set up — publish your first property.` });
   return { ok: true, profile: u.hostProfile };
+}
+
+// Update payout details later from the dashboard (audited; re-verification).
+export function updateHostPayout(userId, { payoutMethod, payout = {} } = {}) {
+  const u = userId ? db.users.get(userId) : null;
+  if (!u || !u.hostProfile) return { ok: false, error: 'not-a-host' };
+  const method = HOST_PAYOUT_METHODS.includes(payoutMethod) ? payoutMethod : u.hostProfile.payoutMethod;
+  const pv = validateHostPayout(method, payout);
+  if (!pv.ok) return pv;
+  u.hostProfile.payoutMethod = method;
+  u.hostProfile.payout = pv.payout;
+  u.hostProfile.payoutVerified = false; // changed details must re-verify
+  u.hostProfile.payoutUpdatedAt = new Date().toISOString();
+  recordAudit({ actor: u.id, role: 'host', action: 'host.payout.updated', entity: 'user', entityId: u.id, summary: method });
+  pushNotification(u.id, { type: 'info', icon: '💷', title: 'Payout details updated', body: `Future payouts go to your ${method}. New details are re-verified before the next payout run.` });
+  return { ok: true, payout: maskedHostPayout(u.hostProfile) };
 }
 
 export const HOST_PHOTOS_MIN = 10;
@@ -2156,10 +2224,12 @@ export function hostDashboard(userId) {
   const u = userId ? db.users.get(userId) : null;
   if (!u) return { ok: false, error: 'auth-required' };
   const registered = !!(u.host && u.hostProfile);
+  // NEVER return raw payout details to the browser — masked only (last 4).
+  const profile = u.hostProfile ? { ...u.hostProfile, payout: undefined, payoutMasked: maskedHostPayout(u.hostProfile) } : null;
   return {
     ok: true,
     registered,
-    profile: u.hostProfile || null,
+    profile,
     listings: registered ? listHostListings(userId) : [],
     bookings: registered ? hostBookings(userId) : [],
     earnings: registered ? hostEarnings(userId) : null,

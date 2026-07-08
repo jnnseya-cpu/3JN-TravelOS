@@ -27,6 +27,7 @@ import { commissionSplit } from '../src/vendors.js';
 import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
 import { bookingDocument } from '../src/documents.js';
 import { saveEmbassyConfig, getEmbassyConfig, redactVisaForApplicant, releaseVisaDecision } from '../src/store.js';
+import { updateHostPayout, hostDashboard } from '../src/store.js';
 import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
 import { db } from '../src/store.js';
 import { assist } from '../src/assistant.js';
@@ -1223,7 +1224,9 @@ test('host marketplace: a community listing goes live and competes in searches',
   // Registration is mandatory before publishing.
   const gate = createHostListing(host.id, { title: 'X', city: 'Dubai', nightlyUSD: 30 });
   assert.equal(gate.error, 'host-registration-required');
-  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet' }).ok, true);
+  // Registration REQUIRES payout details — without them the host can't be paid.
+  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet' }).ok, false, 'no payout details → refused');
+  assert.equal(registerHost(host.id, { displayName: 'Fatima', payoutMethod: 'BitriPay wallet', payout: { walletId: 'BTP-778812' } }).ok, true);
   const created = createHostListing(host.id, {
     title: 'Marina View Apartment', city: 'Dubai', propertyType: 'Entire apartment',
     nightlyUSD: 38, sleeps: 5, amenities: 'Full kitchen, WiFi, Washer',
@@ -1262,7 +1265,7 @@ test('host marketplace: a community listing goes live and competes in searches',
 test('host marketplace: validation + auth guards', () => {
   assert.equal(createHostListing(null, { title: 'X', city: 'Y', nightlyUSD: 10 }).ok, false);
   const u = createUser({ name: 'H2', email: 'h2@example.com' });
-  registerHost(u.id, {});
+  registerHost(u.id, { payout: { accountHolder: 'Test Host', accountNumber: 'GB29NWBK60161331926819', bankName: 'NatWest' } });
   assert.equal(createHostListing(u.id, { title: '', city: 'Dubai', nightlyUSD: 10 }).ok, false);
   assert.equal(createHostListing(u.id, { title: 'No Rate', city: 'Dubai', nightlyUSD: 0 }).ok, false);
   const tenPics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/${i}.jpg`);
@@ -1303,7 +1306,7 @@ test('stays carry name + address so travellers can verify them online', () => {
 
 test('host marketplace: earnings pay the host 90%, 3JN keeps 10%', () => {
   const host = createUser({ name: 'Omar Host', email: 'omar.host@example.com' });
-  registerHost(host.id, { displayName: 'Omar' });
+  registerHost(host.id, { displayName: 'Omar', payout: { accountHolder: 'Omar H', accountNumber: 'GB29NWBK60161331926819', bankName: 'HSBC' } });
   // $20/night — deterministically the cheapest reliable stay in Dubai.
   const riad = createHostListing(host.id, {
     title: 'Souk Riad', city: 'Dubai', nightlyUSD: 20, sleeps: 4,
@@ -1390,7 +1393,7 @@ test('visa flow: approval issues an eVisa; unpaid files wait at the payment gate
 // ---- Host Dashboard: price management + pause/resume ------------------------
 test('host dashboard: set price, pause removes from searches, resume restores', () => {
   const host = createUser({ name: 'Lina Host', email: 'lina.host@example.com' });
-  registerHost(host.id, { displayName: 'Lina' });
+  registerHost(host.id, { displayName: 'Lina', payout: { accountHolder: 'Lina K', accountNumber: 'GB29NWBK60161331926819', bankName: 'Monzo' } });
   const pics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/l/${i}.jpg`);
   const { listing } = createHostListing(host.id, { title: 'Lina Loft', city: 'Istanbul', nightlyUSD: 55, sleeps: 3, address: '3 Galata Steps, Istanbul', photos: pics });
   reviewHostListing(listing.id, { decision: 'approve', reviewerId: 'admin_test' });
@@ -1517,7 +1520,7 @@ import { submitReview } from '../src/reviews.js';
 
 test('synapse: booking a hosted stay notifies the host with their 90% payout', () => {
   const host = createUser({ name: 'Syn Host', email: 'syn.host@example.com' });
-  registerHost(host.id, { displayName: 'Syn' });
+  registerHost(host.id, { displayName: 'Syn', payout: { accountHolder: 'Syn H', accountNumber: 'GB29NWBK60161331926819', bankName: 'Barclays' } });
   const pics = Array.from({ length: 10 }, (_, i) => `https://p.example.com/s/${i}.jpg`);
   { const sy = createHostListing(host.id, { title: 'Synapse Suite', city: 'Dubai', nightlyUSD: 18, sleeps: 4, address: '9 Link Road, Dubai', photos: pics }); reviewHostListing(sy.listing.id, { decision: 'approve', reviewerId: 'admin_test' }); }
   const guest = createUser({ name: 'Syn Guest', email: 'syn.guest@example.com' });
@@ -3270,7 +3273,7 @@ test('hotel holds the privilege; a private host earns it only via reviews + secu
 test('host calendar: blocked dates hide the listing; per-date + weekend prices apply', async () => {
   const { stayQuote, stayIsAvailable } = await import('../src/host-listing.js');
   const u = createUser({ email: 'cal@x.co', name: 'Cal Host' });
-  registerHost(u.id, { displayName: 'Cal' });
+  registerHost(u.id, { displayName: 'Cal', payout: { accountHolder: 'Cal Host', accountNumber: 'GB29NWBK60161331926819', bankName: 'Chase' } });
   const r = createHostListing(u.id, { title: 'Calendar Flat', city: 'Lisbon', address: '1 Rua Alegre, Lisbon', nightlyUSD: 100, sleeps: 4, photos: Array.from({ length: 10 }, (_, i) => `https://x/${i}.jpg`), weekendPriceUSD: 150, weekendDays: ['Fri', 'Sat'] });
   assert.ok(r.ok);
   // Block a date inside the stay → the listing is unavailable for that stay.
@@ -3288,7 +3291,7 @@ test('host calendar: blocked dates hide the listing; per-date + weekend prices a
 
 test('host experiences: published per-person, compete in the activities scan', () => {
   const u = createUser({ email: 'exp@x.co', name: 'Exp Host' });
-  registerHost(u.id, { displayName: 'Exp' });
+  registerHost(u.id, { displayName: 'Exp', payout: { accountHolder: 'Exp Host', accountNumber: 'GB29NWBK60161331926819', bankName: 'Chase' } });
   const e = createHostListing(u.id, { kind: 'experience', title: 'Alfama Food Walk', city: 'Barcelona', address: 'Gothic Quarter, Barcelona', nightlyUSD: 40, sleeps: 10, photos: Array.from({ length: 5 }, (_, i) => `https://x/e${i}.jpg`), experienceType: 'Food tour', durationHours: 3, whatProvided: 'Tastings', whatToBring: 'Comfortable shoes' });
   assert.ok(e.ok && e.listing.kind === 'experience');
   assert.equal(e.listing.details.depositPct, 100, 'experiences take full payment at booking');
@@ -3296,4 +3299,24 @@ test('host experiences: published per-person, compete in the activities scan', (
   const r = plan({ text: 'holiday to Barcelona for 4 nights, 2 adults, flights hotel activities', context: GB, user: null });
   const acts = r.packages.options.flatMap((o) => o.components).filter((c) => c.type === 'activities');
   assert.ok(acts.some((a) => a.supplier === 'Alfama Food Walk' || a.details?.experience), 'community experience competes in the activities scan');
+});
+
+test('host payout is captured at registration, validated per method, and masked', () => {
+  const u = createUser({ email: 'payout@x.co', name: 'Payout Host' });
+  // Bank transfer without an account number → refused.
+  assert.equal(registerHost(u.id, { payoutMethod: 'Bank transfer', payout: { accountHolder: 'P H' } }).ok, false);
+  // PayPal with a bad email → refused.
+  assert.equal(registerHost(u.id, { payoutMethod: 'PayPal', payout: { paypalEmail: 'not-an-email' } }).ok, false);
+  // Valid bank details → registered, stored, and MASKED on the dashboard.
+  const r = registerHost(u.id, { displayName: 'P', payoutMethod: 'Bank transfer', payout: { accountHolder: 'Payout Host', accountNumber: 'GB29NWBK60161331926819', bankName: 'NatWest', sortOrSwift: '601613' } });
+  assert.equal(r.ok, true);
+  const dash = hostDashboard(u.id);
+  assert.ok(!dash.profile.payout, 'raw payout details never leave the server');
+  assert.ok(dash.profile.payoutMasked.accountNumber.includes('••••'), 'account number masked');
+  assert.ok(dash.profile.payoutMasked.accountNumber.endsWith('6819'), 'last 4 shown');
+  assert.equal(dash.profile.payoutMasked.verified, false, 'verified only after first payout check');
+  // Update to PayPal — re-validated, re-verification required.
+  const up = updateHostPayout(u.id, { payoutMethod: 'PayPal', payout: { paypalEmail: 'host@pay.me' } });
+  assert.equal(up.ok, true);
+  assert.ok(up.payout.paypalEmail.includes('•••'), 'paypal email masked');
 });

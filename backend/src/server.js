@@ -26,7 +26,7 @@ import {
   createContract, listContracts, recordBehaviour,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
-  registerHost, updateHostListing, hostBookings, hostDashboard,
+  registerHost, updateHostListing, hostBookings, hostDashboard, updateHostPayout,
   grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT, usageStats,
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
@@ -445,7 +445,7 @@ function fullyLoadDemoAccounts() {
   if (!h) { step('host: account created', () => createUser({ name: 'Demo Host', email: 'host@3jntravel.com', role: 'consumer' })); h = byEmail('host@3jntravel.com'); }
   if (h && listHostListings(h.id).length === 0) {
     step('host: registered + listing published (12 photos)', () => {
-      registerHost(h.id, { displayName: 'Demo Host', payoutMethod: 'BitriPay wallet' });
+      registerHost(h.id, { displayName: 'Demo Host', payoutMethod: 'BitriPay wallet', payout: { walletId: 'BTP-DEMO-884421' } });
       const demoListing = createHostListing(h.id, {
         title: 'The Palm Residence — Marina View Apartment',
         city: 'Dubai',
@@ -1519,7 +1519,18 @@ app.get('/api/visaos/audit-chain', safe((req, res) => {
 app.post('/api/host/register', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to register as a host.' });
-  res.json(registerHost(user.id, req.body || {}));
+  const r = registerHost(user.id, req.body || {});
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
+}));
+// Update payout details from the dashboard (validated; re-verified before the
+// next payout run; only masked details ever come back).
+app.patch('/api/host/payout', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const r = updateHostPayout(user.id, req.body || {});
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
 }));
 app.get('/api/host/dashboard', safe((req, res) => {
   const user = currentUser(req);
