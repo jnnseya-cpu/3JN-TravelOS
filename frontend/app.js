@@ -108,6 +108,7 @@ function nav(view) {
   if (view === 'marketplace') renderMarketplace();
   if (view === 'blog') renderBlog();
   if (view === 'rewards') renderRewards();
+  if (view === 'vendors') renderVendors();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -316,7 +317,7 @@ async function populateShowcase() {
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
 function applyDeepLink() {
-  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'api', 'console', 'business', 'admin']);
+  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'vendors', 'api', 'console', 'business', 'admin']);
   const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
   let target = '';
   const qv = new URLSearchParams(location.search).get('view');
@@ -1732,6 +1733,61 @@ window.withdrawCommission = async (amount) => {
   try { const r = await api('/api/rewards/withdraw', { method: 'POST', body: JSON.stringify({ amountGbp: amount, method: 'bank' }) });
     if (r.ok) { toast('✓ Payout requested'); renderRewards(); } else { toast(r.error === 'insufficient-balance' ? 'Nothing available to withdraw yet.' : 'Could not request payout.'); }
   } catch { toast('Could not request payout.'); }
+};
+
+// ---- Vendor Partner Programme (vendor portal) ------------------------------
+async function renderVendors() {
+  const out = $('#vendorsBody');
+  if (!out) return;
+  let prog;
+  try { prog = await api('/api/vendors/programme'); } catch { out.innerHTML = '<div class="card pad center muted">Could not load the programme. Please try again.</div>'; return; }
+  const tierCards = prog.tiers.map((t) => `
+    <div class="card pad">
+      <span class="eyebrow">${esc(t.name)}</span>
+      <div style="font-family:'Space Grotesk';font-weight:700;font-size:28px;color:var(--gold);margin:8px 0">${t.commissionPct}%<span class="muted" style="font-size:13px;font-weight:400"> of every eligible sale</span></div>
+      <div class="kv"><span>Platform fee</span><span>${prog.platformFeePct}%</span></div>
+      <div class="kv"><span>Platform keeps</span><span>${t.platformKeepsPct}%</span></div>
+      <div class="kv"><span>Top Seller month</span><span style="color:var(--green)">${t.bonusPct}% (+1%)</span></div>
+      <div class="kv"><span>£1,000 example</span><span>you earn <strong style="color:var(--gold)">£${t.example.vendorGbp}</strong></span></div>
+      ${t.requiresRegistration ? `<p class="muted" style="font-size:11.5px;margin-top:8px">Requires legal registration: ${esc((t.requiredDocs || []).slice(0, 3).join(' · '))}…</p>` : '<p class="muted" style="font-size:11.5px;margin-top:8px">For individuals — no business registration needed.</p>'}
+    </div>`).join('');
+
+  let mine = null;
+  if (state.user) { try { mine = (await api('/api/vendors/me')).dashboard; } catch { /* not a vendor yet */ } }
+
+  const portal = mine ? `
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:22px">
+      ${[['Status', mine.status], ['Rate', mine.commissionRatePct + '%' + (mine.topSellerBonusActive ? ' 🏆' : '')], ['Sales', mine.totalSales], ['Sales value', '£' + mine.salesValueGbp.toLocaleString()], ['Earned', '£' + mine.commissionEarnedGbp.toLocaleString()], ['Pending payout', '£' + mine.pendingPayoutGbp.toLocaleString()]]
+        .map(([l, v]) => `<div class="card pad" style="text-align:center"><div class="t-label">${l}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${v}</div></div>`).join('')}
+    </div>
+    <div class="card pad" style="margin-top:14px"><span class="eyebrow">Your sell link</span>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <input readonly value="${esc(mine.sellLink)}" style="flex:1;min-width:220px;background:var(--navy-700);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13px" onclick="this.select()" />
+        <button class="btn btn-gold btn-sm" onclick="navigator.clipboard.writeText('${esc(mine.sellLink)}').then(()=>toast('✓ Sell link copied'))">Copy</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:8px">Code <strong style="color:var(--gold)">${esc(mine.vendorCode)}</strong> · Every eligible sale through your link earns ${mine.commissionRatePct}% — paid automatically every Friday. ${mine.leaderboardRank ? `Leaderboard: #${mine.leaderboardRank}.` : ''} Top seller each month earns +1% the following month.</p>
+      ${(mine.payoutHistory || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Recent payouts</span>${mine.payoutHistory.map((p) => `<div class="kv"><span>${esc((p.at || '').slice(0, 10))}</span><span>£${p.amountGbp.toLocaleString()} · <span class="muted">${esc(p.status)}</span></span></div>`).join('')}</div>` : ''}
+    </div>`
+    : `
+    <div class="card pad center" style="margin-top:22px">
+      <h3 style="margin:0 0 8px">${state.user ? 'Apply to become a Vendor Partner' : 'Sign in to apply'}</h3>
+      <p class="muted" style="max-width:560px;margin:0 auto 14px">Every applicant passes an AI risk review (identity, address, credibility, fraud, sanctions screening). Approved partners get the portal, weekly Friday payouts and the monthly Top Seller bonus.</p>
+      ${state.user ? `
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-gold" onclick="applyVendorFlow('independent')">Apply as Individual (3%)</button>
+        <button class="btn btn-ghost" onclick="applyVendorFlow('registered')">Apply as Registered Agent (4%)</button>
+      </div>` : '<button class="btn btn-gold" onclick="openAuth()">Sign in / Create account</button>'}
+    </div>`;
+
+  out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>${portal}
+    <p class="center muted" style="font-size:12px;margin-top:18px">Commission is never paid on refunds, chargebacks, fraud, self-referrals or policy violations. The platform always keeps its minimum margin.</p>`;
+}
+window.applyVendorFlow = async (tier) => {
+  try {
+    const r = await api('/api/vendors/apply', { method: 'POST', body: JSON.stringify({ tier, identityDoc: true, addressProof: true, socialHandles: ['pending-verification'], businessHistory: tier === 'registered', documents: tier === 'registered' ? ['company-registration', 'tax-registration', 'director-id', 'bank-proof'] : [] }) });
+    if (r.ok) { toast(r.profile.status === 'approved' ? '✓ Approved! Welcome to the programme.' : 'Application received — our compliance team is reviewing it.'); renderVendors(); }
+    else toast('Could not submit application.');
+  } catch { toast('Could not submit application.'); }
 };
 
 // ---- Document Vault -------------------------------------------------------

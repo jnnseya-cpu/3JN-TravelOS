@@ -11,6 +11,7 @@ import {
   AI_GROWTH_TOOLS, REFERRAL_ACU, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK,
 } from './rewards.js';
 import { quoteChange, applyChange, quoteCancellation } from './operator.js';
+import { VENDOR_TIERS, commissionSplit, saleIsPayable, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -47,6 +48,9 @@ const db = {
   revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
   rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
   supportTickets: [], // AI Support Concierge escalations to a human { id, userId, intent, message, reason, status, transcript }
+  vendorProfiles: new Map(), // Vendor Partner Programme: userId -> { tier, status, vendorCode, riskReview, ... }
+  vendorSales: [], // { id, vendorId, bookingId, saleGbp, vendorGbp, platformKeepsGbp, status, flags..., at }
+  vendorPayouts: [], // weekly Friday payout batches { id, vendorId, amountGbp, saleIds, status, at }
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -982,7 +986,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null }) {
   const bookingId = id('bkg');
   const gateway = GATEWAY[paymentMethod] || 'stripe';
   const booking = {
@@ -1019,6 +1023,8 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     gateway,
     // Lead traveller captured + validated at booking time (passport, DOB, etc).
     leadTraveller: lead || null,
+    // Vendor Partner attribution: which approved vendor brought this sale.
+    vendorCode: vendorCode ? String(vendorCode).trim().toUpperCase() : null,
     status: 'confirmed',
     payments: [],
     priceGuard: { active: true, baselineUSD: option.totalUSD, events: [] },
@@ -1059,6 +1065,20 @@ export function recordPayment(bookingId, payment) {
   // Rewards: the first payment makes this a "paid booking" — fire the referral
   // engine once (250 ACU + revenue-share accrual). Guarded so it never double-pays.
   try { if (!b.referralProcessed) processReferralOnPaidBooking(b); } catch { /* rewards are best-effort */ }
+  // Vendor Partner attribution: the first payment confirms the sale — record the
+  // vendor commission once (carved from the 10% fee; never on top of it).
+  try {
+    if (b.vendorCode && !b.vendorSaleProcessed) {
+      const vendor = findVendorByCode(b.vendorCode);
+      if (vendor && vendor.userId !== b.userId) {
+        const saleGbp = (b.option?.pricing?.local?.total && b.option?.pricing?.symbol === '£')
+          ? b.option.pricing.local.total
+          : (b.option?.totalUSD || 0) / VENDOR_GBP_TO_USD;
+        const r = recordVendorSale({ vendorId: vendor.userId, bookingId: b.id, saleGbp, customerId: b.userId });
+        if (r.ok) b.vendorSaleProcessed = true;
+      }
+    }
+  } catch { /* vendor attribution is best-effort */ }
   return b;
 }
 
@@ -1393,6 +1413,167 @@ export function operatorConfirm(bookingId) {
   return { ok: false, error: 'unknown-action' };
 }
 
+// ===========================================================================
+// VENDOR PARTNER PROGRAMME (docs/VENDOR-PARTNER-PROGRAMME.md)
+// Sell More. Earn Weekly. Grow Without Owning the Platform.
+// ===========================================================================
+const VENDOR_GBP_TO_USD = 1.27;
+
+// §4 — apply. The AI risk review runs immediately; a clean pass auto-approves,
+// a sanctions hit rejects, anything else goes to manual compliance review.
+export function applyVendor(userId, { tier = 'independent', identityDoc, addressProof, socialHandles, businessHistory, documents, flags } = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'auth-required' };
+  const t = VENDOR_TIERS[tier] || VENDOR_TIERS.independent;
+  const review = vendorRiskReview({ name: u.name, email: u.email, tier: t.key, identityDoc, addressProof, socialHandles, businessHistory, documents, flags });
+  const status = review.sanctionsHit ? 'rejected' : review.passed ? 'approved' : 'pending-review';
+  const p = {
+    userId, tier: t.key, status,
+    vendorCode: 'VND-' + userId.slice(-4).toUpperCase(),
+    riskReview: review, documents: (documents || []).slice(0, 12),
+    appliedAt: nowISO(), decidedAt: status === 'approved' || status === 'rejected' ? nowISO() : null,
+    topSellerMonth: null, // month key this vendor holds the +1% bonus for
+  };
+  db.vendorProfiles.set(userId, p);
+  recordAudit({ actor: userId, role: u.role, action: 'vendor.applied', entity: 'vendor', entityId: userId, summary: `${t.key} · risk ${review.overallRisk} → ${status}` });
+  if (status === 'approved') pushNotification(userId, { type: 'success', icon: '🤝', title: 'Vendor Partner approved', body: `Welcome to the Vendor Partner Programme! Your code is ${p.vendorCode}. You earn ${(t.commissionRate * 100).toFixed(0)}% on every eligible sale, paid every Friday.` });
+  return { ok: true, profile: p };
+}
+export function getVendorProfile(userId) { return db.vendorProfiles.get(userId) || null; }
+export function findVendorByCode(code) {
+  if (!code) return null;
+  const c = String(code).trim().toUpperCase();
+  return [...db.vendorProfiles.values()].find((v) => v.vendorCode === c) || null;
+}
+// Admin decides a pending application (or suspends/reinstates).
+export function decideVendor(userId, { approve, tier, status } = {}) {
+  const p = db.vendorProfiles.get(userId);
+  if (!p) return { ok: false, error: 'not-found' };
+  if (tier && VENDOR_TIERS[tier]) p.tier = tier;
+  if (typeof approve === 'boolean') p.status = approve ? 'approved' : 'rejected';
+  if (status) p.status = status; // e.g. 'suspended'
+  p.decidedAt = nowISO();
+  recordAudit({ actor: 'admin', role: 'admin', action: 'vendor.decided', entity: 'vendor', entityId: userId, summary: `${p.tier} → ${p.status}` });
+  return { ok: true, profile: p };
+}
+
+// §1/§2/§7 — record an eligible sale for an approved vendor. Commission is
+// carved from the 10% fee at the vendor's effective rate (incl. any top-seller
+// bonus for the current month). Self-referrals earn nothing.
+export function recordVendorSale({ vendorId, bookingId, saleGbp, customerId }) {
+  const p = db.vendorProfiles.get(vendorId);
+  if (!p || p.status !== 'approved') return { ok: false, error: 'vendor-not-approved' };
+  if (customerId && customerId === vendorId) return { ok: false, error: 'self-referral' };
+  const monthKey = nowISO().slice(0, 7);
+  const split = commissionSplit(saleGbp, p.tier, { hasBonus: p.topSellerMonth === monthKey });
+  const sale = {
+    id: id('vsl'), vendorId, bookingId: bookingId || null, customerId: customerId || null,
+    ...split, status: 'confirmed', paymentCleared: true, validated: true,
+    refunded: false, chargeback: false, fraudFlag: false, complianceHold: false,
+    paidOut: false, at: nowISO(),
+  };
+  db.vendorSales.push(sale);
+  recordAudit({ actor: vendorId, role: 'vendor', action: 'vendor.sale', entity: 'booking', entityId: bookingId || '-', summary: `£${split.saleGbp} sale · vendor £${split.vendorGbp} · platform keeps £${split.platformKeepsGbp}` });
+  return { ok: true, sale };
+}
+// §7 — flag a sale (refund/chargeback/fraud): kills any unpaid commission.
+export function flagVendorSale(saleId, flag) {
+  const s = db.vendorSales.find((x) => x.id === saleId);
+  if (!s) return { ok: false, error: 'not-found' };
+  if (['refunded', 'chargeback', 'fraudFlag', 'complianceHold'].includes(flag)) s[flag] = true;
+  recordAudit({ actor: 'system', role: 'system', action: 'vendor.sale.flagged', entity: 'vendor-sale', entityId: saleId, summary: flag });
+  return { ok: true, sale: s };
+}
+
+// §3 — the automatic weekly payout run (Fridays). Releases every payable sale
+// per vendor as one batch. Idempotent: paid sales never pay twice.
+export function runWeeklyVendorPayouts() {
+  const byVendor = new Map();
+  for (const s of db.vendorSales) {
+    if (!saleIsPayable(s)) continue;
+    if (!byVendor.has(s.vendorId)) byVendor.set(s.vendorId, []);
+    byVendor.get(s.vendorId).push(s);
+  }
+  const batches = [];
+  for (const [vendorId, sales] of byVendor) {
+    const amount = Math.round(sales.reduce((t, s) => t + s.vendorGbp, 0) * 100) / 100;
+    if (amount <= 0) continue;
+    sales.forEach((s) => { s.paidOut = true; });
+    const batch = { id: id('vpo'), vendorId, amountGbp: amount, saleIds: sales.map((s) => s.id), status: 'paid', method: 'bank', at: nowISO() };
+    db.vendorPayouts.push(batch);
+    batches.push(batch);
+    pushNotification(vendorId, { type: 'success', icon: '💷', title: 'Weekly payout sent', body: `£${amount.toFixed(2)} commission for ${sales.length} sale${sales.length > 1 ? 's' : ''} is on its way to your account.` });
+  }
+  recordAudit({ actor: 'system', role: 'system', action: 'vendor.payout.run', entity: 'vendor', entityId: 'weekly', summary: `${batches.length} vendors paid £${batches.reduce((s, b) => s + b.amountGbp, 0).toFixed(2)}` });
+  return { ok: true, batches };
+}
+
+// §3 automation — serverless-safe "every Friday": any traffic on a Friday
+// triggers the weekly run once (keyed by ISO week), so payouts go out without a
+// cron. Also crowns the top seller on the first run of a new month.
+let lastPayoutWeek = null;
+export function maybeRunFridayPayouts(now = new Date()) {
+  if (now.getUTCDay() !== 5) return null; // Friday only
+  const weekKey = `${now.getUTCFullYear()}-W${Math.ceil(((now - new Date(Date.UTC(now.getUTCFullYear(), 0, 1))) / 86400000 + 1) / 7)}`;
+  if (lastPayoutWeek === weekKey) return null;
+  if (db.vendorPayouts.some((p) => (p.weekKey === weekKey))) { lastPayoutWeek = weekKey; return null; }
+  lastPayoutWeek = weekKey;
+  awardTopSellerBonus(nowISO());
+  const run = runWeeklyVendorPayouts();
+  run.batches.forEach((b) => { b.weekKey = weekKey; });
+  return run;
+}
+
+// §2 — crown last month's top seller: they hold +1% for the CURRENT month.
+// Run at month start (or on demand); idempotent per month.
+export function awardTopSellerBonus(todayISO = nowISO()) {
+  const currentMonth = todayISO.slice(0, 7);
+  const lastMonth = previousMonthKey(todayISO);
+  const winner = topSellerForMonth(db.vendorSales, lastMonth);
+  if (!winner) return { ok: true, winner: null };
+  const p = db.vendorProfiles.get(winner);
+  if (!p) return { ok: false, error: 'winner-profile-missing' };
+  if (p.topSellerMonth === currentMonth) return { ok: true, winner, alreadyAwarded: true };
+  p.topSellerMonth = currentMonth;
+  pushNotification(winner, { type: 'success', icon: '🏆', title: 'Top Seller of the month!', body: `You were last month's best performer — you earn +1% commission on every sale this month.` });
+  recordAudit({ actor: 'system', role: 'system', action: 'vendor.top-seller', entity: 'vendor', entityId: winner, summary: `bonus month ${currentMonth}` });
+  return { ok: true, winner, bonusMonth: currentMonth };
+}
+
+// §5 — the vendor portal dashboard.
+export function vendorDashboard(userId) {
+  const p = db.vendorProfiles.get(userId);
+  if (!p) return null;
+  const sales = db.vendorSales.filter((s) => s.vendorId === userId);
+  const payouts = db.vendorPayouts.filter((x) => x.vendorId === userId);
+  const monthKey = nowISO().slice(0, 7);
+  const board = vendorLeaderboard(1000);
+  const rank = board.findIndex((e) => e.vendorId === userId);
+  const metrics = deriveVendorMetrics({ sales, payouts, tier: p.tier, hasBonus: p.topSellerMonth === monthKey, rank: rank === -1 ? null : rank + 1 });
+  return {
+    ...metrics, status: p.status, vendorCode: p.vendorCode,
+    sellLink: `https://3jntravel.com/?vendor=${p.vendorCode}`,
+    recentSales: sales.slice(-8).reverse(),
+    payoutHistory: payouts.slice(-8).reverse(),
+    riskReview: { overallRisk: p.riskReview?.overallRisk, recommendation: p.riskReview?.recommendation },
+  };
+}
+export function vendorLeaderboard(limit = 20) {
+  const byVendor = new Map();
+  for (const s of db.vendorSales) {
+    if (s.refunded || s.chargeback || s.fraudFlag) continue;
+    byVendor.set(s.vendorId, (byVendor.get(s.vendorId) || 0) + s.saleGbp);
+  }
+  return [...byVendor.entries()].map(([vendorId, salesGbp]) => {
+    const u = db.users.get(vendorId); const p = db.vendorProfiles.get(vendorId);
+    return { vendorId, name: u?.name || 'Vendor', tier: p?.tier || 'independent', salesGbp: Math.round(salesGbp * 100) / 100 };
+  }).sort((a, b) => b.salesGbp - a.salesGbp).slice(0, limit);
+}
+export function listVendors(status) {
+  const all = [...db.vendorProfiles.values()];
+  return status ? all.filter((v) => v.status === status) : all;
+}
+
 // Admin / profitability snapshot.
 export function revenueSnapshot() {
   const bookings = [...db.bookings.values()];
@@ -1599,8 +1780,8 @@ export function searchToBookStats() {
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts'];
 
 export function snapshot() {
   const out = { counter };

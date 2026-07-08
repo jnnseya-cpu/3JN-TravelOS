@@ -23,6 +23,8 @@ import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from
 import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
+import { commissionSplit } from '../src/vendors.js';
+import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
 import { assist } from '../src/assistant.js';
 import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
@@ -3036,4 +3038,53 @@ test('minimum AI profit margin is enforced at 100% across every action', () => {
   // The floor never lets an action be charged below 2× its provider cost.
   assert.ok(minAcuForMargin(0.01) >= 1);
   assert.ok(pricedAcuForAction(1) >= 1);
+});
+
+// ---- Vendor Partner Programme ----------------------------------------------
+test('vendor commission model matches the spec (£1,000 examples + bonus)', () => {
+  const ind = commissionSplit(1000, 'independent');
+  assert.equal(ind.platformFeeGbp, 100); assert.equal(ind.vendorGbp, 30); assert.equal(ind.platformKeepsGbp, 70);
+  const reg = commissionSplit(1000, 'registered');
+  assert.equal(reg.vendorGbp, 40); assert.equal(reg.platformKeepsGbp, 60);
+  const indB = commissionSplit(1000, 'independent', { hasBonus: true });
+  assert.equal(indB.vendorGbp, 40); assert.equal(indB.platformKeepsGbp, 60);
+  const regB = commissionSplit(1000, 'registered', { hasBonus: true });
+  assert.equal(regB.vendorGbp, 50); assert.equal(regB.platformKeepsGbp, 50, 'platform never keeps less than 5%');
+});
+
+test('vendor lifecycle: AI risk review → approved → attributed sale → Friday payout', () => {
+  const v = createUser({ email: 'vlife@x.co', name: 'Vendor Life' });
+  const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@v'], businessHistory: true });
+  assert.equal(appd.profile.status, 'approved', 'clean applicant auto-approves');
+  assert.ok(appd.profile.vendorCode.startsWith('VND-'));
+  // Missing identity/address → NOT auto-approved.
+  const shady = createUser({ email: 'shady@x.co', name: 'No Docs' });
+  const appS = applyVendor(shady.id, {});
+  assert.notEqual(appS.profile.status, 'approved', 'incomplete applications never auto-approve');
+  // Attributed sale on first payment (commission carved from the 10% fee).
+  const cust = createUser({ email: 'vcust@x.co', name: 'C' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1000 }, revenue: { commissionUSD: 127 } }, totalUSD: 1270, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: cust.id, vendorCode: appd.profile.vendorCode });
+  recordPayment(b.id, { type: 'deposit', amount: 200 });
+  const dash = vendorDashboard(v.id);
+  assert.equal(dash.commissionEarnedGbp, 30, '3% of £1,000');
+  assert.equal(dash.pendingPayoutGbp, 30);
+  // Weekly run pays and is idempotent.
+  const run = runWeeklyVendorPayouts();
+  assert.ok(run.batches.some((x) => x.vendorId === v.id && x.amountGbp === 30));
+  assert.equal(vendorDashboard(v.id).pendingPayoutGbp, 0);
+  assert.equal(runWeeklyVendorPayouts().batches.filter((x) => x.vendorId === v.id).length, 0, 'never pays twice');
+});
+
+test('vendor protections: self-referral earns nothing; flagged sales are not paid', () => {
+  const v = createUser({ email: 'vself@x.co', name: 'Selfie' });
+  const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@s'], businessHistory: true });
+  // Self-referral: vendor books for themselves with their own code.
+  const own = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 500 } }, totalUSD: 635, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: v.id, vendorCode: appd.profile.vendorCode });
+  recordPayment(own.id, { type: 'deposit', amount: 100 });
+  assert.equal((vendorDashboard(v.id).commissionEarnedGbp || 0), 0, 'self-referral earns nothing');
+  // A refunded sale is never payable.
+  const r = recordVendorSale({ vendorId: v.id, bookingId: 'bkx', saleGbp: 800, customerId: 'someone-else' });
+  flagVendorSale(r.sale.id, 'refunded');
+  const run = runWeeklyVendorPayouts();
+  assert.ok(!run.batches.some((x) => x.saleIds.includes(r.sale.id)), 'refunded sale excluded from payout');
 });

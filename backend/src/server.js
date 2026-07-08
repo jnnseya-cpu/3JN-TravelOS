@@ -37,7 +37,10 @@ import {
   earnAcu, getPartnerProfile, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
   createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, latestBookingForUser,
+  applyVendor, getVendorProfile, decideVendor, vendorDashboard, vendorLeaderboard,
+  listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
 } from './store.js';
+import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { supportRespond } from './chatbot.js';
 import { assist } from './assistant.js';
@@ -95,7 +98,10 @@ app.get('/api/health', (req, res) => res.json({
 
 // Persist the store to Firebase RTDB shortly after any successful mutation
 // (debounced). No-op when persistence is disabled (offline / no credentials).
+// Also the serverless-safe scheduler tick: on Fridays the first request of the
+// week triggers the automatic vendor payout run (+ monthly top-seller award).
 app.use((req, res, next) => {
+  try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     res.on('finish', () => { if (res.statusCode < 400) scheduleSave(snapshot); });
   }
@@ -936,7 +942,7 @@ app.post('/api/quote', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment, protection } = req.body || {};
+  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
   const quote = getQuote(quoteId);
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);
@@ -953,7 +959,7 @@ app.post('/api/book', safe((req, res) => {
     });
   }
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode });
   // Refundable search deposit (spec §6): a booking converts the user's active
   // deposit — its value comes OFF the final payment, never double-charged.
   if (user) {
@@ -1175,6 +1181,64 @@ app.post('/api/admin/rewards/influencer/:userId/decide', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const { approve, tier, standing } = req.body || {};
   res.json(decideInfluencer(req.params.userId, { approve, tier, standing }));
+}));
+
+// ---- Vendor Partner Programme ----------------------------------------------
+// Public programme card: tiers, rates, examples, payout terms.
+app.get('/api/vendors/programme', safe((req, res) => {
+  res.json({
+    platformFeePct: PLATFORM_FEE_RATE * 100,
+    tiers: Object.values(VENDOR_TIERS).map((t) => ({
+      key: t.key, name: t.name,
+      commissionPct: Math.round(t.commissionRate * 100), bonusPct: Math.round(t.bonusRate * 100),
+      platformKeepsPct: Math.round((PLATFORM_FEE_RATE - t.commissionRate) * 100),
+      platformKeepsBonusPct: Math.round((PLATFORM_FEE_RATE - t.bonusRate) * 100),
+      requiresRegistration: t.requiresRegistration, requiredDocs: t.requiredDocs || [],
+      example: commissionSplit(1000, t.key),
+    })),
+    payouts: 'Automatic every Friday, after: sale confirmed · payment cleared · no refund/chargeback/fraud flag · booking validated · compliance passed.',
+    topSellerBonus: '+1% for the following month — re-earned monthly.',
+  });
+}));
+// Apply (AI risk review runs immediately; clean pass auto-approves).
+app.post('/api/vendors/apply', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const { tier, identityDoc, addressProof, socialHandles, businessHistory, documents } = req.body || {};
+  res.json(applyVendor(user.id, { tier, identityDoc, addressProof, socialHandles, businessHistory, documents }));
+}));
+// My vendor portal (§5).
+app.get('/api/vendors/me', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const dash = vendorDashboard(user.id);
+  if (!dash) return res.status(404).json({ error: 'not-a-vendor' });
+  res.json({ dashboard: dash });
+}));
+app.get('/api/vendors/leaderboard', safe((req, res) => {
+  res.json({ leaderboard: vendorLeaderboard(Number(req.query.limit) || 20) });
+}));
+// Admin: applications queue, decisions, weekly payout run, top-seller award.
+app.get('/api/admin/vendors', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ vendors: listVendors(req.query.status) });
+}));
+app.post('/api/admin/vendors/:userId/decide', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { approve, tier, status } = req.body || {};
+  res.json(decideVendor(req.params.userId, { approve, tier, status }));
+}));
+app.post('/api/admin/vendors/payout-run', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(runWeeklyVendorPayouts());
+}));
+app.post('/api/admin/vendors/top-seller', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(awardTopSellerBonus());
+}));
+app.post('/api/admin/vendors/sales/:saleId/flag', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(flagVendorSale(req.params.saleId, (req.body || {}).flag));
 }));
 
 // ---- AI Support Concierge (chatbot + human escalation) --------------------
