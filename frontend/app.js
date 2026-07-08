@@ -110,6 +110,7 @@ function nav(view) {
   if (view === 'blog') renderBlog();
   if (view === 'rewards') renderRewards();
   if (view === 'vendors') renderVendors();
+  if (view === 'hosting') renderHosting();
 }
 document.addEventListener('click', (e) => {
   const navEl = e.target.closest('[data-nav]');
@@ -318,7 +319,7 @@ async function populateShowcase() {
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
 function applyDeepLink() {
-  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'vendors', 'api', 'console', 'business', 'admin']);
+  const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'vendors', 'hosting', 'api', 'console', 'business', 'admin']);
   const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
   let target = '';
   const qv = new URLSearchParams(location.search).get('view');
@@ -1196,7 +1197,25 @@ async function renderConsole() {
   const cards = quoteCards + (bookings.length ? bookings.map((b) => bookingCard(b)).join('') :
     `<div class="card pad center muted">No bookings yet. <button class="btn btn-ghost btn-sm" data-nav="planner">Plan a trip</button></div>`);
 
-  out.innerHTML = `<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
+  // ROLE IDENTITY BANNER — every account opens knowing exactly what it is,
+  // what it controls, and where its primary tools are. No two roles look alike.
+  const ROLE_BANNERS = {
+    merchant: { icon: '💳', title: 'BitriPay Merchant Portal', sub: 'You move money: create payment links & QR invoices, track every settlement to the penny. Your portal is directly below.', actions: [['Create payment link', "document.getElementById('merchantPortal')?.scrollIntoView({behavior:'smooth'})"]] },
+    partner: { icon: '🤝', title: 'Agency Partner Command', sub: 'You resell the OS white-label: production API keys, per-booking revenue share, your own customers. Keys & settlement below.', actions: [['My API keys', "document.getElementById('merchantPortal')?.scrollIntoView({behavior:'smooth'})"], ['Vendor Programme', "nav('vendors')"]] },
+    embassy: { icon: '🏛', title: 'Embassy Decision Command', sub: 'You hold full visa decision authority — criteria, fees, branding, releases. This traveller console is secondary for you.', actions: [['Open Decision Command Centre', "nav('visaos')"]] },
+    consulate: { icon: '🛂', title: 'Consulate eVisa Command', sub: 'Your eVisa processing queue, decisions and audit chain live in VisaOS.', actions: [['Open eVisa queue', "nav('visaos')"]] },
+    business: { icon: '🏢', title: 'Corporate Travel Command', sub: 'Approve trips against policy, monitor duty of care, manage team bookings — your command centre is the Business view.', actions: [['Open Business Centre', "nav('business')"]] },
+    admin: { icon: '🛡', title: 'Platform Administration', sub: 'All 3JN income, AI margins, user/host/vendor queues and support tickets — your command centre is the Admin view.', actions: [['Open Admin Centre', "nav('admin')"]] },
+  };
+  const rb = !u.allAccess && ROLE_BANNERS[u.role];
+  const roleBanner = rb ? `
+    <div class="card pad" style="border-color:rgba(216,180,106,.45);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><span class="eyebrow">${rb.icon} ${esc(rb.title)}</span>
+        <p class="muted" style="font-size:12.5px;margin:4px 0 0;max-width:640px">${rb.sub}</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${rb.actions.map(([label, fn]) => `<button class="btn btn-gold btn-sm" onclick="${fn}">${label}</button>`).join('')}</div>
+    </div>` : '';
+
+  out.innerHTML = `${roleBanner}<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
   renderTravelProfile();
   renderEsims();
@@ -3254,7 +3273,7 @@ $('#testAccountBtn')?.addEventListener('click', window.provisionTest); // button
 // Per-account meta: email wins over role (the host is a consumer WITH hosting
 // power). Blurbs state the ACCOUNT'S AUTHORITY — what this account decides.
 const DEMO_ACCOUNT_META = {
-  'host@3jntravel.com': { icon: '🏠', label: 'Property Host', view: 'console', host: true, blurb: 'RUNS a live listing: The Palm Residence, Dubai Marina (approved, 12 photos) — sets nightly price, pauses/publishes, sees bookings & 90% payouts' },
+  'host@3jntravel.com': { icon: '🏠', label: 'Property Host', view: 'hosting', blurb: 'RUNS a live listing: The Palm Residence, Dubai Marina (approved, 12 photos) — full-page dashboard: set nightly price, pause/publish, publish new properties, see reservations & 90% payouts' },
 };
 const DEMO_ROLE_META = {
   admin: { icon: '🛡', label: 'Platform Admin', view: 'admin', blurb: 'RULES the platform: all 3JN income & AI-margin panels · approves/suspends vendors, influencers & host listings · sees every user, booking & support ticket · 10,500 ACU, Elite' },
@@ -3298,7 +3317,6 @@ window.demoSignIn = (id) => {
   const meta = demoMetaFor(acct);
   toast(`✓ Signed in as ${acct.name} (${meta.label || acct.role})`);
   nav(meta.view);
-  if (meta.host) setTimeout(() => window.openHostDashboard?.(), 250); // host lands in their dashboard
 };
 // Staff second factor: collect the PIN, keep it for this session (sent as the
 // x-staff-pin header on every request) and reopen the demo panel unlocked.
@@ -3540,36 +3558,56 @@ window.sendContact = async () => {
 // your properties — set prices, pause/resume, manage bookings and earnings.
 $('#hostLink')?.addEventListener('click', () => openHostDashboard());
 
-async function openHostDashboard() {
-  if (!state.user) { toast('Sign in first — hosting is tied to your account.'); return; }
-  let d; try { d = await api('/api/host/dashboard'); } catch { return; }
+// The Host Dashboard is a full PAGE (nav: Hosting), not a pop-up — property
+// setup and management need room. openHostDashboard stays as the entry point
+// every existing link uses.
+function openHostDashboard() { nav('hosting'); }
 
-  // Step 1 — registration gate.
+async function renderHosting() {
+  const out = $('#hostingBody');
+  if (!out) return;
+  if (!state.user) {
+    out.innerHTML = `<div class="card pad center">
+      <h3 style="margin:0 0 8px">Sign in to start hosting</h3>
+      <p class="muted" style="max-width:520px;margin:0 auto 14px">Register once, publish your property with photos, pass AI verification + admin review, and it sells inside 3JN packages next to hotels. You keep <strong>90%</strong> of every stay.</p>
+      <button class="btn btn-gold" onclick="openAuth()">Sign in / Create account</button></div>`;
+    return;
+  }
+  out.innerHTML = '<div class="card pad center muted">Loading your hosting dashboard…</div>';
+  let d; try { d = await api('/api/host/dashboard'); } catch { out.innerHTML = '<div class="card pad center muted">Could not load the dashboard — please try again.</div>'; return; }
+
+  // Step 1 — registration gate (on the page, not a pop-up).
   if (!d.registered) {
-    modal(`
-      <span class="eyebrow">3JN Host Marketplace</span>
-      <h3 style="margin:6px 0">Register as a host</h3>
-      <p class="muted" style="font-size:13px">One registration unlocks your Host Dashboard: publish properties, set your prices, pause or resume listings, and manage bookings and payouts. You keep <strong>90%</strong> of every stay; 3JN keeps 10%.</p>
+    out.innerHTML = `<div class="card pad" style="max-width:560px;margin:0 auto">
+      <span class="eyebrow">Step 1 of 2 · Register as a host</span>
+      <h3 style="margin:6px 0">Open your Host Dashboard</h3>
+      <p class="muted" style="font-size:13px">One registration unlocks everything: publish properties, set your prices, pause or resume listings, manage bookings and payouts. You keep <strong>90%</strong> of every stay; 3JN keeps 10%.</p>
       <div class="field" style="margin-top:12px"><label>Host display name (shown to guests)</label><input class="in" id="hostRegName" value="${esc(state.user.name || '')}" /></div>
       <div class="field" style="margin-top:10px"><label>Payout method</label><select class="in" id="hostRegPayout"><option>Bank transfer</option><option>BitriPay wallet</option><option>PayPal</option></select></div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="hostRegister()">Register & open my dashboard</button>
-      <p class="muted" style="font-size:11.5px;margin-top:8px">Identity comes from your 3JN account; properties pass the 50-point integrity check before going live.</p>`);
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Identity comes from your 3JN account; properties pass the 50-point integrity check + AI security verification + admin review before going live.</p>
+    </div>`;
     return;
   }
 
-  // Step 2 — the dashboard.
+  // Step 2 — the dashboard (full page, two columns).
+  const statusChip = (l) => l.status === 'live'
+    ? '<span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">● Live in searches</span>'
+    : l.status === 'pending-review'
+      ? '<span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">🕓 Awaiting 3JN review</span>'
+      : '<span class="ch-chip" style="color:var(--muted)">⏸ Paused</span>';
   const props = (d.listings || []).map((l) => `
     <div class="card pad" style="margin-bottom:10px">
-      <div class="kv" style="border:none;padding:0"><span style="font-family:'Space Grotesk';font-weight:700">🏠 ${esc(l.title)}</span>
-        <span class="ch-chip" style="color:${l.status === 'live' ? 'var(--green)' : 'var(--muted)'};border-color:${l.status === 'live' ? 'rgba(70,211,154,0.35)' : 'var(--line)'}">● ${l.status === 'live' ? 'Live in searches' : 'Paused'}</span></div>
-      <div class="muted" style="font-size:12px;margin:2px 0 8px">${esc(l.city)} · ${esc(l.address || '')} · sleeps ${l.sleeps} · ${(l.photos || []).length} photos · reliability ${l.reliabilityScore}</div>
+      ${(l.photos || []).length ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px">${(l.photos || []).slice(0, 4).map((p) => `<img src="${esc(p)}" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px" alt="" loading="lazy">`).join('')}</div>` : ''}
+      <div class="kv" style="border:none;padding:0"><span style="font-family:'Space Grotesk';font-weight:700">🏠 ${esc(l.title)}</span>${statusChip(l)}</div>
+      <div class="muted" style="font-size:12px;margin:2px 0 8px">${esc(l.city)} · ${esc(l.address || '')} · ${esc(l.propertyType || '')} · sleeps ${l.sleeps} · ${(l.photos || []).length} photos · reliability ${l.reliabilityScore}${l.aiVerification ? ` · AI verification ${l.aiVerification.score}/100 · security ${esc(l.aiVerification.securityRisk || '—')}` : ''}</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <label class="muted" style="font-size:12px">Nightly (USD)</label>
         <input class="in" id="price_${l.id}" type="number" value="${l.nightlyUSD}" style="width:100px" />
         <button class="btn btn-ghost btn-sm" onclick="hostSetPrice('${l.id}')">Update price</button>
-        <button class="btn btn-ghost btn-sm" onclick="hostToggle('${l.id}','${l.status === 'live' ? 'paused' : 'live'}')">${l.status === 'live' ? '⏸ Pause listing' : '▶ Go live'}</button>
+        ${l.status !== 'pending-review' ? `<button class="btn btn-ghost btn-sm" onclick="hostToggle('${l.id}','${l.status === 'live' ? 'paused' : 'live'}')">${l.status === 'live' ? '⏸ Pause listing' : '▶ Go live'}</button>` : '<span class="muted" style="font-size:11.5px">Goes live automatically once 3JN approves it.</span>'}
       </div>
-    </div>`).join('') || '<p class="muted" style="font-size:12.5px">No properties yet — publish your first below.</p>';
+    </div>`).join('') || '<p class="muted" style="font-size:12.5px">No properties yet — publish your first on the right. It goes through AI verification + admin review, then sells inside packages automatically.</p>';
 
   const bookings = (d.bookings || []).map((b) => `
     <div class="kv"><span>${esc(b.listing)} <span class="muted" style="font-size:11.5px">· ${b.nights || '—'} nights · ${esc(b.status || '')}</span></span>
@@ -3577,36 +3615,43 @@ async function openHostDashboard() {
     || '<p class="muted" style="font-size:12px">No reservations yet — live listings sell inside package options automatically.</p>';
 
   const e = d.earnings;
-  modal(`
-    <span class="eyebrow">Host Dashboard · ${esc(d.profile.displayName)} · payout via ${esc(d.profile.payoutMethod)}</span>
-    <div class="console-grid" style="gap:10px;margin:10px 0">
-      <div class="card pad" style="text-align:center"><div class="t-stat">${(d.listings || []).length}</div><div class="t-label">Properties</div></div>
-      <div class="card pad" style="text-align:center"><div class="t-stat">${(d.bookings || []).length}</div><div class="t-label">Bookings</div></div>
-      <div class="card pad" style="text-align:center"><div class="t-stat" style="color:var(--gold)">$${e ? e.totals.netUSD : 0}</div><div class="t-label">Net earnings (90%)</div></div>
+  out.innerHTML = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+      ${[['Properties', (d.listings || []).length], ['Live now', (d.listings || []).filter((l) => l.status === 'live').length], ['Reservations', (d.bookings || []).length], ['Gross', '$' + (e ? e.totals.grossUSD : 0)], ['Your 90%', '$' + (e ? e.totals.netUSD : 0)]]
+        .map(([k, v]) => `<div class="card pad" style="text-align:center"><div class="t-label">${k}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${v}</div></div>`).join('')}
     </div>
-    <span class="eyebrow">My properties</span>
-    <div style="margin:8px 0 14px">${props}</div>
-    <span class="eyebrow">Reservations</span>
-    <div style="margin:6px 0 14px">${bookings}</div>
-    <hr style="border-color:var(--line);margin:12px 0">
-    <span class="eyebrow">Publish a new property</span>
-    <div class="field" style="margin-top:8px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
-    <div class="field" style="margin-top:10px"><label>City</label><input class="in" id="hostCity" placeholder="e.g. Dubai" /></div>
-    <div class="field" style="margin-top:10px"><label>Street address (guests verify you online by name + address)</label><input class="in" id="hostAddress" placeholder="e.g. 14 Marina Walk, Dubai Marina" /></div>
-    <div style="display:flex;gap:10px;margin-top:10px">
-      <div class="field" style="flex:1"><label>Type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
-      <div class="field" style="width:110px"><label>Sleeps</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="20" /></div>
-      <div class="field" style="width:150px"><label>Nightly (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
-    </div>
-    <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
-    <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100</label>
-      <input type="file" id="hostPhotoFiles" accept="image/*" multiple style="display:none" onchange="hostAddPhotos(this.files)" />
-      <button class="btn btn-ghost btn-block" type="button" onclick="$('#hostPhotoFiles').click()">📷 Upload photos from this device</button>
-      <div class="muted" style="font-size:11.5px;margin-top:6px" id="hostPhotoCount">0 / 10 minimum · photos compress automatically before upload</div>
-      <div id="hostPhotoPreview" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:8px"></div>
-      <details style="margin-top:8px"><summary class="muted" style="font-size:12px;cursor:pointer">Or paste image URLs (one per line)</summary>
-        <textarea class="in" id="hostPhotos" rows="3" placeholder="https://…/living-room.jpg" style="margin-top:6px" oninput="hostPhotoRecount()"></textarea></details></div>
-    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish property</button>`);
+    <p class="muted center" style="font-size:12px;margin:8px 0 14px">Host: <strong style="color:var(--gold)">${esc(d.profile.displayName)}</strong> · payouts via ${esc(d.profile.payoutMethod)} · you keep 90% of every stay</p>
+    <div class="console-grid">
+      <div>
+        <span class="eyebrow">My properties · price, pause, publish</span>
+        <div style="margin:8px 0 14px">${props}</div>
+        <span class="eyebrow">Reservations & payouts</span>
+        <div class="card pad" style="margin-top:6px">${bookings}</div>
+      </div>
+      <div>
+        <div class="card pad">
+        <span class="eyebrow">Publish a new property</span>
+        <div class="field" style="margin-top:8px"><label>Property name</label><input class="in" id="hostName" placeholder="e.g. Marina View Apartment" /></div>
+        <div class="field" style="margin-top:10px"><label>City</label><input class="in" id="hostCity" placeholder="e.g. Dubai" /></div>
+        <div class="field" style="margin-top:10px"><label>Street address (guests verify you online by name + address)</label><input class="in" id="hostAddress" placeholder="e.g. 14 Marina Walk, Dubai Marina" /></div>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:140px"><label>Type</label><select class="in" id="hostType"><option>Entire apartment</option><option>Private room</option><option>Villa</option><option>Townhouse</option><option>Guest suite</option></select></div>
+          <div class="field" style="width:100px"><label>Sleeps</label><input class="in" id="hostSleeps" type="number" value="4" min="1" max="20" /></div>
+          <div class="field" style="width:130px"><label>Nightly (USD)</label><input class="in" id="hostRate" type="number" placeholder="120" /></div>
+        </div>
+        <div class="field" style="margin-top:10px"><label>Amenities (comma-separated)</label><input class="in" id="hostAmenities" placeholder="Full kitchen, WiFi, Washer, Self check-in" /></div>
+        <div class="field" style="margin-top:10px"><label>Photos — minimum 10, maximum 100</label>
+          <input type="file" id="hostPhotoFiles" accept="image/*" multiple style="display:none" onchange="hostAddPhotos(this.files)" />
+          <button class="btn btn-ghost btn-block" type="button" onclick="$('#hostPhotoFiles').click()">📷 Upload photos from this device</button>
+          <div class="muted" style="font-size:11.5px;margin-top:6px" id="hostPhotoCount">0 / 10 minimum · photos compress automatically before upload</div>
+          <div id="hostPhotoPreview" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:8px"></div>
+          <details style="margin-top:8px"><summary class="muted" style="font-size:12px;cursor:pointer">Or paste image URLs (one per line)</summary>
+            <textarea class="in" id="hostPhotos" rows="3" placeholder="https://…/living-room.jpg" style="margin-top:6px" oninput="hostPhotoRecount()"></textarea></details></div>
+        <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish property</button>
+        <p class="muted" style="font-size:11px;margin-top:8px">Every property passes the 50-point integrity check, AI security verification and 3JN admin review before going live. Guests book through 3JN; you're paid your 90% per stay.</p>
+        </div>
+      </div>
+    </div>`;
 }
 
 window.hostRegister = async () => {
