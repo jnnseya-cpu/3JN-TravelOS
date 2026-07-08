@@ -2837,6 +2837,9 @@ function toggleAccountMenu() {
     <div class="am-head">${avatarHTML(u, 34)}<div><div class="am-name">${esc(u.name)}</div>
       <div class="am-sub">${esc(u.tier)} · ${u.points.toLocaleString()} pts${u.membership?.active ? ' · ' + esc(u.membership.name) : ''}</div></div></div>
     ${item('🧭', 'My Console', "closeAccountMenu();nav('console')")}
+    ${item('🎁', 'Rewards · Refer & Earn', "closeAccountMenu();nav('rewards')")}
+    ${item('🤝', 'Vendor Partner Programme', "closeAccountMenu();nav('vendors')")}
+    ${item('🛂', 'VisaOS · Visa Centre', "closeAccountMenu();nav('visaos')")}
     ${item('🏠', 'Host Dashboard', 'closeAccountMenu();openHostDashboard()')}
     ${can(['business', 'admin']) ? item('💼', 'Business Centre', "closeAccountMenu();nav('business')") : ''}
     ${can(['embassy', 'consulate', 'admin']) ? item('🏛', 'Consulate / VisaOS', "closeAccountMenu();nav('visaos')") : ''}
@@ -3071,7 +3074,7 @@ window.provisionTest = async () => {
     nav('console');
   } catch { /* */ }
 };
-$('#testAccountBtn').addEventListener('click', window.provisionTest);
+$('#testAccountBtn')?.addEventListener('click', window.provisionTest); // button retired from the top bar; demo panel covers it
 
 // ---- Fully-loaded demo accounts (one per role) -----------------------------
 // Seeds all role accounts (admin, business, merchant, partner, consumer,

@@ -56,21 +56,20 @@
         <span></span><span></span><span></span>
       </button>
       <div class="nav-menu" id="navMenu">
+        <!-- Slim top bar: five primary destinations only, so it fits on one
+             line even after sign-in. VisaOS / Rewards / Partners live in the
+             footer (and remain deep-linkable at /visaos, /app?view=rewards…). -->
         <nav class="nav-links">
           <a data-nav="home" data-i18n="nav.home">Home</a>
           <a data-nav="planner" data-i18n="nav.plan">Plan a Trip</a>
           <a data-nav="marketplace">Destinations</a>
-          <a data-nav="visaos">VisaOS</a>
           <a data-nav="membership" data-i18n="nav.membership">Membership</a>
-          <a data-nav="rewards">Rewards</a>
-          <a data-nav="vendors">Partners</a>
           <a data-nav="console" data-i18n="nav.console">Console</a>
         </nav>
         <div class="nav-cta">
           <span id="userChip" class="pill hidden" style="margin:0"></span>
           <button class="bell bell-desktop" id="notifBtn" title="Notifications" aria-label="Notifications">🔔<span class="bell-badge hidden" id="notifBadge">0</span></button>
           <button class="btn btn-ghost btn-sm" id="signBtn">Sign in</button>
-          <button class="btn btn-ghost btn-sm" id="testAccountBtn" title="One account, every section unlocked">Full Access</button>
           <button class="btn btn-gold btn-sm" data-nav="planner">Get My Best Trip</button>
         </div>
       </div>
@@ -634,7 +633,7 @@
             <span class="lnk" data-content="flights">Flights</span>
             <span class="lnk" data-content="journeys">Trains, Ferries &amp; Cruises</span>
             <span class="lnk" data-content="hotels">Hotels</span>
-            <span class="lnk" data-content="visa">Visa Services</span>
+            <span class="lnk" data-nav="visaos">VisaOS · Visa Services</span>
             <span class="lnk" data-content="support">Travel Insurance</span>
             <span class="lnk" data-content="transfers">Airport Transfers</span>
           </div>
@@ -648,13 +647,13 @@
             <span class="lnk" data-nav="membership">Membership</span>
           </div>
           <div>
-            <h5>Platform</h5>
-            <span class="lnk" data-nav="api">API Platform</span>
-            <a class="lnk" href="/landing.html" style="text-decoration:none;color:inherit;display:block">The 3JN Experience</a>
-            <span class="lnk" data-content="careers">Partner Programme</span>
-            <span class="lnk" data-nav="api">Developers</span>
-            <span class="lnk" data-nav="api">Integrations</span>
+            <h5>Earn &amp; Partner</h5>
+            <span class="lnk" data-nav="rewards">Rewards · Refer &amp; Earn</span>
+            <span class="lnk" data-nav="vendors">Vendor Partner Programme</span>
             <span class="lnk" id="hostLink">Become a Host</span>
+            <span class="lnk" data-nav="api">API Platform</span>
+            <span class="lnk" data-nav="api">Developers &amp; Integrations</span>
+            <a class="lnk" href="/landing.html" style="text-decoration:none;color:inherit;display:block">The 3JN Experience</a>
           </div>
           <div>
             <h5>Company</h5>
