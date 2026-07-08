@@ -3238,3 +3238,30 @@ test('visa AI result is officer-only until the officer RELEASES the decision', (
   assert.equal(after.decision.reason, 'Insufficient funds evidence');
   assert.ok(listNotifications(applicant.id).filter((n) => /visa decision/i.test(n.title)).length > before, 'applicant notified on release, not before');
 });
+
+// ---- Accommodation privilege: hotel default; host must EARN the slot -------
+test('hotel holds the privilege; a private host earns it only via reviews + security + price', async () => {
+  const { buildPackages } = await import('../src/packager.js');
+  const mkScan = (host) => ({
+    flights: [{ type: 'flight', supplier: 'BA', verified: true, reliabilityScore: 90, priceUSD: 400, details: { outbound: { stops: 0 }, inbound: { stops: 0 } } }],
+    hotel: [
+      { type: 'hotel', supplier: 'City Hotel', verified: true, reliabilityScore: 88, stars: 4, priceUSD: 700, details: { guestRating: 8.4, reviews: 900 } },
+      host,
+    ],
+  });
+  const intent = { nights: 5, travellers: { adults: 2, children: 0, childAges: [], total: 2 }, components: ['flights', 'hotel'], flightPrefs: {}, dates: { checkIn: '2027-05-01' } };
+  const cur = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  const std = (scan) => buildPackages(scan, intent, cur, 0).options.find((o) => o.tier === 'Standard').components.find((c) => ['hotel', 'host'].includes(c.type));
+
+  // 1. Cheaper external host with a WEAK review base → hotel keeps the slot.
+  const weak = { type: 'host', supplier: 'Cheap Flat', verified: true, reliabilityScore: 90, stars: 4, priceUSD: 500, details: { guestRating: 7.9, reviews: 12 } };
+  assert.equal(std(mkScan(weak)).supplier, 'City Hotel', 'weakly-reviewed host never wins on price alone');
+
+  // 2. Cheaper external host with STRONG reviews + reliability → earns the slot.
+  const strong = { type: 'host', supplier: 'Loved Flat', verified: true, reliabilityScore: 92, stars: 4, priceUSD: 500, details: { guestRating: 9.1, reviews: 340 } };
+  assert.equal(std(mkScan(strong)).supplier, 'Loved Flat', 'well-reviewed secure cheaper host earns the privilege');
+
+  // 3. Same strong host but PRICIER than the hotel → hotel keeps the slot.
+  const pricier = { ...strong, priceUSD: 800 };
+  assert.equal(std(mkScan(pricier)).supplier, 'City Hotel', 'without a better price the hotel stays privileged');
+});

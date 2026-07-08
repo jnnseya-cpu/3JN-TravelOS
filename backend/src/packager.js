@@ -14,13 +14,50 @@ function reliableVerified(offers) {
   return offers.filter((o) => o.verified && o.reliabilityScore >= RELIABILITY_FLOOR);
 }
 
+// ---- Accommodation privilege rule -------------------------------------------
+// The HOTEL holds the privileged slot in every package. A private host may
+// take it ONLY by earning it on all three counts:
+//   1. good online reviews (guest rating ≥ 8.5 from a real review base),
+//   2. no security concern (3JN-verified + reliability ≥ 85 + no flags),
+//   3. a good price (cheaper than the best competing hotel).
+// Where no host exists the hotel simply stands; where a host fails any test,
+// the hotel keeps the slot regardless of price.
+const HOST_PRIVILEGE = { minGuestRating: 8.5, minReviews: 25, minReliability: 85, communityMinRating: 8.0, communityMinReliability: 78 };
+function hostEarnsPrivilege(host, bestHotel) {
+  const d = host.details || {};
+  const goodPrice = !bestHotel || (host.priceUSD || Infinity) < bestHotel.priceUSD;
+  if (!goodPrice || host.securityFlag || d.securityConcern) return false;
+  if (d.community) {
+    // 3JN's OWN marketplace: a listing is only `verified` after AI security
+    // verification + admin approval — that IS the security check. Its guest
+    // rating starts from that vetting and moves with REAL guest reviews, so a
+    // badly-reviewed property drops below the bar and loses the slot.
+    return !!host.verified
+      && (host.reliabilityScore || 0) >= HOST_PRIVILEGE.communityMinReliability
+      && (d.guestRating || 0) >= HOST_PRIVILEGE.communityMinRating;
+  }
+  // External private hosts: a REAL review base is mandatory — strong guest
+  // rating over enough reviews, plus verification and high reliability.
+  return !!host.verified
+    && (d.guestRating || 0) >= HOST_PRIVILEGE.minGuestRating
+    && (d.reviews || 0) >= HOST_PRIVILEGE.minReviews
+    && (host.reliabilityScore || 0) >= HOST_PRIVILEGE.minReliability;
+}
+// Drop hosts that haven't earned the slot; hotels always stay in the pool.
+function accommodationPool(list) {
+  const hotels = list.filter((x) => x.type !== 'host');
+  const bestHotel = cheapest(hotels);
+  const earned = list.filter((x) => x.type === 'host' && hostEarnsPrivilege(x, bestHotel));
+  return [...hotels, ...earned];
+}
+
 // Selection strategy per tier.
 const TIERS = {
   Standard: {
     label: 'Standard — Cheapest Reliable',
     blurb: 'The lowest total price across verified, reliable suppliers.',
     pickFlight: (list) => preferDirect(list, cheapest),
-    pickHotel: (list) => cheapest(list),
+    pickHotel: (list) => cheapest(accommodationPool(list)),
     pickPerSupplier: (list) => cheapest(list),
     marketMultiplier: 1.18, // public price we beat
   },
@@ -28,7 +65,7 @@ const TIERS = {
     label: 'Premium — Best Balance',
     blurb: 'Higher-rated suppliers and better comfort for a modest uplift.',
     pickFlight: (list) => preferDirect(list, bestValue),
-    pickHotel: (list) => byStars(list, 4),
+    pickHotel: (list) => byStars(accommodationPool(list), 4),
     pickPerSupplier: (list) => bestValue(list),
     marketMultiplier: 1.22,
   },
@@ -36,7 +73,7 @@ const TIERS = {
     label: 'Luxury — Top Rated',
     blurb: 'The highest-rated, most premium verified options available.',
     pickFlight: (list) => preferDirect(list, topRated),
-    pickHotel: (list) => byStars(list, 5),
+    pickHotel: (list) => byStars(accommodationPool(list), 5),
     pickPerSupplier: (list) => topRated(list),
     marketMultiplier: 1.30,
   },
