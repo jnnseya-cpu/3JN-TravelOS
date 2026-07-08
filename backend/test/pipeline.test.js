@@ -3473,3 +3473,50 @@ test('market benchmark: judges vs the lowest quote AND vs protected fares separa
   assert.match(r.row.note, /self-transfer/, 'headline says exactly who undercuts us and with what product');
   assert.equal(r.row.marketQuotes.length, 2, 'every recorded quote is kept');
 });
+
+// ---- Kiwi Tequila LCC door: the airlines Duffel doesn't carry ---------------
+test('Tequila itinerary normalises with segments, layovers and booking context', async () => {
+  const { normalizeTequilaItinerary } = await import('../src/live-suppliers.js');
+  const item = {
+    price: 91.5,
+    booking_token: 'TOK-abc123456789',
+    deep_link: 'https://www.kiwi.com/deep?booking=abc',
+    baglimit: { hold_weight: 20 },
+    availability: { seats: 4 },
+    route: [
+      { flyFrom: 'EMA', cityFrom: 'Nottingham', flyTo: 'DUB', cityTo: 'Dublin', local_departure: '2026-09-01T07:10:00.000Z', local_arrival: '2026-09-01T08:05:00.000Z', airline: 'FR', flight_no: 664, return: 0 },
+      { flyFrom: 'DUB', cityFrom: 'Dublin', flyTo: 'BRU', cityTo: 'Brussels', local_departure: '2026-09-01T10:30:00.000Z', local_arrival: '2026-09-01T13:25:00.000Z', airline: 'FR', flight_no: 1023, return: 0 },
+      { flyFrom: 'BRU', cityFrom: 'Brussels', flyTo: 'EMA', cityTo: 'Nottingham', local_departure: '2026-09-05T17:20:00.000Z', local_arrival: '2026-09-05T18:10:00.000Z', airline: 'FR', flight_no: 1024, return: 1 },
+    ],
+  };
+  const norm = normalizeTequilaItinerary(item, 116, { total: 1, adults: 1, children: 0, childAges: [] });
+  assert.equal(norm.supplier, 'Ryanair', 'IATA FR maps to the real carrier name');
+  assert.equal(norm.live, true);
+  assert.match(norm.sourcedVia, /Tequila/);
+  const out = norm.details.outbound;
+  assert.equal(out.from, 'EMA'); assert.equal(out.to, 'BRU');
+  assert.equal(out.stops, 1);
+  assert.equal(out.segments.length, 2);
+  assert.equal(out.segments[0].flightNumber, 'FR664');
+  assert.equal(out.layovers[0].airport, 'DUB', 'stopover airport named');
+  assert.equal(out.layovers[0].durationLabel, '2h 25m', 'exact wait computed');
+  assert.match(out.stopLabel, /via Dublin \(DUB\) 2h 25m wait/);
+  const back = norm.details.inbound;
+  assert.equal(back.stops, 0); assert.equal(back.stopLabel, 'Direct');
+  assert.equal(norm.details.bookingToken, 'TOK-abc123456789');
+  assert.equal(norm.details.liveCurrency, 'GBP');
+  assert.match(norm.details.baggage, /20kg/);
+});
+
+test('a paid LCC booking routes to the ops desk with the customer told honestly', async () => {
+  const { createBooking, saveQuote, listSupportTickets } = await import('../src/store.js');
+  const u = createUser({ name: 'LCC Buyer', email: 'lcc.buyer@example.com' });
+  const option = {
+    tier: 'Standard', totalUSD: 116,
+    pricing: { lines: { totalUSD: 116 }, local: { total: 92 }, revenue: { commissionUSD: 11, savingsShareUSD: 0 } },
+    components: [{ type: 'flight', supplier: 'Ryanair', live: true, verified: true, reliabilityScore: 86, priceUSD: 116, details: { bookingToken: 'TOK-xyz', deepLink: 'https://kiwi.com/x', passengers: 1, outbound: { from: 'EMA', to: 'BRU', stops: 1 } } }],
+  };
+  const q = saveQuote({ option, intent: { dates: { checkIn: '2026-09-01' } } });
+  const b = createBooking({ quoteId: q.id, option, instalment: null, userId: u.id, paymentMethod: 'card' });
+  assert.equal(b.priceBasis, 'live', 'a Tequila fare is a real, chargeable price');
+});

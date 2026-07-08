@@ -69,7 +69,7 @@ export async function runFlightBenchmark({ routes = DEFAULT_BENCHMARK_ROUTES, de
       ok: false,
       reason: 'live-flights-not-configured',
       mode: duffelMode(),
-      message: 'No Duffel key in this environment — run the benchmark on production (Vercel), where the live key is set.',
+      message: 'No live fare key (Duffel or Tequila) in this environment — run the benchmark on production (Vercel), where the live keys are set.',
     };
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(depart || ''))) {

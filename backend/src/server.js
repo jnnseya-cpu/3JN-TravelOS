@@ -58,7 +58,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, liveSuppliersConfigured, liveFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -184,6 +184,28 @@ function bookingFullyPaid(booking) {
 //   • Instalments  → HOLD the fare now (Duffel hold order); issue the ticket
 //     automatically when the final instalment is paid.
 async function autoTicketFlight(booking) {
+  // Kiwi Tequila (LCC) fares have a bookingToken instead of a Duffel offerId.
+  // They are ticketed by the OPS DESK through Kiwi's booking flow — money is
+  // captured only after check_flights re-validation, and the customer is told
+  // exactly what happens next. Never silent, never fabricated.
+  const lccFlight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.bookingToken && !c.details?.offerId);
+  if (lccFlight) {
+    const ful = (booking.fulfilment = booking.fulfilment || {});
+    if (ful.ticketing === 'issued' || ful.ticketing === 'ops-queue') return;
+    ful.ticketing = 'ops-queue';
+    ful.source = 'kiwi-tequila';
+    ful.bookingToken = lccFlight.details.bookingToken;
+    ful.opsDeepLink = lccFlight.details.deepLink || null;
+    ful.queuedAt = new Date().toISOString();
+    createSupportTicket({
+      userId: booking.userId, intent: 'ops-ticketing',
+      message: `Issue LCC ticket for booking ${booking.id} — ${lccFlight.supplier}, paid ${bookingFullyPaid(booking) ? 'IN FULL' : 'deposit'} · token ${String(lccFlight.details.bookingToken).slice(0, 24)}…`,
+      reason: 'LCC fare (Kiwi Tequila) — ticket via Kiwi booking flow',
+    });
+    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.ops-queued', entity: 'booking', entityId: booking.id, summary: `${lccFlight.supplier} via Kiwi Tequila — ops desk issues` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Booking confirmed — ticket on its way', body: `Your ${lccFlight.supplier} fare is confirmed at the charged price. Our ops desk is issuing the ticket now — your airline reference arrives shortly (normally under an hour).` });
+    return;
+  }
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
   if (!flight || !liveFlightsEnabled()) return;
   const ful = () => (booking.fulfilment = booking.fulfilment || {});
@@ -566,6 +588,12 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
   const diag = req.query.probe === '0' ? null : await duffelDiagnostic();
   res.json({
     flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode(), diagnostic: diag },
+    lccFlights: {
+      provider: 'Kiwi Tequila', enabled: lccFlightsEnabled(),
+      note: lccFlightsEnabled()
+        ? 'LCC door OPEN — Ryanair/Jet2/Wizz fares flow live on regional routes (EMA, etc.).'
+        : 'LCC door closed — Ryanair/Jet2/TUI (the airlines serving UK regional airports like East Midlands) do not sell via Duffel. Get a free key at tequila.kiwi.com and set TEQUILA_API_KEY to make routes like EMA→Brussels bookable live.',
+    },
     hotels: { provider: 'Amadeus', enabled: liveHotelsEnabled() },
     schedules: { provider: 'OAG', enabled: oagScheduleEnabled() },
     note: duffelMode() === 'test'
@@ -1170,14 +1198,20 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
       message: 'This quote is estimated — live supplier fares are not connected yet, so we do not take real payment for it. Connect live inventory (Duffel/Amadeus) to enable secure card checkout at the exact bookable price.',
     });
   }
-  // FRESH-FARE GUARD: a live Duffel flight offer expires and can reprice. Before
-  // charging, re-validate it against Duffel. If it expired or moved, refuse and
-  // ask the traveller to re-search — never charge a fare we can no longer ticket.
-  const flightComp = (booking.option?.components || []).find((c) => c.type === 'flight' && c.details?.offerId && c.live);
+  // FRESH-FARE GUARD: a live flight offer expires and can reprice. Before
+  // charging, re-validate it with its provider (Duffel or Kiwi Tequila). If it
+  // expired or moved, refuse and ask the traveller to re-search — never charge
+  // a fare we can no longer ticket.
+  const flightComp = (booking.option?.components || []).find((c) => c.type === 'flight' && (c.details?.offerId || c.details?.bookingToken) && c.live);
   if (flightComp && liveFlightsEnabled()) {
-    const check = await validateDuffelOffer(flightComp.details.offerId);
+    const check = flightComp.details.offerId
+      ? await validateDuffelOffer(flightComp.details.offerId)
+      : await validateTequilaOffer(flightComp.details.bookingToken, { adults: booking.option?.components?.find((c) => c.type === 'flight')?.details?.passengers || 1 });
     if (check.ok && (check.expired || check.live === false)) {
       return res.status(409).json({ error: 'fare-expired', message: 'This live fare has expired since your search — please re-search so we quote and charge the current bookable price.' });
+    }
+    if (check.ok && check.priceChanged) {
+      return res.status(409).json({ error: 'fare-changed', message: 'The airline price changed since your search — please re-search to see and confirm the current fare before paying.' });
     }
     if (check.ok && typeof check.priceUSD === 'number') {
       const shown = flightComp.priceUSD || 0;

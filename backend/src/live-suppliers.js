@@ -44,7 +44,17 @@ const OAG_SCHEDULES_KEY = env.OAG_SCHEDULES_KEY || '';
 const OAG_FLIGHTINFO_KEY = env.OAG_SUBSCRIPTION_KEY || env.OAG_FLIGHTINFO_KEY || env.OAG_API_KEY || '';
 const OAG_BASE = env.OAG_BASE_URL || 'https://api.oag.com';
 
-export function liveFlightsEnabled() { return !!DUFFEL_TOKEN && typeof fetch === 'function'; }
+// Kiwi Tequila — the LOW-COST CARRIER door. Duffel carries network carriers
+// (BA/KLM/Turkish…) but NOT Ryanair/Jet2/TUI, which are the airlines that
+// actually serve UK regional airports like East Midlands. Without this key,
+// routes like EMA→BRU can never return a live fare no matter how correct the
+// code is. Free key: https://tequila.kiwi.com — set TEQUILA_API_KEY.
+const TEQUILA_KEY = env.TEQUILA_API_KEY || env.KIWI_TEQUILA_KEY || '';
+const TEQUILA_BASE = env.TEQUILA_BASE_URL || 'https://api.tequila.kiwi.com';
+
+export function duffelEnabled() { return !!DUFFEL_TOKEN && typeof fetch === 'function'; }
+export function lccFlightsEnabled() { return !!TEQUILA_KEY && typeof fetch === 'function'; }
+export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled(); }
 export function liveHotelsEnabled() { return !!(AMADEUS_ID && AMADEUS_SECRET) && typeof fetch === 'function'; }
 export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
 export function liveSuppliersConfigured() { return liveFlightsEnabled() || liveHotelsEnabled() || oagScheduleEnabled(); }
@@ -57,6 +67,9 @@ const CARRIER_NAMES = {
   UA: 'United Airlines', IB: 'Iberia', AZ: 'ITA Airways', SV: 'Saudia', MS: 'EgyptAir',
   ET: 'Ethiopian Airlines', KQ: 'Kenya Airways', WY: 'Oman Air', GF: 'Gulf Air', W6: 'Wizz Air',
   FR: 'Ryanair', U2: 'easyJet', AT: 'Royal Air Maroc', QF: 'Qantas', NH: 'ANA', JL: 'Japan Airlines',
+  LS: 'Jet2.com', SN: 'Brussels Airlines', VY: 'Vueling', TP: 'TAP Air Portugal', EW: 'Eurowings',
+  PC: 'Pegasus Airlines', DY: 'Norwegian', BY: 'TUI Airways', HV: 'Transavia', TO: 'Transavia France',
+  RK: 'Ryanair UK', EI: 'Aer Lingus', LO: 'LOT Polish Airlines', A3: 'Aegean Airlines',
 };
 const PREMIUM_CARRIERS = new Set(['EK', 'QR', 'SQ', 'EY', 'CX', 'QF', 'NH']);
 function carrierName(iata) { return CARRIER_NAMES[iata] || (iata ? `${iata} (airline)` : 'Airline'); }
@@ -233,7 +246,7 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
 // price? Prevents charging a customer for a stale/repriced fare we can't ticket.
 // Returns { ok, live, expired, priceUSD, currency } or { ok:false } offline.
 export async function validateDuffelOffer(offerId) {
-  if (!liveFlightsEnabled() || !offerId) return { ok: false, reason: 'not-configured' };
+  if (!duffelEnabled() || !offerId) return { ok: false, reason: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/offers/${encodeURIComponent(offerId)}`, {
     headers: {
       Authorization: `Bearer ${DUFFEL_TOKEN}`,
@@ -255,7 +268,7 @@ export async function validateDuffelOffer(offerId) {
 // balance (mode 'balance') by default. Returns { ok, order:{...} } or
 // { ok:false, error } — the caller triggers a refund on failure.
 export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance' } = {}) {
-  if (!liveFlightsEnabled() || !offerId) return { ok: false, error: 'not-configured' };
+  if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const body = {
     data: {
       type: 'instant',
@@ -295,7 +308,7 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
 // The airline holds the price until payment_required_by; we pay to ticket once
 // the customer has finished paying us. Only works on offers that allow holds.
 export async function createDuffelHoldOrder({ offerId, passengers = [] }) {
-  if (!liveFlightsEnabled() || !offerId) return { ok: false, error: 'not-configured' };
+  if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/orders`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -308,7 +321,7 @@ export async function createDuffelHoldOrder({ offerId, passengers = [] }) {
 // Pay a held order from balance → ISSUES THE TICKET. Called when the customer
 // has finished paying us (final instalment) or immediately for pay-in-full.
 export async function payDuffelOrder({ orderId, amount, currency }) {
-  if (!liveFlightsEnabled() || !orderId) return { ok: false, error: 'not-configured' };
+  if (!duffelEnabled() || !orderId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/payments`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -345,12 +358,8 @@ export function duffelMode() {
 
 // Fetch live flights from Duffel. Returns an array of normalised offers, or
 // null when disabled / unreachable / no usable offers.
-export async function fetchLiveFlights(intent, dest, origin) {
-  if (!liveFlightsEnabled()) return null;
-  const originCode = origin?.airport;
-  const destCode = dest?.code;
-  if (!originCode || !destCode || !intent?.dates?.checkIn) return null;
-
+async function fetchDuffelFlights(intent, originCode, destCode) {
+  if (!duffelEnabled()) return null;
   const slices = [{ origin: originCode, destination: destCode, departure_date: intent.dates.checkIn }];
   if (intent.dates.checkOut) slices.push({ origin: destCode, destination: originCode, departure_date: intent.dates.checkOut });
 
@@ -386,6 +395,170 @@ export async function fetchLiveFlights(intent, dest, origin) {
     if (norm) out.push(norm);
   }
   return out.length ? out : null;
+}
+
+// ---- Kiwi Tequila (low-cost carriers) --------------------------------------
+// dd/mm/yyyy — the date format Tequila's search API expects.
+function tequilaDate(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+// Normalise one Tequila itinerary to our flight-offer shape (same contract as
+// normalizeDuffelOffer, including per-segment detail + layovers). Exported for
+// tests. `enable_vi=0` in the search means every itinerary is a SINGLE booking
+// (protected, bags through) — never a self-transfer combo.
+export function normalizeTequilaItinerary(item, priceUSD, travellers) {
+  const segs = Array.isArray(item?.route) ? item.route : [];
+  if (!segs.length) return null;
+  const toLeg = (list) => {
+    if (!list.length) return null;
+    const first = list[0]; const last = list[list.length - 1];
+    const dep = (s) => String(s.local_departure || '').slice(0, 19);
+    const arr = (s) => String(s.local_arrival || '').slice(0, 19);
+    const hh = (iso) => (String(iso).match(/T(\d{2}:\d{2})/) || [])[1] || '';
+    const dd = (iso) => String(iso).slice(0, 10);
+    const segments = list.map((s) => ({
+      carrier: carrierName(s.airline),
+      flightNumber: `${s.airline || ''}${s.flight_no || ''}`,
+      operatedBy: s.operating_carrier && s.operating_carrier !== s.airline ? carrierName(s.operating_carrier) : null,
+      from: s.flyFrom || '', fromCity: s.cityFrom || '',
+      to: s.flyTo || '', toCity: s.cityTo || '',
+      date: dd(dep(s)), depart: hh(dep(s)), arrive: hh(arr(s)),
+      durationLabel: '',
+      aircraft: null,
+    }));
+    const layovers = [];
+    for (let i = 1; i < list.length; i++) {
+      const mins = Math.round((new Date(dep(list[i])) - new Date(arr(list[i - 1]))) / 60000);
+      layovers.push({
+        airport: list[i].flyFrom || '',
+        city: list[i].cityFrom || '',
+        minutes: mins > 0 ? mins : null,
+        durationLabel: mins > 0 ? `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m` : '',
+        overnight: dd(dep(list[i])) !== dd(arr(list[i - 1])),
+        tight: mins > 0 && mins < 60,
+      });
+    }
+    const stops = list.length - 1;
+    const totalMins = Math.round((new Date(arr(last)) - new Date(dep(first))) / 60000);
+    const viaLabel = layovers.length
+      ? ` · via ${layovers.map((l) => `${l.city || l.airport} (${l.airport})${l.durationLabel ? ' ' + l.durationLabel + ' wait' : ''}`).join(', ')}`
+      : '';
+    return {
+      from: first.flyFrom || '', fromCity: first.cityFrom || '',
+      to: last.flyTo || '', toCity: last.cityTo || '',
+      date: dd(dep(first)),
+      depart: hh(dep(first)), arrive: hh(arr(last)),
+      arriveNextDay: dd(arr(last)) !== dd(dep(first)),
+      durationLabel: totalMins > 0 ? `${Math.floor(totalMins / 60)}h ${totalMins % 60}m` : '',
+      stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${stops > 1 ? 's' : ''}${viaLabel}`,
+      segments, layovers,
+    };
+  };
+  const outbound = toLeg(segs.filter((s) => !s.return));
+  const inbound = toLeg(segs.filter((s) => s.return));
+  if (!outbound) return null;
+  const mainCarrier = carrierName(segs[0].airline);
+  const bagNote = item.baglimit?.hold_weight ? `checked up to ${item.baglimit.hold_weight}kg bookable` : 'checked bags bookable';
+  return {
+    type: 'flight',
+    supplier: mainCarrier,
+    verified: true,
+    reliabilityScore: 86, // real bookable LCC fare via the Kiwi Tequila pipe
+    premium: false,
+    live: true,
+    sourcedVia: 'Kiwi Tequila (live)',
+    sourcedType: 'LCC aggregator',
+    details: {
+      outbound, inbound,
+      passengers: travellers.total,
+      cabin: 'Economy',
+      baggage: `Cabin bag included · ${bagNote}`,
+      // Tequila booking context: re-validated via check_flights before any
+      // real charge; ticketing runs through the ops queue (see autoTicketFlight).
+      bookingToken: item.booking_token || null,
+      deepLink: item.deep_link || null,
+      liveAmount: item.price != null ? String(item.price) : null,
+      liveCurrency: 'GBP',
+      seatsLeft: item.availability?.seats ?? null,
+    },
+    priceUSD,
+  };
+}
+
+async function fetchTequilaFlights(intent, originCode, destCode) {
+  if (!lccFlightsEnabled()) return null;
+  const q = new URLSearchParams({
+    fly_from: originCode,
+    fly_to: destCode,
+    date_from: tequilaDate(intent.dates.checkIn),
+    date_to: tequilaDate(intent.dates.checkIn),
+    adults: String(intent.travellers.adults || 1),
+    children: String(intent.travellers.children || 0),
+    curr: 'GBP',
+    limit: '8',
+    sort: 'price',
+    enable_vi: '0', // single-booking itineraries ONLY — no self-transfer combos
+  });
+  if (intent.dates.checkOut) {
+    q.set('return_from', tequilaDate(intent.dates.checkOut));
+    q.set('return_to', tequilaDate(intent.dates.checkOut));
+  }
+  const res = await httpJSON(`${TEQUILA_BASE}/v2/search?${q}`, {
+    timeoutMs: FLIGHT_TIMEOUT_MS,
+    headers: { apikey: TEQUILA_KEY, Accept: 'application/json' },
+  });
+  const items = res?.data;
+  if (!Array.isArray(items) || !items.length) return null;
+  const out = [];
+  for (const item of items.slice(0, 8)) {
+    const usd = await toUSD(item.price, 'GBP');
+    if (usd == null) continue;
+    const norm = normalizeTequilaItinerary(item, usd, intent.travellers);
+    if (norm) out.push(norm);
+  }
+  return out.length ? out : null;
+}
+
+// Re-validate a Tequila itinerary right before charging real money — same
+// safety contract as validateDuffelOffer: never charge for a fare that has
+// repriced or sold out.
+export async function validateTequilaOffer(bookingToken, { adults = 1, children = 0 } = {}) {
+  if (!lccFlightsEnabled() || !bookingToken) return { ok: false, reason: 'not-configured' };
+  const q = new URLSearchParams({
+    booking_token: bookingToken, bnum: '0',
+    adults: String(adults), children: String(children), infants: '0',
+    currency: 'GBP',
+  });
+  const res = await httpJSON(`${TEQUILA_BASE}/v2/booking/check_flights?${q}`, {
+    timeoutMs: FLIGHT_TIMEOUT_MS,
+    headers: { apikey: TEQUILA_KEY, Accept: 'application/json' },
+  });
+  if (!res || res.__error) return { ok: false, reason: 'unreachable' };
+  return {
+    ok: true,
+    live: res.flights_checked === true && res.flights_invalid !== true,
+    expired: res.flights_invalid === true,
+    priceChanged: res.price_change === true,
+    amount: res.conversion?.amount ?? res.total ?? null,
+    currency: 'GBP',
+  };
+}
+
+export async function fetchLiveFlights(intent, dest, origin) {
+  if (!liveFlightsEnabled()) return null;
+  const originCode = origin?.airport;
+  const destCode = dest?.code;
+  if (!originCode || !destCode || !intent?.dates?.checkIn) return null;
+  // Query BOTH doors concurrently: Duffel (network carriers) + Tequila (LCCs —
+  // Ryanair/Jet2/Wizz, the airlines serving UK regional airports). Merged and
+  // sorted by price; the packager re-ranks for reliability anyway.
+  const [duffel, tequila] = await Promise.all([
+    fetchDuffelFlights(intent, originCode, destCode).catch(() => null),
+    fetchTequilaFlights(intent, originCode, destCode).catch(() => null),
+  ]);
+  const merged = [...(duffel || []), ...(tequila || [])].sort((a, b) => a.priceUSD - b.priceUSD).slice(0, 10);
+  return merged.length ? merged : null;
 }
 
 // Diagnose exactly WHY a live flight search did or didn't return bookable fares.
