@@ -118,9 +118,31 @@ function currentUser(req) {
 // Returns true if the caller may proceed; otherwise sends a 403 JSON and returns
 // false so the handler can `if (!requireRole(...)) return;`. allAccess accounts
 // (the Full-Access demo profile) bypass the role check by design.
+// ---- Staff access PIN -------------------------------------------------------
+// Set STAFF_ACCESS_PIN in the environment to lock every privileged role behind
+// a second factor: privileged email login, demo sign-in AND every privileged
+// API call must then carry the PIN (x-staff-pin header or body.staffPin).
+// With the PIN unset the prototype behaviour is unchanged — set it in
+// production BEFORE going live.
+const PRIVILEGED_ROLES = new Set(['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate']);
+const staffPin = () => process.env.STAFF_ACCESS_PIN || '';
+function staffPinOk(req) {
+  const pin = staffPin();
+  if (!pin) return true; // gate not configured
+  return req.headers['x-staff-pin'] === pin || (req.body && req.body.staffPin === pin);
+}
+
 function requireRole(req, res, roles) {
   const u = currentUser(req);
-  if (u && (u.allAccess || roles.includes(u.role))) return true;
+  if (u && (u.allAccess || roles.includes(u.role))) {
+    // Privileged areas require the staff PIN when one is configured — even a
+    // correct role/user id is not enough (ids are not secrets).
+    if (roles.some((r) => PRIVILEGED_ROLES.has(r)) && !staffPinOk(req)) {
+      res.status(403).json({ error: 'staff-pin-required', message: 'This area requires the staff access PIN.' });
+      return false;
+    }
+    return true;
+  }
   res.status(403).json({
     error: 'forbidden',
     message: u
@@ -449,12 +471,26 @@ function fullyLoadDemoAccounts() {
 app.post('/api/accounts/seed-roles', safe((req, res) => {
   const accounts = seedAllRoles();
   const demoLoaded = fullyLoadDemoAccounts();
-  res.json({ roles: ROLES, accounts: accounts.map((u) => getUser(u.id) || u), demoLoaded });
+  // Staff-PIN protection: with a PIN configured and absent from the request,
+  // privileged demo accounts are listed but their sign-in identity is redacted
+  // (a user id IS the session credential in this architecture).
+  const unlocked = staffPinOk(req);
+  const rows = accounts.map((u) => {
+    const full = getUser(u.id) || u;
+    if (!unlocked && (PRIVILEGED_ROLES.has(full.role) || full.allAccess)) {
+      return { ...full, id: null, pinRequired: true };
+    }
+    return full;
+  });
+  res.json({ roles: ROLES, accounts: rows, demoLoaded, staffPinConfigured: !!staffPin() });
 }));
 
 // One-click FULL-ACCESS account — a single account that can use every section of
 // the OS (admin, business, merchant, consumer, VisaOS government).
 app.post('/api/account/test', safe((req, res) => {
+  // A full-access account IS an admin credential — behind the staff PIN when
+  // one is configured.
+  if (!staffPinOk(req)) return res.status(403).json({ error: 'staff-pin-required', message: 'Full-access demo accounts require the staff access PIN.' });
   const user = createUser({ name: 'Full-Access Traveller', role: 'admin', allAccess: true });
   addPoints(user.id, 1250 - user.points); // land in Voyager tier (~1,250 pts)
   creditAcu(user.id, 10000, 'full-access-demo'); // funded so every paid feature works
@@ -673,6 +709,11 @@ app.post('/api/login', safe((req, res) => {
   const email = ((req.body || {}).email || '').trim().toLowerCase();
   const user = findUserByEmail(email);
   if (!user) return res.status(404).json({ error: 'not-found', message: 'No account with that email. Sign up instead.' });
+  // Privileged accounts (admin, business, embassy…) can never be opened by
+  // email alone: when the staff PIN is configured it must accompany the login.
+  if ((PRIVILEGED_ROLES.has(user.role) || user.allAccess) && !staffPinOk(req)) {
+    return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
+  }
   res.json({ user });
 }));
 

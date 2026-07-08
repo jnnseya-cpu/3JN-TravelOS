@@ -22,6 +22,7 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.user) headers['x-user-id'] = state.user.id;
   if (state.country) headers['x-country'] = state.country;
+  if (state.staffPin) headers['x-staff-pin'] = state.staffPin; // staff second factor
   let res;
   try {
     res = await fetch(API_BASE + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
@@ -3032,7 +3033,18 @@ window.doLogin = async () => {
     return;
   }
   if (!$('#humanA')?.value) { toast('Answer the human check to continue.'); return; }
-  let d; try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, humanCheck: humanCheckPayload(true) }) }); } catch { fetchHumanChallenge(); return; }
+  let d;
+  try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, humanCheck: humanCheckPayload(true) }) }); }
+  catch (e) {
+    // Staff accounts require the second factor: collect the PIN and retry once.
+    if (/PIN/i.test(e?.message || '')) {
+      const pin = window.prompt('This is a staff account. Enter the staff access PIN:');
+      if (!pin) return;
+      state.staffPin = pin;
+      try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, humanCheck: humanCheckPayload(true), staffPin: pin }) }); }
+      catch { toast('PIN not accepted.'); fetchHumanChallenge(); return; }
+    } else { fetchHumanChallenge(); return; }
+  }
   setUser(d.user); closeModal(); toast(`✓ Welcome back, ${d.user.name}!`); nav('console');
 };
 
@@ -3081,10 +3093,13 @@ window.openDemoAccounts = async () => {
   catch { modal('<div class="center muted" style="padding:30px">Could not load demo accounts — please try again.</div>'); return; }
   const rows = (data.accounts || []).map((a) => {
     const m = DEMO_ROLE_META[a.role] || { icon: '👤', label: a.role, view: 'console', blurb: '' };
+    const btn = a.pinRequired
+      ? `<button class="btn btn-ghost btn-sm" onclick="staffPinPrompt()">🔒 PIN</button>`
+      : `<button class="btn btn-gold btn-sm" onclick="demoSignIn('${esc(a.id)}')">Sign in</button>`;
     return `<div class="kv" style="align-items:flex-start;gap:10px">
       <span style="flex:1">${m.icon} <strong>${esc(m.label)}</strong> <span class="muted" style="font-size:11.5px">· ${esc(a.email)}</span><br>
         <span class="muted" style="font-size:11.5px">${esc(m.blurb)}</span></span>
-      <button class="btn btn-gold btn-sm" onclick="demoSignIn('${esc(a.id)}')">Sign in</button>
+      ${btn}
     </div>`;
   }).join('');
   window.__demoAccounts = data.accounts || [];
@@ -3103,6 +3118,14 @@ window.demoSignIn = (id) => {
   const meta = DEMO_ROLE_META[acct.role] || { view: 'console' };
   toast(`✓ Signed in as ${acct.name} (${acct.role})`);
   nav(meta.view);
+};
+// Staff second factor: collect the PIN, keep it for this session (sent as the
+// x-staff-pin header on every request) and reopen the demo panel unlocked.
+window.staffPinPrompt = () => {
+  const pin = window.prompt('Staff access PIN');
+  if (!pin) return;
+  state.staffPin = pin;
+  openDemoAccounts();
 };
 
 // ---- API portal calculator -----------------------------------------------

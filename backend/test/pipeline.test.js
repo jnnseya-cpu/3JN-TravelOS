@@ -3112,3 +3112,34 @@ test('vendor commission is HELD until the trip completes (departure/checkout pas
   const after = runWeeklyVendorPayouts();
   assert.ok(after.batches.some((x) => x.vendorId === v.id && x.amountGbp === 30), 'released after travel completed');
 });
+
+// ---- Staff access PIN (privileged accounts never open passwordless) --------
+test('staff PIN locks privileged login, demo identities and admin APIs', async () => {
+  process.env.STAFF_ACCESS_PIN = 'test-pin-9';
+  try {
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (p, body, h = {}) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: JSON.stringify(body) });
+    try {
+      // Seed the role accounts, WITHOUT the pin: privileged ids must be redacted.
+      const seed = await (await post('/api/accounts/seed-roles', {})).json();
+      const admin = seed.accounts.find((a) => a.role === 'admin');
+      assert.equal(admin.id, null, 'admin identity redacted without the PIN');
+      assert.equal(admin.pinRequired, true);
+      const consumer = seed.accounts.find((a) => a.role === 'consumer');
+      assert.ok(consumer.id, 'consumer demo stays one-tap');
+      // WITH the pin → identities unlock.
+      const seed2 = await (await post('/api/accounts/seed-roles', { staffPin: 'test-pin-9' })).json();
+      const admin2 = seed2.accounts.find((a) => a.role === 'admin');
+      assert.ok(admin2.id, 'PIN unlocks the admin identity');
+      // Full-access endpoint refuses without the pin.
+      assert.equal((await post('/api/account/test', {})).status, 403);
+      // Admin API refuses a valid admin id without the pin header, allows with it.
+      const noPin = await fetch(base + '/api/admin/live-status?probe=0', { headers: { 'x-user-id': admin2.id } });
+      assert.equal(noPin.status, 403, 'admin API requires the PIN even with a valid admin id');
+      const withPin = await fetch(base + '/api/admin/live-status?probe=0', { headers: { 'x-user-id': admin2.id, 'x-staff-pin': 'test-pin-9' } });
+      assert.equal(withPin.status, 200, 'PIN + admin id opens the admin API');
+    } finally { server.close(); }
+  } finally { delete process.env.STAFF_ACCESS_PIN; }
+});
