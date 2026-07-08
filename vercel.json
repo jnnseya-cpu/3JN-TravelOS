@@ -3,6 +3,11 @@
   "version": 2,
   "name": "3jn-travel-os",
   "outputDirectory": "frontend",
+  "git": {
+    "deploymentEnabled": {
+      "claude/global-travel-os-q119k1": false
+    }
+  },
   "functions": {
     "api/index.js": { "maxDuration": 30 }
   },
