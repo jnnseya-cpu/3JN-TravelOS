@@ -46,7 +46,7 @@ import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { supportRespond } from './chatbot.js';
 import { assist } from './assistant.js';
-import { bookingDocument } from './documents.js';
+import { bookingDocument, includedServices } from './documents.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
@@ -1081,6 +1081,25 @@ app.get('/api/book/:id', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   res.json({ booking });
+}));
+
+// Console → booking → 📄 Documents: the structured document vault — the SAME
+// per-service confirmation cards as the printed document (single source of
+// truth), so "full instructions in your Console" is literally true.
+app.get('/api/book/:id/documents', safe((req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
+  const ful = booking.fulfilment || {};
+  res.json({
+    bookingId: booking.id,
+    status: booking.status,
+    ticketing: ful.ticketing || 'confirmed',
+    pnr: ful.pnr || null,
+    ticketNumbers: (ful.ticketNumbers || []).filter(Boolean).length ? ful.ticketNumbers : (ful.eTicketNumber ? [ful.eTicketNumber] : []),
+    services: includedServices(booking),
+  });
 }));
 
 // Branded travel document — e-ticket / itinerary / confirmation. Returns a

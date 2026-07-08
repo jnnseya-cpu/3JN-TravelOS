@@ -113,72 +113,18 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   }).join('');
 
   // EVERY OTHER SERVICE — each gets its own confirmation block with the
-  // details a traveller actually needs on the ground.
+  // details a traveller actually needs on the ground. serviceBlockData is the
+  // SINGLE source of truth: the printed document AND the Console → 📄 Documents
+  // panel both render from it, so they can never diverge.
   const otherBlocks = others.map((c, i) => {
-    const d = c.details || {};
-    const rows = [];
-    if (c.type === 'transfer') {
-      rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'TRF'))}</b>`]);
-      rows.push(['Vehicle', esc(d.vehicle || 'Standard')], ['Capacity', esc(d.capacity || '')]);
-      rows.push(['Trips', `${d.trips || 2} — airport → stay on arrival · stay → airport on departure`]);
-      rows.push(['How it works', `Arrival: after baggage claim, your driver waits at the arrivals exit holding a <b>3JN board with your name</b>${startDate ? ` on ${esc(startDate)}` : ''}. The driver's name and phone number are sent to you by SMS and email <b>24 hours before pickup</b>. Departure: pickup time is confirmed the evening before.`]);
-      rows.push(['Can\'t find your driver?', 'Message the 3JN Assistant in the app or email support@3jntravel.com quoting your booking ref — we locate the driver live. Please don\'t book alternative transport without contacting us first.']);
-    } else if (c.type === 'esim') {
-      rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
-      rows.push(['ICCID', `<b class="ticketno">${esc(confRef(booking.id, i, '8944'))}</b>`]);
-      rows.push(['How to activate', '1) Open your <b>3JN Console → your booking → 📄 Documents</b> (or the activation email) and scan the QR code. 2) Install the eSIM over WiFi <b>before departure</b>. 3) On landing, enable data roaming on the 3JN eSIM line — it activates on first connection abroad and your validity starts then.']);
-      rows.push(['Didn\'t get the QR?', 'Ask the 3JN Assistant "resend my eSIM" or email support@3jntravel.com — reissued in minutes.']);
-    } else if (c.type === 'insurance') {
-      rows.push(['Policy number', `<b class="ticketno">${esc(confRef(booking.id, i, 'POL'))}</b>`]);
-      rows.push(['Cover', esc(d.cover || 'Medical + cancellation')], ['Insured', `${d.people || o.travellers?.total || 1} traveller(s) · ${d.days || ''} days · valid ${esc(startDate)} → ${esc(endDate || startDate)}`]);
-      rows.push(['How to claim', '1) Medical emergency: call the 24/7 emergency line on your policy schedule (emailed with this document) BEFORE treatment where possible. 2) Keep every receipt, report and reference. 3) Start the claim from your 3JN Console → booking → Insurance, or ask the 3JN Assistant — we pre-fill the claim with your trip data.']);
-      rows.push(['Carry', 'A copy of the policy schedule (digital is fine) and this booking reference.']);
-    } else if (c.type === 'visa') {
-      rows.push(['Service', esc(d.visaType || 'Visa application')], ['Applicants', `${d.people || 1}`]);
-      rows.push(['Status & tracking', `Processing ~${d.processingDays || '—'} days. Track live in your Console → VisaOS → My applications. The embassy releases the decision — you're notified instantly and your official decision letter appears there.`]);
-      rows.push(['At the border', 'Carry your passport, a printed or digital copy of the decision letter, and this itinerary. Conditions on the visa (validity, entries) are stated on the letter.']);
-    } else if (c.type === 'activities' || c.type === 'tickets') {
-      rows.push(['Voucher', `<b class="ticketno">${esc(confRef(booking.id, i, 'VCH'))}</b> — show at entry (digital accepted, ID may be requested)`]);
-      rows.push(['Schedule', `${d.date ? esc(d.date) + ' · ' : ''}Exact meeting point and start time are confirmed by email and in your Console <b>24–48h before</b>. ${d.durationHours ? `Duration ~${d.durationHours}h. ` : ''}Arrive 15 minutes early.`]);
-      rows.push(['Changes', 'Need a different day or headcount? Ask the 3JN Assistant — free rescheduling up to 24h before where the operator allows.']);
-      if (d.whatProvided?.length) rows.push(['Included', d.whatProvided.map(esc).join(' · ')]);
-      if (d.whatToBring?.length) rows.push(['Bring', d.whatToBring.map(esc).join(' · ')]);
-    } else if (c.type === 'carhire') {
-      rows.push(['Reservation', `<b class="ticketno">${esc(confRef(booking.id, i, 'CAR'))}</b>`], ['Vehicle', esc(d.vehicle || '')]);
-      rows.push(['Pickup', `Airport rental desk on arrival${startDate ? ` (${esc(startDate)})` : ''} — quote the reservation number.`]);
-      rows.push(['You must bring', 'Full driving licence held 1+ years, passport, and a credit card in the MAIN driver\'s name (a refundable deposit is blocked on it). International Driving Permit where required.']);
-      rows.push(['Cover', 'Basic collision cover included; excess-reduction offered at the desk — check your travel insurance first, it may already cover the excess.']);
-    } else if (c.type === 'photographer') {
-      rows.push(['Session ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'PHO'))}</b>`], ['Session', esc(d.unit || 'per 2h shoot')]);
-      rows.push(['Scheduling', 'The photographer contacts you within 24h of booking (email + Console message) to agree the date, time and shoot locations. Golden-hour slots go first — reply early.']);
-      rows.push(['Your photos', 'Edited photos delivered to your Console → Documents within 5 days of the shoot (full-resolution download, yours to keep).']);
-    } else if (c.type === 'guide') {
-      rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'GDE'))}</b>`], ['Engagement', esc(d.unit || 'per day')]);
-      rows.push(['Meeting', 'Your guide meets you at your accommodation lobby at the agreed time (default 09:00, day after arrival). Name, photo and phone number sent 24h before.']);
-      rows.push(['Customising', 'Tell the 3JN Assistant what you want to see — the itinerary is yours; the guide adapts on the day. Entry fees for attractions are paid separately unless stated.']);
-    } else if (c.type === 'restaurant') {
-      rows.push(['Reservation ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'RSV'))}</b>`], ['Covers', `${d.people || o.travellers?.total || 2} · ${esc(d.unit || 'set menu per person')}`]);
-      rows.push(['Confirmation', 'The exact restaurant, date and table time are confirmed by email and in your Console 48h before. Give the reservation ref (or your name) at the door.']);
-      rows.push(['Dietary needs', 'Allergies or preferences? Tell the 3JN Assistant now — we pass them to the kitchen with the reservation.']);
-    } else if (c.type === 'translator') {
-      rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'TRN'))}</b>`], ['Engagement', esc(d.unit || 'per day')]);
-      rows.push(['Meeting', 'Your interpreter meets you at your accommodation (or a location you choose) at the agreed time. Name and phone number sent 24h before. Working languages confirmed at booking.']);
-      rows.push(['Scope', 'Business meetings, medical appointments, shopping, officialdom — anything spoken. Written document translation can be added via the Assistant.']);
-    } else if (c.type === 'driver') {
-      rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'DRV'))}</b>`], ['Engagement', esc(d.unit || 'per day · with vehicle')]);
-      rows.push(['How it works', 'A licensed driver with an air-conditioned vehicle is at your disposal for the day (up to 10 hours). Pickup at your accommodation at the agreed time; the driver waits at every stop. Driver name, vehicle plate and phone sent 24h before.']);
-      rows.push(['Notes', 'Fuel, parking and tolls included within the city. Out-of-city day trips — agree the route with the Assistant first so it\'s priced upfront.']);
-    } else {
-      rows.push(['Reference', `<b class="ticketno">${esc(confRef(booking.id, i, 'REF'))}</b>`]);
-      if (d.planLabel) rows.push(['Details', esc(d.planLabel)]);
-      rows.push(['How to use', 'Full instructions are in your Console → booking → 📄 Documents, or ask the 3JN Assistant.']);
-    }
+    const b = serviceBlockData(booking, c, i, { startDate, endDate });
     return `
     <div class="seg">
-      <div class="seg-head"><span>${iconFor(c.type)} ${esc(labelFor(c.type))} — ${esc(c.supplier)}</span></div>
-      <table class="legs"><tbody>${rows.map(([k, v]) => `<tr><td class="dir">${esc(k)}</td><td colspan="3">${v}</td></tr>`).join('')}</tbody></table>
+      <div class="seg-head"><span>${b.icon} ${esc(b.label)} — ${esc(b.supplier)}</span></div>
+      <table class="legs"><tbody>${b.rows.map(([k, v]) => `<tr><td class="dir">${esc(k)}</td><td colspan="3">${v}</td></tr>`).join('')}</tbody></table>
     </div>`;
   }).join('');
+
 
   const paxName = lead.fullLegalName || lead.name || user?.name || 'Lead traveller';
   const paxCount = o.travellers?.total || flights[0]?.details?.passengers || 1;
@@ -261,4 +207,90 @@ function labelFor(type) {
 }
 function iconFor(type) {
   return ({ transfer: '🚘', visa: '🛂', esim: '📶', insurance: '🛡', activities: '🎟', tickets: '🎫', carhire: '🚗', train: '🚆', coach: '🚌', ferry: '⛴', cruise: '🛳', photographer: '📸', guide: '🧭', restaurant: '🍽', translator: '🗣', driver: '🚙' }[type] || '•');
+}
+
+// ---------------------------------------------------------------------------
+// One included-service confirmation card, as structured data:
+//   { type, icon, label, supplier, rows: [[key, htmlValue]...] }
+// The SINGLE source of truth for service instructions — the printed travel
+// document renders it, and GET /api/book/:id/documents feeds the Console
+// "📄 Documents" panel from it, so the two can never diverge.
+export function serviceBlockData(booking, c, i, { startDate = '', endDate = '' } = {}) {
+  const o = booking.option || {};
+  const d = c.details || {};
+  const rows = [];
+  if (c.type === 'transfer') {
+    rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'TRF'))}</b>`]);
+    rows.push(['Vehicle', esc(d.vehicle || 'Standard')], ['Capacity', esc(d.capacity || '')]);
+    rows.push(['Trips', `${d.trips || 2} — airport → stay on arrival · stay → airport on departure`]);
+    rows.push(['How it works', `Arrival: after baggage claim, your driver waits at the arrivals exit holding a <b>3JN board with your name</b>${startDate ? ` on ${esc(startDate)}` : ''}. The driver's name and phone number are sent to you by SMS and email <b>24 hours before pickup</b>. Departure: pickup time is confirmed the evening before.`]);
+    rows.push(['Can\'t find your driver?', 'Message the 3JN Assistant in the app or email support@3jntravel.com quoting your booking ref — we locate the driver live. Please don\'t book alternative transport without contacting us first.']);
+  } else if (c.type === 'esim') {
+    const iccid = confRef(booking.id, i, '8944');
+    rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
+    rows.push(['ICCID', `<b class="ticketno">${esc(iccid)}</b>`]);
+    rows.push(['Activation code', `<b class="ticketno">LPA:1$sm.3jntravel.com$${esc(iccid.replace(/[^0-9A-Za-z]/g, ''))}</b> — Settings → Mobile/Cellular → Add eSIM → <b>Enter Details Manually</b>`]);
+    rows.push(['How to activate', '1) Scan the QR in your activation email — or enter the activation code above manually. 2) Install the eSIM over WiFi <b>before departure</b>. 3) On landing, enable data roaming on the 3JN eSIM line — it activates on first connection abroad and your validity starts then.']);
+    rows.push(['Didn\'t get the QR?', 'Ask the 3JN Assistant "resend my eSIM" or email support@3jntravel.com — reissued in minutes.']);
+  } else if (c.type === 'insurance') {
+    rows.push(['Policy number', `<b class="ticketno">${esc(confRef(booking.id, i, 'POL'))}</b>`]);
+    rows.push(['Cover', esc(d.cover || 'Medical + cancellation')], ['Insured', `${d.people || o.travellers?.total || 1} traveller(s) · ${d.days || ''} days · valid ${esc(startDate)} → ${esc(endDate || startDate)}`]);
+    rows.push(['How to claim', '1) Medical emergency: call the 24/7 emergency line on your policy schedule (emailed with this document) BEFORE treatment where possible. 2) Keep every receipt, report and reference. 3) Start the claim from your 3JN Console → booking → Insurance, or ask the 3JN Assistant — we pre-fill the claim with your trip data.']);
+    rows.push(['Carry', 'A copy of the policy schedule (digital is fine) and this booking reference.']);
+  } else if (c.type === 'visa') {
+    rows.push(['Service', esc(d.visaType || 'Visa application')], ['Applicants', `${d.people || 1}`]);
+    rows.push(['Status & tracking', `Processing ~${d.processingDays || '—'} days. Track live in your Console → VisaOS → My applications. The embassy releases the decision — you're notified instantly and your official decision letter appears there.`]);
+    rows.push(['At the border', 'Carry your passport, a printed or digital copy of the decision letter, and this itinerary. Conditions on the visa (validity, entries) are stated on the letter.']);
+  } else if (c.type === 'activities' || c.type === 'tickets') {
+    rows.push(['Voucher', `<b class="ticketno">${esc(confRef(booking.id, i, 'VCH'))}</b> — show at entry (digital accepted, ID may be requested)`]);
+    rows.push(['Schedule', `${d.date ? esc(d.date) + ' · ' : ''}Exact meeting point and start time are confirmed by email and in your Console <b>24–48h before</b>. ${d.durationHours ? `Duration ~${d.durationHours}h. ` : ''}Arrive 15 minutes early.`]);
+    rows.push(['Changes', 'Need a different day or headcount? Ask the 3JN Assistant — free rescheduling up to 24h before where the operator allows.']);
+    if (d.whatProvided?.length) rows.push(['Included', d.whatProvided.map(esc).join(' · ')]);
+    if (d.whatToBring?.length) rows.push(['Bring', d.whatToBring.map(esc).join(' · ')]);
+  } else if (c.type === 'carhire') {
+    rows.push(['Reservation', `<b class="ticketno">${esc(confRef(booking.id, i, 'CAR'))}</b>`], ['Vehicle', esc(d.vehicle || '')]);
+    rows.push(['Pickup', `Airport rental desk on arrival${startDate ? ` (${esc(startDate)})` : ''} — quote the reservation number.`]);
+    rows.push(['You must bring', 'Full driving licence held 1+ years, passport, and a credit card in the MAIN driver\'s name (a refundable deposit is blocked on it). International Driving Permit where required.']);
+    rows.push(['Cover', 'Basic collision cover included; excess-reduction offered at the desk — check your travel insurance first, it may already cover the excess.']);
+  } else if (c.type === 'photographer') {
+    rows.push(['Session ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'PHO'))}</b>`], ['Session', esc(d.unit || 'per 2h shoot')]);
+    rows.push(['Scheduling', 'The photographer contacts you within 24h of booking (email + Console message) to agree the date, time and shoot locations. Golden-hour slots go first — reply early.']);
+    rows.push(['Your photos', 'Edited photos delivered to your Console → Documents within 5 days of the shoot (full-resolution download, yours to keep).']);
+  } else if (c.type === 'guide') {
+    rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'GDE'))}</b>`], ['Engagement', esc(d.unit || 'per day')]);
+    rows.push(['Meeting', 'Your guide meets you at your accommodation lobby at the agreed time (default 09:00, day after arrival). Name, photo and phone number sent 24h before.']);
+    rows.push(['Customising', 'Tell the 3JN Assistant what you want to see — the itinerary is yours; the guide adapts on the day. Entry fees for attractions are paid separately unless stated.']);
+  } else if (c.type === 'restaurant') {
+    rows.push(['Reservation ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'RSV'))}</b>`], ['Covers', `${d.people || o.travellers?.total || 2} · ${esc(d.unit || 'set menu per person')}`]);
+    rows.push(['Confirmation', 'The exact restaurant, date and table time are confirmed by email and in your Console 48h before. Give the reservation ref (or your name) at the door.']);
+    rows.push(['Dietary needs', 'Allergies or preferences? Tell the 3JN Assistant now — we pass them to the kitchen with the reservation.']);
+  } else if (c.type === 'translator') {
+    rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'TRN'))}</b>`], ['Engagement', esc(d.unit || 'per day')]);
+    rows.push(['Meeting', 'Your interpreter meets you at your accommodation (or a location you choose) at the agreed time. Name and phone number sent 24h before. Working languages confirmed at booking.']);
+    rows.push(['Scope', 'Business meetings, medical appointments, shopping, officialdom — anything spoken. Written document translation can be added via the Assistant.']);
+  } else if (c.type === 'driver') {
+    rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'DRV'))}</b>`], ['Engagement', esc(d.unit || 'per day · with vehicle')]);
+    rows.push(['How it works', 'A licensed driver with an air-conditioned vehicle is at your disposal for the day (up to 10 hours). Pickup at your accommodation at the agreed time; the driver waits at every stop. Driver name, vehicle plate and phone sent 24h before.']);
+    rows.push(['Notes', 'Fuel, parking and tolls included within the city. Out-of-city day trips — agree the route with the Assistant first so it\'s priced upfront.']);
+  } else {
+    rows.push(['Reference', `<b class="ticketno">${esc(confRef(booking.id, i, 'REF'))}</b>`]);
+    if (d.planLabel) rows.push(['Details', esc(d.planLabel)]);
+    rows.push(['How to use', 'Open this card in your Console → booking → 📄 Documents, or ask the 3JN Assistant.']);
+  }
+  return { type: c.type, icon: iconFor(c.type), label: labelFor(c.type), supplier: c.supplier, rows };
+}
+
+// All included-service cards for a booking — feeds the Console Documents panel.
+export function includedServices(booking) {
+  const comps = booking.option?.components || [];
+  const flights = comps.filter((x) => x.type === 'flight');
+  const stays = comps.filter((x) => x.type === 'hotel' || x.type === 'host');
+  const trip = flights[0]?.details || {};
+  const startDate = trip.outbound?.date || stays[0]?.details?.checkIn || '';
+  const endDate = trip.inbound?.date || stays[0]?.details?.checkOut || '';
+  // Index within the filtered list — identical to the printed document's
+  // indexing, so the refs (TRF-…, VCH-…) match exactly on both surfaces.
+  return comps
+    .filter((c) => !['flight', 'hotel', 'host'].includes(c.type))
+    .map((c, i) => serviceBlockData(booking, c, i, { startDate, endDate }));
 }

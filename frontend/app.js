@@ -1824,34 +1824,26 @@ window.applyVendorFlow = async (tier) => {
 };
 
 // ---- Document Vault -------------------------------------------------------
+// Console → booking → 📄 Documents — the REAL document vault. Renders the same
+// per-service confirmation cards as the printed travel document (one source of
+// truth on the server), including refs, instructions and the eSIM activation code.
 window.openDocs = async (bookingId) => {
-  let data;
-  try { data = await api(`/api/book/${bookingId}`); } catch { return; }
-  const b = data.booking;
-  const o = b.option;
-  const sym = o.pricing.symbol;
-  const lines = o.components.map((c) => `  • ${labelFor(c).replace(/<[^>]+>/g, '')} — ${c.supplier}${c.agentId ? ` [agent ${c.agentId}]` : ''}`).join('\n');
-  const doc = `3JN TRAVEL OS — BOOKING CONFIRMATION
-=====================================
-Booking ref : ${b.id}
-Package     : ${o.tier}
-Status      : ${b.status}
-Paid via    : ${b.gateway}
-Total       : ${sym}${o.pricing.local.total}
-
-INCLUDED
-${lines}
-
-Powered by Artificial Intelligence • Built for Better Travel`;
+  let d;
+  try { d = await api(`/api/book/${bookingId}/documents`); } catch { toast('Could not load documents.'); return; }
+  const cards = (d.services || []).map((s) => `
+    <div class="card pad" style="margin-top:10px">
+      <div style="font-weight:700;margin-bottom:6px">${s.icon} ${esc(s.label)} <span class="muted" style="font-weight:400;font-size:12px">— ${esc(s.supplier)}</span></div>
+      ${s.rows.map(([k, v]) => `<div class="kv" style="align-items:flex-start"><span class="muted" style="font-size:11.5px;min-width:110px">${esc(k)}</span><span style="font-size:12.5px;text-align:right;flex:1">${v}</span></div>`).join('')}
+    </div>`).join('');
   modal(`
-    <span class="eyebrow">Document Vault · ${b.id}</span>
-    <h3 style="margin:6px 0">Your travel documents</h3>
-    <div class="kv"><span>✈ e-Ticket</span><span class="muted">issued</span></div>
-    <div class="kv"><span>🏨 Hotel voucher</span><span class="muted">issued</span></div>
-    <div class="kv"><span>🛡 Insurance certificate</span><span class="muted">issued</span></div>
-    <div class="kv"><span>🛂 Visa approval</span><span class="muted">where applicable</span></div>
-    <pre class="card pad" style="margin-top:12px;font-size:11px;white-space:pre-wrap;font-family:monospace">${doc.replace(/</g, '&lt;')}</pre>
-    <button class="btn btn-gold btn-block" style="margin-top:12px" onclick='downloadDoc(${JSON.stringify(b.id)}, ${JSON.stringify(doc)})'>⬇ Download confirmation</button>`);
+    <span class="eyebrow">📄 Documents · ${esc(d.bookingId)}</span>
+    <h3 style="margin:6px 0 2px">Your travel documents & service instructions</h3>
+    <div class="kv"><span>Status</span><span>${esc(d.status)} · ${esc(d.ticketing)}</span></div>
+    ${d.pnr ? `<div class="kv"><span>Airline PNR</span><span><b>${esc(d.pnr)}</b></span></div>` : ''}
+    ${(d.ticketNumbers || []).length ? `<div class="kv"><span>E-ticket number(s)</span><span><b>${d.ticketNumbers.map(esc).join(', ')}</b></span></div>` : ''}
+    <button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal();viewEticket('${esc(d.bookingId)}')">🎫 Open full e-ticket / itinerary (print or save as PDF)</button>
+    ${cards || '<p class="muted" style="font-size:12.5px;margin-top:10px">No additional services on this booking.</p>'}
+    <p class="muted" style="font-size:11px;margin-top:10px">Anything unclear? Ask the 💬 3JN Assistant — it reads this exact booking and can resend documents, reschedule services or connect you to a specialist.</p>`);
 };
 window.downloadDoc = (id, text) => {
   const blob = new Blob([text], { type: 'text/plain' });
