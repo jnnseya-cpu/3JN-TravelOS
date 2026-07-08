@@ -600,8 +600,8 @@ app.post('/api/benchmark/flights', safe(async (req, res) => {
 }));
 app.post('/api/benchmark/flights/market', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  const { runId, rowId, source, priceGbp } = req.body || {};
-  res.json(recordBenchmarkMarket(runId, rowId, { source, priceGbp }));
+  const { runId, rowId, source, priceGbp, selfTransfer } = req.body || {};
+  res.json(recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTransfer }));
 }));
 
 // ---- Profitability Dashboard (spec §17): real-time money view --------------

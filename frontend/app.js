@@ -2160,9 +2160,13 @@ async function renderBenchmark() {
     'no-live-fare': ['— no live fare', 'var(--muted)'],
   };
   const rows = (run?.rows || []).map((r) => {
-    const verdict = r.result && VERDICT[r.result.verdict]
-      ? `<span class="ch-chip" style="color:${VERDICT[r.result.verdict][1]};border-color:currentColor">${VERDICT[r.result.verdict][0]}${r.result.deltaGbp != null ? ` · ${r.result.deltaGbp <= 0 ? '−' : '+'}£${Math.abs(r.result.deltaGbp).toFixed(2)} (${r.result.deltaPct > 0 ? '+' : ''}${r.result.deltaPct}%)` : ''}</span>`
-      : '<span class="muted" style="font-size:11.5px">read a leader price → record it below</span>';
+    const chip = (res, label) => res && VERDICT[res.verdict]
+      ? `<span class="ch-chip" style="color:${VERDICT[res.verdict][1]};border-color:currentColor">${label ? label + ' ' : ''}${VERDICT[res.verdict][0]}${res.deltaGbp != null ? ` · ${res.deltaGbp <= 0 ? '−' : '+'}£${Math.abs(res.deltaGbp).toFixed(2)} (${res.deltaPct > 0 ? '+' : ''}${res.deltaPct}%)` : ''}${res.vs ? ` vs ${esc(res.vs.source)} £${res.vs.priceGbp}${res.vs.selfTransfer ? ' (self-transfer)' : ''}` : ''}</span>`
+      : '';
+    const verdict = (chip(r.result, '') + (r.protectedResult && r.result?.vs?.selfTransfer ? ' ' + chip(r.protectedResult, 'Protected fares:') : ''))
+      || '<span class="muted" style="font-size:11.5px">read a leader price → record it below</span>';
+    const quotes = (r.marketQuotes || []).map((q) => `<span class="chip" style="font-size:10.5px">${esc(q.source)} £${q.priceGbp}${q.selfTransfer ? ' · self-transfer' : ''}</span>`).join(' ');
+    const noteHTML = r.note ? `<div style="font-size:11.5px;color:var(--green);margin-top:4px">✓ ${esc(r.note)}</div>` : '';
     const fare = r.live
       ? `<strong style="color:var(--gold)">£${(r.ourPriceGbp ?? 0).toFixed(2)}</strong> <span class="muted" style="font-size:11px">customer pays · raw £${(r.rawFareGbp ?? 0).toFixed(2)} · ${esc(r.carrier || '')} · ${esc(r.cabin || '')}${r.baggage ? ' · ' + esc(r.baggage) : ''} · ${r.offersFound} offers</span>`
       : `<span style="color:#ff8a8a">${r.error === 'no-offers' ? 'No live offers on this route/date — try the alternate airport or another date' : esc(r.error || 'no result')}</span>`;
@@ -2173,11 +2177,14 @@ async function renderBenchmark() {
       <div style="margin-top:4px;font-size:13px">${fare}</div>
       <div style="margin-top:6px;font-size:12px">Check the same route: <a href="${r.links.skyscanner}" target="_blank" rel="noopener" style="color:var(--gold)">Skyscanner</a> · <a href="${r.links.googleFlights}" target="_blank" rel="noopener" style="color:var(--gold)">Google Flights</a> · <a href="${r.links.kayak}" target="_blank" rel="noopener" style="color:var(--gold)">Kayak</a></div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
-        <select class="in" id="bmsrc-${esc(r.id)}" style="max-width:150px;padding:6px 8px"><option>Skyscanner</option><option>Google Flights</option><option>Kayak</option><option>Trip.com</option><option>Expedia</option></select>
-        <input class="in" id="bmp-${esc(r.id)}" placeholder="Leader's £ total" style="max-width:140px" inputmode="decimal" value="${r.market?.priceGbp ?? ''}">
+        <select class="in" id="bmsrc-${esc(r.id)}" style="max-width:150px;padding:6px 8px"><option>Skyscanner</option><option>Google Flights</option><option>Kayak</option><option>momondo</option><option>Kiwi.com</option><option>Trip.com</option><option>Expedia</option></select>
+        <input class="in" id="bmp-${esc(r.id)}" placeholder="Leader's £ total" style="max-width:140px" inputmode="decimal">
+        <label class="muted" style="font-size:11.5px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="bmst-${esc(r.id)}"> self-transfer / separate tickets</label>
         <button class="btn btn-ghost btn-sm" onclick="saveBenchmarkMarket('${esc(run.id)}','${esc(r.id)}')">Record & judge</button>
-        ${verdict}
       </div>
+      ${quotes ? `<div style="margin-top:6px">${quotes}</div>` : ''}
+      <div style="margin-top:6px">${verdict}</div>
+      ${noteHTML}
     </div>`;
   }).join('');
   el.innerHTML = `
@@ -2218,9 +2225,10 @@ window.runBenchmark = async (custom) => {
 window.saveBenchmarkMarket = async (runId, rowId) => {
   const priceGbp = parseFloat($(`#bmp-${rowId}`)?.value);
   const source = $(`#bmsrc-${rowId}`)?.value || 'market';
+  const selfTransfer = !!$(`#bmst-${rowId}`)?.checked;
   if (!(priceGbp > 0)) { toast('Enter the leader’s price in £ first.'); return; }
   try {
-    const r = await api('/api/benchmark/flights/market', { method: 'POST', body: JSON.stringify({ runId, rowId, source, priceGbp }) });
+    const r = await api('/api/benchmark/flights/market', { method: 'POST', body: JSON.stringify({ runId, rowId, source, priceGbp, selfTransfer }) });
     if (!r.ok) { toast(r.message || r.error || 'Could not record.'); return; }
     toast('✓ Recorded — verdict updated.');
     renderBenchmark();

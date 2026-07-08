@@ -3455,3 +3455,21 @@ test('connecting flights expose per-segment flights, stopover airports and wait 
   assert.equal(leg.layovers[0].tight, false);
   assert.match(leg.stopLabel, /via Amsterdam \(AMS\) 1h 45m wait/, 'summary label says where and how long');
 });
+
+test('market benchmark: judges vs the lowest quote AND vs protected fares separately', async () => {
+  const { saveBenchmarkRun, recordBenchmarkMarket } = await import('../src/store.js');
+  const saved = saveBenchmarkRun({ at: '2026-07-08T12:00:00Z', depart: '2026-09-01', ret: '2026-09-06', adults: 1, mode: 'live', rows: [
+    { id: 'EMA-BRU-2026-09-01', label: 'Nottingham (EMA) → Brussels', origin: 'EMA', dest: 'BRU', depart: '2026-09-01', ret: '2026-09-06', adults: 1, live: true, ourPriceGbp: 92, rawFareGbp: 80, links: {}, market: null, result: null },
+  ] });
+  // momondo £96 protected fare → we win outright.
+  let r = recordBenchmarkMarket(saved.id, 'EMA-BRU-2026-09-01', { source: 'momondo', priceGbp: 96 });
+  assert.equal(r.row.result.verdict, 'unbeatable');
+  // Kiwi £87 self-transfer combo → lowest overall beats us, but the verdict
+  // stays honest about WHAT beat us: separate unprotected tickets.
+  r = recordBenchmarkMarket(saved.id, 'EMA-BRU-2026-09-01', { source: 'Kiwi.com', priceGbp: 87, selfTransfer: true });
+  assert.equal(r.row.result.verdict, 'above-market');
+  assert.equal(r.row.result.vs.source, 'Kiwi.com');
+  assert.equal(r.row.protectedResult.verdict, 'unbeatable', 'still unbeatable among protected single tickets');
+  assert.match(r.row.note, /self-transfer/, 'headline says exactly who undercuts us and with what product');
+  assert.equal(r.row.marketQuotes.length, 2, 'every recorded quote is kept');
+});

@@ -1884,17 +1884,34 @@ export function saveBenchmarkRun(run) {
 export function latestBenchmarkRun() {
   return db.benchmarks[0] || null;
 }
-// The admin reads the leader's price off the prefilled link and records it —
-// the verdict (unbeatable / competitive / above-market) is computed here.
-export function recordBenchmarkMarket(runId, rowId, { source, priceGbp } = {}) {
+// The admin reads leader prices off the prefilled links and records them —
+// as many as they find. We judge against the LOWEST recorded price overall
+// AND against the lowest PROTECTED (single-ticket) price, because an OTA
+// "self-transfer" combo (separate tickets, no protection, re-check bags,
+// sometimes an overnight in a hub) is not the same product as ours.
+export function recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTransfer = false } = {}) {
   const run = db.benchmarks.find((b) => b.id === runId);
   if (!run) return { ok: false, error: 'run-not-found' };
   const row = (run.rows || []).find((r) => r.id === rowId);
   if (!row) return { ok: false, error: 'row-not-found' };
   const price = Math.round(Number(priceGbp) * 100) / 100;
   if (!(price > 0)) return { ok: false, error: 'bad-price', message: 'Enter the market price in GBP.' };
-  row.market = { source: String(source || 'market').slice(0, 40), priceGbp: price, at: nowISO() };
-  row.result = row.ourPriceGbp != null ? benchmarkVerdict(row.ourPriceGbp, price) : { verdict: 'no-live-fare', deltaGbp: null, deltaPct: null };
+  row.marketQuotes = row.marketQuotes || [];
+  row.marketQuotes.push({ source: String(source || 'market').slice(0, 40), priceGbp: price, selfTransfer: !!selfTransfer, at: nowISO() });
+  const lowest = row.marketQuotes.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b));
+  const protectedQuotes = row.marketQuotes.filter((q) => !q.selfTransfer);
+  const lowestProtected = protectedQuotes.length ? protectedQuotes.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b)) : null;
+  row.market = lowest; // kept for compatibility: the toughest competitor
+  if (row.ourPriceGbp != null) {
+    row.result = { ...benchmarkVerdict(row.ourPriceGbp, lowest.priceGbp), vs: lowest };
+    row.protectedResult = lowestProtected ? { ...benchmarkVerdict(row.ourPriceGbp, lowestProtected.priceGbp), vs: lowestProtected } : null;
+    // The honest headline: beaten only by an unprotected hack ≠ beaten.
+    row.note = row.result.verdict === 'above-market' && lowest.selfTransfer && row.protectedResult && row.protectedResult.verdict !== 'above-market'
+      ? 'Only self-transfer combos (separate tickets, no protection) undercut us — we beat or match every protected fare recorded.'
+      : null;
+  } else {
+    row.result = { verdict: 'no-live-fare', deltaGbp: null, deltaPct: null };
+  }
   return { ok: true, row };
 }
 
