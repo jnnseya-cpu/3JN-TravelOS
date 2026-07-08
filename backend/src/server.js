@@ -126,6 +126,10 @@ function currentUser(req) {
 // production BEFORE going live.
 const PRIVILEGED_ROLES = new Set(['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate']);
 const staffPin = () => process.env.STAFF_ACCESS_PIN || '';
+// Go-live switch: LIVE_MODE=true removes every demo/free-AI affordance —
+// guests get cached results only, all AI actions are ACU-funded, and demo
+// account surfaces fail closed unless the staff PIN is configured AND supplied.
+const LIVE_MODE = () => process.env.LIVE_MODE === 'true';
 function staffPinOk(req) {
   const pin = staffPin();
   if (!pin) return true; // gate not configured
@@ -469,6 +473,10 @@ function fullyLoadDemoAccounts() {
   return loaded;
 }
 app.post('/api/accounts/seed-roles', safe((req, res) => {
+  // Live mode: demo accounts fail closed — only staff with the PIN may seed.
+  if (LIVE_MODE() && (!staffPin() || !staffPinOk(req))) {
+    return res.status(403).json({ error: 'demo-disabled', message: 'Demo accounts are disabled in live mode.' });
+  }
   const accounts = seedAllRoles();
   const demoLoaded = fullyLoadDemoAccounts();
   // Staff-PIN protection: with a PIN configured and absent from the request,
@@ -489,7 +497,8 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
 // the OS (admin, business, merchant, consumer, VisaOS government).
 app.post('/api/account/test', safe((req, res) => {
   // A full-access account IS an admin credential — behind the staff PIN when
-  // one is configured.
+  // one is configured, and fail-closed in live mode.
+  if (LIVE_MODE() && !staffPin()) return res.status(403).json({ error: 'demo-disabled', message: 'Demo accounts are disabled in live mode.' });
   if (!staffPinOk(req)) return res.status(403).json({ error: 'staff-pin-required', message: 'Full-access demo accounts require the staff access PIN.' });
   const user = createUser({ name: 'Full-Access Traveller', role: 'admin', allAccess: true });
   addPoints(user.id, 1250 - user.points); // land in Voyager tier (~1,250 pts)
@@ -822,6 +831,22 @@ app.post('/api/plan', safe(async (req, res) => {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
       }
     } catch { /* keep the estimated result */ }
+  }
+
+  // LIVE MODE (go-live switch, LIVE_MODE=true): NO free AI, full stop. Guests
+  // get cached results only; any fresh AI-computed search requires a signed-in
+  // account whose ACUs fund it (the enforcement below). Staff allAccess demo
+  // accounts are exempt so internal testing still works.
+  if (LIVE_MODE() && result.stage === 'options' && !result.cached && !user) {
+    return res.json({
+      stage: 'topup-required',
+      reason: 'account-required',
+      tierName: (SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart).name,
+      acuNeeded: (SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart).acu || 0,
+      balance: 0,
+      isMember: false,
+      message: 'AI searches are funded by ACUs. Create a free account and top up (£5 = 500 ACU) to run live AI searches — cached results stay free.',
+    });
   }
 
   // ACU enforcement: paid search tiers are funded by ACUs. A signed-in account

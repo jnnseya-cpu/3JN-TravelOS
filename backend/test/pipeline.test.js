@@ -3143,3 +3143,22 @@ test('staff PIN locks privileged login, demo identities and admin APIs', async (
     } finally { server.close(); }
   } finally { delete process.env.STAFF_ACCESS_PIN; }
 });
+
+test('LIVE_MODE: no free AI for guests; demo accounts fail closed', async () => {
+  process.env.LIVE_MODE = 'true';
+  try {
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (p, body, h = {}) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: JSON.stringify(body) });
+    try {
+      // Guest fresh search → must be told to create an account + fund ACUs.
+      const r = await (await post('/api/plan', { text: `2 adults to Rome for 4 nights in October ${Date.now()}, flights hotel` })).json();
+      assert.equal(r.stage, 'topup-required', 'guests get no free AI in live mode');
+      assert.equal(r.reason, 'account-required');
+      // Demo seeding fails closed (no STAFF_ACCESS_PIN configured).
+      assert.equal((await post('/api/accounts/seed-roles', {})).status, 403);
+      assert.equal((await post('/api/account/test', {})).status, 403);
+    } finally { server.close(); }
+  } finally { delete process.env.LIVE_MODE; }
+});
