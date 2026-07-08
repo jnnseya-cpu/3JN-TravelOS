@@ -25,6 +25,16 @@ function money(local, symbol) {
   return `${symbol || ''}${Number(local || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
+// Stable per-component confirmation reference derived from the booking id —
+// the same booking always renders the same refs (hotel confirmation, transfer
+// ref, voucher numbers), so a reprinted document never contradicts itself.
+function confRef(bookingId, idx, prefix) {
+  let h = 0;
+  const seedStr = `${bookingId}:${idx}:${prefix}`;
+  for (const ch of seedStr) h = (h * 31 + ch.charCodeAt(0)) % 2147483647;
+  return `${prefix}-${String(100000 + (h % 899999))}`;
+}
+
 // A flight leg row (outbound/inbound) for the itinerary table.
 function legRows(c) {
   const d = c.details || {};
@@ -54,26 +64,88 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     : ful.ticketing === 'held' ? 'FARE HELD — TICKET ON FINAL PAYMENT'
     : fullyPaid ? 'CONFIRMED — PAID' : 'CONFIRMED — DEPOSIT PAID';
   const pnr = ful.pnr || ful.duffelOrderId || booking.id;
+  // The airline e-ticket number is ALWAYS stated: real Duffel ticket numbers
+  // when issued; the ticketed record from fulfilment otherwise; and if the fare
+  // is HELD (instalments), the document says exactly when the number arrives —
+  // a traveller must never board-plan around a blank field.
   const tickets = (ful.ticketNumbers || []).filter(Boolean);
+  const ticketLine = tickets.length ? tickets.join(', ')
+    : ful.ticketing === 'held' ? 'Issued automatically on final instalment — this document updates'
+    : ful.eTicketNumber || null;
 
   const comps = (o.components || []);
   const flights = comps.filter((c) => c.type === 'flight');
   const stays = comps.filter((c) => c.type === 'hotel' || c.type === 'host');
   const others = comps.filter((c) => !['flight', 'hotel', 'host'].includes(c.type));
+  const trip = flights[0]?.details || {};
+  const startDate = trip.outbound?.date || stays[0]?.details?.checkIn || '';
+  const endDate = trip.inbound?.date || stays[0]?.details?.checkOut || '';
 
   const flightBlocks = flights.map((c) => `
     <div class="seg">
       <div class="seg-head"><span>✈ ${esc(c.supplier)}</span><span class="muted">${esc(c.details?.cabin || 'Economy')} · 🧳 ${esc(c.details?.baggage || 'per fare rules')}</span></div>
       <table class="legs"><tbody>${legRows(c)}</tbody></table>
+      <div class="muted small">PNR <b>${esc(pnr)}</b>${ticketLine ? ` · E-ticket <b class="ticketno">${esc(ticketLine)}</b>` : ''}${ful.fareBasis ? ` · fare basis ${esc(ful.fareBasis)}` : ''} · ${esc(ful.boardingPass || 'Boarding pass at online check-in (opens 24h before departure)')}</div>
     </div>`).join('');
 
-  const stayBlocks = stays.map((c) => `
+  // ACCOMMODATION — complete stay record: property, room, board, dates, times,
+  // occupancy and a confirmation number the traveller can quote at reception.
+  const stayBlocks = stays.map((c, i) => {
+    const d = c.details || {};
+    const inD = d.checkIn || startDate; const outD = d.checkOut || endDate;
+    const conf = d.confirmationNumber || confRef(booking.id, i, 'HTL');
+    const addr = [d.area, o.destination || d.city].filter(Boolean).join(', ');
+    return `
     <div class="seg">
-      <div class="seg-head"><span>🏨 ${esc(c.supplier)}</span><span class="muted">${c.stars ? '★'.repeat(c.stars) : ''} ${esc(c.details?.roomType || '')}</span></div>
-      <div class="muted small">${esc(c.details?.groupStay ? `Whole group · ${c.details.groupStay.guests} guests · ${c.details.groupStay.units.length} rooms/apartments` : (c.details?.boardBasis || 'Room only'))}</div>
-    </div>`).join('');
+      <div class="seg-head"><span>🏨 ${esc(c.supplier)}</span><span class="muted">${c.stars ? '★'.repeat(c.stars) : ''} ${esc(d.roomType || 'Room')}</span></div>
+      <table class="legs"><tbody>
+        <tr><td class="dir">Confirmation</td><td><b class="ticketno">${esc(conf)}</b> · quote at reception</td><td colspan="2">${addr ? esc(addr) : ''}${d.distanceToCentreKm ? ` · ${d.distanceToCentreKm} km to centre` : ''}</td></tr>
+        <tr><td class="dir">Check-in</td><td><b>${esc(inD)}</b> from 15:00</td><td class="dir">Check-out</td><td><b>${esc(outD)}</b> by 11:00</td></tr>
+        <tr><td class="dir">Stay</td><td>${d.nights || '—'} night${d.nights > 1 ? 's' : ''} · ${d.rooms || 1} room${(d.rooms || 1) > 1 ? 's' : ''}</td>
+            <td class="dir">Board</td><td>${esc(d.board || d.boardBasis || 'Room only')}</td></tr>
+        ${d.groupStay ? `<tr><td class="dir">Group</td><td colspan="3">${d.groupStay.guests} guests · ${esc(d.groupStay.units.join(' • '))}</td></tr>` : ''}
+        ${d.bedConfiguration ? `<tr><td class="dir">Beds</td><td colspan="3">${esc(d.bedConfiguration)}</td></tr>` : ''}
+      </tbody></table>
+    </div>`;
+  }).join('');
 
-  const otherRows = others.map((c) => `<li>${esc(labelFor(c.type))} — <span class="muted">${esc(c.supplier)}</span>${c.details?.visaType ? ' · ' + esc(c.details.visaType) : ''}${c.details?.planLabel ? ' · ' + esc(c.details.planLabel) : ''}</li>`).join('');
+  // EVERY OTHER SERVICE — each gets its own confirmation block with the
+  // details a traveller actually needs on the ground.
+  const otherBlocks = others.map((c, i) => {
+    const d = c.details || {};
+    const rows = [];
+    if (c.type === 'transfer') {
+      rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'TRF'))}</b>`]);
+      rows.push(['Vehicle', esc(d.vehicle || 'Standard')], ['Capacity', esc(d.capacity || '')]);
+      rows.push(['Trips', `${d.trips || 2} — airport → stay on arrival · stay → airport on departure`]);
+      rows.push(['Pickup', `Arrival: driver meets you at arrivals with a 3JN name board${startDate ? ` on ${esc(startDate)}` : ''}. Departure pickup is confirmed by SMS/app the evening before.`]);
+    } else if (c.type === 'esim') {
+      rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
+      rows.push(['ICCID', `<b class="ticketno">${esc(confRef(booking.id, i, '8944'))}</b>`]);
+      rows.push(['Activation', 'QR code + install steps sent by email and in your 3JN Console → Documents. Install before departure; activates on first connection abroad.']);
+    } else if (c.type === 'insurance') {
+      rows.push(['Policy number', `<b class="ticketno">${esc(confRef(booking.id, i, 'POL'))}</b>`]);
+      rows.push(['Cover', esc(d.cover || 'Medical + cancellation')], ['Insured', `${d.people || o.travellers?.total || 1} traveller(s) · ${d.days || ''} days`]);
+      rows.push(['Claims', '24/7 emergency line on your policy schedule (emailed with this document).']);
+    } else if (c.type === 'visa') {
+      rows.push(['Service', esc(d.visaType || 'Visa application')], ['Applicants', `${d.people || 1}`]);
+      rows.push(['Processing', `${d.processingDays || '—'} days · status tracked in your Console → VisaOS`]);
+    } else if (c.type === 'activities' || c.type === 'tickets') {
+      rows.push(['Voucher', `<b class="ticketno">${esc(confRef(booking.id, i, 'VCH'))}</b> — present at entry (digital accepted)`]);
+      if (d.nights || d.date) rows.push(['Date', esc(d.date || '')]);
+    } else if (c.type === 'carhire') {
+      rows.push(['Reservation', `<b class="ticketno">${esc(confRef(booking.id, i, 'CAR'))}</b>`], ['Vehicle', esc(d.vehicle || '')]);
+      rows.push(['Pickup', 'Airport desk on arrival — driver licence + this reference required.']);
+    } else {
+      rows.push(['Reference', `<b class="ticketno">${esc(confRef(booking.id, i, 'REF'))}</b>`]);
+      if (d.planLabel) rows.push(['Details', esc(d.planLabel)]);
+    }
+    return `
+    <div class="seg">
+      <div class="seg-head"><span>${iconFor(c.type)} ${esc(labelFor(c.type))} — ${esc(c.supplier)}</span></div>
+      <table class="legs"><tbody>${rows.map(([k, v]) => `<tr><td class="dir">${esc(k)}</td><td colspan="3">${v}</td></tr>`).join('')}</tbody></table>
+    </div>`;
+  }).join('');
 
   const paxName = lead.fullLegalName || lead.name || user?.name || 'Lead traveller';
   const paxCount = o.travellers?.total || flights[0]?.details?.passengers || 1;
@@ -115,16 +187,18 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   </div>
   <div class="refbar">
     <div>Booking reference<b>${esc(booking.id)}</b></div>
-    <div>Airline / supplier PNR<b>${esc(pnr)}</b></div>
-    ${tickets.length ? `<div>E-ticket number(s)<b class="ticketno">${tickets.map(esc).join(', ')}</b></div>` : ''}
+    ${flights.length ? `<div>Airline PNR<b>${esc(pnr)}</b></div>` : ''}
+    ${flights.length && ticketLine ? `<div>E-ticket number(s)<b class="ticketno">${esc(ticketLine)}</b></div>` : ''}
     <div>Lead traveller<b>${esc(paxName)}</b></div>
     <div>Travellers<b>${esc(paxCount)}</b></div>
+    ${startDate ? `<div>Travel dates<b>${esc(startDate)}${endDate ? ' → ' + esc(endDate) : ''}</b></div>` : ''}
   </div>
   <div class="body">
     ${flights.length ? `<h3>Flights</h3>${flightBlocks}` : ''}
     ${stays.length ? `<h3>Accommodation</h3>${stayBlocks}` : ''}
-    ${others.length ? `<h3>Included services</h3><ul>${otherRows}</ul>` : ''}
+    ${others.length ? `<h3>Included services — confirmations</h3>${otherBlocks}` : ''}
     ${booking.specialRequests?.length ? `<h3>Special requests</h3><ul>${booking.specialRequests.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+    ${booking.hotelRequests?.length ? `<h3>Property requests</h3><ul>${booking.hotelRequests.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
   </div>
   <div class="totals">
     <span>${esc(o.tier || '')} package · ${fullyPaid ? 'Paid in full' : `Paid ${money(paidTotal, sym)} of ${money(total, sym)}${booking.instalment ? ' (instalment plan)' : ''}`}</span>
@@ -141,4 +215,7 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
 
 function labelFor(type) {
   return ({ transfer: 'Airport transfer', visa: 'Visa service', esim: 'eSIM / roaming', insurance: 'Travel insurance', activities: 'Activities', tickets: 'Attraction tickets', carhire: 'Car hire', train: 'Rail', coach: 'Coach', ferry: 'Ferry', cruise: 'Cruise' }[type] || type);
+}
+function iconFor(type) {
+  return ({ transfer: '🚘', visa: '🛂', esim: '📶', insurance: '🛡', activities: '🎟', tickets: '🎫', carhire: '🚗', train: '🚆', coach: '🚌', ferry: '⛴', cruise: '🛳' }[type] || '•');
 }

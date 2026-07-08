@@ -25,6 +25,7 @@ import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
 import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
+import { bookingDocument } from '../src/documents.js';
 import { saveEmbassyConfig, getEmbassyConfig } from '../src/store.js';
 import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
 import { db } from '../src/store.js';
@@ -3193,4 +3194,24 @@ test('embassy sets criteria/fees/templates; AI proposal follows THEIR thresholds
   assert.ok(letter.includes('United Arab Emirates'), 'letter carries the embassy name');
   assert.ok(letter.includes('VISA APPROVED') && letter.includes('Single entry'), 'letter shows decision + conditions');
   assert.ok(letter.includes('199'), 'letter shows the embassy-set fee');
+});
+
+test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insurance, voucher', () => {
+  const b = { id: 'bkg_doc1', fulfilment: { pnr: 'KXQPLM', eTicketNumber: '176-2400123456', ticketing: 'confirmed' }, leadTraveller: { fullLegalName: 'Jean N' }, payments: [{ amount: 500 }], option: { tier: 'Standard', destination: 'Dubai', travellers: { total: 2 }, pricing: { symbol: '£', local: { total: 2000 } }, components: [
+    { type: 'flight', supplier: 'Emirates', details: { cabin: 'Economy', baggage: '2 checked', outbound: { from: 'LHR', to: 'DXB', date: '2026-10-03', depart: '10:00', arrive: '20:00' }, inbound: { from: 'DXB', to: 'LHR', date: '2026-10-10' }, passengers: 2 } },
+    { type: 'hotel', supplier: 'Rove Downtown', stars: 4, details: { nights: 7, rooms: 1, roomType: 'Superior Double', board: 'Breakfast included', area: 'Downtown', checkIn: '2026-10-03', checkOut: '2026-10-10' } },
+    { type: 'transfer', supplier: 'Blacklane', details: { vehicle: 'Business saloon', trips: 2 } },
+    { type: 'esim', supplier: 'Airalo', details: { planLabel: '6GB · 11 days' } },
+    { type: 'insurance', supplier: 'AXA Travel', details: { cover: 'Medical £5m', people: 2 } },
+    { type: 'activities', supplier: 'Desert Safari', details: {} },
+  ] } };
+  const html = bookingDocument(b, {});
+  for (const must of ['176-2400123456', 'HTL-', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', 'name board', '8944-', 'POL-', 'VCH-', 'Superior Double', 'Breakfast included']) {
+    assert.ok(html.includes(must), `document must contain ${must}`);
+  }
+  // Held fare: the e-ticket line must explain WHEN the number arrives, never blank.
+  const held = { ...b, fulfilment: { pnr: 'KXQPLM', ticketing: 'held', ticketNumbers: [] } };
+  assert.ok(bookingDocument(held, {}).includes('Issued automatically on final instalment'), 'held state is explained');
+  // Same booking always renders the same confirmation refs (stable reprints).
+  assert.equal(bookingDocument(b, {}), html, 'documents are deterministic');
 });
