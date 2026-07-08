@@ -14,6 +14,7 @@ import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
+import { benchmarkVerdict } from './benchmark.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -54,6 +55,7 @@ const db = {
   vendorProfiles: new Map(), // Vendor Partner Programme: userId -> { tier, status, vendorCode, riskReview, ... }
   vendorSales: [], // { id, vendorId, bookingId, saleGbp, vendorGbp, platformKeepsGbp, status, flags..., at }
   vendorPayouts: [], // weekly Friday payout batches { id, vendorId, amountGbp, saleIds, status, at }
+  benchmarks: [], // Market Benchmark runs: live fares vs market-leader prices
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -1869,7 +1871,32 @@ export function searchToBookStats() {
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks'];
+
+// ---- Market Benchmark runs (live fares vs the market leaders) ---------------
+export function saveBenchmarkRun(run) {
+  const rec = { id: id('bmk'), ...run };
+  db.benchmarks.unshift(rec);
+  if (db.benchmarks.length > 12) db.benchmarks.length = 12; // keep recent history only
+  recordAudit({ actor: 'admin', role: 'admin', action: 'benchmark.run', entity: 'benchmark', entityId: rec.id, summary: `${(run.rows || []).length} routes · depart ${run.depart}` });
+  return rec;
+}
+export function latestBenchmarkRun() {
+  return db.benchmarks[0] || null;
+}
+// The admin reads the leader's price off the prefilled link and records it —
+// the verdict (unbeatable / competitive / above-market) is computed here.
+export function recordBenchmarkMarket(runId, rowId, { source, priceGbp } = {}) {
+  const run = db.benchmarks.find((b) => b.id === runId);
+  if (!run) return { ok: false, error: 'run-not-found' };
+  const row = (run.rows || []).find((r) => r.id === rowId);
+  if (!row) return { ok: false, error: 'row-not-found' };
+  const price = Math.round(Number(priceGbp) * 100) / 100;
+  if (!(price > 0)) return { ok: false, error: 'bad-price', message: 'Enter the market price in GBP.' };
+  row.market = { source: String(source || 'market').slice(0, 40), priceGbp: price, at: nowISO() };
+  row.result = row.ourPriceGbp != null ? benchmarkVerdict(row.ourPriceGbp, price) : { verdict: 'no-live-fare', deltaGbp: null, deltaPct: null };
+  return { ok: true, row };
+}
 
 export function snapshot() {
   const out = { counter };

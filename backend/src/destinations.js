@@ -81,6 +81,28 @@ export const DESTINATIONS = {
       DEFAULT: { required: true, type: 'B-2 visa', costUSD: 185, processingDays: 30 },
     },
   },
+  BRU: {
+    city: 'Brussels',
+    country: 'BE',
+    countryName: 'Belgium',
+    airport: 'BRU',
+    timezone: 'Europe/Brussels',
+    // Short-haul UK/EU baselines — a synthesised entry priced this route like a
+    // long-haul trip (Turkish/Emirates at $400+), which fails any market test.
+    flightBaseUSD: 140,
+    hotelNightBaseUSD: 135,
+    activityBaseUSD: 45,
+    transferBaseUSD: 30,
+    carDayBaseUSD: 42,
+    aliases: ['brussels', 'bruxelles', 'belgium'],
+    visa: {
+      GB: { required: false, type: 'Schengen visa-free (90 days)', costUSD: 0, processingDays: 0 },
+      US: { required: false, type: 'Schengen visa-free (90 days)', costUSD: 0, processingDays: 0 },
+      NG: { required: true, type: 'Schengen short-stay visa', costUSD: 90, processingDays: 15 },
+      IN: { required: true, type: 'Schengen short-stay visa', costUSD: 90, processingDays: 15 },
+      DEFAULT: { required: true, type: 'Schengen short-stay visa', costUSD: 90, processingDays: 15 },
+    },
+  },
   DPS: {
     city: 'Bali',
     country: 'ID',
@@ -135,8 +157,21 @@ const CITY_AIRPORTS = {
   liverpool: { airport: 'LPL', city: 'Liverpool', country: 'GB' },
   newcastle: { airport: 'NCL', city: 'Newcastle', country: 'GB' },
   'new castle': { airport: 'NCL', city: 'Newcastle', country: 'GB' },
+  // East Midlands catchment — Nottingham has no airport of its own; EMA is the
+  // real departure point (a fake "NOT" code would break live fare searches).
+  nottingham: { airport: 'EMA', city: 'Nottingham', country: 'GB' },
+  derby: { airport: 'EMA', city: 'Derby', country: 'GB' },
+  leicester: { airport: 'EMA', city: 'Leicester', country: 'GB' },
+  'east midlands': { airport: 'EMA', city: 'Nottingham', country: 'GB' },
+  sheffield: { airport: 'MAN', city: 'Sheffield', country: 'GB' },
+  southampton: { airport: 'SOU', city: 'Southampton', country: 'GB' },
+  cardiff: { airport: 'CWL', city: 'Cardiff', country: 'GB' },
+  belfast: { airport: 'BFS', city: 'Belfast', country: 'GB' },
+  aberdeen: { airport: 'ABZ', city: 'Aberdeen', country: 'GB' },
   'london gatwick': { airport: 'LGW', city: 'London', country: 'GB' },
   'london stansted': { airport: 'STN', city: 'London', country: 'GB' },
+  'london luton': { airport: 'LTN', city: 'London', country: 'GB' },
+  'london city': { airport: 'LCY', city: 'London', country: 'GB' },
   dublin: { airport: 'DUB', city: 'Dublin', country: 'IE' },
   // Europe
   paris: { airport: 'CDG', city: 'Paris', country: 'FR' },

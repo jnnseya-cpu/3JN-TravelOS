@@ -40,7 +40,9 @@ import {
   applyVendor, getVendorProfile, decideVendor, vendorDashboard, vendorLeaderboard,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
   getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
+  saveBenchmarkRun, latestBenchmarkRun, recordBenchmarkMarket,
 } from './store.js';
+import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
@@ -574,6 +576,32 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
           : `Duffel LIVE token set, but the live probe did not return bookable fares: ${diag?.message || 'unknown'} — flights fall back to estimated until this clears.`)
         : 'Duffel not configured — flights are estimated.',
   });
+}));
+
+// ---- Market Benchmark: prove live fares against the market leaders ---------
+// Runs real routes through the SAME live Duffel search + checkout pricing the
+// customer gets, and hands the admin prefilled Skyscanner/Google Flights/Kayak
+// links for the identical route + dates. The admin records the leader's price
+// and gets an honest verdict: unbeatable / competitive / above-market.
+app.get('/api/benchmark/flights', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ enabled: liveFlightsEnabled(), mode: duffelMode(), defaults: DEFAULT_BENCHMARK_ROUTES, lastRun: latestBenchmarkRun() });
+}));
+app.post('/api/benchmark/flights', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { routes, depart, ret, adults } = req.body || {};
+  const out = await runFlightBenchmark({
+    routes: Array.isArray(routes) && routes.length ? routes : undefined,
+    depart, ret, adults,
+  });
+  if (!out.ok) return res.json(out);
+  const saved = saveBenchmarkRun(out.run);
+  res.json({ ok: true, run: saved });
+}));
+app.post('/api/benchmark/flights/market', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { runId, rowId, source, priceGbp } = req.body || {};
+  res.json(recordBenchmarkMarket(runId, rowId, { source, priceGbp }));
 }));
 
 // ---- Profitability Dashboard (spec §17): real-time money view --------------

@@ -800,15 +800,27 @@ window.showComponentInfo = (tier, idx) => {
   const toLocal = (usd) => money2(usd * (o.pricing.local.total / o.pricing.lines.totalUSD), sym);
   const d = c.details || {};
   if (c.type === 'flight') {
+    // Connecting itineraries show the FULL plan: every flight number, the
+    // stopover airport, and exactly how long each wait is.
+    const connectionHTML = (l) => {
+      if (!Array.isArray(l?.segments) || l.segments.length < 2) return '';
+      const parts = [];
+      l.segments.forEach((s, i) => {
+        parts.push(`<div class="kv" style="border:none;padding:4px 0"><span>✈ <strong>${esc(s.flightNumber || s.carrier)}</strong> <span class="muted">${esc(s.carrier)}${s.operatedBy ? ' · operated by ' + esc(s.operatedBy) : ''}${s.aircraft ? ' · ' + esc(s.aircraft) : ''}</span></span><span style="font-size:12px">${esc(s.from)} ${esc(s.depart)} → ${esc(s.to)} ${esc(s.arrive)} <span class="muted">· ${esc(s.durationLabel || '')}</span></span></div>`);
+        const lay = (l.layovers || [])[i];
+        if (lay) parts.push(`<div style="margin:2px 0 2px 14px;font-size:12px;color:${lay.tight ? '#ffb86b' : 'var(--muted)'}">🕓 Stopover in ${esc(lay.city || lay.airport)} (${esc(lay.airport)}) — ${esc(lay.durationLabel || 'wait time per airline')}${lay.overnight ? ' · overnight' : ''}${lay.tight ? ' · ⚠ tight connection' : ''} · you stay airside, same ticket</div>`);
+      });
+      return `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(223,229,238,.15)"><span class="muted" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase">Your connection plan</span>${parts.join('')}</div>`;
+    };
     const legHTML = (l, title) => l ? `
       <div class="card pad" style="margin-top:10px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
           <strong>${title}</strong><span class="muted" style="font-size:12px">${esc(l.date)} · ${esc(l.stopLabel)} · ${esc(l.durationLabel)}</span></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
           <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.depart)}</div><div class="muted" style="font-size:12px">${esc(l.from)}${l.fromCity ? ' · ' + esc(l.fromCity) : ''}</div></div>
-          <div class="muted" style="flex:1;text-align:center;font-size:12px">✈ ${esc(l.durationLabel)}<div class="rel-bar" style="margin:6px 12px"><i style="width:100%"></i></div>${esc(l.stopLabel)}</div>
+          <div class="muted" style="flex:1;text-align:center;font-size:12px">✈ ${esc(l.durationLabel)}<div class="rel-bar" style="margin:6px 12px"><i style="width:100%"></i></div>${l.stops ? esc(`${l.stops} stop${l.stops > 1 ? 's' : ''}`) : 'Direct'}</div>
           <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</div><div class="muted" style="font-size:12px">${esc(l.to)}${l.toCity ? ' · ' + esc(l.toCity) : ''}</div></div>
-        </div></div>` : '';
+        </div>${connectionHTML(l)}</div>` : '';
     const direct = (d.outbound?.stops || 0) === 0 && (d.inbound?.stops || 0) === 0;
     modal(`<span class="eyebrow">Flight details · ${esc(c.supplier)}</span>
       <h3 style="margin:6px 0 2px">${esc(d.outbound?.fromCity || d.outbound?.from)} → ${esc(d.outbound?.toCity || d.outbound?.to)}</h3>
@@ -2060,6 +2072,7 @@ async function renderAdmin() {
         }</div></div>
       </div>
     </div>
+    <div id="benchmarkPanel" style="margin-top:24px"></div>
     <div class="section-head left" style="margin:28px 0 10px"><h2 style="font-size:20px">Enterprise AI agents</h2></div>
     <div class="console-grid">
       <div class="card pad">
@@ -2088,7 +2101,90 @@ async function renderAdmin() {
       </div>
     </div>
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
+  renderBenchmark();
 }
+
+// ---- Market Benchmark: are we unbeatable? -----------------------------------
+// Runs real routes through the SAME live Duffel search + checkout pricing the
+// customer gets, then links the identical route + dates on Skyscanner / Google
+// Flights / Kayak. Read the leader's price, record it, get an honest verdict.
+async function renderBenchmark() {
+  const el = $('#benchmarkPanel'); if (!el) return;
+  let d; try { d = await api('/api/benchmark/flights'); } catch { return; }
+  const run = d.lastRun;
+  const VERDICT = {
+    unbeatable: ['✅ UNBEATABLE', 'var(--green)'],
+    competitive: ['🟡 Within 3%', 'var(--gold)'],
+    'above-market': ['⚠ Above market', '#ff8a8a'],
+    'no-live-fare': ['— no live fare', 'var(--muted)'],
+  };
+  const rows = (run?.rows || []).map((r) => {
+    const verdict = r.result && VERDICT[r.result.verdict]
+      ? `<span class="ch-chip" style="color:${VERDICT[r.result.verdict][1]};border-color:currentColor">${VERDICT[r.result.verdict][0]}${r.result.deltaGbp != null ? ` · ${r.result.deltaGbp <= 0 ? '−' : '+'}£${Math.abs(r.result.deltaGbp).toFixed(2)} (${r.result.deltaPct > 0 ? '+' : ''}${r.result.deltaPct}%)` : ''}</span>`
+      : '<span class="muted" style="font-size:11.5px">read a leader price → record it below</span>';
+    const fare = r.live
+      ? `<strong style="color:var(--gold)">£${(r.ourPriceGbp ?? 0).toFixed(2)}</strong> <span class="muted" style="font-size:11px">customer pays · raw £${(r.rawFareGbp ?? 0).toFixed(2)} · ${esc(r.carrier || '')} · ${esc(r.cabin || '')}${r.baggage ? ' · ' + esc(r.baggage) : ''} · ${r.offersFound} offers</span>`
+      : `<span style="color:#ff8a8a">${r.error === 'no-offers' ? 'No live offers on this route/date — try the alternate airport or another date' : esc(r.error || 'no result')}</span>`;
+    return `<div style="padding:10px 0;border-bottom:1px solid rgba(223,229,238,.08)">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+        <strong>${esc(r.label)}</strong>
+        <span class="muted" style="font-size:11.5px">${esc(r.depart)}${r.ret ? ' → ' + esc(r.ret) : ' one-way'} · ${r.adults} adult${r.adults > 1 ? 's' : ''}</span></div>
+      <div style="margin-top:4px;font-size:13px">${fare}</div>
+      <div style="margin-top:6px;font-size:12px">Check the same route: <a href="${r.links.skyscanner}" target="_blank" rel="noopener" style="color:var(--gold)">Skyscanner</a> · <a href="${r.links.googleFlights}" target="_blank" rel="noopener" style="color:var(--gold)">Google Flights</a> · <a href="${r.links.kayak}" target="_blank" rel="noopener" style="color:var(--gold)">Kayak</a></div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <select class="in" id="bmsrc-${esc(r.id)}" style="max-width:150px;padding:6px 8px"><option>Skyscanner</option><option>Google Flights</option><option>Kayak</option><option>Trip.com</option><option>Expedia</option></select>
+        <input class="in" id="bmp-${esc(r.id)}" placeholder="Leader's £ total" style="max-width:140px" inputmode="decimal" value="${r.market?.priceGbp ?? ''}">
+        <button class="btn btn-ghost btn-sm" onclick="saveBenchmarkMarket('${esc(run.id)}','${esc(r.id)}')">Record & judge</button>
+        ${verdict}
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="section-head left" style="margin:0 0 10px"><h2 style="font-size:20px">✈ Market Benchmark — are we unbeatable?</h2></div>
+    <div class="card pad">
+      ${d.enabled
+        ? `<div class="muted" style="font-size:12.5px">Duffel <strong>${esc(d.mode || '')}</strong> key detected — fares below are the real prices a customer pays (raw fare + 10% + Duffel pass-through), against the same route on the market leaders.</div>`
+        : '<div style="color:#ffb86b;font-size:12.5px">⚠ No live fare key in this environment — the sweep only returns real prices on production (Vercel), where the Duffel key is set.</div>'}
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:flex-end">
+        <div class="field"><label>Depart</label><input class="in" id="bmDepart" type="date" value="2026-09-01" style="max-width:150px"></div>
+        <div class="field"><label>Return</label><input class="in" id="bmReturn" type="date" value="2026-09-06" style="max-width:150px"></div>
+        <div class="field"><label>From (IATA)</label><input class="in" id="bmFrom" placeholder="EMA" maxlength="3" style="max-width:90px;text-transform:uppercase"></div>
+        <div class="field"><label>To (IATA)</label><input class="in" id="bmTo" placeholder="BRU" maxlength="3" style="max-width:90px;text-transform:uppercase"></div>
+        <button class="btn btn-gold btn-sm" onclick="runBenchmark(true)">Run custom route</button>
+        <button class="btn btn-ghost btn-sm" onclick="runBenchmark(false)">Run full sweep (${(d.defaults || []).length} routes)</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:6px">Default sweep: ${(d.defaults || []).map((r) => esc(r.label)).join(' · ')}</div>
+      ${run ? `<div style="margin-top:14px"><span class="eyebrow">Last run · ${esc((run.at || '').replace('T', ' ').slice(0, 16))} · Duffel ${esc(run.mode || '')}</span>${rows}</div>` : ''}
+    </div>`;
+}
+window.runBenchmark = async (custom) => {
+  const depart = $('#bmDepart')?.value; const ret = $('#bmReturn')?.value || null;
+  if (!depart) { toast('Pick a departure date.'); return; }
+  const body = { depart, ret };
+  if (custom) {
+    const from = ($('#bmFrom')?.value || '').trim().toUpperCase(); const to = ($('#bmTo')?.value || '').trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) { toast('Enter 3-letter IATA codes, e.g. EMA → BRU.'); return; }
+    body.routes = [{ label: `${from} → ${to}`, origin: from, dest: to }];
+  }
+  toast('✈ Running live fare sweep — a few seconds per route…');
+  try {
+    const r = await api('/api/benchmark/flights', { method: 'POST', body: JSON.stringify(body) });
+    if (!r.ok) { toast(r.message || 'Benchmark could not run here.'); return; }
+    toast('✓ Sweep complete — open the leader links and record their prices.');
+    renderBenchmark();
+  } catch (e) { toast(e?.message || 'Benchmark failed.'); }
+};
+window.saveBenchmarkMarket = async (runId, rowId) => {
+  const priceGbp = parseFloat($(`#bmp-${rowId}`)?.value);
+  const source = $(`#bmsrc-${rowId}`)?.value || 'market';
+  if (!(priceGbp > 0)) { toast('Enter the leader’s price in £ first.'); return; }
+  try {
+    const r = await api('/api/benchmark/flights/market', { method: 'POST', body: JSON.stringify({ runId, rowId, source, priceGbp }) });
+    if (!r.ok) { toast(r.message || r.error || 'Could not record.'); return; }
+    toast('✓ Recorded — verdict updated.');
+    renderBenchmark();
+  } catch { toast('Could not record the market price.'); }
+};
 
 // ---- Blog (AI-written, hyperlinked, shareable) ----------------------------
 $('#genPostBtn')?.addEventListener('click', async () => {

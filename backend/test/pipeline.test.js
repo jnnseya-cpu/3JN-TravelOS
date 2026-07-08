@@ -3351,3 +3351,107 @@ test('marketplace basket add-ons are REAL components: photographer, guide, resta
   const rest = r.packages.options[0].components.find((c) => c.type === 'restaurant');
   assert.ok(rest.priceUSD > 0 && rest.verified, 'restaurant booking is a priced, verified component');
 });
+
+// ---- Market Benchmark: prove live fares against the market leaders ----------
+import { compareLinks, sellPriceUSD, benchmarkVerdict, runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from '../src/benchmark.js';
+import { resolveOrigin as resolveOriginBM, findDestination as findDestinationBM } from '../src/destinations.js';
+
+test('Nottingham resolves to East Midlands (EMA) — never a fake "NOT" code', () => {
+  const o = resolveOriginBM('Nottingham');
+  assert.equal(o.airport, 'EMA');
+  assert.equal(o.country, 'GB');
+  assert.ok(!o.approxCode, 'a real IATA code, not a derived placeholder');
+  // The whole catchment maps to real airports.
+  assert.equal(resolveOriginBM('Derby').airport, 'EMA');
+  assert.equal(resolveOriginBM('Leicester').airport, 'EMA');
+  assert.equal(resolveOriginBM('Belfast').airport, 'BFS');
+  assert.equal(resolveOriginBM('Cardiff').airport, 'CWL');
+});
+
+test('Brussels is a real catalogue destination with short-haul pricing and honest visa rules', () => {
+  const d = findDestinationBM('trip to Brussels');
+  assert.ok(d, 'Brussels found');
+  assert.equal(d.airport, 'BRU');
+  assert.equal(d.country, 'BE');
+  assert.ok(d.flightBaseUSD <= 200, 'short-haul fare basis, not a long-haul synthesis');
+  assert.equal(d.visa.GB.required, false, 'British citizens are Schengen visa-free');
+  assert.equal(d.visa.NG.required, true, 'Schengen short-stay visa where genuinely needed');
+});
+
+test('the Nottingham→Brussels test query plans end-to-end with realistic economics', () => {
+  const r = plan({ text: 'I want to travel to Brussels from Nottingham, 1 adult for 5 days, on 01/09/2026. I want flights only, instalments and the lowest reliable price.', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  assert.equal(r.origin.airport, 'EMA', 'departs from the real East Midlands airport');
+  assert.equal(r.intent.dates.checkIn, '2026-09-01');
+  assert.deepEqual(r.intent.travellers.total, 1);
+  // Flights-only: no hotel in the packages.
+  const std = r.packages.options[0];
+  assert.ok(std.components.some((c) => c.type === 'flight'));
+  assert.ok(!std.components.some((c) => c.type === 'hotel'), 'flights only — no hotel priced in');
+  // Short-haul realism: the cheapest scanned fare must not price like long-haul.
+  assert.ok(r.scanSummary.flights.cheapestUSD < 350, `EMA→BRU estimate is short-haul (got $${r.scanSummary.flights.cheapestUSD})`);
+});
+
+test('market benchmark: sell price mirrors checkout math and verdicts are honest', () => {
+  // £100 raw fare: +10% commission, + Duffel pass-through (£2.20 order + 1%).
+  const sell = sellPriceUSD(100);
+  assert.ok(sell > 110 && sell < 120, `raw $100 sells ~$114 (got $${sell})`);
+  // Verdicts in GBP.
+  assert.equal(benchmarkVerdict(95, 100).verdict, 'unbeatable');
+  assert.equal(benchmarkVerdict(100, 100).verdict, 'unbeatable');
+  assert.equal(benchmarkVerdict(102, 100).verdict, 'competitive');
+  const above = benchmarkVerdict(120, 100);
+  assert.equal(above.verdict, 'above-market');
+  assert.equal(above.deltaGbp, 20);
+  assert.equal(above.deltaPct, 20);
+  assert.equal(benchmarkVerdict(120, null).verdict, 'awaiting-market-price');
+});
+
+test('market benchmark: leader links target the identical route and dates', () => {
+  const links = compareLinks({ origin: 'EMA', dest: 'BRU', depart: '2026-09-01', ret: '2026-09-06' });
+  assert.ok(links.skyscanner.includes('/ema/bru/260901/260906/'), 'Skyscanner deep link carries both dates');
+  assert.ok(links.kayak.includes('/EMA-BRU/2026-09-01/2026-09-06'), 'Kayak deep link carries both dates');
+  assert.ok(decodeURIComponent(links.googleFlights).includes('EMA to BRU on 2026-09-01'), 'Google Flights query names the route');
+  // One-way variant drops the return cleanly.
+  const ow = compareLinks({ origin: 'LHR', dest: 'DXB', depart: '2026-09-01' });
+  assert.ok(ow.skyscanner.endsWith('/260901/'), 'one-way Skyscanner link has a single date');
+});
+
+test('market benchmark: refuses to invent prices without a live fare key', async () => {
+  const out = await runFlightBenchmark({ depart: '2026-09-01', ret: '2026-09-06' });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'live-flights-not-configured');
+  assert.match(out.message, /production/i, 'tells the admin where the real run happens');
+  assert.ok(DEFAULT_BENCHMARK_ROUTES.some((r) => r.origin === 'EMA' && r.dest === 'BRU'), 'the Nottingham test route is in the default sweep');
+});
+
+test('connecting flights expose per-segment flights, stopover airports and wait times', () => {
+  const seg = (from, to, dep, arr, num) => ({
+    origin: { iata_code: from, city_name: from === 'EMA' ? 'Nottingham' : from === 'AMS' ? 'Amsterdam' : 'Brussels' },
+    destination: { iata_code: to, city_name: to === 'AMS' ? 'Amsterdam' : 'Brussels' },
+    departing_at: dep, arriving_at: arr,
+    marketing_carrier: { name: 'KLM', iata_code: 'KL' }, marketing_carrier_flight_number: num,
+    duration: 'PT1H15M',
+    passengers: [{ cabin_class_marketing_name: 'Economy', baggages: [{ type: 'carry_on', quantity: 1 }] }],
+  });
+  const offer = {
+    id: 'off_test', total_amount: '120.00', total_currency: 'GBP', expires_at: '2026-08-30T12:00:00Z',
+    owner: { name: 'KLM' },
+    slices: [{ duration: 'PT4H05M', segments: [
+      seg('EMA', 'AMS', '2026-09-01T06:00:00', '2026-09-01T08:20:00', '1070'),
+      seg('AMS', 'BRU', '2026-09-01T10:05:00', '2026-09-01T10:50:00', '1723'),
+    ] }],
+    passengers: [{ id: 'pas_1', type: 'adult' }],
+  };
+  const norm = normalizeDuffelOffer(offer, 152, { total: 1, adults: 1, children: 0, childAges: [] });
+  const leg = norm.details.outbound;
+  assert.equal(leg.stops, 1);
+  assert.equal(leg.segments.length, 2, 'every individual flight is listed');
+  assert.equal(leg.segments[0].flightNumber, 'KL1070');
+  assert.equal(leg.segments[1].flightNumber, 'KL1723');
+  assert.equal(leg.layovers.length, 1);
+  assert.equal(leg.layovers[0].airport, 'AMS', 'stopover airport is named');
+  assert.equal(leg.layovers[0].durationLabel, '1h 45m', 'exact wait time is stated');
+  assert.equal(leg.layovers[0].tight, false);
+  assert.match(leg.stopLabel, /via Amsterdam \(AMS\) 1h 45m wait/, 'summary label says where and how long');
+});

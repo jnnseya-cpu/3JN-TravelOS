@@ -137,6 +137,36 @@ function sliceToLeg(slice) {
   if (!segs.length) return null;
   const first = segs[0]; const last = segs[segs.length - 1];
   const stops = segs.length - 1;
+  // Per-segment detail — a connecting itinerary must tell the traveller WHICH
+  // flights they are on, WHERE they change planes and HOW LONG each wait is.
+  const segments = segs.map((s) => ({
+    carrier: s.marketing_carrier?.name || s.operating_carrier?.name || '',
+    flightNumber: `${s.marketing_carrier?.iata_code || s.operating_carrier?.iata_code || ''}${s.marketing_carrier_flight_number || s.operating_carrier_flight_number || ''}`,
+    operatedBy: s.operating_carrier?.name && s.operating_carrier.name !== s.marketing_carrier?.name ? s.operating_carrier.name : null,
+    from: s.origin?.iata_code || '', fromCity: s.origin?.city_name || s.origin?.name || '',
+    to: s.destination?.iata_code || '', toCity: s.destination?.city_name || s.destination?.name || '',
+    date: dateOf(s.departing_at), depart: hhmm(s.departing_at), arrive: hhmm(s.arriving_at),
+    durationLabel: durationLabel(s.duration),
+    aircraft: s.aircraft?.name || null,
+  }));
+  // Layover between consecutive segments. Duffel timestamps are LOCAL to the
+  // airport, and both sides of a layover are the SAME airport, so a plain
+  // difference is the true wait time.
+  const layovers = [];
+  for (let i = 1; i < segs.length; i++) {
+    const mins = Math.round((new Date(segs[i].departing_at) - new Date(segs[i - 1].arriving_at)) / 60000);
+    layovers.push({
+      airport: segs[i].origin?.iata_code || '',
+      city: segs[i].origin?.city_name || segs[i].origin?.name || '',
+      minutes: mins > 0 ? mins : null,
+      durationLabel: mins > 0 ? `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m` : '',
+      overnight: dateOf(segs[i].departing_at) !== dateOf(segs[i - 1].arriving_at),
+      tight: mins > 0 && mins < 60, // under an hour — flag it so nobody misses a connection unwarned
+    });
+  }
+  const viaLabel = layovers.length
+    ? ` · via ${layovers.map((l) => `${l.city || l.airport} (${l.airport})${l.durationLabel ? ' ' + l.durationLabel + ' wait' : ''}`).join(', ')}`
+    : '';
   return {
     from: first.origin?.iata_code || '', fromCity: first.origin?.city_name || first.origin?.name || '',
     to: last.destination?.iata_code || '', toCity: last.destination?.city_name || last.destination?.name || '',
@@ -144,7 +174,8 @@ function sliceToLeg(slice) {
     depart: hhmm(first.departing_at), arrive: hhmm(last.arriving_at),
     arriveNextDay: dateOf(last.arriving_at) !== dateOf(first.departing_at),
     durationLabel: durationLabel(slice.duration),
-    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${stops > 1 ? 's' : ''}`,
+    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${stops > 1 ? 's' : ''}${viaLabel}`,
+    segments, layovers,
   };
 }
 

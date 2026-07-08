@@ -35,18 +35,27 @@ function confRef(bookingId, idx, prefix) {
   return `${prefix}-${String(100000 + (h % 899999))}`;
 }
 
-// A flight leg row (outbound/inbound) for the itinerary table.
+// A flight leg row (outbound/inbound) for the itinerary table. A connecting
+// leg ALSO prints every individual flight (number, times) and each stopover
+// (airport + wait) — a traveller changing planes must never have to guess
+// where they connect or how long they have.
 function legRows(c) {
   const d = c.details || {};
   const one = (leg, dir) => {
     if (!leg) return '';
-    return `<tr>
+    const main = `<tr>
       <td class="dir">${dir}</td>
       <td><strong>${esc(leg.from || '')}</strong> ${esc(leg.fromCity ? '· ' + leg.fromCity : '')} → <strong>${esc(leg.to || '')}</strong> ${esc(leg.toCity ? '· ' + leg.toCity : '')}</td>
       <td>${esc(leg.date || '')}</td>
       <td>${esc(leg.depart || '')} – ${esc(leg.arrive || '')}${leg.arriveNextDay ? ' <span class="muted">+1</span>' : ''}</td>
       <td>${esc(leg.stopLabel || (leg.stops ? leg.stops + ' stop' : 'Direct'))}</td>
     </tr>`;
+    if (!Array.isArray(leg.segments) || leg.segments.length < 2) return main;
+    const plan = leg.segments.map((s, i) => {
+      const lay = (leg.layovers || [])[i];
+      return `<div>✈ <strong>${esc(s.flightNumber || s.carrier)}</strong> ${esc(s.carrier)}${s.operatedBy ? ` (operated by ${esc(s.operatedBy)})` : ''} — ${esc(s.from)} ${esc(s.depart)} → ${esc(s.to)} ${esc(s.arrive)} (${esc(s.durationLabel || '')})</div>${lay ? `<div class="muted" style="margin-left:14px">🕓 Change planes in ${esc(lay.city || lay.airport)} (${esc(lay.airport)}) — ${esc(lay.durationLabel || 'see boarding pass')} wait${lay.overnight ? ', overnight' : ''}${lay.tight ? ' — TIGHT CONNECTION, go straight to your gate' : ''}. Same ticket: your bags are checked through and the airline rebooks you free if a delay breaks the connection.</div>` : ''}`;
+    }).join('');
+    return `${main}<tr><td></td><td colspan="4" style="font-size:11.5px;padding:4px 8px 10px">${plan}</td></tr>`;
   };
   return one(d.outbound, 'Outbound') + one(d.inbound, 'Return');
 }
