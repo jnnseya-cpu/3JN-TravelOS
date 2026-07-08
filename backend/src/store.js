@@ -1889,7 +1889,7 @@ export function latestBenchmarkRun() {
 // AND against the lowest PROTECTED (single-ticket) price, because an OTA
 // "self-transfer" combo (separate tickets, no protection, re-check bags,
 // sometimes an overnight in a hub) is not the same product as ours.
-export function recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTransfer = false } = {}) {
+export function recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTransfer = false, caveat = '' } = {}) {
   const run = db.benchmarks.find((b) => b.id === runId);
   if (!run) return { ok: false, error: 'run-not-found' };
   const row = (run.rows || []).find((r) => r.id === rowId);
@@ -1897,7 +1897,7 @@ export function recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTran
   const price = Math.round(Number(priceGbp) * 100) / 100;
   if (!(price > 0)) return { ok: false, error: 'bad-price', message: 'Enter the market price in GBP.' };
   row.marketQuotes = row.marketQuotes || [];
-  row.marketQuotes.push({ source: String(source || 'market').slice(0, 40), priceGbp: price, selfTransfer: !!selfTransfer, at: nowISO() });
+  row.marketQuotes.push({ source: String(source || 'market').slice(0, 40), priceGbp: price, selfTransfer: !!selfTransfer, caveat: String(caveat || '').trim().slice(0, 80) || null, at: nowISO() });
   const lowest = row.marketQuotes.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b));
   const protectedQuotes = row.marketQuotes.filter((q) => !q.selfTransfer);
   const lowestProtected = protectedQuotes.length ? protectedQuotes.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b)) : null;

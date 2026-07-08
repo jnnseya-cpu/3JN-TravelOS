@@ -2165,7 +2165,7 @@ async function renderBenchmark() {
       : '';
     const verdict = (chip(r.result, '') + (r.protectedResult && r.result?.vs?.selfTransfer ? ' ' + chip(r.protectedResult, 'Protected fares:') : ''))
       || '<span class="muted" style="font-size:11.5px">read a leader price → record it below</span>';
-    const quotes = (r.marketQuotes || []).map((q) => `<span class="chip" style="font-size:10.5px">${esc(q.source)} £${q.priceGbp}${q.selfTransfer ? ' · self-transfer' : ''}</span>`).join(' ');
+    const quotes = (r.marketQuotes || []).map((q) => `<span class="chip" style="font-size:10.5px">${esc(q.source)} £${q.priceGbp}${q.selfTransfer ? ' · self-transfer' : ''}${q.caveat ? ' · ' + esc(q.caveat) : ''}</span>`).join(' ');
     const noteHTML = r.note ? `<div style="font-size:11.5px;color:var(--green);margin-top:4px">✓ ${esc(r.note)}</div>` : '';
     const fare = r.live
       ? `<strong style="color:var(--gold)">£${(r.ourPriceGbp ?? 0).toFixed(2)}</strong> <span class="muted" style="font-size:11px">customer pays · raw £${(r.rawFareGbp ?? 0).toFixed(2)} · ${esc(r.carrier || '')} · ${esc(r.cabin || '')}${r.baggage ? ' · ' + esc(r.baggage) : ''} · ${r.offersFound} offers</span>`
@@ -2180,6 +2180,7 @@ async function renderBenchmark() {
         <select class="in" id="bmsrc-${esc(r.id)}" style="max-width:150px;padding:6px 8px"><option>Skyscanner</option><option>Google Flights</option><option>Kayak</option><option>momondo</option><option>Kiwi.com</option><option>Trip.com</option><option>Expedia</option></select>
         <input class="in" id="bmp-${esc(r.id)}" placeholder="Leader's £ total" style="max-width:140px" inputmode="decimal">
         <label class="muted" style="font-size:11.5px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="bmst-${esc(r.id)}"> self-transfer / separate tickets</label>
+        <input class="in" id="bmcv-${esc(r.id)}" placeholder="caveat, e.g. lands at Charleroi" style="max-width:190px;font-size:12px">
         <button class="btn btn-ghost btn-sm" onclick="saveBenchmarkMarket('${esc(run.id)}','${esc(r.id)}')">Record & judge</button>
       </div>
       ${quotes ? `<div style="margin-top:6px">${quotes}</div>` : ''}
@@ -2226,9 +2227,10 @@ window.saveBenchmarkMarket = async (runId, rowId) => {
   const priceGbp = parseFloat($(`#bmp-${rowId}`)?.value);
   const source = $(`#bmsrc-${rowId}`)?.value || 'market';
   const selfTransfer = !!$(`#bmst-${rowId}`)?.checked;
+  const caveat = $(`#bmcv-${rowId}`)?.value || '';
   if (!(priceGbp > 0)) { toast('Enter the leader’s price in £ first.'); return; }
   try {
-    const r = await api('/api/benchmark/flights/market', { method: 'POST', body: JSON.stringify({ runId, rowId, source, priceGbp, selfTransfer }) });
+    const r = await api('/api/benchmark/flights/market', { method: 'POST', body: JSON.stringify({ runId, rowId, source, priceGbp, selfTransfer, caveat }) });
     if (!r.ok) { toast(r.message || r.error || 'Could not record.'); return; }
     toast('✓ Recorded — verdict updated.');
     renderBenchmark();
