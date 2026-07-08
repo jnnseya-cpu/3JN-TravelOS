@@ -105,7 +105,7 @@ function nav(view) {
   if (view === 'admin') renderAdmin();
   if (view === 'comms') renderComms();
   if (view === 'business') renderBusiness();
-  if (view === 'visaos') renderVisaApply();
+  if (view === 'visaos') renderVisaOS();
   if (view === 'marketplace') renderMarketplace();
   if (view === 'blog') renderBlog();
   if (view === 'rewards') renderRewards();
@@ -2147,8 +2147,59 @@ window.planDest = (city) => {
 };
 
 // ---- 3JN VisaOS -----------------------------------------------------------
+// VisaOS is TWO different products in one view — role decides which you get:
+//   · Officers (embassy/consulate/admin) → the DECISION COMMAND CENTRE.
+//   · Everyone else → the applicant experience (apply + track MY applications).
+function isVisaOfficer() {
+  return !!(state.user && (state.user.allAccess || ['embassy', 'consulate', 'admin'].includes(state.user.role)));
+}
+function renderVisaOS() {
+  const officer = isVisaOfficer();
+  const a = $('#visaTabApply'); const g = $('#visaTabGov');
+  if (a && g) {
+    if (officer) {
+      g.textContent = '🛡 Decision Command Centre';
+      g.classList.add('btn-gold'); g.classList.remove('btn-ghost');
+      a.textContent = 'Applicant view (preview)';
+      a.classList.add('btn-ghost'); a.classList.remove('btn-gold');
+    } else {
+      a.textContent = 'Apply for a visa';
+      a.classList.add('btn-gold'); a.classList.remove('btn-ghost');
+      g.textContent = '📋 My applications';
+      g.classList.add('btn-ghost'); g.classList.remove('btn-gold');
+    }
+  }
+  officer ? renderVisaGov() : renderVisaApply();
+}
 $('#visaTabApply')?.addEventListener('click', renderVisaApply);
-$('#visaTabGov')?.addEventListener('click', renderVisaGov);
+$('#visaTabGov')?.addEventListener('click', () => (isVisaOfficer() ? renderVisaGov() : renderMyVisaApplications()));
+
+// Applicant: track my applications — REDACTED view (status only until the
+// embassy releases the decision; then decision + official letter).
+async function renderMyVisaApplications() {
+  const out = $('#visaosOut');
+  if (!out) return;
+  if (!state.user) { out.innerHTML = '<div class="card pad center"><p class="muted">Sign in to track your visa applications.</p><button class="btn btn-gold" onclick="openAuth()">Sign in</button></div>'; return; }
+  out.innerHTML = '<div class="card pad center muted">Loading your applications…</div>';
+  let d;
+  try { d = await api('/api/visaos/my-applications'); } catch { out.innerHTML = '<div class="card pad center muted">Could not load applications.</div>'; return; }
+  const rows = (d.applications || []).map((x) => {
+    const decided = x.status === 'decided' && x.decision;
+    const col = decided ? (x.decision.decision === 'Approved' ? 'var(--green)' : x.decision.decision === 'Refused' ? '#ff8a8a' : 'var(--blue-bright)') : 'var(--gold)';
+    return `<div class="card pad" style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <strong>${esc(x.applicant?.name || 'Application')} → ${esc(x.country || x.applicant?.destination || '')}</strong>
+        <span style="color:${col};font-weight:600">${decided ? esc(x.decision.decision) : '🕓 Under embassy review'}</span>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(x.id)} · ${esc(x.visaType || 'tourist')} · submitted ${esc((x.at || '').slice(0, 10))}</div>
+      ${decided ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(x.decision.reason || '')}${(x.decision.conditions || []).length ? '<br>Conditions: ' + x.decision.conditions.map(esc).join(' · ') : ''}</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="viewVisaLetter('${esc(x.id)}')">📄 Official decision letter</button>`
+        : `<p class="muted" style="font-size:12px;margin-top:6px">The embassy is reviewing your file. You'll be notified the moment your decision letter is issued — decisions are made and released by an authorised officer.</p>`}
+      ${(x.missingDocuments || []).length ? `<div style="margin-top:6px"><span class="t-label">Speeds up review if provided:</span> <span class="muted" style="font-size:12px">${x.missingDocuments.map(esc).join(' · ')}</span></div>` : ''}
+    </div>`;
+  }).join('');
+  out.innerHTML = rows || '<div class="card pad center muted">No applications yet — tap "Apply for a visa" to start.</div>';
+}
 
 // Fields the applicant must complete. `req: true` means it gates the AI run.
 const VISA_FORM_FIELDS = [
@@ -2545,8 +2596,13 @@ async function renderVisaGov() {
     <div class="kv"><span>Sealed blocks</span><span>${chain?.integrity?.blocks ?? g.auditChain?.blocks ?? 0}</span></div>
     ${(chain?.blocks || []).slice(0, 5).map((b) => `<div class="kv"><span class="muted" style="font-size:11px">#${b.index} ${esc(b.event)}</span><span class="muted" style="font-size:11px">${esc((b.hash || '').slice(0, 14))}…</span></div>`).join('')}`;
   out.innerHTML = `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-      <button class="btn btn-ghost btn-sm" onclick="openEmbassySettings()">⚙ Embassy settings · criteria, branding, fees</button>
+    <div class="card pad" style="border-color:rgba(216,180,106,.45);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <span class="eyebrow">🛡 Embassy Decision Command Centre</span>
+        <div style="font-family:'Space Grotesk';font-weight:700;font-size:17px;margin-top:2px">You hold full decision authority.</div>
+        <p class="muted" style="font-size:12.5px;margin:4px 0 0;max-width:620px">The AI screens every file and proposes against <strong>your</strong> criteria — you confirm, override, refuse or request more. Applicants see <strong>nothing</strong> until you release the decision. You set the visa fees, the refusal reasons, the visa conditions, and the letter carries your embassy's name, seal and language.</p>
+      </div>
+      <button class="btn btn-gold btn-sm" onclick="openEmbassySettings()">⚙ Set criteria · fees · branding · language</button>
     </div>
     <div class="kpi-grid">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
@@ -3195,22 +3251,28 @@ $('#testAccountBtn')?.addEventListener('click', window.provisionTest); // button
 // Seeds all role accounts (admin, business, merchant, partner, consumer,
 // embassy, consulate) — each pre-loaded with memberships, ACU, bookings,
 // listings and queue data — and lets you sign in as any of them in one tap.
-const DEMO_ROLE_META = {
-  admin: { icon: '🛡', label: 'Platform Admin', view: 'admin', blurb: '10,000 ACU · Elite plan · income, AI-cost & ACU-profit panels, vendor/influencer/host queues' },
-  business: { icon: '🏢', label: 'Corporate Manager', view: 'business', blurb: '5,000 ACU float · approvals queue · duty of care · corporate policy' },
-  merchant: { icon: '💳', label: 'BitriPay Merchant', view: 'console', blurb: 'Payment links, settlement view, £420 demo invoice' },
-  partner: { icon: '🤝', label: 'Agency Partner', view: 'console', blurb: 'White-label API keys · partner payouts' },
-  consumer: { icon: '🧳', label: 'Test Traveller', view: 'console', blurb: 'Membership + ACU pack · booking with e-ticket · rewards & referral link' },
-  embassy: { icon: '🏛', label: 'Embassy Officer', view: 'visaos', blurb: 'VisaOS decision queue with pending applications' },
-  consulate: { icon: '🛂', label: 'Consulate eVisa Officer', view: 'visaos', blurb: 'eVisa processing queue + hash-chained audit trail' },
+// Per-account meta: email wins over role (the host is a consumer WITH hosting
+// power). Blurbs state the ACCOUNT'S AUTHORITY — what this account decides.
+const DEMO_ACCOUNT_META = {
+  'host@3jntravel.com': { icon: '🏠', label: 'Property Host', view: 'console', host: true, blurb: 'RUNS a live listing: The Palm Residence, Dubai Marina (approved, 12 photos) — sets nightly price, pauses/publishes, sees bookings & 90% payouts' },
 };
+const DEMO_ROLE_META = {
+  admin: { icon: '🛡', label: 'Platform Admin', view: 'admin', blurb: 'RULES the platform: all 3JN income & AI-margin panels · approves/suspends vendors, influencers & host listings · sees every user, booking & support ticket · 10,500 ACU, Elite' },
+  business: { icon: '🏢', label: 'Corporate Manager', view: 'business', blurb: 'CONTROLS company travel: approves/declines trip requests against policy · duty-of-care map · team bookings · 5,250 ACU float' },
+  merchant: { icon: '💳', label: 'BitriPay Merchant', view: 'console', blurb: 'MOVES money: creates payment links & QR invoices (£420 demo live) · tracks settlement to the penny' },
+  partner: { icon: '🤝', label: 'Agency Partner', view: 'console', blurb: 'RESELLS the OS: white-label production API key · revenue share on every booking through it' },
+  consumer: { icon: '🧳', label: 'Test Traveller', view: 'console', blurb: 'LIVES the customer journey: paid Dubai booking with e-ticket · Travel+ Family plan · 1,930 ACU · savings pot · visa application AWAITING the embassy\'s decision' },
+  embassy: { icon: '🏛', label: 'Embassy Officer', view: 'visaos', blurb: 'DECIDES visas with full authority: sets the country\'s criteria, fees & letter branding · sees the AI\'s confidential verdict on 3 pending files · approves, refuses or overrides with reasons & conditions · RELEASES the decision when ready' },
+  consulate: { icon: '🛂', label: 'Consulate eVisa Officer', view: 'visaos', blurb: 'PROCESSES eVisas end-to-end: same full decision powers on the eVisa queue · every action sealed in the tamper-proof audit chain' },
+};
+const demoMetaFor = (a) => DEMO_ACCOUNT_META[a.email] || DEMO_ROLE_META[a.role] || { icon: '👤', label: a.role, view: 'console', blurb: '' };
 window.openDemoAccounts = async () => {
   modal('<div class="center muted" style="padding:30px">Loading fully-loaded demo accounts…</div>');
   let data;
   try { data = await api('/api/accounts/seed-roles', { method: 'POST', body: JSON.stringify({}) }); }
   catch { modal('<div class="center muted" style="padding:30px">Could not load demo accounts — please try again.</div>'); return; }
   const rows = (data.accounts || []).map((a) => {
-    const m = DEMO_ROLE_META[a.role] || { icon: '👤', label: a.role, view: 'console', blurb: '' };
+    const m = demoMetaFor(a);
     const btn = a.pinRequired
       ? `<button class="btn btn-ghost btn-sm" onclick="staffPinPrompt()">🔒 PIN</button>`
       : `<button class="btn btn-gold btn-sm" onclick="demoSignIn('${esc(a.id)}')">Sign in</button>`;
@@ -3233,9 +3295,10 @@ window.demoSignIn = (id) => {
   if (!acct) { toast('Account not found — reopen the demo panel.'); return; }
   setUser(acct);
   closeModal();
-  const meta = DEMO_ROLE_META[acct.role] || { view: 'console' };
-  toast(`✓ Signed in as ${acct.name} (${acct.role})`);
+  const meta = demoMetaFor(acct);
+  toast(`✓ Signed in as ${acct.name} (${meta.label || acct.role})`);
   nav(meta.view);
+  if (meta.host) setTimeout(() => window.openHostDashboard?.(), 250); // host lands in their dashboard
 };
 // Staff second factor: collect the PIN, keep it for this session (sent as the
 // x-staff-pin header on every request) and reopen the demo panel unlocked.

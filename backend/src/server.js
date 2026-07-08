@@ -485,7 +485,11 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
   // privileged demo accounts are listed but their sign-in identity is redacted
   // (a user id IS the session credential in this architecture).
   const unlocked = staffPinOk(req);
-  const rows = accounts.map((u) => {
+  // Include the fully-loaded HOST account (a consumer with hosting capability
+  // and a published, pre-approved listing) alongside the role accounts.
+  const host = findUserByEmail('host@3jntravel.com');
+  const all = host ? [...accounts, host] : accounts;
+  const rows = all.map((u) => {
     const full = getUser(u.id) || u;
     if (!unlocked && (PRIVILEGED_ROLES.has(full.role) || full.allAccess)) {
       return { ...full, id: null, pinRequired: true };

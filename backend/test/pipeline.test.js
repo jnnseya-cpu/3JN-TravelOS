@@ -2563,7 +2563,8 @@ test('demo accounts: seed-roles returns fully loaded accounts for every role', a
     const res = await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' });
     assert.equal(res.status, 200);
     const d = await res.json();
-    assert.equal(d.accounts.length, 7, 'one account per role');
+    assert.equal(d.accounts.length, 8, 'one account per role + the property host');
+    assert.ok(d.accounts.some((a) => a.email === 'host@3jntravel.com'), 'host demo account listed');
     assert.ok(Array.isArray(d.demoLoaded), 'demo-load ran');
     // Consumer is fully loaded: membership, ACU, a real booking, a pot, a visa file.
     const tester = d.accounts.find((a) => a.email === 'tester@3jntravel.com');
