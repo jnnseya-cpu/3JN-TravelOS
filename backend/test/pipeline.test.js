@@ -3210,7 +3210,7 @@ test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insur
     { type: 'activities', supplier: 'Desert Safari', details: {} },
   ] } };
   const html = bookingDocument(b, {});
-  for (const must of ['176-2400123456', 'HTL-', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', 'name board', '8944-', 'POL-', 'VCH-', 'Superior Double', 'Breakfast included']) {
+  for (const must of ['176-2400123456', 'HTL-', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', '3JN board with your name', '8944-', 'POL-', 'VCH-', 'Superior Double', 'Breakfast included', 'support@3jntravel.com']) {
     assert.ok(html.includes(must), `document must contain ${must}`);
   }
   // Held fare: the e-ticket line must explain WHEN the number arrives, never blank.

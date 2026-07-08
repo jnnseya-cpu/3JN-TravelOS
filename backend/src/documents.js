@@ -94,12 +94,15 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     const d = c.details || {};
     const inD = d.checkIn || startDate; const outD = d.checkOut || endDate;
     const conf = d.confirmationNumber || confRef(booking.id, i, 'HTL');
-    const addr = [d.area, o.destination || d.city].filter(Boolean).join(', ');
+    // FULL property identification: name + street address (or area + city) so
+    // the traveller can find, verify and navigate to the place.
+    const addr = d.address || [d.area, o.destination || d.city].filter(Boolean).join(', ');
     return `
     <div class="seg">
-      <div class="seg-head"><span>🏨 ${esc(c.supplier)}</span><span class="muted">${c.stars ? '★'.repeat(c.stars) : ''} ${esc(d.roomType || 'Room')}</span></div>
+      <div class="seg-head"><span>🏨 <b>${esc(d.propertyName || c.supplier)}</b></span><span class="muted">${c.stars ? '★'.repeat(c.stars) : ''} ${esc(d.roomType || 'Room')}</span></div>
       <table class="legs"><tbody>
-        <tr><td class="dir">Confirmation</td><td><b class="ticketno">${esc(conf)}</b> · quote at reception</td><td colspan="2">${addr ? esc(addr) : ''}${d.distanceToCentreKm ? ` · ${d.distanceToCentreKm} km to centre` : ''}</td></tr>
+        <tr><td class="dir">Property</td><td><b>${esc(d.propertyName || c.supplier)}</b></td><td class="dir">Address</td><td>${esc(addr || '—')}${d.distanceToCentreKm ? ` · ${d.distanceToCentreKm} km to centre` : ''}</td></tr>
+        <tr><td class="dir">Confirmation</td><td><b class="ticketno">${esc(conf)}</b> · quote at reception</td><td class="dir">Contact</td><td>Reception via the property · issues? 3JN support (below) sorts it with them directly</td></tr>
         <tr><td class="dir">Check-in</td><td><b>${esc(inD)}</b> from 15:00</td><td class="dir">Check-out</td><td><b>${esc(outD)}</b> by 11:00</td></tr>
         <tr><td class="dir">Stay</td><td>${d.nights || '—'} night${d.nights > 1 ? 's' : ''} · ${d.rooms || 1} room${(d.rooms || 1) > 1 ? 's' : ''}</td>
             <td class="dir">Board</td><td>${esc(d.board || d.boardBasis || 'Room only')}</td></tr>
@@ -118,11 +121,13 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
       rows.push(['Booking ref', `<b class="ticketno">${esc(confRef(booking.id, i, 'TRF'))}</b>`]);
       rows.push(['Vehicle', esc(d.vehicle || 'Standard')], ['Capacity', esc(d.capacity || '')]);
       rows.push(['Trips', `${d.trips || 2} — airport → stay on arrival · stay → airport on departure`]);
-      rows.push(['Pickup', `Arrival: driver meets you at arrivals with a 3JN name board${startDate ? ` on ${esc(startDate)}` : ''}. Departure pickup is confirmed by SMS/app the evening before.`]);
+      rows.push(['How it works', `Arrival: after baggage claim, your driver waits at the arrivals exit holding a <b>3JN board with your name</b>${startDate ? ` on ${esc(startDate)}` : ''}. The driver's name and phone number are sent to you by SMS and email <b>24 hours before pickup</b>. Departure: pickup time is confirmed the evening before.`]);
+      rows.push(['Can\'t find your driver?', 'Message the 3JN Assistant in the app or email support@3jntravel.com quoting your booking ref — we locate the driver live. Please don\'t book alternative transport without contacting us first.']);
     } else if (c.type === 'esim') {
       rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
       rows.push(['ICCID', `<b class="ticketno">${esc(confRef(booking.id, i, '8944'))}</b>`]);
-      rows.push(['Activation', 'QR code + install steps sent by email and in your 3JN Console → Documents. Install before departure; activates on first connection abroad.']);
+      rows.push(['How to activate', '1) Open your <b>3JN Console → your booking → 📄 Documents</b> (or the activation email) and scan the QR code. 2) Install the eSIM over WiFi <b>before departure</b>. 3) On landing, enable data roaming on the 3JN eSIM line — it activates on first connection abroad and your validity starts then.']);
+      rows.push(['Didn\'t get the QR?', 'Ask the 3JN Assistant "resend my eSIM" or email support@3jntravel.com — reissued in minutes.']);
     } else if (c.type === 'insurance') {
       rows.push(['Policy number', `<b class="ticketno">${esc(confRef(booking.id, i, 'POL'))}</b>`]);
       rows.push(['Cover', esc(d.cover || 'Medical + cancellation')], ['Insured', `${d.people || o.travellers?.total || 1} traveller(s) · ${d.days || ''} days`]);
@@ -203,6 +208,16 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   <div class="totals">
     <span>${esc(o.tier || '')} package · ${fullyPaid ? 'Paid in full' : `Paid ${money(paidTotal, sym)} of ${money(total, sym)}${booking.instalment ? ' (instalment plan)' : ''}`}</span>
     <span class="big">${money(total, sym)}</span>
+  </div>
+  <div class="body" style="padding-top:0">
+    <h3>Need help while travelling?</h3>
+    <div class="seg" style="background:#f7f9fc">
+      <table class="legs"><tbody>
+        <tr><td class="dir">24/7 assistant</td><td>Open the 3JN app → 💬 chat. It checks this exact booking, resends documents, changes dates, and hands you to a human specialist when needed.</td></tr>
+        <tr><td class="dir">Email</td><td><b>support@3jntravel.com</b> — quote booking ref <b>${esc(booking.id)}</b> and we pick it up with your full file already open.</td></tr>
+        <tr><td class="dir">Disruption</td><td>Flight cancelled or hotel issue on arrival? Contact us FIRST — we rebook or resolve directly with the supplier and you stay covered.</td></tr>
+      </tbody></table>
+    </div>
   </div>
   <div class="ft">
     This document is issued by ${esc(BRAND.name)} as your booking agent and merchant of record. Present the booking reference and PNR at check-in.
