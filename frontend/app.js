@@ -2970,7 +2970,7 @@ function openAuth(mode = 'signup') {
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
       ${fb ? '<p class="muted center" style="font-size:12px;margin-top:10px"><a onclick="forgotPassword()" style="color:var(--gold);cursor:pointer">Forgot password?</a></p>' : ''}
       <p class="muted center" style="font-size:12.5px;margin-top:12px">New to 3JN? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('signup')">Create an account</a></p>
-      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🛡 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openStaffLogin()">Staff / Admin sign in</a></p>`);
+      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🛡 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openStaffLogin()">Staff / Admin sign in</a> · 🧪 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Fully-loaded demo accounts</a></p>`);
   } else {
     modal(`
       <span class="eyebrow">Create account</span>
@@ -2984,7 +2984,8 @@ function openAuth(mode = 'signup') {
       <div class="field" style="margin-top:10px"><label>Referral code (optional)</label><input class="in" id="auRef" placeholder="3JN-XXXX"></div>
       ${humanBlock()}
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doSignup()">Create account · 250 pts bonus</button>
-      <p class="muted center" style="font-size:12.5px;margin-top:12px">Already have an account? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('login')">Log in</a></p>`);
+      <p class="muted center" style="font-size:12.5px;margin-top:12px">Already have an account? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('login')">Log in</a></p>
+      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🧪 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Just exploring? Use a fully-loaded demo account</a></p>`);
   }
   fetchHumanChallenge();
 }
@@ -3000,7 +3001,8 @@ window.openStaffLogin = () => {
     <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@3jntravel.com" autocomplete="email"></div>
     ${window.firebaseAuth?.available ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••" autocomplete="current-password"></div>' : ''}
     ${humanBlock()}
-    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Sign in</button>`);
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Sign in</button>
+    <p class="muted center" style="font-size:11.5px;margin-top:10px;opacity:.75">🧪 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Use a fully-loaded staff demo account</a></p>`);
   fetchHumanChallenge();
 };
 window.doSignup = async () => {
@@ -3058,6 +3060,50 @@ window.provisionTest = async () => {
   } catch { /* */ }
 };
 $('#testAccountBtn').addEventListener('click', window.provisionTest);
+
+// ---- Fully-loaded demo accounts (one per role) -----------------------------
+// Seeds all role accounts (admin, business, merchant, partner, consumer,
+// embassy, consulate) — each pre-loaded with memberships, ACU, bookings,
+// listings and queue data — and lets you sign in as any of them in one tap.
+const DEMO_ROLE_META = {
+  admin: { icon: '🛡', label: 'Platform Admin', view: 'admin', blurb: '10,000 ACU · Elite plan · income, AI-cost & ACU-profit panels, vendor/influencer/host queues' },
+  business: { icon: '🏢', label: 'Corporate Manager', view: 'business', blurb: '5,000 ACU float · approvals queue · duty of care · corporate policy' },
+  merchant: { icon: '💳', label: 'BitriPay Merchant', view: 'console', blurb: 'Payment links, settlement view, £420 demo invoice' },
+  partner: { icon: '🤝', label: 'Agency Partner', view: 'console', blurb: 'White-label API keys · partner payouts' },
+  consumer: { icon: '🧳', label: 'Test Traveller', view: 'console', blurb: 'Membership + ACU pack · booking with e-ticket · rewards & referral link' },
+  embassy: { icon: '🏛', label: 'Embassy Officer', view: 'visaos', blurb: 'VisaOS decision queue with pending applications' },
+  consulate: { icon: '🛂', label: 'Consulate eVisa Officer', view: 'visaos', blurb: 'eVisa processing queue + hash-chained audit trail' },
+};
+window.openDemoAccounts = async () => {
+  modal('<div class="center muted" style="padding:30px">Loading fully-loaded demo accounts…</div>');
+  let data;
+  try { data = await api('/api/accounts/seed-roles', { method: 'POST', body: JSON.stringify({}) }); }
+  catch { modal('<div class="center muted" style="padding:30px">Could not load demo accounts — please try again.</div>'); return; }
+  const rows = (data.accounts || []).map((a) => {
+    const m = DEMO_ROLE_META[a.role] || { icon: '👤', label: a.role, view: 'console', blurb: '' };
+    return `<div class="kv" style="align-items:flex-start;gap:10px">
+      <span style="flex:1">${m.icon} <strong>${esc(m.label)}</strong> <span class="muted" style="font-size:11.5px">· ${esc(a.email)}</span><br>
+        <span class="muted" style="font-size:11.5px">${esc(m.blurb)}</span></span>
+      <button class="btn btn-gold btn-sm" onclick="demoSignIn('${esc(a.id)}')">Sign in</button>
+    </div>`;
+  }).join('');
+  window.__demoAccounts = data.accounts || [];
+  modal(`
+    <span class="eyebrow">Fully-loaded demo accounts · one per role</span>
+    <h3 style="margin:6px 0 4px">Explore every side of the OS</h3>
+    <p class="muted" style="font-size:12.5px">Each account ships pre-loaded — memberships, ACU balances, bookings with e-tickets, host listings, payment links and visa queues — so every command centre demos end-to-end. Tap Sign in to switch.</p>
+    ${rows}
+    <p class="muted" style="font-size:11px;margin-top:10px">Demo data is synthesised. Switch accounts any time from this panel.</p>`);
+};
+window.demoSignIn = (id) => {
+  const acct = (window.__demoAccounts || []).find((a) => a.id === id);
+  if (!acct) { toast('Account not found — reopen the demo panel.'); return; }
+  setUser(acct);
+  closeModal();
+  const meta = DEMO_ROLE_META[acct.role] || { view: 'console' };
+  toast(`✓ Signed in as ${acct.name} (${acct.role})`);
+  nav(meta.view);
+};
 
 // ---- API portal calculator -----------------------------------------------
 const volRange = $('#volRange');
