@@ -1103,11 +1103,26 @@ app.get('/api/instalments/preview', safe((req, res) => {
   if (!plan) return res.status(400).json({ error: 'bad-departure-date', message: 'Pass ?depart=YYYY-MM-DD (a future date) and optional ?total=.' });
   res.json({ plan, tiers: INSTALMENT_TIERS.map((t) => ({ band: t.maxDays === Infinity ? `${t.minDays}+ days` : `${t.minDays}–${t.maxDays} days`, name: t.name, depositPct: t.depositPct, instalments: t.schedule.length })), graceHours: INSTALMENT_GRACE_HOURS });
 }));
-// Enforcement sweep: grace warnings + auto-cancel of defaulted plans. Run by
-// the admin (or a scheduler in production).
+// Enforcement sweep: reminders (14/7/3/1/0 days), autopay charges, grace
+// warnings + auto-cancel of defaulted plans. Run by the admin (or a scheduler
+// in production).
 app.post('/api/admin/instalments/enforce', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json(enforceInstalments(req.body?.today));
+}));
+// Autopay consent: the customer opts into automatic recurring instalment
+// charges (off-session charging activates when a payment method is saved
+// with the PSP; consent is recorded either way).
+app.post('/api/book/:id/autopay', safe((req, res) => {
+  const user = currentUser(req);
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'booking-not-found' });
+  if (!user || (booking.userId && booking.userId !== user.id && !user.allAccess)) return res.status(403).json({ error: 'not-your-booking' });
+  if (booking.instalment?.engine !== 'ai-smart') return res.status(400).json({ error: 'no-smart-plan' });
+  const enabled = req.body?.enabled !== false;
+  booking.instalment.autopay = { ...booking.instalment.autopay, enabled, method: req.body?.method || booking.instalment.autopay?.method || 'saved-card', consentAt: enabled ? new Date().toISOString() : null };
+  recordAudit({ actor: user.id, role: 'consumer', action: 'instalment.autopay', entity: 'booking', entityId: booking.id, summary: enabled ? 'autopay enabled' : 'autopay disabled' });
+  res.json({ ok: true, autopay: booking.instalment.autopay });
 }));
 
 // ---- Book: confirm + take deposit ----------------------------------------

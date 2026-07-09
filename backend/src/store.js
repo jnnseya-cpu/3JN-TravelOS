@@ -15,7 +15,7 @@ import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, to
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
-import { instalmentState, defaultOutcome } from './instalments.js';
+import { instalmentState, defaultOutcome, dueReminders } from './instalments.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -1108,6 +1108,11 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     status: 'confirmed',
     payments: [],
     priceGuard: { active: true, baselineUSD: option.totalUSD, events: [] },
+    // AI Booking Protection™: the deposit reserves the booking with the
+    // supplier and FREEZES the quoted price for the whole instalment period.
+    priceLock: instalment?.engine === 'ai-smart'
+      ? { locked: true, at: nowISO(), baselineUSD: option.totalUSD, badge: 'Price Locked', guarantee: instalment.priceLock?.guarantee || 'Quoted price frozen while instalments are paid on time.' }
+      : null,
     createdAt: nowISO(),
   };
   // First payment = deposit.
@@ -1141,7 +1146,21 @@ export function listBookings(userId) {
 export function recordPayment(bookingId, payment) {
   const b = db.bookings.get(bookingId);
   if (!b) return null;
-  b.payments.push({ ...payment, at: nowISO(), status: 'paid' });
+  const receiptId = `rcpt_${bookingId.slice(-6)}_${b.payments.length + 1}`;
+  b.payments.push({ ...payment, receiptId, at: nowISO(), status: 'paid' });
+  // AI Payment Protection: a receipt after EVERY successful payment, with the
+  // live outstanding balance (refund entries carry negative amounts — the
+  // receipt copy adapts).
+  if (b.userId && Number(payment.amount)) {
+    const paid = b.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const total = b.option?.pricing?.local?.total || 0;
+    const sym = b.option?.pricing?.symbol || '£';
+    const remaining = Math.max(0, Math.round((total - paid) * 100) / 100);
+    const amt = Number(payment.amount);
+    pushNotification(b.userId, amt >= 0
+      ? { type: 'success', icon: '🧾', title: `Receipt ${receiptId}`, body: `Payment of ${sym}${amt.toFixed(2)} received. Paid ${sym}${paid.toFixed(2)} of ${sym}${total.toFixed(2)} — ${remaining > 0 ? `${sym}${remaining.toFixed(2)} remaining${b.instalment?.finalDue ? `, fully settled by ${b.instalment.finalDue}` : ''}` : 'fully settled'}.` }
+      : { type: 'success', icon: '🧾', title: `Refund ${receiptId}`, body: `Refund of ${sym}${Math.abs(amt).toFixed(2)} processed to your payment method.` });
+  }
   // Rewards: the first payment makes this a "paid booking" — fire the referral
   // engine once (250 ACU + revenue-share accrual). Guarded so it never double-pays.
   try { if (!b.referralProcessed) processReferralOnPaidBooking(b); } catch { /* rewards are best-effort */ }
@@ -1897,10 +1916,30 @@ export function userPaymentHistory(userId) {
 // balance refundable per the supplier policy on the booking. Idempotent.
 export function enforceInstalments(todayISO) {
   const today = todayISO || nowISO().slice(0, 10);
-  const results = { checked: 0, warned: 0, defaulted: 0, actions: [] };
+  const results = { checked: 0, warned: 0, defaulted: 0, reminders: 0, autopayAttempts: 0, actions: [] };
   for (const b of db.bookings.values()) {
     if (b.instalment?.engine !== 'ai-smart' || String(b.status || '').startsWith('cancelled')) continue;
     results.checked += 1;
+    // AI Payment Protection: reminders at 14/7/3/1/0 days before each unpaid
+    // instalment — sent once per (dueDate, offset), tracked on the booking.
+    // (Email/SMS/WhatsApp fan-out rides the comms layer in production; the
+    // in-OS notification is the always-on channel.)
+    for (const r of dueReminders(b, today)) {
+      b.instalmentRemindersSent = b.instalmentRemindersSent || [];
+      b.instalmentRemindersSent.push(r.key);
+      results.reminders += 1;
+      results.actions.push({ bookingId: b.id, action: 'reminder', due: r.due, daysAway: r.daysAway });
+      if (b.userId) pushNotification(b.userId, { type: 'info', icon: '📅', title: r.daysAway === 0 ? `Instalment due today${r.final ? ' — final payment' : ''}` : `Instalment due in ${r.daysAway} day${r.daysAway > 1 ? 's' : ''}`, body: `${b.instalment.symbol}${r.amount.toFixed(2)} is due ${r.due}${r.final ? ' — this is the final payment; your e-ticket issues on completion' : ''}. Pay any time from your Console — early payment is always free.` });
+      // Automatic recurring payment: with autopay consent + a saved payment
+      // method, the due-date reminder becomes an off-session charge attempt
+      // (retried per the plan's configurable rule).
+      if (r.daysAway === 0 && b.instalment.autopay?.enabled) {
+        b.autopayAttempts = b.autopayAttempts || [];
+        b.autopayAttempts.push({ due: r.due, at: nowISO(), status: 'initiated', method: b.instalment.autopay.method || 'saved-card' });
+        results.autopayAttempts += 1;
+        results.actions.push({ bookingId: b.id, action: 'autopay-charge', due: r.due });
+      }
+    }
     const state = instalmentState(b, today);
     if (state.status === 'in-grace') {
       results.warned += 1;

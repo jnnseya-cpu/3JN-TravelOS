@@ -19,20 +19,26 @@ export const FINAL_PAYMENT_DAYS = 7; // hard rule: settled ≥7 days pre-departu
 export const INSTALMENT_GRACE_HOURS = Number(process.env.INSTALMENT_GRACE_HOURS) || 48;
 export const SUPPLIER_MIN_DEPOSIT_PCT = 0.10; // no plan may dip below this
 
-// The ten date-banded plans. `schedule` entries are [daysBeforeDeparture, pct];
-// the deposit is charged at booking. Percentages per band sum to exactly 100%.
+// The ten date-banded plans (spec v2, "Developer Ready"). `schedule` entries
+// are [daysBeforeDeparture, pct]; the deposit is charged at booking.
+// Percentages per band sum to exactly 100%.
 export const INSTALMENT_TIERS = [
-  { minDays: 181, maxDays: Infinity, name: 'Ultimate Flex', depositPct: 0.10, schedule: [[150, 0.15], [120, 0.15], [90, 0.15], [60, 0.15], [30, 0.15], [7, 0.15]] },
-  { minDays: 121, maxDays: 180, name: 'Premium Flex', depositPct: 0.15, schedule: [[90, 0.20], [60, 0.20], [30, 0.20], [7, 0.25]] },
-  { minDays: 91, maxDays: 120, name: 'Smart Plan', depositPct: 0.20, schedule: [[60, 0.25], [30, 0.25], [7, 0.30]] },
-  { minDays: 61, maxDays: 90, name: 'Easy Plan', depositPct: 0.30, schedule: [[30, 0.30], [7, 0.40]] },
-  { minDays: 46, maxDays: 60, name: 'Express Plan', depositPct: 0.40, schedule: [[21, 0.30], [7, 0.30]] },
-  { minDays: 31, maxDays: 45, name: 'Quick Plan', depositPct: 0.50, schedule: [[14, 0.25], [7, 0.25]] },
-  { minDays: 22, maxDays: 30, name: 'Priority Plan', depositPct: 0.60, schedule: [[7, 0.40]] },
-  { minDays: 15, maxDays: 21, name: 'Last-Minute Flex', depositPct: 0.75, schedule: [[7, 0.25]] },
-  { minDays: 8, maxDays: 14, name: 'Rapid Plan', depositPct: 0.90, schedule: [[7, 0.10]] },
-  { minDays: 0, maxDays: 7, name: 'Instant Booking', depositPct: 1.00, schedule: [] },
+  { minDays: 180, maxDays: Infinity, name: 'Ultimate Flex', depositPct: 0.10, schedule: [[150, 0.15], [120, 0.15], [90, 0.15], [60, 0.15], [30, 0.15], [7, 0.15]] },
+  { minDays: 120, maxDays: 179, name: 'Premium Flex', depositPct: 0.15, schedule: [[90, 0.20], [60, 0.20], [30, 0.20], [7, 0.25]] },
+  { minDays: 90, maxDays: 119, name: 'Smart Plan', depositPct: 0.20, schedule: [[60, 0.25], [30, 0.25], [7, 0.30]] },
+  { minDays: 60, maxDays: 89, name: 'Easy Pay', depositPct: 0.30, schedule: [[30, 0.30], [7, 0.40]] },
+  { minDays: 45, maxDays: 59, name: 'Express', depositPct: 0.40, schedule: [[21, 0.30], [7, 0.30]] },
+  { minDays: 30, maxDays: 44, name: 'Quick Pay', depositPct: 0.50, schedule: [[14, 0.20], [7, 0.30]] },
+  { minDays: 21, maxDays: 29, name: 'Priority', depositPct: 0.60, schedule: [[7, 0.40]] },
+  { minDays: 14, maxDays: 20, name: 'Last Minute', depositPct: 0.75, schedule: [[7, 0.25]] },
+  { minDays: 8, maxDays: 13, name: 'Rapid', depositPct: 0.90, schedule: [[7, 0.10]] },
+  { minDays: 0, maxDays: 7, name: 'Instant Purchase', depositPct: 1.00, schedule: [] },
 ];
+
+// AI Payment Protection: reminder cadence before each due date, and the
+// default automatic-retry rule for failed recurring payments (configurable).
+export const REMINDER_OFFSETS = [14, 7, 3, 1, 0];
+export const DEFAULT_RETRY_RULE = { attempts: 3, everyHours: 24 };
 
 export function daysUntil(departISO, todayISO) {
   const d = new Date(String(departISO) + 'T00:00:00Z');
@@ -59,6 +65,8 @@ export function assessInstalmentRisk({
   daysToDeparture = 0,
   destRisk = 'normal', // 'normal' | 'elevated' (advisory / high-fraud corridor)
   productTypes = [],
+  paymentMethod = 'card', // 'card' | 'wallet' | 'unknown' — reliability signal
+  supplierTerms = 'standard', // 'standard' | 'strict' — supplier payment terms
 } = {}) {
   const factors = [];
   let score = 0;
@@ -80,6 +88,8 @@ export function assessInstalmentRisk({
   if (daysToDeparture <= 21) add(10, 'Short runway to departure');
   if (destRisk === 'elevated') add(10, 'Destination/supplier risk elevated');
   if (productTypes.includes('cruise') || productTypes.includes('visa')) add(5, 'Product carries strict supplier penalties');
+  if (paymentMethod === 'unknown') add(5, 'Payment method reliability unknown');
+  if (supplierTerms === 'strict') add(5, 'Supplier requires strict payment terms');
 
   const band = score >= 60 ? 'declined' : score >= 40 ? 'high' : score >= 20 ? 'medium' : 'low';
   const trusted = score <= 5 && (history.paidBookings || 0) >= 3;
@@ -146,7 +156,7 @@ export function buildSmartInstalmentPlan({ totalLocal, currency, departISO, toda
   const finalDue = schedule.length ? schedule[schedule.length - 1].due : null;
   return {
     engine: 'ai-smart',
-    plan: declined ? 'Instant Booking (instalments unavailable)' : effectiveTier.name,
+    plan: declined ? 'Instant Purchase (instalments unavailable)' : effectiveTier.name,
     daysToDeparture: days,
     currency: currency.code,
     symbol: currency.symbol,
@@ -161,8 +171,40 @@ export function buildSmartInstalmentPlan({ totalLocal, currency, departISO, toda
     finalRule: `Balance fully settled no later than ${FINAL_PAYMENT_DAYS} days before departure`,
     payEarlyAnytime: true,
     graceHours: INSTALMENT_GRACE_HOURS,
+    // AI Booking Protection™: paying the deposit reserves the booking with
+    // the supplier and FREEZES the quoted price for the whole instalment
+    // period, provided instalments are paid on time.
+    priceLock: { locked: true, badge: 'Price Locked', guarantee: 'Your price is frozen from the moment the deposit is paid — market rises, currency moves and demand spikes cannot touch it while instalments are paid on time.' },
+    // AI Payment Protection: recurring-payment consent + retry rule (off-
+    // session charging activates when a saved payment method exists).
+    autopay: { enabled: false, method: null, retry: { ...DEFAULT_RETRY_RULE } },
+    reminderOffsets: [...REMINDER_OFFSETS],
     risk: risk ? { band: risk.band, score: risk.score, requireIdCheck: risk.adjustments.requireIdCheck, factors: risk.factors.map((f) => f.factor) } : null,
   };
+}
+
+// Which reminders are due today for a smart-plan booking, excluding any
+// already sent (tracked on the booking) and instalments already covered by
+// payments. Reminder key format: `${dueDate}@${offset}`.
+export function dueReminders(booking, todayISO) {
+  const inst = booking?.instalment;
+  if (!inst || inst.engine !== 'ai-smart' || !inst.schedule?.length) return [];
+  const today = todayISO || new Date().toISOString().slice(0, 10);
+  const sent = new Set(booking.instalmentRemindersSent || []);
+  const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const out = [];
+  let cumulative = inst.deposit;
+  for (const item of inst.schedule) {
+    cumulative = round2(cumulative + item.amount);
+    if (paid + 0.01 >= cumulative) continue; // already covered — no nagging
+    const gap = daysUntil(item.due, today);
+    if (gap == null || gap < 0) continue;
+    if (REMINDER_OFFSETS.includes(gap)) {
+      const key = `${item.due}@${gap}`;
+      if (!sent.has(key)) out.push({ key, due: item.due, daysAway: gap, amount: item.amount, final: !!item.final });
+    }
+  }
+  return out;
 }
 
 // ---- Instalment state machine -------------------------------------------------

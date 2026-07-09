@@ -1710,16 +1710,33 @@ function bookingCard(b) {
   const pgEvents = (b.priceGuard.events || []).map((e) => `
     <div class="pg-event ${e.action === 'rebook-refund' ? 'drop' : ''}">${e.message}${e.refundUSD ? ` <strong style="color:var(--green)">(+${money2(e.refundUSD * (o.pricing.local.total / o.pricing.lines.totalUSD), sym)})</strong>` : ''}</div>`).join('');
   const sched = (b.instalment?.schedule || []).map((s, i) => `
-    <div class="kv"><span>Instalment ${i + 1} · ${s.due}</span><span>${s.status === 'paid' ? '✓ paid' : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`}</span></div>`).join('');
+    <div class="kv"><span>Instalment ${i + 1} · ${s.due}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${s.status === 'paid' ? '✓ paid' : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`}</span></div>`).join('');
   const comps = o.components.map((c) => labelFor(c)).join(' · ');
+  // AI Payment Protection: live progress tracker — % paid, outstanding, plan.
+  const paidTotal = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const totalLocal = o.pricing.local.total;
+  const paidPct = totalLocal > 0 ? Math.min(100, Math.round((paidTotal / totalLocal) * 100)) : 0;
+  const progress = b.instalment ? `
+    <div style="margin:8px 0 2px">
+      <div style="display:flex;justify-content:space-between;font-size:11.5px" class="muted">
+        <span>${b.instalment.plan ? esc(b.instalment.plan) + ' · ' : ''}${paidPct}% paid</span>
+        <span>${paidPct >= 100 ? '✓ fully settled' : `${money2(Math.max(0, totalLocal - paidTotal), sym)} remaining${b.instalment.finalDue ? ' · settled by ' + esc(b.instalment.finalDue) : ''}`}</span></div>
+      <div class="rel-bar" style="margin-top:4px"><i style="width:${paidPct}%"></i></div>
+    </div>` : '';
+  // AI Booking Protection™: Price Locked badge + any market-rise savings the
+  // Neural Price Guard recorded while the price was frozen.
+  const lockSavedUSD = (b.priceGuard?.events || []).filter((e) => e.action === 'rate-locked').reduce((s, e) => Math.max(s, e.deltaUSD || 0), 0);
+  const lockBadge = b.priceLock?.locked
+    ? `<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b" title="${esc(b.priceLock.guarantee || '')}">🔒 PRICE LOCKED${lockSavedUSD > 0 ? ` · saved ${money2(lockSavedUSD * (o.pricing.local.total / o.pricing.lines.totalUSD), sym)} vs market` : ''}</span>` : '';
 
   return `
     <div class="card booking-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(216,180,106,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'}</div>
+        <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(216,180,106,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'} ${lockBadge}</div>
         <strong style="font-family:'Space Grotesk'">${money2(o.pricing.local.total, sym)}</strong>
       </div>
       <p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>
+      ${progress}
       <div style="margin:10px 0">${sched}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>

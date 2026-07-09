@@ -3535,18 +3535,25 @@ test('smart instalments: every tier sums to exactly 100% and ends 7 days out', (
 test('smart instalments: date bands select the right plan at the boundaries', () => {
   const today = '2026-07-09';
   const plus = (d) => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); };
-  assert.equal(tierForDeparture(plus(181), today).name, 'Ultimate Flex');
-  assert.equal(tierForDeparture(plus(180), today).name, 'Premium Flex');
-  assert.equal(tierForDeparture(plus(121), today).name, 'Premium Flex');
-  assert.equal(tierForDeparture(plus(120), today).name, 'Smart Plan');
-  assert.equal(tierForDeparture(plus(90), today).name, 'Easy Plan');
-  assert.equal(tierForDeparture(plus(60), today).name, 'Express Plan');
-  assert.equal(tierForDeparture(plus(45), today).name, 'Quick Plan');
-  assert.equal(tierForDeparture(plus(30), today).name, 'Priority Plan');
-  assert.equal(tierForDeparture(plus(21), today).name, 'Last-Minute Flex');
-  assert.equal(tierForDeparture(plus(14), today).name, 'Rapid Plan');
-  assert.equal(tierForDeparture(plus(7), today).name, 'Instant Booking');
-  assert.equal(tierForDeparture(plus(0), today).name, 'Instant Booking');
+  assert.equal(tierForDeparture(plus(180), today).name, 'Ultimate Flex');
+  assert.equal(tierForDeparture(plus(179), today).name, 'Premium Flex');
+  assert.equal(tierForDeparture(plus(120), today).name, 'Premium Flex');
+  assert.equal(tierForDeparture(plus(119), today).name, 'Smart Plan');
+  assert.equal(tierForDeparture(plus(90), today).name, 'Smart Plan');
+  assert.equal(tierForDeparture(plus(89), today).name, 'Easy Pay');
+  assert.equal(tierForDeparture(plus(60), today).name, 'Easy Pay');
+  assert.equal(tierForDeparture(plus(59), today).name, 'Express');
+  assert.equal(tierForDeparture(plus(45), today).name, 'Express');
+  assert.equal(tierForDeparture(plus(44), today).name, 'Quick Pay');
+  assert.equal(tierForDeparture(plus(30), today).name, 'Quick Pay');
+  assert.equal(tierForDeparture(plus(29), today).name, 'Priority');
+  assert.equal(tierForDeparture(plus(21), today).name, 'Priority');
+  assert.equal(tierForDeparture(plus(20), today).name, 'Last Minute');
+  assert.equal(tierForDeparture(plus(14), today).name, 'Last Minute');
+  assert.equal(tierForDeparture(plus(13), today).name, 'Rapid');
+  assert.equal(tierForDeparture(plus(8), today).name, 'Rapid');
+  assert.equal(tierForDeparture(plus(7), today).name, 'Instant Purchase');
+  assert.equal(tierForDeparture(plus(0), today).name, 'Instant Purchase');
   assert.equal(tierForDeparture(plus(-1), today), null, 'past departures get no plan');
 });
 
@@ -3562,7 +3569,7 @@ test('smart instalments: plan amounts sum to the total, final absorbs rounding, 
   assert.equal(plan.schedule[0].due, '2026-10-16', 'first instalment 150 days before departure');
   // 0–7 days: Instant Booking, no instalments.
   const instant = buildSmartInstalmentPlan({ totalLocal: 500, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-07-12', todayISO: '2026-07-09' });
-  assert.equal(instant.plan, 'Instant Booking');
+  assert.equal(instant.plan, 'Instant Purchase');
   assert.equal(instant.depositPct, 1);
   assert.equal(instant.schedule.length, 0);
 });
@@ -3611,4 +3618,48 @@ test('smart instalments: missed payment → grace warning, then auto-cancel with
   assert.equal(act.refundableBalance, 0, 'nothing beyond the deposit was paid → nothing to refund');
   const cancelled = getBooking(b.id);
   assert.equal(cancelled.status, 'cancelled-instalment-default');
+});
+
+test('smart instalments v2: Quick Pay splits 50/20/30 and Price Lock rides every smart plan', () => {
+  // 35 days out → Quick Pay: 50% deposit, 20% instalment at 14d, 30% final at 7d.
+  const plan = buildSmartInstalmentPlan({ totalLocal: 1000, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-08-13', todayISO: '2026-07-09' });
+  assert.equal(plan.plan, 'Quick Pay');
+  assert.equal(plan.deposit, 500);
+  assert.equal(plan.schedule.length, 2);
+  assert.equal(plan.schedule[0].amount, 200, 'instalment 1 is 20%');
+  assert.equal(plan.schedule[1].amount, 300, 'final payment is 30%');
+  assert.equal(plan.schedule[1].due, '2026-08-06', 'final due 7 days before departure');
+  // AI Booking Protection™ is part of the plan contract.
+  assert.equal(plan.priceLock.locked, true);
+  assert.match(plan.priceLock.guarantee, /frozen/i);
+  assert.deepEqual(plan.reminderOffsets, [14, 7, 3, 1, 0]);
+  assert.equal(plan.autopay.enabled, false, 'autopay is opt-in consent, never default-on');
+});
+
+test('smart instalments v2: reminders fire at 14/7/3/1/0 days, receipts issue, price lock lands on the booking', async () => {
+  const { createBooking: mkB, saveQuote: mkQ, enforceInstalments, recordPayment, getBooking, listNotifications } = await import('../src/store.js');
+  const u = createUser({ name: 'Reminder Test', email: 'rem.test@example.com' });
+  const option = { tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', lines: { totalUSD: 1266 }, local: { total: 1000 }, revenue: { commissionUSD: 100, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 1266, details: {} }] };
+  const plan = buildSmartInstalmentPlan({ totalLocal: 1000, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-10-09', todayISO: '2026-07-09' });
+  const q = mkQ({ option, intent: { dates: { checkIn: '2026-10-09' } } });
+  const b = mkB({ quoteId: q.id, option, instalment: plan, userId: u.id, paymentMethod: 'card' });
+  // AI Booking Protection™: the booking carries the Price Locked guarantee.
+  assert.equal(getBooking(b.id).priceLock.locked, true);
+  assert.equal(getBooking(b.id).priceLock.badge, 'Price Locked');
+  // First instalment due 2026-08-10 → reminder fires 14 days ahead, once only.
+  let sweep = enforceInstalments('2026-07-27');
+  assert.ok(sweep.actions.some((a) => a.bookingId === b.id && a.action === 'reminder' && a.daysAway === 14), '14-day reminder fires');
+  sweep = enforceInstalments('2026-07-27');
+  assert.ok(!sweep.actions.some((a) => a.bookingId === b.id && a.action === 'reminder'), 'same reminder never repeats');
+  // Due-date reminder + autopay charge attempt when consent is on.
+  getBooking(b.id).instalment.autopay = { enabled: true, method: 'saved-card', retry: { attempts: 3, everyHours: 24 } };
+  sweep = enforceInstalments('2026-08-10');
+  assert.ok(sweep.actions.some((a) => a.bookingId === b.id && a.action === 'reminder' && a.daysAway === 0), 'due-day reminder fires');
+  assert.ok(sweep.actions.some((a) => a.bookingId === b.id && a.action === 'autopay-charge'), 'autopay charge initiates on the due date');
+  // Receipts: every successful payment issues one with the live balance.
+  recordPayment(b.id, { type: 'instalment', amount: 250, gateway: 'stripe' });
+  const paid = getBooking(b.id).payments.find((p) => p.type === 'instalment');
+  assert.match(paid.receiptId, /^rcpt_/);
+  const notes = listNotifications(u.id);
+  assert.ok(notes.some((n) => /Receipt rcpt_/.test(n.title) && /remaining/.test(n.body)), 'receipt notification carries the outstanding balance');
 });
