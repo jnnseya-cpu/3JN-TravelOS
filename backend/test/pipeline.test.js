@@ -3520,3 +3520,95 @@ test('a paid LCC booking routes to the ops desk with the customer told honestly'
   const b = createBooking({ quoteId: q.id, option, instalment: null, userId: u.id, paymentMethod: 'card' });
   assert.equal(b.priceBasis, 'live', 'a Tequila fare is a real, chargeable price');
 });
+
+// ---- AI Smart Instalment Payment Engine --------------------------------------
+import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil } from '../src/instalments.js';
+
+test('smart instalments: every tier sums to exactly 100% and ends 7 days out', () => {
+  for (const t of INSTALMENT_TIERS) {
+    const sum = t.depositPct + t.schedule.reduce((s, [, p]) => s + p, 0);
+    assert.ok(Math.abs(sum - 1) < 1e-9, `${t.name} sums to 100% (got ${sum})`);
+    if (t.schedule.length) assert.equal(t.schedule[t.schedule.length - 1][0], 7, `${t.name} final payment is 7 days before departure`);
+  }
+});
+
+test('smart instalments: date bands select the right plan at the boundaries', () => {
+  const today = '2026-07-09';
+  const plus = (d) => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); };
+  assert.equal(tierForDeparture(plus(181), today).name, 'Ultimate Flex');
+  assert.equal(tierForDeparture(plus(180), today).name, 'Premium Flex');
+  assert.equal(tierForDeparture(plus(121), today).name, 'Premium Flex');
+  assert.equal(tierForDeparture(plus(120), today).name, 'Smart Plan');
+  assert.equal(tierForDeparture(plus(90), today).name, 'Easy Plan');
+  assert.equal(tierForDeparture(plus(60), today).name, 'Express Plan');
+  assert.equal(tierForDeparture(plus(45), today).name, 'Quick Plan');
+  assert.equal(tierForDeparture(plus(30), today).name, 'Priority Plan');
+  assert.equal(tierForDeparture(plus(21), today).name, 'Last-Minute Flex');
+  assert.equal(tierForDeparture(plus(14), today).name, 'Rapid Plan');
+  assert.equal(tierForDeparture(plus(7), today).name, 'Instant Booking');
+  assert.equal(tierForDeparture(plus(0), today).name, 'Instant Booking');
+  assert.equal(tierForDeparture(plus(-1), today), null, 'past departures get no plan');
+});
+
+test('smart instalments: plan amounts sum to the total, final absorbs rounding, dates land right', () => {
+  const plan = buildSmartInstalmentPlan({ totalLocal: 999.99, currency: { code: 'GBP', symbol: '£' }, departISO: '2027-03-15', todayISO: '2026-07-09' });
+  assert.equal(plan.plan, 'Ultimate Flex');
+  assert.equal(plan.depositPct, 0.10);
+  assert.equal(plan.depositNonRefundable, true);
+  assert.equal(plan.payEarlyAnytime, true);
+  const sum = plan.deposit + plan.schedule.reduce((s, x) => s + x.amount, 0);
+  assert.ok(Math.abs(sum - 999.99) < 0.005, `schedule sums to the total (got ${sum})`);
+  assert.equal(plan.schedule[plan.schedule.length - 1].due, '2027-03-08', 'final payment exactly 7 days before departure');
+  assert.equal(plan.schedule[0].due, '2026-10-16', 'first instalment 150 days before departure');
+  // 0–7 days: Instant Booking, no instalments.
+  const instant = buildSmartInstalmentPlan({ totalLocal: 500, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-07-12', todayISO: '2026-07-09' });
+  assert.equal(instant.plan, 'Instant Booking');
+  assert.equal(instant.depositPct, 1);
+  assert.equal(instant.schedule.length, 0);
+});
+
+test('smart instalments: the AI risk engine adjusts deposits, caps plans and declines', () => {
+  // Guest, first booking, high value, short runway → high risk.
+  const hi = assessInstalmentRisk({ user: null, history: { paidBookings: 0, cancelled: 0, noShows: 0, chargebacks: 0 }, totalGbp: 6000, daysToDeparture: 14 });
+  assert.equal(hi.band, 'high');
+  const hiPlan = buildSmartInstalmentPlan({ totalLocal: 6000, currency: { code: 'GBP', symbol: '£' }, departISO: '2027-03-15', todayISO: '2026-07-09', risk: hi });
+  assert.equal(hiPlan.depositPct, 0.25, 'high risk: 10% tier deposit + 15pp');
+  assert.equal(hiPlan.schedule.length, 2, 'high risk: instalments capped at 2');
+  assert.equal(hiPlan.schedule[hiPlan.schedule.length - 1].daysBefore, 7, 'the 7-day final payment survives the cap');
+  const sum = hiPlan.deposit + hiPlan.schedule.reduce((s, x) => s + x.amount, 0);
+  assert.ok(Math.abs(sum - 6000) < 0.005, 'risk-adjusted plan still sums to the total');
+  assert.equal(hi.adjustments.requireIdCheck, true);
+  // Chargeback + guest → declined → Instant Booking only.
+  const bad = assessInstalmentRisk({ user: null, history: { paidBookings: 0, cancelled: 1, noShows: 0, chargebacks: 1 }, totalGbp: 3000, daysToDeparture: 30 });
+  assert.equal(bad.band, 'declined');
+  const badPlan = buildSmartInstalmentPlan({ totalLocal: 3000, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-09-09', todayISO: '2026-07-09', risk: bad });
+  assert.equal(badPlan.depositPct, 1, 'declined risk pays in full');
+  assert.equal(badPlan.schedule.length, 0);
+  // Trusted repeat customer → deposit relief, floored at the supplier minimum.
+  const trusted = assessInstalmentRisk({ user: { travelProfile: { fullLegalName: 'T H', passportNumber: 'X1' } }, history: { paidBookings: 4, cancelled: 0, noShows: 0, chargebacks: 0 }, totalGbp: 800, daysToDeparture: 200 });
+  assert.equal(trusted.band, 'low');
+  const tPlan = buildSmartInstalmentPlan({ totalLocal: 800, currency: { code: 'GBP', symbol: '£' }, departISO: '2027-03-15', todayISO: '2026-07-09', risk: trusted });
+  assert.equal(tPlan.depositPct, 0.10, 'trusted relief never dips below the 10% supplier minimum');
+});
+
+test('smart instalments: missed payment → grace warning, then auto-cancel with deposit forfeited', async () => {
+  const { createBooking: mkBooking, saveQuote: mkQuote, enforceInstalments, getBooking } = await import('../src/store.js');
+  const u = createUser({ name: 'Instalment Test', email: 'inst.test@example.com' });
+  const option = { tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', lines: { totalUSD: 1266 }, local: { total: 1000 }, revenue: { commissionUSD: 100, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 1266, details: {} }] };
+  const plan = buildSmartInstalmentPlan({ totalLocal: 1000, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-10-09', todayISO: '2026-07-09' });
+  assert.equal(plan.plan, 'Smart Plan'); // 92 days out
+  const q = mkQuote({ option, intent: { dates: { checkIn: '2026-10-09' } } });
+  const b = mkBooking({ quoteId: q.id, option, instalment: plan, userId: u.id, paymentMethod: 'card' });
+  // Deposit paid at booking (createBooking records it). First instalment due
+  // 60 days before departure = 2026-08-10. The day after: in grace.
+  let sweep = enforceInstalments('2026-08-11');
+  assert.ok(sweep.actions.some((a) => a.bookingId === b.id && a.action === 'grace-warning'), 'grace warning fires first');
+  // Three days later, still unpaid → defaulted: cancelled + deposit forfeited.
+  sweep = enforceInstalments('2026-08-14');
+  const act = sweep.actions.find((a) => a.bookingId === b.id);
+  assert.equal(act.action, 'auto-cancelled');
+  assert.equal(act.forfeitedDeposit, plan.deposit, 'the non-refundable deposit is forfeited');
+  assert.equal(act.refundableBalance, 0, 'nothing beyond the deposit was paid → nothing to refund');
+  const cancelled = getBooking(b.id);
+  assert.equal(cancelled.status, 'cancelled-instalment-default');
+});

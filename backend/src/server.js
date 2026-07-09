@@ -9,6 +9,7 @@ import { detectContext, listCurrencies } from './geo.js';
 import { destinationsCatalog, findDestination, resolveOrigin } from './destinations.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, tierForDeparture, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS } from './instalments.js';
 import {
   createUser, getUser, buyAcu, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
@@ -41,6 +42,7 @@ import {
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
   getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
   saveBenchmarkRun, latestBenchmarkRun, recordBenchmarkMarket,
+  userPaymentHistory, enforceInstalments,
 } from './store.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -1049,18 +1051,37 @@ app.post('/api/booking/validate', safe((req, res) => {
   res.json({ ...validation, risk: bookingRiskScore(fraudSignals || {}) });
 }));
 
-// ---- Quote: persist a chosen option + build instalments -------------------
-app.post('/api/quote', safe((req, res) => {
-  const { option, intent, months, depositPct } = req.body || {};
-  if (!option) return res.status(400).json({ error: 'option-required' });
-  const currency = { code: option.pricing.currency, symbol: option.pricing.symbol, rateFromUSD: option.pricing.local.total / option.pricing.lines.totalUSD };
-  const instalment = instalmentPlan({
+// ---- Quote: persist a chosen option + AI Smart Instalment plan -------------
+// The AI selects the plan from departure date + risk profile (spec: AI Smart
+// Instalment Payment Engine). Manual months/deposit overrides are ignored —
+// the customer may always pay MORE, earlier, without penalty.
+function smartPlanForRequest(req, option, intent) {
+  const currency = { code: option.pricing.currency, symbol: option.pricing.symbol, rateFromUSD: option.pricing.local.total / (option.pricing.lines?.totalUSD || option.pricing.local.total) };
+  const user = currentUser(req);
+  const departISO = intent?.dates?.checkIn;
+  const totalGbp = option.pricing.currency === 'GBP' ? option.pricing.local.total : (option.pricing.lines?.totalUSD || 0) * 0.79;
+  const risk = assessInstalmentRisk({
+    user,
+    history: userPaymentHistory(user?.id),
+    totalGbp,
+    daysToDeparture: departISO ? (daysUntil(departISO, new Date().toISOString().slice(0, 10)) ?? 0) : 0,
+    productTypes: (option.components || []).map((c) => c.type),
+  });
+  const plan = departISO ? buildSmartInstalmentPlan({
     totalLocal: option.pricing.local.total,
     currency,
-    months: months || 3,
-    depositPct: depositPct ?? 0.2,
-    checkIn: intent?.dates?.checkIn,
-  });
+    departISO,
+    todayISO: new Date().toISOString().slice(0, 10),
+    risk,
+  }) : null;
+  // No departure date / past date → fall back to the legacy 3-month split so a
+  // quote is never blocked; real bookings always carry a checkIn.
+  return plan || instalmentPlan({ totalLocal: option.pricing.local.total, currency, months: 3, depositPct: 0.2, checkIn: departISO });
+}
+app.post('/api/quote', safe((req, res) => {
+  const { option, intent } = req.body || {};
+  if (!option) return res.status(400).json({ error: 'option-required' });
+  const instalment = smartPlanForRequest(req, option, intent);
   const quote = saveQuote({ option, intent, instalment });
   recordBehaviour(currentUser(req)?.id, {
     event: 'quote',
@@ -1070,6 +1091,25 @@ app.post('/api/quote', safe((req, res) => {
   res.json({ quote });
 }));
 
+// ---- AI Smart Instalments: public plan preview + admin enforcement ---------
+// Preview: which plan does a departure date get, with the caller's own risk
+// profile applied? Powers the "how would I pay?" view before any quote.
+app.get('/api/instalments/preview', safe((req, res) => {
+  const departISO = String(req.query.depart || '');
+  const total = Number(req.query.total) || 1000;
+  const user = currentUser(req);
+  const risk = assessInstalmentRisk({ user, history: userPaymentHistory(user?.id), totalGbp: total, daysToDeparture: daysUntil(departISO, new Date().toISOString().slice(0, 10)) ?? 0 });
+  const plan = buildSmartInstalmentPlan({ totalLocal: total, currency: { code: 'GBP', symbol: '£' }, departISO, risk });
+  if (!plan) return res.status(400).json({ error: 'bad-departure-date', message: 'Pass ?depart=YYYY-MM-DD (a future date) and optional ?total=.' });
+  res.json({ plan, tiers: INSTALMENT_TIERS.map((t) => ({ band: t.maxDays === Infinity ? `${t.minDays}+ days` : `${t.minDays}–${t.maxDays} days`, name: t.name, depositPct: t.depositPct, instalments: t.schedule.length })), graceHours: INSTALMENT_GRACE_HOURS });
+}));
+// Enforcement sweep: grace warnings + auto-cancel of defaulted plans. Run by
+// the admin (or a scheduler in production).
+app.post('/api/admin/instalments/enforce', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(enforceInstalments(req.body?.today));
+}));
+
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
   const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
@@ -1077,17 +1117,12 @@ app.post('/api/book', safe((req, res) => {
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);
 
-  let instalment = quote.instalment;
-  if (months || depositPct != null) {
-    const currency = { code: quote.option.pricing.currency, symbol: quote.option.pricing.symbol, rateFromUSD: 1 };
-    instalment = instalmentPlan({
-      totalLocal: quote.option.pricing.local.total,
-      currency,
-      months: months || quote.instalment.months,
-      depositPct: depositPct ?? quote.instalment.depositPct,
-      checkIn: quote.intent?.dates?.checkIn,
-    });
-  }
+  // The AI-selected plan from the quote stands — the schedule is re-derived
+  // fresh at booking time so a quote left open for days still books on the
+  // CURRENT date band (a 95-days-out quote booked at 89 days is an Easy Plan,
+  // not a stale Smart Plan). Manual months/deposit overrides are not accepted;
+  // paying more, earlier is always allowed.
+  const instalment = smartPlanForRequest(req, quote.option, quote.intent);
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode });
   // Refundable search deposit (spec §6): a booking converts the user's active

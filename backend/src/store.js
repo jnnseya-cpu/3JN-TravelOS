@@ -15,6 +15,7 @@ import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, to
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
+import { instalmentState, defaultOutcome } from './instalments.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -1872,6 +1873,54 @@ export function searchToBookStats() {
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks'];
+
+// ---- AI Smart Instalment Engine: history + enforcement ----------------------
+// Payment history feeding the risk engine: paid bookings, cancellations,
+// no-shows, chargebacks (chargebacks arrive via PSP disputes — flag on user).
+export function userPaymentHistory(userId) {
+  const out = { paidBookings: 0, cancelled: 0, noShows: 0, chargebacks: 0 };
+  if (!userId) return out;
+  const u = db.users.get(userId);
+  out.chargebacks = u?.chargebacks || 0;
+  for (const b of db.bookings.values()) {
+    if (b.userId !== userId) continue;
+    const paid = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    if (String(b.status || '').startsWith('cancelled')) out.cancelled += 1;
+    else if (paid > 0) out.paidBookings += 1;
+    if (b.noShow) out.noShows += 1;
+  }
+  return out;
+}
+
+// Grace-period enforcement: any smart-plan booking whose instalment stayed
+// unpaid past the grace window auto-cancels — deposit forfeited, remaining
+// balance refundable per the supplier policy on the booking. Idempotent.
+export function enforceInstalments(todayISO) {
+  const today = todayISO || nowISO().slice(0, 10);
+  const results = { checked: 0, warned: 0, defaulted: 0, actions: [] };
+  for (const b of db.bookings.values()) {
+    if (b.instalment?.engine !== 'ai-smart' || String(b.status || '').startsWith('cancelled')) continue;
+    results.checked += 1;
+    const state = instalmentState(b, today);
+    if (state.status === 'in-grace') {
+      results.warned += 1;
+      if (b.userId && b.lastGraceWarnFor !== state.missedDue) {
+        b.lastGraceWarnFor = state.missedDue;
+        pushNotification(b.userId, { type: 'warning', icon: '⏳', title: 'Instalment overdue — grace period active', body: `Your instalment of ${b.instalment.symbol}${state.overdueAmount} was due ${state.missedDue}. Pay within the grace period (by ${state.graceDeadline.slice(0, 16).replace('T', ' ')}) to keep your booking — after that it cancels automatically and the deposit is forfeited.` });
+      }
+      results.actions.push({ bookingId: b.id, action: 'grace-warning', due: state.missedDue });
+    } else if (state.status === 'defaulted') {
+      const outcome = defaultOutcome(b);
+      b.status = 'cancelled-instalment-default';
+      b.instalmentDefault = { at: nowISO(), ...outcome, missedDue: state.missedDue };
+      results.defaulted += 1;
+      results.actions.push({ bookingId: b.id, action: 'auto-cancelled', ...outcome });
+      recordAudit({ actor: 'system', role: 'system', action: 'instalment.defaulted', entity: 'booking', entityId: b.id, summary: `missed ${state.missedDue}; deposit ${b.instalment.symbol}${outcome.forfeitedDeposit} forfeited; refundable ${b.instalment.symbol}${outcome.refundableBalance}` });
+      if (b.userId) pushNotification(b.userId, { type: 'warning', icon: '❌', title: 'Booking cancelled — instalment unpaid', body: `The grace period passed without payment, so the booking was cancelled per the plan terms. The deposit (${b.instalment.symbol}${outcome.forfeitedDeposit}) is non-refundable; ${outcome.refundableBalance > 0 ? `${b.instalment.symbol}${outcome.refundableBalance} is being refunded per supplier policy.` : 'no further balance was held.'}` });
+    }
+  }
+  return results;
+}
 
 // ---- Market Benchmark runs (live fares vs the market leaders) ---------------
 export function saveBenchmarkRun(run) {

@@ -1038,14 +1038,29 @@ window.openBooking = async (tier) => {
   const inst = data.quote.instalment;
   const sym = option.pricing.symbol;
 
-  const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${s.due}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
+  const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${s.due}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
+  // AI Smart Instalment plan header: which plan, why, and the protection rules
+  // the customer is agreeing to — stated before they pay, not in small print.
+  const smart = inst.engine === 'ai-smart' ? `
+    <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.35)">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+        <strong>🤖 ${esc(inst.plan)}</strong>
+        <span class="muted" style="font-size:11.5px">${inst.daysToDeparture} days to departure · AI-selected</span></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">
+        Deposit <strong>${(inst.depositPct * 100).toFixed(0)}%</strong> today (<strong style="color:var(--gold)">non-refundable</strong> — it secures your booking and locks the fare) ·
+        ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(inst.finalDue)}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
+        pay any amount early, any time, no penalty.
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels and the deposit is forfeited; any balance beyond the deposit follows the supplier refund policy.</div>
+      ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}
+    </div>` : '';
   const docList = reqs.documents.map((d) => `<li><span class="cs">${esc(d)}</span></li>`).join('');
   const entry = reqs.entryRules.map((r) => `<div class="kv"><span><span class="vstatus ${r.required ? 'watch' : 'pass'}"></span>${esc(r.type)}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${esc(r.note)}</span></div>`).join('');
   modal(`
     <span class="eyebrow">${esc(tier)} package · ${esc(intent.destination.city)}</span>
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
-    <p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>
-    <div class="kv" style="font-weight:700"><span>Deposit today</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
+    ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>`}
+    <div class="kv" style="font-weight:700"><span>Deposit today ${inst.engine === 'ai-smart' ? '<span class="muted" style="font-size:11px">(non-refundable)</span>' : ''}</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
     ${rows}
 
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller${international ? ' (exact passport spelling)' : ''}</span></div>
