@@ -398,8 +398,11 @@ window.applyDiveLever = (i) => {
 
 async function runPlan(overrides = {}) {
   const { approveAcu, ...restOverrides } = overrides;
-  const text = $('#intentInput').value.trim();
-  if (!text) { toast('Describe your trip first.'); return; }
+  let text = $('#intentInput').value.trim();
+  // "Inspire me" works from a blank slate — the proposer just returns a
+  // seasonal spread when there are no words to match.
+  if (!text && restOverrides.inspire) text = 'somewhere nice';
+  if (!text) { toast('Describe your trip first — or tap ✨ Inspire me.'); return; }
   const out = $('#plannerOut');
   out.innerHTML = scanAnimation();
 
@@ -446,6 +449,7 @@ async function runPlan(overrides = {}) {
   }
   if (data.stage === 'topup-required') { renderTopup(data); return; }
   if (data.stage === 'concierge-requires-commitment') { renderConciergeCommitment(data); return; }
+  if (data.stage === 'inspiration') { renderInspiration(data); return; }
   if (data.stage === 'clarify') { renderClarify(data); return; }
   // A paid tier was funded by ACUs — reflect the new balance.
   if (typeof data.acuBalance === 'number' && state.user) {
@@ -509,16 +513,58 @@ function scanAnimation() {
 }
 const tick = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Pickable destination cards — used inside the clarify screen and as the
+// full "Inspire me" stage. Picking one fills the search box and re-runs.
+function proposalCardsHTML(proposals) {
+  return (proposals || []).map((p) => `
+    <div class="card pad dest-card" style="cursor:pointer" onclick="planProposed('${esc(p.city)}')">
+      <div style="font-size:26px">${esc(p.emoji || '✈️')}</div>
+      <h3 style="margin:6px 0 2px">${esc(p.city)}</h3>
+      <div class="muted" style="font-size:12.5px">${esc(p.blurb || '')}</div>
+      <div class="chips" style="margin-top:8px">
+        ${p.inSeason ? '<span class="chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">☀ in season</span>' : ''}
+        ${(p.matchedVibes || []).slice(0, 3).map((v) => `<span class="chip">${esc(v)}</span>`).join('')}
+        ${p.budget ? `<span class="chip">${p.budget === 'low' ? '£ value' : p.budget === 'high' ? '£££ premium' : '££ mid'}</span>` : ''}
+      </div>
+      <button class="btn btn-gold btn-sm btn-block" style="margin-top:10px">Build this trip →</button>
+    </div>`).join('');
+}
+window.planProposed = (city) => {
+  const box = $('#intentInput');
+  if (box) box.value = `A trip to ${city} for 5 nights with flights and hotel — the cheapest reliable price.`;
+  runPlan();
+};
+window.inspireMe = () => runPlan({ inspire: true });
+
 function renderClarify(data) {
   const qs = data.questions.map((q) => `
     <div style="margin-top:14px">
-      <strong>${q.question}</strong>
-      <div class="chips">${q.options.map((o) => `<span class="chip" onclick="answer('${q.id}','${o}')">${o}</span>`).join('')}</div>
+      <strong>${esc(q.question)}</strong>
+      <div class="chips">${q.options.map((o) => `<span class="chip" onclick="answer('${esc(q.id)}','${esc(o)}')">${esc(o)}</span>`).join('')}</div>
     </div>`).join('');
+  // When the destination is unresolved, offer proposals right here so the
+  // traveller with nowhere in mind is never stuck on the question.
+  const inspire = (data.proposals && data.proposals.length) ? `
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(223,229,238,.1)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+        <strong>✨ Nowhere in mind? Let us propose</strong>
+        <span class="muted" style="font-size:12px">tailored to your words &amp; season</span>
+      </div>
+      <div class="dest-grid" style="margin-top:10px">${proposalCardsHTML(data.proposals.slice(0, 6))}</div>
+    </div>` : '';
   $('#plannerOut').innerHTML = `<div class="card pad"><span class="eyebrow">A couple of quick questions</span>
-    <p class="muted" style="font-size:14px">We need a little more to build your best package.</p>${qs}</div>`;
+    <p class="muted" style="font-size:14px">Tell us where — or let us suggest somewhere below.</p>${qs}${inspire}</div>`;
 }
 window.answer = (id, val) => runPlan({ [id]: val });
+
+// Full "Inspire me" stage — the traveller asked for suggestions outright.
+function renderInspiration(data) {
+  $('#plannerOut').innerHTML = `<div class="card pad">
+    <span class="eyebrow">✨ Inspire me</span>
+    <p class="muted" style="font-size:14px">${esc(data.message || 'Trips worth taking — pick one and we build the whole thing.')}</p>
+    <div class="dest-grid" style="margin-top:14px">${proposalCardsHTML(data.proposals)}</div>
+  </div>`;
+}
 
 function renderOptions(data) {
   const intent = data.intent;

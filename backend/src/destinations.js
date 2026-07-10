@@ -290,6 +290,54 @@ export function destinationsCatalog() {
   });
 }
 
+// ---- "Inspire me": propose destinations when the traveller has none in mind ---
+// A curated set spanning vibes, seasons and budgets. Proposals only need a city
+// name + why — when the traveller picks one, the normal pipeline synthesises
+// and prices it. Ranked by the signals parsed from their words + the month.
+const INSPIRATION = [
+  { city: 'Dubai', emoji: '🌇', vibes: ['luxury', 'sun', 'city', 'shopping', 'warm'], months: [10, 11, 0, 1, 2, 3], budget: 'high', blurb: 'Sun, skyline and desert — year-round warmth, peak Nov–Mar.' },
+  { city: 'Barcelona', emoji: '🏖️', vibes: ['beach', 'culture', 'food', 'city', 'romantic'], months: [4, 5, 6, 8, 9], budget: 'mid', blurb: 'Beach + Gaudí + tapas — glorious late spring and early autumn.' },
+  { city: 'Bali', emoji: '🌴', vibes: ['tropical', 'wellness', 'beach', 'adventure', 'romantic', 'budget'], months: [3, 4, 5, 6, 7, 8], budget: 'low', blurb: 'Rice terraces, surf and spas — dry season Apr–Sep, great value.' },
+  { city: 'Istanbul', emoji: '🕌', vibes: ['culture', 'history', 'food', 'city', 'budget'], months: [3, 4, 8, 9, 10], budget: 'low', blurb: 'Where two continents meet — bazaars, mosques, superb value.' },
+  { city: 'Marrakech', emoji: '🕌', vibes: ['culture', 'adventure', 'warm', 'budget'], months: [2, 3, 4, 9, 10, 11], budget: 'low', blurb: 'Souks, riads and the Atlas mountains — warm and affordable.' },
+  { city: 'Lisbon', emoji: '🚋', vibes: ['city', 'beach', 'food', 'culture', 'budget'], months: [4, 5, 6, 8, 9], budget: 'mid', blurb: 'Trams, tiles and Atlantic beaches — Europe’s sunniest capital.' },
+  { city: 'Rome', emoji: '🏛️', vibes: ['culture', 'history', 'food', 'city', 'romantic'], months: [3, 4, 5, 9, 10], budget: 'mid', blurb: 'Two thousand years of history over the best pasta of your life.' },
+  { city: 'Bangkok', emoji: '🛕', vibes: ['city', 'food', 'culture', 'budget', 'warm', 'nightlife'], months: [10, 11, 0, 1, 2], budget: 'low', blurb: 'Street food, temples and buzz — cool, dry season Nov–Feb.' },
+  { city: 'New York', emoji: '🗽', vibes: ['city', 'shopping', 'culture', 'nightlife'], months: [4, 5, 8, 9, 11], budget: 'high', blurb: 'The city that never sleeps — shows, skylines and shopping.' },
+  { city: 'Cape Town', emoji: '⛰️', vibes: ['adventure', 'beach', 'nature', 'wine', 'warm'], months: [10, 11, 0, 1, 2, 3], budget: 'mid', blurb: 'Table Mountain, beaches and winelands — sunny Oct–Mar.' },
+  { city: 'Reykjavik', emoji: '🌋', vibes: ['adventure', 'nature', 'cold'], months: [5, 6, 7, 8, 11, 0, 1], budget: 'high', blurb: 'Northern lights in winter, midnight sun in summer.' },
+  { city: 'Zanzibar', emoji: '🏝️', vibes: ['beach', 'tropical', 'romantic', 'warm'], months: [5, 6, 7, 8, 9, 0, 1], budget: 'mid', blurb: 'White-sand islands and turquoise water off the Tanzanian coast.' },
+];
+// Signal words → vibe tags.
+const VIBE_WORDS = {
+  beach: ['beach', 'sea', 'coast', 'island', 'sand'], sun: ['sun', 'sunny', 'warm', 'hot', 'heat'], warm: ['warm', 'hot', 'sun', 'tropical'],
+  cold: ['snow', 'ski', 'cold', 'northern lights', 'aurora'], culture: ['culture', 'history', 'historic', 'museum', 'art', 'ancient'],
+  food: ['food', 'foodie', 'cuisine', 'eat', 'culinary'], city: ['city', 'urban', 'shopping', 'shop'], nightlife: ['nightlife', 'party', 'clubs'],
+  romantic: ['romantic', 'honeymoon', 'couple', 'anniversary'], adventure: ['adventure', 'hike', 'trek', 'explore', 'safari', 'wild'],
+  tropical: ['tropical', 'jungle', 'palm'], wellness: ['wellness', 'spa', 'yoga', 'retreat', 'relax'], budget: ['cheap', 'budget', 'affordable', 'value'],
+  luxury: ['luxury', 'luxurious', 'five star', '5 star', 'premium'], nature: ['nature', 'mountain', 'wildlife', 'scenery'], family: ['family', 'kids', 'children'],
+};
+
+// Rank the inspiration set against the traveller's words, month and budget.
+// `text` is the raw search; `monthIndex` 0-11 (or null); `budget` low|mid|high|null.
+export function proposeDestinations({ text = '', monthIndex = null, budget = null, nationality = null, limit = 6 } = {}) {
+  const t = String(text).toLowerCase();
+  const wanted = new Set();
+  for (const [vibe, words] of Object.entries(VIBE_WORDS)) if (words.some((w) => t.includes(w))) wanted.add(vibe);
+  const scored = INSPIRATION.map((d) => {
+    let score = 0;
+    for (const v of d.vibes) if (wanted.has(v)) score += 3;
+    if (monthIndex != null && d.months.includes(monthIndex)) score += 4; // in-season is a strong signal
+    if (budget && d.budget === budget) score += 3;
+    if (budget === 'low' && d.budget === 'low') score += 1;
+    // A tiny deterministic tiebreak by name so results are stable, not random.
+    score += (d.city.charCodeAt(0) % 5) * 0.01;
+    return { ...d, score, inSeason: monthIndex != null ? d.months.includes(monthIndex) : null, matchedVibes: d.vibes.filter((v) => wanted.has(v)) };
+  }).sort((a, b) => b.score - a.score);
+  // If nothing matched at all, still return a sensible seasonal spread.
+  return scored.slice(0, limit).map((d) => ({ city: d.city, emoji: d.emoji, blurb: d.blurb, inSeason: d.inSeason, matchedVibes: d.matchedVibes, budget: d.budget }));
+}
+
 export function findDestination(text) {
   const lower = (text || '').toLowerCase();
   for (const [code, dest] of Object.entries(DESTINATIONS)) {

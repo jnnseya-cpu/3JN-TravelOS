@@ -7,7 +7,7 @@
 // "Console Error: {}" class of failures from the previous build).
 
 import { parseIntent } from './intent.js';
-import { findDestination, originForCountry, resolveOrigin } from './destinations.js';
+import { findDestination, originForCountry, resolveOrigin, proposeDestinations } from './destinations.js';
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive, farePrediction } from './price-dive.js';
@@ -65,10 +65,23 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     intent.needComponents = false;
   }
 
-  // If we still can't resolve the destination, ask rather than fail.
+  // If we still can't resolve the destination, ask rather than fail — but ALSO
+  // propose destinations, because many travellers have nowhere in mind. A month
+  // index is derived for seasonality; vibe/budget come from their own words.
   const questions = clarifyingQuestions(intent);
   if (!intent.destination) {
-    return { stage: 'clarify', intent, questions, context };
+    const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+    const monthIndex = intent.dates?.checkIn ? new Date(intent.dates.checkIn + 'T00:00:00Z').getUTCMonth()
+      : (intent.month ? MONTH_NAMES.indexOf(String(intent.month).toLowerCase()) : null);
+    const budget = /\b(cheap|budget|affordable|value)\b/i.test(text || '') ? 'low'
+      : /\b(luxur|five star|5 star|premium)\b/i.test(text || '') ? 'high' : null;
+    const proposals = proposeDestinations({ text: text || '', monthIndex: monthIndex >= 0 ? monthIndex : null, budget, nationality: intent.nationality });
+    // Explicit "inspire me" (the user asked for suggestions, or skipped the
+    // destination question) → an inspiration stage the UI renders as pick-cards.
+    if (overrides.inspire || overrides.destination === '__inspire__') {
+      return { stage: 'inspiration', intent, proposals, context, message: 'No fixed plans? Here are trips worth taking — pick one and we build the whole thing.' };
+    }
+    return { stage: 'clarify', intent, questions, proposals, context };
   }
 
   // Destination is known but the traveller didn't say WHAT they want. Honour the

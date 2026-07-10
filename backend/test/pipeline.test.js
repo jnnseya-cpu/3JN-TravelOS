@@ -4158,3 +4158,30 @@ test('CarTrawler ride events update the booking live and validate the inbound se
     assert.ok(listNotifications(u.id).some((n) => /driver/i.test(n.title)), 'traveller notified of ride status');
   } finally { server.close(); }
 });
+
+// ---- Inspire me: propose destinations when there is none in mind -------------
+test('destination proposer ranks by vibe, season and budget; planner offers it', async () => {
+  const { proposeDestinations } = await import('../src/destinations.js');
+  // Beach + budget in July → warm, in-season, good-value places lead.
+  const beach = proposeDestinations({ text: 'cheap beach holiday', monthIndex: 6, budget: 'low' });
+  assert.ok(beach.length >= 4);
+  assert.ok(beach.slice(0, 3).some((p) => ['Bali', 'Barcelona', 'Lisbon'].includes(p.city)), 'beach/value picks surface');
+  assert.ok(beach[0].inSeason, 'top pick is in season');
+  // Luxury sun in January → Dubai/Cape Town (warm + premium that month).
+  const lux = proposeDestinations({ text: 'luxury sun', monthIndex: 0, budget: 'high' });
+  assert.ok(lux.slice(0, 2).some((p) => ['Dubai', 'Cape Town'].includes(p.city)));
+  // Blank slate still returns a sensible spread, never empty.
+  assert.ok(proposeDestinations({ text: 'somewhere nice' }).length >= 4);
+
+  // Planner: a no-destination search returns proposals in the clarify stage,
+  // and inspire:true returns the dedicated inspiration stage.
+  const clarify = plan({ text: 'a warm beach trip in July for 7 nights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(clarify.stage, 'clarify');
+  assert.ok(Array.isArray(clarify.proposals) && clarify.proposals.length >= 4, 'proposals offered even without a destination');
+  const inspired = plan({ text: 'a warm beach trip in July for 7 nights', context: GB, user: null, searchTier: 'smart', overrides: { inspire: true } });
+  assert.equal(inspired.stage, 'inspiration');
+  assert.ok(inspired.proposals.length >= 4);
+  // Picking a proposal (by naming it) plans normally.
+  const built = plan({ text: 'A trip to Bali for 5 nights with flights and hotel', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(built.stage, 'options');
+});
