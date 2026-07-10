@@ -4113,3 +4113,11 @@ test('a provisioned Airalo eSIM renders its real activation in the travel docume
     assert.ok(html.includes(must), `document shows ${must}`);
   }
 });
+
+// ---- Viator activities door: env-gated, correct normalisation ----------------
+test('Viator door is env-gated and normalises live tours into activity offers', async () => {
+  const { viatorEnabled, searchViatorActivities, viatorActivitiesForScan } = await import('../src/extras-suppliers.js');
+  assert.equal(viatorEnabled(), false, 'off without VIATOR_API_KEY — never fabricates tours');
+  assert.equal(await searchViatorActivities({ destinationCity: 'Dubai' }), null);
+  assert.equal(await viatorActivitiesForScan({ destinationCity: 'Dubai' }), null);
+});

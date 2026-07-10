@@ -195,26 +195,81 @@ export async function provisionEsimViaAiralo({ countryCode, minGB = 1, ourRef })
   };
 }
 
-// ---- Viator partner API (activities) -------------------------------------------
-export async function searchViatorActivities({ destination, date, pax = 2 }) {
+// ---- Viator partner API (activities/tours) -------------------------------------
+// Viator's product search keys on a NUMERIC destination id, resolved from the
+// city name via /partner/destinations. The destination list is large and
+// stable, so cache it in-process for the day.
+const VIATOR_HEADERS = () => ({ 'exp-api-key': VIATOR_KEY, Accept: 'application/json;version=2.0', 'Accept-Language': 'en', 'Content-Type': 'application/json' });
+let _viatorDests = null; // { at, map: Map(lowerCityName -> destinationId) }
+async function viatorDestinationId(city) {
+  if (!viatorEnabled() || !city) return null;
+  const want = String(city).trim().toLowerCase();
+  if (!_viatorDests || Date.now() - _viatorDests.at > 24 * 3600000) {
+    const res = await httpJSON(`${VIATOR_BASE}/partner/destinations`, { headers: VIATOR_HEADERS() });
+    const list = res?.destinations;
+    if (!Array.isArray(list)) return null;
+    const map = new Map();
+    for (const d of list) if (d.name && d.destinationId != null) {
+      const key = String(d.name).toLowerCase();
+      if (!map.has(key)) map.set(key, d.destinationId); // first (usually the city, not a sub-area)
+    }
+    _viatorDests = { at: Date.now(), map };
+  }
+  // Exact match, else a city whose name starts with the query (e.g. "Dubai").
+  if (_viatorDests.map.has(want)) return _viatorDests.map.get(want);
+  for (const [name, id] of _viatorDests.map) if (name === want || name.startsWith(want + ',') || name.startsWith(want + ' ')) return id;
+  return null;
+}
+
+export async function searchViatorActivities({ destinationCity, date, pax = 2, currency = 'GBP' }) {
   if (!viatorEnabled()) return null;
+  const destId = await viatorDestinationId(destinationCity);
+  if (destId == null) return null;
+  const body = {
+    filtering: { destination: String(destId), ...(date ? { startDate: date, endDate: date } : {}) },
+    sorting: { sort: 'TRAVELER_RATING', order: 'DESCENDING' },
+    pagination: { start: 1, count: 10 },
+    currency,
+  };
   const res = await httpJSON(`${VIATOR_BASE}/partner/products/search`, {
-    method: 'POST',
-    headers: { 'exp-api-key': VIATOR_KEY, Accept: 'application/json;version=2.0', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filtering: { destination: String(destination) }, pagination: { start: 1, count: 8 }, currency: 'GBP' }),
+    method: 'POST', headers: VIATOR_HEADERS(), body: JSON.stringify(body),
   });
-  const products = res?.products;
+  const products = res?.products?.results || res?.products || res?.data;
   if (!Array.isArray(products) || !products.length) return null;
-  return products.map((p) => ({
+  return products.map((p) => {
+    const priceGbp = p.pricing?.summary?.fromPrice ?? p.fromPrice ?? null;
+    const rating = p.reviews?.combinedAverageRating ?? p.rating ?? null;
+    return {
+      type: 'activity',
+      supplier: `${p.title || 'Tour'} · Viator`,
+      title: p.title || 'Activity',
+      productCode: p.productCode || p.code || null,
+      productUrl: p.productUrl || p.webURL || null,
+      priceGbp: priceGbp != null ? Math.round(Number(priceGbp) * 100) / 100 : null,
+      rating,
+      reviewCount: p.reviews?.totalReviews ?? null,
+      durationMins: p.duration?.fixedDurationInMinutes ?? null,
+      live: true,
+      sourcedVia: 'Viator (live)',
+    };
+  }).filter((p) => p.priceGbp != null && p.productCode);
+}
+
+// Normalise live Viator tours into the OS activity-offer shape so they compete
+// in the package scan (priced in USD at the platform anchor).
+export async function viatorActivitiesForScan({ destinationCity, date, pax = 2 }) {
+  const tours = await searchViatorActivities({ destinationCity, date, pax }).catch(() => null);
+  if (!tours || !tours.length) return null;
+  return tours.slice(0, 6).map((t) => ({
     type: 'activity',
-    supplier: 'Viator',
-    title: p.title,
-    productCode: p.productCode,
-    priceGbp: p.pricing?.summary?.fromPrice ?? null,
-    rating: p.reviews?.combinedAverageRating ?? null,
-    live: true,
+    supplier: t.supplier,
+    verified: true,
+    reliabilityScore: t.rating ? Math.min(97, Math.round(t.rating * 19)) : 88, // 5.0★ → ~95
+    priceUSD: Math.round((t.priceGbp / 0.79) * 100) / 100,
+    details: { unit: 'per person', viatorProductCode: t.productCode, productUrl: t.productUrl, rating: t.rating, reviews: t.reviewCount, durationMins: t.durationMins, live: true },
     sourcedVia: 'Viator (live)',
-  })).filter((p) => p.priceGbp != null);
+    sourcedType: 'activities-api',
+  }));
 }
 
 // ---- Mozio (airport transfers) --------------------------------------------------

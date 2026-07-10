@@ -1021,6 +1021,11 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
   }
   if (wanted.has('activities')) {
     scan.activities = scanActivities(intent, dest);
+    // LIVE Viator tours (when the door is open) compete alongside the vetted
+    // catalogue — a top-rated, well-priced real tour wins the slot on merit.
+    if (live && Array.isArray(live.activities) && live.activities.length) {
+      scan.activities = [...live.activities, ...scan.activities];
+    }
     // Community EXPERIENCES (host-run tours, priced per person) compete inside
     // the activities scan exactly as community stays compete with hotels.
     if (Array.isArray(communityExperiences) && communityExperiences.length) {

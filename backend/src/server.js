@@ -47,7 +47,7 @@ import {
   listFulfilmentOrders, completeFulfilmentOrder, updateFulfilmentOrder,
   sweepBotAccounts, unflagBotAccount,
 } from './store.js';
-import { supplierDoors } from './extras-suppliers.js';
+import { supplierDoors, viatorEnabled, viatorActivitiesForScan } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -1003,7 +1003,12 @@ app.post('/api/plan', safe(async (req, res) => {
       } else {
         live = await fetchLiveOffers(intent, dest, result.origin);
       }
-      const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length);
+      // LIVE Viator tours when activities are requested and the door is open.
+      if (viatorEnabled() && (result.intent?.components || []).includes('activities') && dest?.city) {
+        const acts = await viatorActivitiesForScan({ destinationCity: dest.city, date: intent.dates?.checkIn, pax: intent.travellers?.total }).catch(() => null);
+        if (acts && acts.length) live = { ...live, activities: acts };
+      }
+      const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length) || (live.activities && live.activities.length);
       if (hasLive) {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
       }
