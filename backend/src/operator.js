@@ -133,9 +133,26 @@ export function quoteCancellation(booking) {
   const sym = booking.option?.pricing?.symbol || '£';
   const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const rp = booking.refundPolicy || {};
-  // Refundable percentage from the policy (default 0 if non-refundable / unknown).
-  let pct = typeof rp.refundablePct === 'number' ? rp.refundablePct
-    : Array.isArray(rp.tiers) && rp.tiers[0]?.refundPct != null ? rp.tiers[0].refundPct : 0;
+  // Refundable percentage from the policy. The real structure is a time-banded
+  // platformFallback.refundSchedule ([{window, refundPct}]) selected by days to
+  // travel — NOT a flat refundablePct/tiers (which never existed on the object,
+  // so every cancellation used to quote £0 even for a fully-flexible booking).
+  let pct = 0;
+  if (typeof rp.refundablePct === 'number') {
+    pct = rp.refundablePct; // honour an explicit supplier-normalised value if present
+  } else {
+    const sched = rp.platformFallback?.refundSchedule || [];
+    if (sched.length) {
+      // Days to travel from the booking's travel date (check-in / outbound leg).
+      const travelISO = rp.travelDate
+        || booking.option?.dates?.checkIn
+        || (booking.option?.components || []).map((c) => c.details?.checkIn || c.details?.date || c.details?.outbound?.date).find(Boolean)
+        || null;
+      const days = travelISO ? Math.floor((Date.parse(travelISO) - Date.now()) / 86400000) : 30;
+      const idx = days >= 30 ? 0 : days >= 15 ? 1 : days >= 7 ? 2 : Math.min(3, sched.length - 1);
+      pct = sched[idx]?.refundPct ?? 0;
+    }
+  }
   pct = Math.max(0, Math.min(100, pct));
   const refundGbp = round2(paid * (pct / 100));
   return { ok: true, quote: { kind: 'cancel', symbol: sym, paidGbp: round2(paid), refundablePct: pct, refundGbp, nonRefundableGbp: round2(paid - refundGbp) } };

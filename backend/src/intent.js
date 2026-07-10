@@ -137,10 +137,13 @@ export function parseExplicitDates(text, today = new Date()) {
     if (mo1 >= 1 && mo1 <= 12 && mo2 >= 1 && mo2 <= 12 && d1 <= 31 && d2 <= 31) {
       const y1 = m[3] ? normYear(m[3]) : rollYear(mo1 - 1);
       const y2 = m[6] ? normYear(m[6]) : (mo2 < mo1 ? y1 + 1 : y1);
-      const ci = new Date(Date.UTC(y1, mo1 - 1, d1));
-      const co = new Date(Date.UTC(y2, mo2 - 1, d2));
+      let ci = new Date(Date.UTC(y1, mo1 - 1, d1));
+      let co = new Date(Date.UTC(y2, mo2 - 1, d2));
+      // Traveller typed the range backwards ("24/08 to 17/08") — swap so check-in
+      // is the earlier date, instead of a 1-night trip with an inverted date pair.
+      if (co < ci) { const t = ci; ci = co; co = t; }
       const nights = Math.max(1, Math.round((co - ci) / 86400000));
-      return { checkIn: iso(y1, mo1 - 1, d1), checkOut: iso(y2, mo2 - 1, d2), nights, monthIndex: mo1 - 1 };
+      return { checkIn: ci.toISOString().slice(0, 10), checkOut: co.toISOString().slice(0, 10), nights, monthIndex: ci.getUTCMonth() };
     }
   }
 

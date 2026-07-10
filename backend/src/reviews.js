@@ -19,9 +19,13 @@ export function adjustedReliability(baseReliability, supplier) {
 }
 
 export function submitReview(payload) {
-  // Basic validation — rating 1..5.
-  const rating = Math.max(1, Math.min(5, Number(payload.rating) || 0));
   if (!payload.supplier) return { ok: false, error: 'supplier-required' };
+  // Rating must be a real 1..5 value — REJECT anything else instead of coercing
+  // it up to 1 star (a missing/NaN rating used to become a genuine 1-star review
+  // that dragged the supplier's score down).
+  const n = Number(payload.rating);
+  if (!Number.isFinite(n) || n < 1 || n > 5) return { ok: false, error: 'invalid-rating', message: 'Rating must be between 1 and 5.' };
+  const rating = Math.round(n);
   const review = addReview({ ...payload, rating });
   return { ok: true, review, supplierAvg: supplierScores().find((s) => s.supplier === payload.supplier)?.avg };
 }

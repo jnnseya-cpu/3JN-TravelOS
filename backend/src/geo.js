@@ -55,7 +55,11 @@ export function detectContext(req, overrides = {}) {
     DEFAULT_COUNTRY;
 
   const known = CURRENCY_BY_COUNTRY[country] ? country : DEFAULT_COUNTRY;
-  const currency = CURRENCY_BY_COUNTRY[overrides.currencyCountry || known];
+  // currencyCountry must be clamped to a supported country too — an unsupported
+  // ISO code (IT, JP, CN, BR… any country outside the map) would make `currency`
+  // undefined and 500 the whole search on `currency.code` below.
+  const curCountry = CURRENCY_BY_COUNTRY[overrides.currencyCountry] ? overrides.currencyCountry : known;
+  const currency = CURRENCY_BY_COUNTRY[curCountry];
 
   return {
     country: known,

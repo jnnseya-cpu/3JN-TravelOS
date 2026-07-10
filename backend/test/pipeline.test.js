@@ -4427,3 +4427,56 @@ test('flights-only fee: 2% of fare, floored at £4.99, capped at £15', () => {
   const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
   assert.equal(memberFee, 0, 'Travel+ members pay no flight service fee');
 });
+
+// ---- WAVE 6: deep-clean critical-fix regressions ----------------------------
+import { quoteCancellation as quoteCancelW6 } from '../src/operator.js';
+import { submitReview as submitReviewW6 } from '../src/reviews.js';
+import { buildRefundPolicy as buildRefundW6 } from '../src/booking-schema.js';
+
+test('wave6 geo: an unsupported currencyCountry never crashes the search', () => {
+  // Italy/Japan/China etc. are outside the 14-country map — must fall back, not 500.
+  for (const c of ['IT', 'JP', 'CN', 'BR', 'ZZ']) {
+    const ctx = detectContext({ headers: {} }, { country: c, currencyCountry: c });
+    assert.ok(ctx.currency && ctx.currency.code, `currency resolved for ${c}`);
+  }
+  // A supported country still gets its own currency.
+  assert.equal(detectContext({ headers: {} }, { country: 'GB', currencyCountry: 'GB' }).currency.code, 'GBP');
+});
+
+test('wave6 autopay: recordAudit is imported — the endpoint returns 200, not 500', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const u = createUser({ name: 'Autopay User', email: `ap${Date.now()}@x.co` });
+    const opt = { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 }, lines: { totalUSD: 1140 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] };
+    const b = createBooking({ quoteId: 'q_ap', option: opt, instalment: { engine: 'ai-smart', deposit: 200, schedule: [{ due: '2026-09-01', amount: 700, status: 'scheduled' }], autopay: {} }, userId: u.id });
+    const res = await fetch(`${base}/api/book/${b.id}/autopay`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': u.id }, body: JSON.stringify({ enabled: true }) });
+    assert.equal(res.status, 200, 'autopay no longer 500s (recordAudit was undefined)');
+    const d = await res.json();
+    assert.equal(d.autopay.enabled, true);
+  } finally { server.close(); }
+});
+
+test('wave6 cancellation: a flexible booking 30+ days out quotes a real refund, not £0', () => {
+  const option = { components: [{ type: 'hotel', supplier: 'Rove', details: { freeCancellation: true } }], pricing: { symbol: '£' }, dates: { checkIn: '2027-06-01' } };
+  const booking = { option, refundPolicy: buildRefundW6(option, '2027-06-01'), payments: [{ type: 'deposit', amount: 200 }, { type: 'instalment', amount: 300 }] };
+  const q = quoteCancelW6(booking).quote;
+  assert.ok(q.refundablePct > 0, `flexible + 30 days out is refundable (got ${q.refundablePct}%)`);
+  assert.ok(q.refundGbp > 0, `real refund quoted (got £${q.refundGbp})`);
+  assert.equal(q.paidGbp, 500);
+});
+
+test('wave6 reviews: an invalid rating is rejected, not coerced to 1 star', () => {
+  assert.equal(submitReviewW6({ supplier: 'BA', rating: 0 }).error, 'invalid-rating');
+  assert.equal(submitReviewW6({ supplier: 'BA', rating: undefined }).error, 'invalid-rating');
+  assert.equal(submitReviewW6({ supplier: 'BA', rating: 9 }).error, 'invalid-rating');
+  assert.equal(submitReviewW6({ supplier: 'BA', rating: 4 }).ok, true);
+});
+
+test('wave6 dates: a backwards range is swapped, not turned into a 1-night inverted trip', () => {
+  const r = parseExplicitDates('24/08/2026 to 17/08/2026', new Date(Date.UTC(2026, 0, 10)));
+  assert.equal(r.checkIn, '2026-08-17');
+  assert.equal(r.checkOut, '2026-08-24');
+  assert.equal(r.nights, 7);
+});

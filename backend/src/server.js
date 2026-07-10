@@ -24,7 +24,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
-  createContract, listContracts, recordBehaviour,
+  createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
   registerHost, updateHostListing, hostBookings, hostDashboard, updateHostPayout,
