@@ -22,7 +22,9 @@ export const FLIGHT_ONLY_MEMBER_FREE = true;
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never
 // of booking value) — plus lifetime attribution on the customer they brought.
-export const FLIGHT_ONLY_PARTNER_SHARE = 0.40;
+// Trimmed 40% → 30% now the flight fee scales up to £15: 3JN keeps 70% of the
+// larger take while partners still earn more per ticket on high-value fares.
+export const FLIGHT_ONLY_PARTNER_SHARE = 0.30;
 export const SAVINGS_SHARE_RATE = 0.10;   // 10% of value created vs market
 // The savings-share only triggers when the AI creates REAL value: savings must
 // exceed £100 (≈ $127 at the platform's 0.79 GBP anchor) before the 10% share

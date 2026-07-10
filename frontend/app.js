@@ -2048,7 +2048,7 @@ async function renderVendors() {
   out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>
     <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.3)">
       <span class="eyebrow">✈ Flights-only bookings — different maths, bigger prize</span>
-      <p class="muted" style="font-size:12.5px;margin:6px 0">Flights-only baskets carry a small <strong>2%</strong> service fee (min £4.99, capped at £15) instead of 10% (that's how our flight prices beat the comparison sites). On those you earn <strong>40% of the fee</strong> — but you keep <strong>lifetime attribution</strong>: every hotel, package or extra that customer ever books afterwards pays your full ${'3–4%'} rate automatically, no code needed. Bring us a customer once, earn on everything they ever book.</p>
+      <p class="muted" style="font-size:12.5px;margin:6px 0">Flights-only baskets carry a small <strong>2%</strong> service fee (min £4.99, capped at £15) instead of 10% (that's how our flight prices beat the comparison sites). On those you earn <strong>30% of the fee</strong> — but you keep <strong>lifetime attribution</strong>: every hotel, package or extra that customer ever books afterwards pays your full ${'3–4%'} rate automatically, no code needed. Bring us a customer once, earn on everything they ever book.</p>
     </div>
     ${portal}${servicesBlock}
     <p class="center muted" style="font-size:12px;margin-top:18px">Commission is never paid on refunds, chargebacks, fraud, self-referrals or policy violations. The platform always keeps its minimum margin.</p>`;
