@@ -320,7 +320,7 @@ async function populateShowcase() {
 // and direct/shared paths (/console, /visaos, /how-it-works, …).
 function applyDeepLink() {
   const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'vendors', 'hosting', 'api', 'console', 'business', 'admin']);
-  const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
+  const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace', 'marketplace': 'marketplace' };
   let target = '';
   // Meta Pixel: Stripe success returns to /console?paid=1&booking=... —
   // that IS the purchase moment. Guarded per booking id so refreshes never
