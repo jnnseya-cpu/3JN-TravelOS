@@ -62,6 +62,15 @@ const db = {
   fulfilmentOrders: [], // Ops Fulfilment Desk: per-component orders on paid bookings
 };
 
+// Ring-buffer cap for the high-frequency append-only logs. Without this they
+// grow unbounded and, because the whole store is snapshot+re-uploaded on every
+// save, eventually bloat every persistence write and OOM a long-lived instance.
+const AUDIT_CAP = 20000;
+const NOTIF_CAP = 8000;
+const ACU_TXN_CAP = 12000;
+const PRICE_EVENT_CAP = 5000;
+const capArr = (arr, cap) => { if (Array.isArray(arr) && arr.length > cap) arr.splice(0, arr.length - cap); };
+
 // ---- Communication event delivery log -------------------------------------
 const COMMS_CAP = 2000;
 export function recordCommsDelivery({ event, name, channel, recipient, status, provider, severity } = {}) {
@@ -418,6 +427,7 @@ export function govAnalytics() {
 export function pushNotification(userId, { type = 'info', title, body, icon } = {}) {
   const n = { id: id('ntf'), userId: userId || null, type, icon: icon || '🔔', title, body: body || '', read: false, at: nowISO() };
   db.notifications.push(n);
+  capArr(db.notifications, NOTIF_CAP);
   return n;
 }
 export function listNotifications(userId) {
@@ -434,6 +444,7 @@ export function markNotificationsRead(userId) {
 export function recordAudit({ actor = 'system', role = 'system', action, entity, entityId, summary }) {
   const entry = { id: id('aud'), actor, role, action, entity, entityId, summary: summary || '', at: nowISO() };
   db.audit.push(entry);
+  capArr(db.audit, AUDIT_CAP);
   return entry;
 }
 export function adminAudit(limit = 50) {
@@ -534,6 +545,7 @@ export function spendAcu(userId, amount, reason) {
   if (u.acuBalance < amount) return { ok: false, error: 'insufficient-acu', balance: u.acuBalance };
   u.acuBalance -= amount;
   db.acuTxns.push({ id: id('acu'), userId, type: 'USAGE', amount: -amount, reason, at: nowISO() });
+  capArr(db.acuTxns, ACU_TXN_CAP);
   return { ok: true, balance: u.acuBalance };
 }
 
@@ -573,6 +585,7 @@ export function buyAcu(userId, pack) {
   u.acuBalance += p.acu;
   db.acuTxns.push({ id: id('acu'), userId, type: 'PURCHASE', amount: base, reason: `pack:${pack}`, at: nowISO() });
   if (bonus > 0) db.acuTxns.push({ id: id('acu'), userId, type: 'BONUS', amount: bonus, reason: `pack:${pack}:volume-bonus`, at: nowISO() });
+  capArr(db.acuTxns, ACU_TXN_CAP);
   recordAudit({ actor: userId, role: u.role, action: 'acu.topup', entity: 'acu', entityId: userId, summary: `+${p.acu} ACU (£${p.gbp})` });
   return { ok: true, balance: u.acuBalance, charged: p.gbp, bonusAcu: bonus };
 }
@@ -584,6 +597,7 @@ export function creditAcu(userId, amount, reason = 'credit', type = 'BONUS') {
   if (!u || !(amount > 0)) return { ok: false, error: 'invalid' };
   u.acuBalance += Math.round(amount);
   db.acuTxns.push({ id: id('acu'), userId, type, amount: Math.round(amount), reason, at: nowISO() });
+  capArr(db.acuTxns, ACU_TXN_CAP);
   return { ok: true, balance: u.acuBalance };
 }
 // Refund previously spent ACU back to the wallet (booked as REFUND).
@@ -1275,6 +1289,7 @@ export function logPriceEvent(bookingId, event) {
   const b = db.bookings.get(bookingId);
   if (b) b.priceGuard.events.push(event);
   db.priceEvents.push({ bookingId, ...event });
+  capArr(db.priceEvents, PRICE_EVENT_CAP);
   recordAudit({ actor: 'savings-guard-agent', role: 'agent', action: `priceguard.${event.action}`, entity: 'booking', entityId: bookingId, summary: event.message });
   if (b?.userId && event.action !== 'hold') {
     pushNotification(b.userId, { type: event.action === 'rebook-refund' ? 'success' : 'info', icon: '🛡', title: 'Price Guard update', body: event.message });

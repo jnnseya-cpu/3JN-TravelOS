@@ -111,9 +111,15 @@ app.get('/api/health', (req, res) => res.json({
 // (debounced). No-op when persistence is disabled (offline / no credentials).
 // Also the serverless-safe scheduler tick: on Fridays the first request of the
 // week triggers the automatic vendor payout run (+ monthly top-seller award).
+// Startup readiness: until the persisted store has loaded, block MUTATING
+// requests and suppress saves. A write that lands before hydrate() replaces the
+// collections would be silently erased, and an early save would persist an empty
+// store over good data. Reads may proceed. Tests run on a fresh store (ready).
+let storeReady = process.env.NODE_ENV === 'test';
 app.use((req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
     res.on('finish', () => { if (res.statusCode < 400) scheduleSave(snapshot); });
   }
   next();
@@ -2309,15 +2315,20 @@ if (process.env.NODE_ENV !== 'test') {
   initMailer();
   const p = initPersistence({});
   if (p.enabled) {
+    // Accept writes only AFTER the load settles (resolve or reject) — hydrate()
+    // replaces the collections wholesale, so any write before it is lost.
     load().then((snap) => {
       if (snap && hydrate(snap)) console.log('[persist] restored store from Firebase RTDB');
-    });
+    }).catch((e) => console.error('[persist] load failed:', e?.message || e))
+      .finally(() => { storeReady = true; });
     // Belt-and-braces periodic flush (covers long-lived Cloud Run instances).
     const flushEvery = setInterval(() => save(snapshot()), 15000);
     if (flushEvery.unref) flushEvery.unref();
     const flush = () => { save(snapshot()).finally(() => process.exit(0)); };
     process.on('SIGTERM', flush);
     process.on('SIGINT', flush);
+  } else {
+    storeReady = true; // no persistence configured → nothing to load, ready now
   }
 }
 
