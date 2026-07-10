@@ -17,6 +17,7 @@ import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, dueReminders } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi } from './extras-suppliers.js';
+import { accountIsDormantBot } from './bot-defence.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -1918,6 +1919,51 @@ export function searchToBookStats() {
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders'];
+
+// ---- Bot Defence: dormant-bot sweep + quarantine -------------------------------
+// Flags accounts with machine-generated names/emails AND zero activity.
+// Real accounts are NEVER touched: one booking, one ACU transaction, one
+// review, one listing — any human trace — makes an account immune. Flagged
+// accounts cannot log in until an admin unflags them (the appeal path).
+export function sweepBotAccounts({ olderThanHours = 72, nowMs } = {}) {
+  // SAME CLOCK as user.createdAt (nowISO's deterministic stamp) — mixing the
+  // wall clock with the store clock made brand-new accounts look days old.
+  const clockNow = Number.isFinite(nowMs) ? nowMs : new Date(nowISO()).getTime();
+  const results = { checked: 0, flagged: 0, immune: 0, list: [] };
+  for (const u of db.users.values()) {
+    if (u.flaggedBot) continue;
+    results.checked += 1;
+    const activity = {
+      bookings: [...db.bookings.values()].filter((b) => b.userId === u.id).length,
+      acuTxns: db.acuTxns.filter((t) => t.userId === u.id).length,
+      reviews: db.reviews.filter((r) => r.userId === u.id).length,
+      hostListings: db.hostListings.filter((l) => l.hostId === u.id || l.userId === u.id).length,
+      vendorProfile: db.vendorProfiles.has(u.id) ? 1 : 0,
+      // NOT influencerProfile existence — rewards auto-enrols every signup,
+      // so the profile itself proves nothing. EARNED revenue share does.
+      revshareEarned: db.revshareLedger.filter((r) => r.partnerId === u.id).length,
+      visaApps: db.visaApps.filter((v) => v.userId === u.id).length,
+      potContributions: db.travelPots.filter((p) => (p.contributions || []).some((c) => c.userId === u.id)).length,
+      behaviour: db.behaviour.filter((e) => e.userId === u.id).length,
+    };
+    const verdict = accountIsDormantBot(u, activity, { olderThanHours, nowMs: clockNow });
+    if (!verdict.flag) { results.immune += 1; continue; }
+    u.flaggedBot = { at: nowISO(), reasons: verdict.reasons };
+    u.suspended = true;
+    results.flagged += 1;
+    results.list.push({ userId: u.id, name: u.name, email: u.email, reasons: verdict.reasons });
+    recordAudit({ actor: 'bot-defence', role: 'system', action: 'account.bot-quarantined', entity: 'user', entityId: u.id, summary: verdict.reasons.join(', ') });
+  }
+  return results;
+}
+export function unflagBotAccount(userId) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'not-found' };
+  delete u.flaggedBot;
+  u.suspended = false;
+  recordAudit({ actor: 'admin', role: 'admin', action: 'account.bot-unflagged', entity: 'user', entityId: userId, summary: 'appeal approved — account restored' });
+  return { ok: true, user: u };
+}
 
 // ---- Vendor service listings: real local suppliers in real packages -----------
 // An APPROVED vendor (risk-reviewed + admin-approved) can list the services

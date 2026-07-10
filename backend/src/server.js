@@ -45,8 +45,10 @@ import {
   saveBenchmarkRun, latestBenchmarkRun, recordBenchmarkMarket,
   userPaymentHistory, enforceInstalments,
   listFulfilmentOrders, completeFulfilmentOrder, updateFulfilmentOrder,
+  sweepBotAccounts, unflagBotAccount,
 } from './store.js';
 import { supplierDoors } from './extras-suppliers.js';
+import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
@@ -398,6 +400,14 @@ app.post('/api/account', safe((req, res) => {
   const check = body.humanCheck || {};
   const verdict = body.email ? verifyHumanCheck(check) : verifyLightHuman(check);
   if (!verdict.ok) return res.status(403).json({ ...verdict, human: false });
+  // BOT DEFENCE: machine-generated names/emails, honeypot hits and disposable
+  // domains are refused at the door. Conservative on purpose — a slightly
+  // unusual name alone never blocks a real person.
+  const bot = botSignupVerdict({ name: body.name, email: body.email, honeypot: check.website, elapsedMs: check.elapsedMs, interactions: check.interactions });
+  if (bot.block) {
+    recordAudit({ actor: 'bot-defence', role: 'system', action: 'signup.blocked', entity: 'user', entityId: body.email || '-', summary: bot.reasons.join(', ') });
+    return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
+  }
   delete body.humanCheck;
   const user = createUser(body);
   res.json({ user });
@@ -643,6 +653,16 @@ app.post('/api/benchmark/flights/market', safe((req, res) => {
   res.json(recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTransfer, caveat }));
 }));
 
+// ---- Bot Defence: dormant-bot sweep + appeal ---------------------------------
+app.post('/api/admin/bot-sweep', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(sweepBotAccounts({ olderThanHours: Number(req.body?.olderThanHours) || 72 }));
+}));
+app.post('/api/admin/bot-sweep/:userId/unflag', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(unflagBotAccount(req.params.userId));
+}));
+
 // ---- Ops Fulfilment Desk + Supplier Doors -----------------------------------
 // The "automatic way" around manual supplier portals (Rayna, etc.): paid
 // bookings decompose into channel-routed orders with pre-packed payloads; the
@@ -810,6 +830,11 @@ app.post('/api/login', safe((req, res) => {
   const email = ((req.body || {}).email || '').trim().toLowerCase();
   const user = findUserByEmail(email);
   if (!user) return res.status(404).json({ error: 'not-found', message: 'No account with that email. Sign up instead.' });
+  // BOT DEFENCE: quarantined accounts cannot log in until an admin restores
+  // them (the appeal path keeps a mistaken flag recoverable in one click).
+  if (user.flaggedBot || user.suspended) {
+    return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. If you are a real person, contact support@3jntravel.com and we will restore it personally.' });
+  }
   // Privileged accounts (admin, business, embassy…) can never be opened by
   // email alone: when the staff PIN is configured it must accompany the login.
   if ((PRIVILEGED_ROLES.has(user.role) || user.allAccess) && !staffPinOk(req)) {
@@ -852,6 +877,15 @@ app.post('/api/auth/firebase', safe((req, res) => {
   const { email, name } = req.body || {};
   if (!email) return res.status(400).json({ error: 'email-required' });
   const existing = findUserByEmail(email.trim().toLowerCase());
+  if (existing && (existing.flaggedBot || existing.suspended)) {
+    return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. Contact support@3jntravel.com to restore it.' });
+  }
+  // Same signup screen as email accounts — Google-verified emails still get
+  // the name/disposable-domain checks (a bot can automate OAuth too).
+  if (!existing) {
+    const bot = botSignupVerdict({ name, email });
+    if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
+  }
   const user = existing || createUser({ email: email.trim().toLowerCase(), name: name || undefined });
   res.json({ user, created: !existing });
 }));

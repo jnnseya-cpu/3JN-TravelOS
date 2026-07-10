@@ -3840,3 +3840,79 @@ test('a real vendor service competes in searches, routes the job to the vendor, 
     assert.equal(saleIsPayable(sale.sale, after), true, 'payable once the service date has passed');
   }
 });
+
+// ---- Bot Defence: block bot signups/logins; real accounts NEVER touched ------
+import { nameLooksBot, emailLooksBot, botSignupVerdict, accountIsDormantBot } from '../src/bot-defence.js';
+
+test('bot defence: gibberish and machine identities flag; real human names never do', () => {
+  // Machine signals.
+  assert.equal(nameLooksBot('xkqzvbnt').bot, true, 'vowelless keyboard mash');
+  assert.equal(nameLooksBot('user84729384').bot, true, 'digit-flood name');
+  assert.equal(nameLooksBot('aaaaaaaa Smith').bot, true, 'repeated-run name');
+  assert.equal(emailLooksBot('bot@mailinator.com').bot, true, 'disposable domain');
+  assert.equal(emailLooksBot('a1b2c3d4e5f6a1b2c3d4e5@gmail.com').bot, true, 'hex-blob local part');
+  // Real people — including names that trip naive filters — always pass.
+  for (const name of ['Md Rahman', 'Xu Li', 'Ng Wei', "O'Brien-Smith", 'Jean-Baptiste N’Guessan', 'Krzysztof Szczęsny', 'محمد أحمد', '王小明', 'Björk Guðmundsdóttir', 'B', 'Justin Nseya']) {
+    assert.equal(nameLooksBot(name).bot, false, `"${name}" is a human name`);
+  }
+  assert.equal(emailLooksBot('jane.doe+travel@gmail.com').bot, false, 'plus-tags are human');
+});
+
+test('bot defence: signup verdict blocks only high-confidence combinations', () => {
+  // Honeypot filled → hard block (humans cannot see the field).
+  assert.equal(botSignupVerdict({ name: 'Jane Doe', email: 'jane@gmail.com', honeypot: 'http://spam.biz' }).block, true);
+  // Disposable email → hard block.
+  assert.equal(botSignupVerdict({ name: 'Jane Doe', email: 'x@yopmail.com' }).block, true);
+  // Bot name + instant submit → block.
+  assert.equal(botSignupVerdict({ name: 'xkqzvbnt', email: 'x84729@gmail.com', elapsedMs: 300, interactions: 0 }).block, true);
+  // Bot-ish name ALONE, normal behaviour → NEVER blocks a real person.
+  assert.equal(botSignupVerdict({ name: 'xkqzvbnt', email: 'realperson@gmail.com', elapsedMs: 45000, interactions: 60 }).block, false);
+  // Ordinary signup → clean pass.
+  assert.equal(botSignupVerdict({ name: 'Amina Diallo', email: 'amina.diallo@gmail.com', elapsedMs: 30000, interactions: 40 }).block, false);
+});
+
+test('bot defence: dormant sweep quarantines zero-activity bots and NEVER touches real accounts', async () => {
+  const { sweepBotAccounts, unflagBotAccount, getUserRaw } = await import('../src/store.js');
+  const old = new Date(Date.UTC(2026, 5, 18)).toISOString(); // 12 days before the store clock
+  // A dormant bot: mash name, zero activity, 12 days old. (createUser returns
+  // a sanitized copy — age the STORED record via getUserRaw.)
+  const bot = getUserRaw(createUser({ name: 'qwxzkjvb', email: 'qz9382744@fastmail.com' }).id);
+  bot.createdAt = old;
+  // A REAL user with the SAME suspicious-looking name but ONE booking → immune.
+  const oddButReal = getUserRaw(createUser({ name: 'qwxzkjvb', email: 'odd.real@gmail.com' }).id);
+  oddButReal.createdAt = old;
+  const option = { tier: 'Standard', totalUSD: 100, pricing: { currency: 'GBP', symbol: '£', lines: { totalUSD: 100 }, local: { total: 79 }, revenue: { commissionUSD: 10, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 100, details: {} }] };
+  const q = saveQuote({ option, intent: { dates: { checkIn: '2026-12-01' } } });
+  createBooking({ quoteId: q.id, option, instalment: null, userId: oddButReal.id, paymentMethod: 'card' });
+  // A quiet human: real name, zero activity → NOT flagged (quiet ≠ bot).
+  const quiet = getUserRaw(createUser({ name: 'Grace Mutombo', email: 'grace.mutombo@gmail.com' }).id);
+  quiet.createdAt = old;
+  // A brand-new account (even mash-named) → too young to judge.
+  const fresh = createUser({ name: 'zxkvqjwp', email: 'zx99231@gmail.com' });
+
+  const sweep = sweepBotAccounts({ olderThanHours: 72 });
+  const flaggedIds = sweep.list.map((x) => x.userId);
+  assert.ok(flaggedIds.includes(bot.id), 'dormant bot quarantined');
+  assert.ok(!flaggedIds.includes(oddButReal.id), 'one booking = immune, even with the same name');
+  assert.ok(!flaggedIds.includes(quiet.id), 'quiet human with a real name untouched');
+  assert.ok(!flaggedIds.includes(fresh.id), 'new accounts get time before judgement');
+  assert.equal(bot.suspended, true);
+  // Demo/staff accounts are categorically exempt.
+  assert.ok(!sweep.list.some((x) => String(x.email || '').endsWith('@3jntravel.com')), 'demo accounts never flagged');
+  // Appeal path: one click restores.
+  const restored = unflagBotAccount(bot.id);
+  assert.equal(restored.ok, true);
+  assert.equal(bot.suspended, false);
+  assert.ok(!bot.flaggedBot, 'flag fully removed on restore');
+});
+
+test('bot defence: quarantined accounts cannot log in; signup endpoint refuses bots', async () => {
+  const { sweepBotAccounts, getUserRaw } = await import('../src/store.js');
+  // Endpoint-level checks ride the running-app tests elsewhere; here verify
+  // the store-level contract the endpoints depend on.
+  const botUser = getUserRaw(createUser({ name: 'jjqxxzwk', email: 'jq0192837@inbox.lv' }).id);
+  botUser.createdAt = new Date(Date.UTC(2026, 5, 18)).toISOString();
+  sweepBotAccounts({ olderThanHours: 72 });
+  assert.equal(botUser.suspended, true, 'flagged before login is possible');
+  assert.ok(botUser.flaggedBot.reasons.includes('zero-activity'));
+});

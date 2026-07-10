@@ -1948,7 +1948,12 @@ async function renderVendors() {
     </div>`;
   }
 
-  out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>${portal}${servicesBlock}
+  out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>
+    <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.3)">
+      <span class="eyebrow">✈ Flights-only bookings — different maths, bigger prize</span>
+      <p class="muted" style="font-size:12.5px;margin:6px 0">Flights-only baskets carry a flat <strong>£4.99</strong> platform fee instead of 10% (that's how our flight prices beat the comparison sites). On those you earn <strong>40% of the fee (~£2 per ticket)</strong> — but you keep <strong>lifetime attribution</strong>: every hotel, package or extra that customer ever books afterwards pays your full ${'3–4%'} rate automatically, no code needed. Bring us a customer once, earn on everything they ever book.</p>
+    </div>
+    ${portal}${servicesBlock}
     <p class="center muted" style="font-size:12px;margin-top:18px">Commission is never paid on refunds, chargebacks, fraud, self-referrals or policy violations. The platform always keeps its minimum margin.</p>`;
 }
 window.addVendorSvc = async () => {
@@ -2122,6 +2127,7 @@ async function renderAdmin() {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
+      <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
     </div>
     <div class="kpi-grid">${kpiCards}</div>
     ${uh ? (() => {
@@ -2305,6 +2311,19 @@ async function renderFulfilment() {
       </div>
     </div>`;
 }
+window.runBotSweep = async () => {
+  try {
+    const r = await api('/api/admin/bot-sweep', { method: 'POST', body: '{}' });
+    toast(`🧹 Sweep done: ${r.checked} checked · ${r.flagged} quarantined · ${r.immune} untouched.`);
+    if (r.flagged > 0) modal(`<span class="eyebrow">🧹 Bot sweep — quarantined accounts</span>
+      <p class="muted" style="font-size:12px;margin:6px 0">Machine-generated identity AND zero activity. Any real activity makes an account immune. One-click restore if a flag is wrong.</p>
+      ${r.list.map((u) => `<div class="kv"><span>${esc(u.name || '(no name)')} <span class="muted">· ${esc(u.email || 'no email')}</span><br><span class="muted" style="font-size:10.5px">${esc(u.reasons.join(', '))}</span></span>
+        <button class="btn btn-ghost btn-sm" onclick="unflagBot('${esc(u.userId)}', this)">Restore</button></div>`).join('')}`);
+  } catch { toast('Sweep failed — are you signed in as admin?'); }
+};
+window.unflagBot = async (userId, btn) => {
+  try { const r = await api(`/api/admin/bot-sweep/${userId}/unflag`, { method: 'POST', body: '{}' }); if (r.ok) { btn.textContent = '✓ Restored'; btn.disabled = true; toast('Account restored.'); } } catch { toast('Could not restore.'); }
+};
 window.copyFulfilPayload = (id) => {
   const ta = $(`#ffpay-${id}`); if (!ta) return;
   navigator.clipboard?.writeText(ta.value).then(() => toast('📋 Payload copied — paste it in the supplier portal.'), () => { ta.select(); document.execCommand('copy'); toast('📋 Copied.'); });
