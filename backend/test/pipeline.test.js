@@ -4006,3 +4006,30 @@ test('Duffel fees are charged on the flight order value, never on the whole pack
   assert.ok(Math.abs(fee - (2.20 * 1.27 + 3231 * 0.01)) < 0.02, `fee is order + 1% of flight only (got $${fee})`);
   assert.ok(fee < 3231 * 0.011 + 3, 'fee can never scale with the hotel/activities');
 });
+
+// ---- Typo-tolerant origins + distance-honest estimated schedules -------------
+test('typo "Birmingam" resolves to Birmingham (BHX) and long-haul estimates price and time honestly', async () => {
+  const { resolveOrigin: ro } = await import('../src/destinations.js');
+  // One-letter slips match the real city; the fake "BIR" code is history.
+  assert.equal(ro('Birmingam').airport, 'BHX');
+  assert.equal(ro('Birmingam').corrected, true);
+  assert.equal(ro('Manchestor').airport, 'MAN');
+  assert.equal(ro('Nottinham').airport, 'EMA');
+  // Short/genuinely-unknown names still take the flagged placeholder path.
+  assert.equal(ro('Xyzzytown').approxCode, true);
+  // The full pipeline: Birmingham(typo)→Kinshasa must price like the ~6,300km
+  // route it is, with a via-hub schedule that includes the layover.
+  const r = plan({ text: 'Flights only to Kinshasa from Birmingam, 1 adult, 2026-08-28 to 2026-09-17', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.origin.airport, 'BHX', 'typo corrected in the pipeline');
+  const f = r.packages.options[0].components.find((c) => c.type === 'flight');
+  assert.ok(f.priceUSD > 450, `long-haul return per-seat fare is realistic (got $${f.priceUSD})`);
+  const out = f.details.outbound;
+  if (out.stops > 0) {
+    assert.ok(out.durationMins >= 12.5 * 60, `via-hub Birmingham→Kinshasa takes 12.5h+ (got ${out.durationLabel})`);
+    assert.equal(out.segments.length, 2, 'estimated connection shows both legs');
+    assert.equal(out.segments[0].flightNumber, null, 'flight numbers are never invented for estimates');
+    assert.ok(out.segments[0].indicative, 'segments marked indicative');
+    assert.ok(out.layovers[0].minutes >= 90, 'layover length is stated');
+    assert.match(out.stopLabel, /via .* wait/, 'summary names the hub and the wait');
+  }
+});

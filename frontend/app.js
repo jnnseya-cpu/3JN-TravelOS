@@ -868,7 +868,9 @@ window.showComponentInfo = (tier, idx) => {
         const lay = (l.layovers || [])[i];
         if (lay) parts.push(`<div style="margin:2px 0 2px 14px;font-size:12px;color:${lay.tight ? '#ffb86b' : 'var(--muted)'}">🕓 Stopover in ${esc(lay.city || lay.airport)} (${esc(lay.airport)}) — ${esc(lay.durationLabel || 'wait time per airline')}${lay.overnight ? ' · overnight' : ''}${lay.tight ? ' · ⚠ tight connection' : ''} · you stay airside, same ticket</div>`);
       });
-      return `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(223,229,238,.15)"><span class="muted" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase">Your connection plan</span>${parts.join('')}</div>`;
+      const indicative = l.segments.some((s2) => s2.indicative)
+        ? '<div class="muted" style="font-size:11px;margin-top:4px">ℹ Indicative schedule from real route distances — exact flights, times and connection are confirmed when the fare is ticketed.</div>' : '';
+      return `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(223,229,238,.15)"><span class="muted" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase">Your connection plan</span>${parts.join('')}${indicative}</div>`;
     };
     const legHTML = (l, title) => l ? `
       <div class="card pad" style="margin-top:10px">

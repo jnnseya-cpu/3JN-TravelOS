@@ -482,6 +482,30 @@ const PORT_TOWNS = {
   dunkirk: { code: 'DKK', city: 'Dunkirk', country: 'FR' },
 };
 
+// Edit distance ≤1 (one letter dropped/added/swapped) — catches the typos
+// real people make ("Birmingam", "Manchestor") without ever confusing two
+// genuinely different cities.
+function withinOneEdit(a, b) {
+  if (a === b) return true;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (la > lb) i++; else if (lb > la) j++; else { i++; j++; }
+  }
+  return edits + (la - i) + (lb - j) <= 1;
+}
+function fuzzyCityMatch(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (n.length < 5) return null; // short names are too easy to false-match
+  for (const [key, v] of Object.entries(CITY_AIRPORTS)) {
+    if (withinOneEdit(n, key)) return v;
+  }
+  return null;
+}
+
 export function resolveOrigin(name) {
   // 0) Port towns first — they are ferry/coach gateways, not airports.
   const port = PORT_TOWNS[String(name || '').trim().toLowerCase()];
@@ -492,7 +516,12 @@ export function resolveOrigin(name) {
   // 2) Destination catalogue (carries its own airport + ISO country).
   const known = findDestination(name);
   if (known) return { airport: known.airport, city: known.city, country: known.country };
-  // 3) Unknown city — title-case it and derive a placeholder code, flagged so
+  // 3) Typo tolerance: one-letter slips ("Birmingam") match the real city —
+  //    a fake derived code ("BIR" = Biratnagar!) breaks live searches AND
+  //    blinds the distance-based fare anchor.
+  const fuzzy = fuzzyCityMatch(name);
+  if (fuzzy) return { airport: fuzzy.airport, city: fuzzy.city, country: fuzzy.country, corrected: true };
+  // 4) Unknown city — title-case it and derive a placeholder code, flagged so
   //    the UI can tell the traveller we assumed the nearest code.
   const city = titleCaseDest(name);
   if (!city) return null;

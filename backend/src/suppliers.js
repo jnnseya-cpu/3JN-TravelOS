@@ -247,14 +247,34 @@ export function scanFlights(intent, dest, origin) {
     const outboundPerSeat = fares.outboundPerSeat;
     const inboundPerSeat = fares.inboundPerSeat;
     const totalPerSeat = fares.totalPerSeat;
-    // Deterministic but varied schedule: a flight duration derived from the
-    // route distance, with each leg getting its own departure time.
-    const durationMins = Math.round((120 + distanceFactor * 360) * (1 + (a.premium ? 0 : rnd() * 0.25)));
+    // DISTANCE-HONEST schedule: when we know both airports' coordinates the
+    // flying time comes from the real great-circle distance (~810 km/h door
+    // to door), and a via-hub connection is the SUM of its two real legs plus
+    // a realistic layover — an 11h Birmingham→Kinshasa "via Dubai" cannot
+    // happen here. Unknown coords keep the legacy varied estimate.
+    const kmToMins = (km) => Math.round(km / 13.5) + 45;
+    const oXY = airportCoords(origin.airport);
+    const dXY = airportCoords(dest.code || dest.airport);
+    const directKm = oXY && dXY ? haversineKm(oXY, dXY) : null;
     // Stops: realistic hub-based routing when we know both countries, else fall
     // back to the deterministic premium/noise model.
     const realistic = realisticStops(a, origin.airport, origin.country, dest.airport, dest.country);
     const outStops = realistic != null ? realistic : (a.premium ? 0 : (rnd() > 0.55 ? 1 : 0));
     const inStops = realistic != null ? realistic : (a.premium ? 0 : (rnd() > 0.55 ? 1 : 0));
+    const hubXY = a.hubAirport ? airportCoords(a.hubAirport) : null;
+    const layoverMins = 90 + Math.floor(rnd() * 8) * 15; // 1h30–3h15 at the hub
+    let flyMins, legSplit = null;
+    if (oXY && dXY && hubXY && (outStops > 0 || inStops > 0)) {
+      const l1 = kmToMins(haversineKm(oXY, hubXY));
+      const l2 = kmToMins(haversineKm(hubXY, dXY));
+      legSplit = [l1, l2];
+      flyMins = l1 + l2;
+    } else if (directKm != null) {
+      flyMins = kmToMins(directKm);
+    } else {
+      flyMins = Math.round((120 + distanceFactor * 360) * (1 + (a.premium ? 0 : rnd() * 0.25)));
+    }
+    const durationMins = flyMins;
     const outDepartMin = (5 + Math.floor(rnd() * 16)) * 60 + Math.floor(rnd() * 12) * 5; // 05:00–21:55
     const inDepartMin = (6 + Math.floor(rnd() * 15)) * 60 + Math.floor(rnd() * 12) * 5;
     // A network carrier connecting on this route connects over its own hub —
@@ -268,8 +288,8 @@ export function scanFlights(intent, dest, origin) {
       reliabilityScore: a.rating,
       premium: a.premium,
       details: {
-        outbound: leg(origin.airport, origin.city, dest.airport, dest.city, intent.dates.checkIn, outDepartMin, durationMins + outStops * 80, outStops, outboundPerSeat, via),
-        inbound: leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + inStops * 80, inStops, inboundPerSeat, via),
+        outbound: leg(origin.airport, origin.city, dest.airport, dest.city, intent.dates.checkIn, outDepartMin, durationMins + (outStops ? layoverMins : 0), outStops, outboundPerSeat, via, outStops && legSplit ? { legSplit, layoverMins, carrier: a.name } : null),
+        inbound: leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + (inStops ? layoverMins : 0), inStops, inboundPerSeat, via, inStops && legSplit ? { legSplit: [legSplit[1], legSplit[0]], layoverMins, carrier: a.name } : null),
         passengers: pax,
         cabin: a.premium ? 'Economy (upgradable)' : 'Economy',
         baggage: a.premium ? '2 x 30kg checked + cabin' : '1 x 23kg checked + cabin',
@@ -291,16 +311,34 @@ function fmtMin(total) {
   const m = ((total % 1440) + 1440) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
-function leg(fromAirport, fromCity, toAirport, toCity, date, departMin, durationMin, stops, perSeatUSD, via = null) {
+function leg(fromAirport, fromCity, toAirport, toCity, date, departMin, durationMin, stops, perSeatUSD, via = null, segMeta = null) {
   const arriveMin = departMin + durationMin;
   const nextDay = arriveMin >= 1440;
-  const viaLabel = stops > 0 && via ? ` · via ${via.city || via.airport} (${via.airport})` : '';
+  const mins2label = (m) => `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+  const viaLabel = stops > 0 && via
+    ? ` · via ${via.city || via.airport} (${via.airport})${segMeta ? ` ${mins2label(segMeta.layoverMins)} wait` : ''}`
+    : '';
+  // Estimated connections still show the FULL plan — real leg durations from
+  // airport coordinates and the layover length — marked indicative (flight
+  // numbers are assigned when the fare is ticketed, never invented).
+  let segments, layovers;
+  if (stops > 0 && via && segMeta?.legSplit) {
+    const [l1, l2] = segMeta.legSplit;
+    const arr1 = departMin + l1;
+    const dep2 = arr1 + segMeta.layoverMins;
+    segments = [
+      { carrier: segMeta.carrier, flightNumber: null, indicative: true, from: fromAirport, fromCity, to: via.airport, toCity: via.city || via.airport, date, depart: fmtMin(departMin), arrive: fmtMin(arr1), durationLabel: mins2label(l1) },
+      { carrier: segMeta.carrier, flightNumber: null, indicative: true, from: via.airport, fromCity: via.city || via.airport, to: toAirport, toCity, date, depart: fmtMin(dep2), arrive: fmtMin(arriveMin), durationLabel: mins2label(l2) },
+    ];
+    layovers = [{ airport: via.airport, city: via.city || via.airport, minutes: segMeta.layoverMins, durationLabel: mins2label(segMeta.layoverMins), overnight: Math.floor(dep2 / 1440) > Math.floor(arr1 / 1440), tight: segMeta.layoverMins < 60, indicative: true }];
+  }
   return {
     from: fromAirport, fromCity, to: toAirport, toCity, date,
     depart: fmtMin(departMin), arrive: fmtMin(arriveMin), arriveNextDay: nextDay,
-    durationMins: durationMin, durationLabel: `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`,
+    durationMins: durationMin, durationLabel: mins2label(durationMin),
     stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${viaLabel}`, perSeatUSD,
     via: stops > 0 ? via : null,
+    segments, layovers,
   };
 }
 
