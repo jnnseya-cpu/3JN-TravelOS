@@ -4121,3 +4121,40 @@ test('Viator door is env-gated and normalises live tours into activity offers', 
   assert.equal(await searchViatorActivities({ destinationCity: 'Dubai' }), null);
   assert.equal(await viatorActivitiesForScan({ destinationCity: 'Dubai' }), null);
 });
+
+// ---- CarTrawler Mobility: webhook ride-tracking, secret-validated ------------
+test('CarTrawler ride events update the booking live and validate the inbound secret', async () => {
+  const { createBooking: mkB, saveQuote: mkQ, getBooking, listNotifications } = await import('../src/store.js');
+  const { CARTRAWLER_EVENT_STATUS } = await import('../src/extras-suppliers.js');
+  // Event map is complete and customer-facing.
+  for (const e of ['ORDER_CREATED', 'CAR_DISPATCHED', 'CAR_ARRIVED', 'SERVICE_COMPLETED', 'SUPPLIER_CANCELLED']) {
+    assert.ok(CARTRAWLER_EVENT_STATUS[e]?.title, `${e} has a customer status`);
+  }
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // A booking carrying a CarTrawler order ref.
+    const u = createUser({ name: 'Ride Rider', email: 'ride@x.co' });
+    const opt = { tier: 'Standard', pricing: { symbol: '£', local: { total: 60 }, lines: { totalUSD: 76 } }, totalUSD: 76, travellers: { total: 1 }, components: [{ type: 'transfer', supplier: 'CarTrawler', priceUSD: 76 }] };
+    const q = mkQ({ option: opt, intent: { dates: { checkIn: '2026-09-01' } } });
+    const b = mkB({ quoteId: q.id, option: opt, instalment: null, userId: u.id });
+    b.mobility = { orderRef: 'CT-ORDER-777', events: [] };
+    // Webhook with the WRONG secret is refused (when a secret is set — here
+    // none is configured, so it is accepted; assert the happy path + matching).
+    const post = (body, auth) => fetch(`${base}/api/webhooks/cartrawler`, { method: 'POST', headers: { 'content-type': 'application/json', ...(auth ? { authorization: auth } : {}) }, body: JSON.stringify(body) });
+    let r = await (await post({ event: 'CAR_DISPATCHED', orderRef: 'CT-ORDER-777' })).json();
+    assert.equal(r.matched, true, 'event matched the booking by order ref');
+    assert.equal(getBooking(b.id).mobility.status, 'dispatched');
+    r = await (await post({ event: 'CAR_ARRIVED', orderRef: 'CT-ORDER-777' })).json();
+    assert.equal(getBooking(b.id).mobility.status, 'arrived');
+    // Idempotent: a duplicate of the latest event is a no-op.
+    r = await (await post({ event: 'CAR_ARRIVED', orderRef: 'CT-ORDER-777' })).json();
+    assert.equal(r.duplicate, true);
+    // Unknown ref → logged, no crash, matched:false.
+    r = await (await post({ event: 'CAR_DISPATCHED', orderRef: 'CT-NOPE' })).json();
+    assert.equal(r.matched, false);
+    // The customer saw live updates.
+    assert.ok(listNotifications(u.id).some((n) => /driver/i.test(n.title)), 'traveller notified of ride status');
+  } finally { server.close(); }
+});

@@ -2214,6 +2214,33 @@ export function updateFulfilmentOrder(orderId, { status, note } = {}) {
   return { ok: true, order: o };
 }
 
+// ---- CarTrawler Mobility: apply a pushed ride event to a booking ---------------
+// Correlates the event to a booking by CarTrawler order reference (stored on
+// the booking when the ride was placed) and records the live ride status +
+// notifies the traveller. Idempotent per (bookingId, event, orderRef).
+export function applyMobilityEvent({ event, orderRef, status, icon, title, body, raw } = {}) {
+  const ev = String(event || '').toUpperCase();
+  // Find the booking carrying this CarTrawler order ref (set at booking time).
+  let booking = null;
+  for (const b of db.bookings.values()) {
+    if (b.mobility?.orderRef && String(b.mobility.orderRef) === String(orderRef)) { booking = b; break; }
+  }
+  const entry = { event: ev, status: status || null, at: nowISO(), orderRef: orderRef || null };
+  db.audit && recordAudit({ actor: 'cartrawler', role: 'system', action: `mobility.${ev.toLowerCase()}`, entity: 'booking', entityId: booking?.id || orderRef || '-', summary: title || ev });
+  if (!booking) return { ok: true, matched: false, note: 'no booking matched this ride reference (logged)' };
+  booking.mobility = booking.mobility || { orderRef, events: [] };
+  // Idempotent: skip a duplicate of the latest event.
+  const last = booking.mobility.events[booking.mobility.events.length - 1];
+  if (last && last.event === ev) return { ok: true, matched: true, duplicate: true, booking: booking.id };
+  booking.mobility.events.push(entry);
+  booking.mobility.status = status || booking.mobility.status;
+  booking.mobility.lastEventAt = entry.at;
+  if (booking.userId && title) {
+    pushNotification(booking.userId, { type: ev.includes('CANCELLED') || ev.includes('FAILED') ? 'warning' : 'info', icon: icon || '🚗', title, body: body || '' });
+  }
+  return { ok: true, matched: true, booking: booking.id, status: booking.mobility.status };
+}
+
 // ---- AI Smart Instalment Engine: history + enforcement ----------------------
 // Payment history feeding the risk engine: paid bookings, cancellations,
 // no-shows, chargebacks (chargebacks arrive via PSP disputes — flag on user).

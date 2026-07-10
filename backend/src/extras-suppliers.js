@@ -42,6 +42,13 @@ const VIATOR_KEY = env.VIATOR_API_KEY || '';
 const VIATOR_BASE = env.VIATOR_BASE_URL || 'https://api.viator.com';
 const MOZIO_KEY = env.MOZIO_API_KEY || '';
 const MOZIO_BASE = env.MOZIO_BASE_URL || 'https://api.mozio.com';
+// CarTrawler Mobility (chauffeur/ride). Server-to-server: a Bearer partner
+// token + the X-Mobility-Partner id header on every request. Lifecycle events
+// are PUSHED to our webhook receiver (validated against an inbound secret).
+const CARTRAWLER_TOKEN = env.CARTRAWLER_PARTNER_TOKEN || '';
+const CARTRAWLER_PARTNER_ID = env.CARTRAWLER_PARTNER_ID || '';
+const CARTRAWLER_BASE = env.CARTRAWLER_BASE_URL || '';
+const CARTRAWLER_WEBHOOK_SECRET = env.CARTRAWLER_WEBHOOK_SECRET || '';
 const INSURANCE_KEY = env.XCOVER_API_KEY || env.BATTLEFACE_API_KEY || '';
 // LEGAL GATE: selling insurance in the UK is FCA-regulated. Even with a
 // provider key, sales stay OFF until the IAR/authorisation is confirmed.
@@ -50,6 +57,38 @@ const RAYNA_PORTAL_URL = env.RAYNA_PORTAL_URL || 'https://agents.raynab2b.com';
 
 export function esimApiEnabled() { return (!!ESIMACCESS_KEY || airaloEnabled()) && typeof fetch === 'function'; }
 export function airaloEnabled() { return !!(AIRALO_ID && AIRALO_SECRET) && typeof fetch === 'function'; }
+export function cartrawlerEnabled() { return !!(CARTRAWLER_TOKEN && CARTRAWLER_PARTNER_ID && CARTRAWLER_BASE) && typeof fetch === 'function'; }
+export function cartrawlerWebhookSecret() { return CARTRAWLER_WEBHOOK_SECRET; }
+
+// The customer-facing status for each CarTrawler Mobility lifecycle event.
+export const CARTRAWLER_EVENT_STATUS = {
+  ORDER_CREATED: { status: 'confirmed', icon: '🚗', title: 'Ride confirmed', body: 'Your chauffeur ride is booked and confirmed.' },
+  SUPPLIER_FORWARDED: { status: 'assigned', icon: '🚗', title: 'Driver being assigned', body: 'Your ride was sent to the local operator — a driver is being assigned.' },
+  CAR_DISPATCHED: { status: 'dispatched', icon: '🚕', title: 'Driver on the way', body: 'Your driver has been dispatched and is on the way.' },
+  CAR_ARRIVED: { status: 'arrived', icon: '📍', title: 'Your driver has arrived', body: 'Your driver is at the pickup point.' },
+  SERVICE_IN_PROGRESS: { status: 'in-progress', icon: '🛣', title: 'Ride in progress', body: 'Your ride is underway — safe travels.' },
+  SERVICE_COMPLETED: { status: 'completed', icon: '✅', title: 'Ride completed', body: 'Your ride is complete. Thank you for travelling with 3JN.' },
+  USER_CANCELLED: { status: 'cancelled', icon: '✖️', title: 'Ride cancelled', body: 'Your ride was cancelled.' },
+  SUPPLIER_CANCELLED: { status: 'cancelled', icon: '⚠️', title: 'Ride cancelled by operator', body: 'The operator cancelled your ride — our team is arranging an alternative and any refund due.' },
+  TRANSACTION_COMPLETED: { status: 'paid', icon: '💳', title: 'Ride payment settled', body: 'Payment for your ride is settled.' },
+  TRANSACTION_FAILED: { status: 'payment-failed', icon: '⚠️', title: 'Ride payment issue', body: 'A payment issue occurred on your ride — our team is resolving it.' },
+  PRICE_CONFIRMATION_REQUIRED: { status: 'price-review', icon: '💬', title: 'Ride price update', body: 'The operator needs to confirm a price change — our team is reviewing it before anything is charged.' },
+};
+
+// ---- CarTrawler Mobility: outbound calls (webhook config + rides) --------------
+const CT_HEADERS = () => ({ Authorization: `Bearer ${CARTRAWLER_TOKEN}`, 'X-Mobility-Partner': CARTRAWLER_PARTNER_ID, 'Content-Type': 'application/json', Accept: 'application/json' });
+export async function cartrawlerWebhookOptions() {
+  if (!cartrawlerEnabled()) return null;
+  return httpJSON(`${CARTRAWLER_BASE}/neows/v1/webhook-service/options`, { headers: CT_HEADERS() });
+}
+export async function cartrawlerWebhookInspect() {
+  if (!cartrawlerEnabled()) return null;
+  return httpJSON(`${CARTRAWLER_BASE}/neows/v1/webhook-service/inspect`, { headers: CT_HEADERS() });
+}
+export async function cartrawlerWebhookUpdate(webhooks) {
+  if (!cartrawlerEnabled()) return null;
+  return httpJSON(`${CARTRAWLER_BASE}/neows/v1/webhook-service/update`, { method: 'PATCH', headers: CT_HEADERS(), body: JSON.stringify({ webhooks }) });
+}
 export function viatorEnabled() { return !!VIATOR_KEY && typeof fetch === 'function'; }
 export function mozioEnabled() { return !!MOZIO_KEY && typeof fetch === 'function'; }
 export function insuranceSaleEnabled() { return !!INSURANCE_KEY && INSURANCE_AUTHORISED && typeof fetch === 'function'; }
@@ -69,6 +108,7 @@ export function supplierDoors() {
     { channel: 'transfers', provider: 'Mozio / HolidayTaxis', envVar: 'MOZIO_API_KEY', signup: 'https://www.mozio.com/partners — application', covers: 'Airport transfers, thousands of local operators', fallback: 'ops desk / vendor marketplace' },
     { channel: 'insurance', provider: 'Cover Genius (XCover) / battleface', envVar: 'XCOVER_API_KEY + INSURANCE_AUTHORISED=true', signup: 'https://www.covergenius.com / https://battleface.com — B2B + FCA IAR REQUIRED', covers: 'Travel insurance at 30-40% commission', fallback: 'signpost only — NO sale until FCA authorisation confirmed' },
     { channel: 'carhire', provider: 'CarTrawler / Discover Cars', envVar: 'CARTRAWLER_KEY (later)', signup: 'https://www.cartrawler.com (B2B) · discovercars.com/affiliate (instant)', covers: 'Car hire', fallback: 'ops desk + affiliate links' },
+    { channel: 'mobility', provider: 'CarTrawler Mobility (chauffeur/ride)', envVar: 'CARTRAWLER_PARTNER_TOKEN + CARTRAWLER_PARTNER_ID + CARTRAWLER_BASE_URL + CARTRAWLER_WEBHOOK_SECRET', signup: 'CarTrawler Partner Manager (staging → production)', covers: 'Chauffeur rides with LIVE status: driver dispatched / arrived / in-progress / completed, pushed to our webhook and shown on the booking', fallback: 'ops desk / other transfer providers' },
     { channel: 'ground', provider: 'Distribusion / Trainline Partner', envVar: 'DISTRIBUSION_KEY (later)', signup: 'https://www.distribusion.com — B2B', covers: 'Rail + coach', fallback: 'ops desk' },
     { channel: 'local-services', provider: '3JN Vendor Marketplace', envVar: '— always on', signup: 'vendor onboarding in-OS (risk review + Friday payouts)', covers: 'Photographers, guides, translators, drivers, restaurants', fallback: 'this IS the supply' },
   ].map((d) => ({

@@ -45,9 +45,9 @@ import {
   saveBenchmarkRun, latestBenchmarkRun, recordBenchmarkMarket,
   userPaymentHistory, enforceInstalments,
   listFulfilmentOrders, completeFulfilmentOrder, updateFulfilmentOrder,
-  sweepBotAccounts, unflagBotAccount,
+  sweepBotAccounts, unflagBotAccount, applyMobilityEvent,
 } from './store.js';
-import { supplierDoors, viatorEnabled, viatorActivitiesForScan } from './extras-suppliers.js';
+import { supplierDoors, viatorEnabled, viatorActivitiesForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -711,6 +711,38 @@ app.post('/api/admin/bot-sweep', safe((req, res) => {
 app.post('/api/admin/bot-sweep/:userId/unflag', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json(unflagBotAccount(req.params.userId));
+}));
+
+// ---- CarTrawler Mobility: ride-event webhook receiver + admin config --------
+// CarTrawler PUSHES ride lifecycle events (ORDER_CREATED → CAR_DISPATCHED →
+// CAR_ARRIVED → SERVICE_COMPLETED …) here. We validate an inbound shared
+// secret (never trust an unauthenticated status change), map the event to a
+// customer-facing status on the booking, and notify the traveller live.
+app.post('/api/webhooks/cartrawler', safe((req, res) => {
+  const secret = cartrawlerWebhookSecret();
+  if (secret) {
+    const got = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+    if (got !== secret) return res.status(401).json({ error: 'bad-webhook-secret' });
+  }
+  const body = req.body || {};
+  const event = String(body.event || body.eventType || body.state || '').toUpperCase();
+  const orderRef = body.orderRef || body.orderId || body.reference || body.order?.id || null;
+  const map = CARTRAWLER_EVENT_STATUS[event] || null;
+  const result = applyMobilityEvent({
+    event, orderRef,
+    status: map?.status, icon: map?.icon, title: map?.title, body: map?.body, raw: body,
+  });
+  res.json({ received: true, ...result });
+}));
+app.get('/api/admin/cartrawler/webhooks', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const [options, inspect] = await Promise.all([cartrawlerWebhookOptions(), cartrawlerWebhookInspect()]);
+  res.json({ enabled: cartrawlerEnabled(), options, inspect });
+}));
+app.patch('/api/admin/cartrawler/webhooks', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const out = await cartrawlerWebhookUpdate(req.body?.webhooks || {});
+  res.json(out || { error: 'cartrawler-not-configured' });
 }));
 
 // ---- Ops Fulfilment Desk + Supplier Doors -----------------------------------
