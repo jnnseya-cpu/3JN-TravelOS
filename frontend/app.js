@@ -1903,9 +1903,76 @@ async function renderVendors() {
       </div>` : '<button class="btn btn-gold" onclick="openAuth()">Sign in / Create account</button>'}
     </div>`;
 
-  out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>${portal}
+  // SERVICE LISTINGS + JOBS — for approved vendors who DELIVER services
+  // (photographer, guide, driver, translator, restaurant). They list at their
+  // own price, compete in real package searches, and earn 90% per delivered
+  // job (paid the Friday after the service date).
+  let servicesBlock = '';
+  if (mine && mine.status === 'approved') {
+    let jobs = [];
+    try { jobs = (await api('/api/vendors/jobs')).jobs || []; } catch { /* none yet */ }
+    const openJobs = jobs.filter((j) => j.status !== 'completed');
+    const myServices = (mine.services || []).map((s) => `
+      <div class="kv"><span>${esc(s.title)} <span class="muted">· ${esc(s.type)} · ${esc(s.city)} · ${esc(s.unit)}</span></span>
+      <span>£${s.priceGbp} <a onclick="removeVendorSvc('${esc(s.id)}')" style="color:#ff8a8a;cursor:pointer;font-size:11px">remove</a></span></div>`).join('')
+      || '<p class="muted" style="font-size:12px">No services listed yet — add your first below. It goes live in package searches for your city immediately.</p>';
+    const jobCards = openJobs.map((j) => `
+      <div style="padding:10px 0;border-bottom:1px solid rgba(223,229,238,.08)">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><strong>${esc(j.componentLabel)}</strong><span style="color:var(--gold)">${esc(j.symbol)}${j.sellPrice} · you earn £${(j.sellPrice * 0.9).toFixed(2)}</span></div>
+        <div class="muted" style="font-size:12px;margin-top:3px">${esc(j.destination || '')}${j.serviceDate ? ' · ' + esc(j.serviceDate) : ''}${j.pax ? ' · ' + j.pax + ' pax' : ''}${j.customer?.name ? ' · ' + esc(j.customer.name) : ''}</div>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+          <input class="in" id="vjref-${esc(j.id)}" placeholder="Your confirmation ref for the customer" style="max-width:240px;font-size:12px">
+          <button class="btn btn-gold btn-sm" onclick="confirmVendorJob('${esc(j.id)}')">✓ Confirm job</button>
+        </div>
+      </div>`).join('') || '<p class="muted" style="font-size:12px">No open jobs — when a customer books one of your services, it appears here and you\'re notified instantly.</p>';
+    servicesBlock = `
+    <div class="console-grid" style="margin-top:16px">
+      <div class="card pad">
+        <span class="eyebrow">💼 Jobs — customers who booked YOUR services (${openJobs.length})</span>
+        <p class="muted" style="font-size:12px;margin:6px 0">Confirm each job with your reference — the customer's documents update instantly. You earn <strong>90%</strong>, released the Friday after the service date.</p>
+        ${jobCards}
+      </div>
+      <div class="card pad">
+        <span class="eyebrow">🛍 My service listings</span>
+        ${myServices}
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:flex-end">
+          <div class="field"><label>Type</label><select class="in" id="vsvcType" style="max-width:140px"><option value="photographer">Photographer</option><option value="guide">Local guide</option><option value="driver">Local driver</option><option value="translator">Translator</option><option value="restaurant">Restaurant</option><option value="activity">Activity / tour</option></select></div>
+          <div class="field" style="flex:1;min-width:160px"><label>Title</label><input class="in" id="vsvcTitle" placeholder="e.g. Golden-hour photo shoot"></div>
+          <div class="field"><label>City</label><input class="in" id="vsvcCity" placeholder="Dubai" style="max-width:120px"></div>
+          <div class="field"><label>Price £</label><input class="in" id="vsvcPrice" inputmode="decimal" style="max-width:90px"></div>
+          <div class="field"><label>Unit</label><input class="in" id="vsvcUnit" placeholder="per 2h shoot" style="max-width:130px"></div>
+          <button class="btn btn-gold btn-sm" onclick="addVendorSvc()">+ List service</button>
+        </div>
+        <p class="muted" style="font-size:11px;margin-top:8px">You set the price; customers pay it inside their package. 3JN keeps a 10% platform fee — you receive 90% after delivery.</p>
+      </div>
+    </div>`;
+  }
+
+  out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>${portal}${servicesBlock}
     <p class="center muted" style="font-size:12px;margin-top:18px">Commission is never paid on refunds, chargebacks, fraud, self-referrals or policy violations. The platform always keeps its minimum margin.</p>`;
 }
+window.addVendorSvc = async () => {
+  const body = { type: $('#vsvcType')?.value, title: $('#vsvcTitle')?.value, city: $('#vsvcCity')?.value, priceGbp: parseFloat($('#vsvcPrice')?.value), unit: $('#vsvcUnit')?.value };
+  try {
+    const r = await api('/api/vendors/services', { method: 'POST', body: JSON.stringify(body) });
+    if (!r.ok) { toast(r.message || 'Check the listing details.'); return; }
+    toast('✓ Listed — live in package searches for ' + (body.city || 'your city') + ' now.');
+    renderVendors();
+  } catch { toast('Could not list the service.'); }
+};
+window.removeVendorSvc = async (id) => {
+  try { await api(`/api/vendors/services/${id}`, { method: 'DELETE' }); toast('Removed.'); renderVendors(); } catch { toast('Could not remove.'); }
+};
+window.confirmVendorJob = async (id) => {
+  const ref = $(`#vjref-${id}`)?.value?.trim();
+  if (!ref) { toast('Enter your confirmation reference — the customer sees it in their documents.'); return; }
+  try {
+    const r = await api(`/api/vendors/jobs/${id}/confirm`, { method: 'POST', body: JSON.stringify({ ref }) });
+    if (!r.ok) { toast(r.message || r.error || 'Could not confirm.'); return; }
+    toast(`✅ Job confirmed — you earn £${r.earnings ? r.earnings.vendorGbp : ''} after the service date.`);
+    renderVendors();
+  } catch { toast('Could not confirm the job.'); }
+};
 window.applyVendorFlow = async (tier) => {
   try {
     const r = await api('/api/vendors/apply', { method: 'POST', body: JSON.stringify({ tier, identityDoc: true, addressProof: true, socialHandles: ['pending-verification'], businessHistory: tier === 'registered', documents: tier === 'registered' ? ['company-registration', 'tax-registration', 'director-id', 'bank-proof'] : [] }) });

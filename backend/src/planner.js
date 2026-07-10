@@ -11,7 +11,7 @@ import { findDestination, originForCountry, resolveOrigin } from './destinations
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive, farePrediction } from './price-dive.js';
-import { hostListingsForCity, hostExperiencesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
+import { hostListingsForCity, hostExperiencesForCity, vendorServicesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
 import { route } from './ai-gateway.js';
@@ -138,7 +138,10 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     }
   }
 
-  const scan = scanAll(intent, intent.destination, origin, live, communityHosts, communityExperiences);
+  // Real marketplace vendors serving this city compete in the local-service
+  // slots (photographer, guide, driver…) at their own listed prices.
+  const vendorServices = vendorServicesForCity(intent.destination.city);
+  const scan = scanAll(intent, intent.destination, origin, live, communityHosts, communityExperiences, vendorServices);
   const expectedBookingUSD = roughTotal(scan);
 
   // International = the journey crosses a border. Domestic only when we KNOW both

@@ -1688,6 +1688,7 @@ export function vendorDashboard(userId) {
   return {
     ...metrics, status: p.status, vendorCode: p.vendorCode,
     sellLink: `https://3jntravel.com/?vendor=${p.vendorCode}`,
+    services: p.services || [],
     recentSales: sales.slice(-8).reverse(),
     payoutHistory: payouts.slice(-8).reverse(),
     riskReview: { overallRisk: p.riskReview?.overallRisk, recommendation: p.riskReview?.recommendation },
@@ -1918,6 +1919,92 @@ export function searchToBookStats() {
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders'];
 
+// ---- Vendor service listings: real local suppliers in real packages -----------
+// An APPROVED vendor (risk-reviewed + admin-approved) can list the services
+// they personally deliver — photographer, guide, driver, translator,
+// restaurant — with their own price. Listings compete in the package scan for
+// their city; when a customer books one, the JOB routes to that vendor via
+// the Fulfilment Desk, and the vendor earns 90% (3JN keeps the 10% platform
+// fee), released by the Friday payout run AFTER the service date passes.
+const VENDOR_SERVICE_TYPES = ['photographer', 'guide', 'restaurant', 'translator', 'driver', 'activity'];
+export function addVendorService(userId, { type, title, city, priceGbp, unit, description } = {}) {
+  const p = db.vendorProfiles.get(userId);
+  if (!p || p.status !== 'approved') return { ok: false, error: 'vendor-not-approved', message: 'Only approved vendors can list services — apply to the Vendor Partner Programme first.' };
+  const t = String(type || '').toLowerCase();
+  if (!VENDOR_SERVICE_TYPES.includes(t)) return { ok: false, error: 'bad-type', message: `Service type must be one of: ${VENDOR_SERVICE_TYPES.join(', ')}.` };
+  const price = Math.round(Number(priceGbp) * 100) / 100;
+  if (!(price > 0)) return { ok: false, error: 'bad-price', message: 'Set your price in GBP.' };
+  const cityName = String(city || '').trim();
+  if (cityName.length < 2) return { ok: false, error: 'bad-city', message: 'Name the city you serve.' };
+  p.services = p.services || [];
+  if (p.services.length >= 10) return { ok: false, error: 'too-many', message: 'Up to 10 service listings per vendor.' };
+  const svc = {
+    id: id('vsvc'), type: t,
+    title: String(title || '').trim().slice(0, 80) || `${t[0].toUpperCase()}${t.slice(1)} service`,
+    city: cityName.slice(0, 60),
+    priceGbp: price,
+    unit: String(unit || 'per booking').slice(0, 40),
+    description: String(description || '').trim().slice(0, 300),
+    status: 'live', createdAt: nowISO(),
+  };
+  p.services.push(svc);
+  recordAudit({ actor: userId, role: 'vendor', action: 'vendor.service.listed', entity: 'vendor', entityId: userId, summary: `${svc.type} · ${svc.city} · £${svc.priceGbp}` });
+  return { ok: true, service: svc };
+}
+export function removeVendorService(userId, serviceId) {
+  const p = db.vendorProfiles.get(userId);
+  if (!p?.services) return { ok: false, error: 'not-found' };
+  const i = p.services.findIndex((s) => s.id === serviceId);
+  if (i === -1) return { ok: false, error: 'not-found' };
+  p.services.splice(i, 1);
+  return { ok: true };
+}
+// Live vendor services for a city (feeds the package scan). GBP → USD at the
+// platform anchor so they price alongside estimator offers.
+export function vendorServicesForCity(city, type = null) {
+  const want = String(city || '').trim().toLowerCase();
+  if (!want) return [];
+  const out = [];
+  for (const [vendorId, p] of db.vendorProfiles) {
+    if (p.status !== 'approved') continue;
+    for (const s of p.services || []) {
+      if (s.status !== 'live' || s.city.toLowerCase() !== want) continue;
+      if (type && s.type !== type) continue;
+      out.push({
+        type: s.type,
+        supplier: `${s.title} · ${p.businessName || 'verified vendor'}`,
+        verified: true,
+        reliabilityScore: 88, // risk-reviewed + admin-approved local vendor
+        priceUSD: Math.round((s.priceGbp / 0.79) * 100) / 100,
+        details: { unit: s.unit, vendorId, vendorServiceId: s.id, vendorService: true, description: s.description },
+        sourcedVia: '3JN Vendor Marketplace (local vendor)',
+        sourcedType: 'marketplace',
+      });
+    }
+  }
+  return out;
+}
+// A vendor confirmed delivery of a booked job: create the 90/10 earnings row.
+// serviceDate gates the payout — money releases the Friday AFTER delivery.
+export function recordVendorServiceJob({ vendorId, bookingId, orderId, priceGbp, serviceDate }) {
+  const p = db.vendorProfiles.get(vendorId);
+  if (!p || p.status !== 'approved') return { ok: false, error: 'vendor-not-approved' };
+  const price = Math.round(Number(priceGbp) * 100) / 100;
+  const vendorGbp = Math.round(price * 0.90 * 100) / 100;
+  const sale = {
+    id: id('vsl'), vendorId, bookingId: bookingId || null, orderId: orderId || null,
+    model: 'service-delivery', saleGbp: price, platformFeeGbp: Math.round(price * 0.10 * 100) / 100,
+    vendorRate: 0.90, vendorGbp, platformKeepsGbp: Math.round((price - vendorGbp) * 100) / 100,
+    status: 'confirmed', paymentCleared: true, validated: true,
+    serviceDate: serviceDate || null,
+    refunded: false, chargeback: false, fraudFlag: false, complianceHold: false,
+    paidOut: false, at: nowISO(),
+  };
+  db.vendorSales.push(sale);
+  recordAudit({ actor: vendorId, role: 'vendor', action: 'vendor.job.confirmed', entity: 'booking', entityId: bookingId || '-', summary: `service delivery £${price} · vendor earns £${vendorGbp} after ${serviceDate || 'delivery'}` });
+  return { ok: true, sale };
+}
+
 // ---- Ops Fulfilment Desk ------------------------------------------------------
 // "Whenever a customer does something, I have to complete it manually — I want
 // the automatic way." This is it: every PAID booking auto-decomposes into
@@ -1956,11 +2043,17 @@ export function createFulfilmentOrders(booking) {
       sellPrice: Math.round((c.priceUSD || 0) * rate * 100) / 100, symbol: sym,
       customer: { name: lead.fullName || null, email: lead.email || null, phone: lead.phone || null, nationality: lead.nationality || null, passport: lead.passportNumber || null },
       userId: booking.userId || null,
+      vendorId: c.details?.vendorId || null,
       supplierRef: null, note: null, createdAt: nowISO(), completedAt: null,
     };
     order.portalPayload = portalPayload(order);
     db.fulfilmentOrders.push(order);
     created.push(order);
+    // A marketplace vendor's job: tell the vendor immediately — the customer
+    // has PAID and is waiting on them.
+    if (order.vendorId) {
+      pushNotification(order.vendorId, { type: 'success', icon: '💼', title: 'New job — customer booked your service', body: `${order.componentLabel} in ${order.destination || 'your city'}${order.serviceDate ? ' on ' + order.serviceDate : ''} for ${order.symbol}${order.sellPrice}. Confirm it in your Vendor dashboard → Jobs; you earn 90% after delivery.` });
+    }
   });
   booking.fulfilmentOrdersCreated = true;
   if (created.length) {
@@ -1997,7 +2090,7 @@ export function listFulfilmentOrders({ status } = {}) {
   return status ? all.filter((o) => o.status === status) : all;
 }
 
-export function completeFulfilmentOrder(orderId, { supplierRef, note, auto = false } = {}) {
+export function completeFulfilmentOrder(orderId, { supplierRef, note, auto = false, completedBy = null, netCostGbp = null } = {}) {
   const o = db.fulfilmentOrders.find((x) => x.id === orderId);
   if (!o) return { ok: false, error: 'order-not-found' };
   if (o.status === 'completed') return { ok: true, order: o, already: true };
@@ -2006,7 +2099,13 @@ export function completeFulfilmentOrder(orderId, { supplierRef, note, auto = fal
   o.supplierRef = String(supplierRef || '').trim() || o.supplierRef;
   o.note = note || o.note;
   o.completedAt = nowISO();
-  o.completedBy = auto ? 'auto' : 'ops';
+  o.completedBy = completedBy || (auto ? 'auto' : 'ops');
+  // MARGIN CAPTURE: what did this cost us at the supplier (e.g. Rayna NET
+  // rate)? sell − net = 3JN's margin on the component, on the record.
+  if (Number(netCostGbp) > 0) {
+    o.netCostGbp = Math.round(Number(netCostGbp) * 100) / 100;
+    o.marginGbp = Math.round(((o.sellPrice || 0) - o.netCostGbp) * 100) / 100;
+  }
   // Write the confirmation INTO the booking component so documents + Console
   // show the real supplier reference from this moment on.
   const b = db.bookings.get(o.bookingId);

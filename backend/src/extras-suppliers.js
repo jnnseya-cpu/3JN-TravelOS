@@ -146,6 +146,9 @@ export async function searchMozioTransfers({ from, to, dateTimeISO, pax = 2 }) {
 // Desk under that channel with a pre-packed portal payload.
 export function fulfilmentChannelFor(component, destCountry) {
   const t = component?.type;
+  // A service listed by a REAL marketplace vendor routes to THAT vendor as a
+  // job — they confirm delivery and earn 90% after the service date.
+  if (component?.details?.vendorService && component.details.vendorId) return 'ops:vendor-delivery';
   if (t === 'esim') return esimApiEnabled() ? 'auto:esim-api' : 'auto:esim-inhouse';
   if (t === 'activity' || t === 'activities') {
     if (component.agent || component.agentId || component.details?.agent) return 'ops:rayna';

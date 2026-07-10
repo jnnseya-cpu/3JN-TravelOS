@@ -824,7 +824,7 @@ export function toOneWayLeg(offer, leg, fromCity, toCity) {
 
 // Run a full scan across every requested component. Returns a map of
 // component -> array of supplier offers (or a single offer for visa).
-export function scanAll(intent, dest, origin, live = null, communityHosts = null, communityExperiences = null) {
+export function scanAll(intent, dest, origin, live = null, communityHosts = null, communityExperiences = null, vendorServices = null) {
   const scan = {};
   const wanted = new Set(intent.components);
 
@@ -996,8 +996,14 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
     }
   }
   // Marketplace basket services — active whenever the traveller asks for them.
+  // REAL local vendors (risk-reviewed, admin-approved, listing their own
+  // services at their own price) compete alongside the vetted catalogue —
+  // a well-priced vendor wins the slot on merit.
   for (const svc of ['photographer', 'guide', 'restaurant', 'translator', 'driver']) {
-    if (wanted.has(svc)) scan[svc] = scanService(svc, intent, dest);
+    if (wanted.has(svc)) {
+      const local = (vendorServices || []).filter((v) => v.type === svc);
+      scan[svc] = [...local, ...scanService(svc, intent, dest)];
+    }
   }
   if (wanted.has('visa')) { const v = scanVisa(intent, dest); scan.visa = v ? [v] : []; }
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);

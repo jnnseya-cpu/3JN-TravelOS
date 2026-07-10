@@ -39,6 +39,7 @@ import {
   rewardsLeaderboard, requestWithdrawal,
   createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, latestBookingForUser,
   applyVendor, getVendorProfile, decideVendor, vendorDashboard, vendorLeaderboard,
+  addVendorService, removeVendorService, recordVendorServiceJob,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
   getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
   saveBenchmarkRun, latestBenchmarkRun, recordBenchmarkMarket,
@@ -1467,6 +1468,40 @@ app.get('/api/vendors/me', safe((req, res) => {
 }));
 app.get('/api/vendors/leaderboard', safe((req, res) => {
   res.json({ leaderboard: vendorLeaderboard(Number(req.query.limit) || 20) });
+}));
+// Vendor SERVICE LISTINGS: an approved vendor lists what they deliver
+// (photographer/guide/driver/translator/restaurant) at their own price;
+// the listing competes in real package searches for their city.
+app.post('/api/vendors/services', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(addVendorService(user.id, req.body || {}));
+}));
+app.delete('/api/vendors/services/:id', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(removeVendorService(user.id, req.params.id));
+}));
+// Vendor JOBS: paid bookings of the vendor's services, waiting on delivery
+// confirmation. Confirming creates the 90/10 earnings row (released the
+// Friday AFTER the service date) and notifies the customer.
+app.get('/api/vendors/jobs', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ jobs: listFulfilmentOrders().filter((o) => o.vendorId === user.id) });
+}));
+app.post('/api/vendors/jobs/:id/confirm', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const order = listFulfilmentOrders().find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'job-not-found' });
+  if (order.vendorId !== user.id) return res.status(403).json({ error: 'not-your-job' });
+  const ref = String(req.body?.ref || '').trim();
+  if (!ref) return res.status(400).json({ error: 'confirmation-required', message: 'Enter your booking/confirmation reference for the customer.' });
+  const done = completeFulfilmentOrder(order.id, { supplierRef: ref, completedBy: 'vendor' });
+  if (!done.ok) return res.json(done);
+  const sale = recordVendorServiceJob({ vendorId: user.id, bookingId: order.bookingId, orderId: order.id, priceGbp: order.sellPrice, serviceDate: order.serviceDate });
+  res.json({ ok: true, order: done.order, earnings: sale.ok ? sale.sale : null });
 }));
 // Admin: applications queue, decisions, weekly payout run, top-seller award.
 app.get('/api/admin/vendors', safe((req, res) => {

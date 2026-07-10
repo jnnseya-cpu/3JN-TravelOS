@@ -3794,3 +3794,49 @@ test('supplier doors report every acquisition target; insurance stays closed wit
   assert.equal(vendors.open, true, 'vendor marketplace is our own supply');
   assert.equal(insuranceSaleEnabled(), false, 'insurance sales fail CLOSED without key + INSURANCE_AUTHORISED=true (FCA)');
 });
+
+// ---- Vendor service marketplace: list → compete → job → 90/10 payout ---------
+test('a real vendor service competes in searches, routes the job to the vendor, and pays 90% after delivery', async () => {
+  const { applyVendor: apV, decideVendor: decV, addVendorService, vendorServicesForCity, createBooking: mkB, saveQuote: mkQ, recordPayment, listFulfilmentOrders, completeFulfilmentOrder, recordVendorServiceJob, getBooking } = await import('../src/store.js');
+  const { saleIsPayable } = await import('../src/vendors.js');
+  // Photographer signs up as a vendor, gets approved, lists their service.
+  const ph = createUser({ name: 'Dubai Photographer', email: 'dubai.photo@example.com' });
+  apV(ph.id, { businessName: 'Lens of Dubai', tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@lensofdubai'] });
+  decV(ph.id, { approve: true });
+  // Unapproved users cannot list.
+  const rando = createUser({ name: 'No Vendor', email: 'no.vendor@example.com' });
+  assert.equal(addVendorService(rando.id, { type: 'photographer', city: 'Dubai', priceGbp: 100 }).ok, false);
+  const listed = addVendorService(ph.id, { type: 'photographer', title: 'Golden-hour shoot', city: 'Dubai', priceGbp: 120, unit: 'per 2h shoot' });
+  assert.equal(listed.ok, true);
+  // The listing appears in the city's service pool and in a REAL search.
+  const pool = vendorServicesForCity('Dubai', 'photographer');
+  assert.ok(pool.some((s) => s.details.vendorId === ph.id), 'listing live for the city');
+  const r = plan({ text: 'Trip to Dubai for 4 nights, 2 adults, flights and hotel with a photographer', context: GB, user: null, searchTier: 'smart' });
+  const comp = r.packages.options[0].components.find((c) => c.type === 'photographer');
+  assert.ok(comp, 'photographer packaged');
+  assert.ok(comp.details.vendorId === ph.id, 'the real vendor WON the slot on price (£120 beats the catalogue)');
+  // Customer books & pays → the job routes to the vendor.
+  const option = r.packages.options[0];
+  const q = mkQ({ option, intent: r.intent });
+  const b = mkB({ quoteId: q.id, option, instalment: null, userId: createUser({ name: 'Cust', email: 'svc.cust@example.com' }).id, paymentMethod: 'card', lead: { fullName: 'Svc Cust', nationality: 'GB' } });
+  recordPayment(b.id, { type: 'full', amount: option.pricing.local.total, gateway: 'stripe' });
+  await new Promise((res) => setTimeout(res, 20));
+  const job = listFulfilmentOrders().find((o) => o.bookingId === b.id && o.componentType === 'photographer');
+  assert.ok(job, 'fulfilment order created');
+  assert.equal(job.channel, 'ops:vendor-delivery');
+  assert.equal(job.vendorId, ph.id, 'job assigned to THE vendor whose service was booked');
+  // Vendor confirms → customer document updated + 90/10 earnings row gated on service date.
+  const done = completeFulfilmentOrder(job.id, { supplierRef: 'LOD-2026-001', completedBy: 'vendor' });
+  assert.equal(done.ok, true);
+  const sale = recordVendorServiceJob({ vendorId: ph.id, bookingId: b.id, orderId: job.id, priceGbp: job.sellPrice, serviceDate: job.serviceDate });
+  assert.equal(sale.ok, true);
+  assert.equal(sale.sale.model, 'service-delivery');
+  assert.ok(Math.abs(sale.sale.vendorGbp - job.sellPrice * 0.9) < 0.02, 'vendor earns 90%');
+  assert.ok(Math.abs(sale.sale.platformKeepsGbp - job.sellPrice * 0.1) < 0.02, '3JN keeps the 10% platform fee');
+  // Money releases only AFTER the service date (Friday run gate).
+  if (sale.sale.serviceDate) {
+    assert.equal(saleIsPayable(sale.sale, '2026-08-01'), false, 'not payable before the service happens');
+    const after = new Date(new Date(sale.sale.serviceDate + 'T00:00:00Z').getTime() + 2 * 86400000).toISOString().slice(0, 10);
+    assert.equal(saleIsPayable(sale.sale, after), true, 'payable once the service date has passed');
+  }
+});
