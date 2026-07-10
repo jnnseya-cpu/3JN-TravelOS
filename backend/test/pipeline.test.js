@@ -469,14 +469,25 @@ test('unresolved destination asks clarifying questions instead of crashing', () 
   assert.ok(result.questions.find((q) => q.id === 'destination'));
 });
 
-test('price breakdown applies loyalty discount + 10% commission', () => {
+test('price breakdown funds loyalty discount from commission, never below supplier cost', () => {
+  // Voyager (3%) on a $1000 supplier-cost package.
   const b = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 1200 });
-  // Voyager = 3% off suppliers
-  assert.equal(b.lines.loyaltyDiscountUSD, 30);
-  assert.equal(b.lines.netSuppliersUSD, 970);
-  assert.equal(b.lines.commissionUSD, 97); // 10% of net
-  assert.equal(b.lines.totalUSD, 1067);
+  assert.equal(b.lines.loyaltyDiscountUSD, 30);       // the member's rebate
+  assert.equal(b.lines.netSuppliersUSD, 1000);        // supplier cost ALWAYS collected in full
+  assert.equal(b.lines.grossCommissionUSD, 100);      // the headline 10% on the receipt
+  assert.equal(b.lines.commissionUSD, 70);            // our real take = gross − rebate
+  assert.equal(b.lines.totalUSD, 1070);               // customer pays cost + our net take
+  // Receipt stays consistent: suppliers − loyalty + gross commission = total.
+  assert.equal(b.lines.suppliersUSD - b.lines.loyaltyDiscountUSD + b.lines.grossCommissionUSD, b.lines.totalUSD);
   assert.ok(b.lines.savingsVsMarketUSD > 0);
+
+  // Elite (10%) must reach break-even, NEVER a loss: the discount is capped at
+  // our commission and the supplier cost is still fully covered.
+  const elite = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 15000 });
+  assert.equal(elite.lines.loyaltyDiscountUSD, 100);  // full 10%, capped at commission
+  assert.equal(elite.lines.commissionUSD, 0);         // we keep nothing on the transaction…
+  assert.equal(elite.lines.totalUSD, 1000);           // …but never sell below the $1000 cost
+  assert.ok(elite.lines.totalUSD >= elite.lines.netSuppliersUSD, 'never below supplier cost');
 });
 
 test('loyalty tiers map points correctly', () => {

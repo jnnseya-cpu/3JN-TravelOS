@@ -855,7 +855,7 @@ function optionCard(o, sym, intent) {
       <table class="brk">
         <tr><td>Suppliers</td><td>${money2(p.local.suppliers, sym)}</td></tr>
         <tr class="save"><td>Loyalty discount (${p.loyaltyTier} · ${(p.loyaltyDiscountPct * 100).toFixed(0)}%)</td><td>-${money2(p.local.loyaltyDiscount, sym)}</td></tr>
-        <tr><td>${esc(p.feeLabel || '3JN commission (10%)')}</td><td>${p.local.commission > 0 ? money2(p.local.commission, sym) : '<span style="color:var(--green)">FREE</span>'}</td></tr>
+        <tr><td>${esc(p.feeLabel || '3JN commission (10%)')}</td><td>${(p.local.grossCommission ?? p.local.commission) > 0 ? money2(p.local.grossCommission ?? p.local.commission, sym) : '<span style="color:var(--green)">FREE</span>'}</td></tr>
         ${p.local.duffelFee > 0 ? `<tr><td>Airline booking fees (Duffel)</td><td>${money2(p.local.duffelFee, sym)}</td></tr>` : ''}
         <tr class="total"><td>Total</td><td>${money2(p.local.total, sym)}</td></tr>
       </table>
