@@ -668,10 +668,20 @@ function renderOptions(data) {
     psNote = `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`;
   }
 
+  // Clearly-LABELLED sponsored strip — separate from (never mixed into) the
+  // ranked options, so the cheapest-reliable pick is never reordered by ads.
+  const sponsoredStrip = Array.isArray(data.sponsored) && data.sponsored.length
+    ? `<div class="card pad" style="margin-top:14px;border-style:dashed">
+        <span class="eyebrow">Sponsored · from our partners</span>
+        <div class="chips" style="margin-top:8px">${data.sponsored.map((s) => `<span class="chip">${esc(s.partner)} <span class="muted" style="font-size:10px">Ad</span></span>`).join('')}</div>
+        <p class="muted" style="font-size:11px;margin:6px 0 0">Sponsored placements are clearly labelled and never change your recommended or cheapest pick.</p>
+      </div>`
+    : '';
+
   $('#plannerOut').innerHTML = gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.</p></div>
-    <div class="opt-grid">${opts}</div>` + compareCard(data, sym);
+    <div class="opt-grid">${opts}</div>` + sponsoredStrip + compareCard(data, sym);
 
   // stash options for booking
   window.__options = {};
@@ -2208,6 +2218,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
+      <button class="btn btn-ghost btn-sm" onclick="openPlacements()">💰 Sponsored placements</button>
     </div>
     <div class="kpi-grid">${kpiCards}</div>
     ${uh ? (() => {
@@ -2401,6 +2412,46 @@ window.runBotSweep = async () => {
         <button class="btn btn-ghost btn-sm" onclick="unflagBot('${esc(u.userId)}', this)">Restore</button></div>`).join('')}`);
   } catch { toast('Sweep failed — are you signed in as admin?'); }
 };
+// ---- Sponsored placements (admin revenue tool) ----------------------------
+window.openPlacements = async () => {
+  let d;
+  try { d = await api('/api/admin/placements'); } catch { toast('Admin only.'); return; }
+  const rows = (d.placements || []).length
+    ? d.placements.map((p) => `<div class="kv"><span>${esc(p.partner)} <span class="muted" style="font-size:11px">· ${esc(p.section)} · ${esc(p.destination)} · £${p.feeGBPMonth}/mo ${p.active ? '' : '· <span style="color:var(--muted)">paused</span>'}</span></span>
+      <span style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="togglePlacement('${p.id}', ${!p.active}, this)">${p.active ? 'Pause' : 'Resume'}</button>
+      <button class="btn btn-ghost btn-sm" onclick="deletePlacement('${p.id}', this)">✕</button></span></div>`).join('')
+    : '<div class="muted" style="font-size:12.5px">No placements yet — create one below.</div>';
+  const opts = (d.sections || []).map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  modal(`<span class="eyebrow">💰 Sponsored placements · £${d.monthlyRevenueGBP}/mo recurring</span>
+    <h3 style="margin:6px 0 8px">Labelled supplier placements</h3>
+    <p class="muted" style="font-size:11.5px;margin:0 0 10px">Placements show as a clearly-marked "Sponsored" strip. They never override the reliability floor or reorder the cheapest-reliable pick.</p>
+    <div style="max-height:200px;overflow:auto">${rows}</div>
+    <div class="card pad" style="margin-top:12px">
+      <span class="eyebrow">New placement</span>
+      <div class="field" style="margin-top:8px"><label>Partner / supplier</label><input class="in" id="plPartner" placeholder="e.g. Rove Hotels"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:160px"><label>Section</label><select class="in" id="plSection">${opts}</select></div>
+        <div class="field" style="width:130px"><label>Destination</label><input class="in" id="plDest" value="*" placeholder="* = all"></div>
+        <div class="field" style="width:120px"><label>Fee £/month</label><input class="in" id="plFee" type="number" value="250" min="0"></div>
+      </div>
+      <button class="btn btn-gold btn-block" style="margin-top:12px" onclick="createPlacement()">Create placement</button>
+    </div>`);
+};
+window.createPlacement = async () => {
+  const partner = $('#plPartner')?.value.trim();
+  if (!partner) { toast('Enter a partner name.'); return; }
+  try {
+    const r = await api('/api/admin/placements', { method: 'POST', body: JSON.stringify({ partner, section: $('#plSection').value, destination: $('#plDest').value.trim() || '*', feeGBPMonth: Number($('#plFee').value) || 0 }) });
+    if (r.ok) { toast('✓ Placement created.'); openPlacements(); } else { toast(r.message || 'Invalid placement.'); }
+  } catch { toast('Could not create placement.'); }
+};
+window.togglePlacement = async (id, active, btn) => {
+  try { const r = await api(`/api/admin/placements/${id}`, { method: 'PATCH', body: JSON.stringify({ active }) }); if (r.ok) openPlacements(); } catch { toast('Failed.'); }
+};
+window.deletePlacement = async (id) => {
+  try { const r = await api(`/api/admin/placements/${id}`, { method: 'DELETE' }); if (r.ok) { toast('Removed.'); openPlacements(); } } catch { toast('Failed.'); }
+};
+
 window.unflagBot = async (userId, btn) => {
   try { const r = await api(`/api/admin/bot-sweep/${userId}/unflag`, { method: 'POST', body: '{}' }); if (r.ok) { btn.textContent = '✓ Restored'; btn.disabled = true; toast('Account restored.'); } } catch { toast('Could not restore.'); }
 };
@@ -3954,6 +4005,35 @@ $('#notifBtn')?.addEventListener('click', openNotifications);
 $('#notifBtnMobile')?.addEventListener('click', () => { closeMobileNav(); openNotifications(); });
 
 // ---- Contact form ---------------------------------------------------------
+// ---- Group Travel quote (churches, schools, teams, diaspora groups) --------
+$('#groupTravelLink')?.addEventListener('click', () => openGroupQuote());
+window.openGroupQuote = () => {
+  modal(`
+    <span class="eyebrow">Group Travel</span>
+    <h3 style="margin:6px 0 4px">Get a group quote</h3>
+    <p class="muted" style="font-size:13px">Churches, schools, sports teams, weddings, conferences, family reunions and diaspora groups — one coordinator, one plan, group rates.</p>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:130px"><label>How many travellers?</label><input class="in" id="grpHead" type="number" value="20" min="1"></div>
+      <div class="field" style="flex:1;min-width:150px"><label>Est. trip value each (optional)</label><input class="in" id="grpValue" type="number" placeholder="e.g. 900"></div>
+    </div>
+    <button class="btn btn-gold btn-block" style="margin-top:12px" onclick="calcGroupQuote()">Calculate group quote</button>
+    <div id="grpOut" style="margin-top:12px"></div>`);
+};
+window.calcGroupQuote = async () => {
+  const headcount = Number($('#grpHead')?.value) || 10;
+  const tripValueGBP = Number($('#grpValue')?.value) || 0;
+  let d;
+  try { d = await api('/api/group/quote', { method: 'POST', body: JSON.stringify({ headcount, tripValueGBP }) }); } catch { toast('Could not calculate.'); return; }
+  const out = $('#grpOut'); if (!out) return;
+  out.innerHTML = `<div class="card pad">
+    <div class="kv"><span>Group planning fee</span><span>£${d.planningFeeGBP}</span></div>
+    <div class="kv"><span>Coordination fee (£5 × ${d.headcount})</span><span>£${d.groupBookingFeeGBP}</span></div>
+    <div class="kv total"><span><strong>Upfront to start</strong></span><span><strong style="color:var(--gold)">£${d.totalUpfrontGBP}</strong></span></div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Plus the standard 10% on the final package. Every traveller gets their own itinerary, and the group shares one coordinator. We'll email <strong>${esc(d.contact)}</strong> to build it.</p>
+    <button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal(); (document.getElementById('contactLink')||{click(){}}).click()">Talk to a group specialist</button>
+  </div>`;
+};
+
 $('#contactLink')?.addEventListener('click', () => {
   modal(`
     <span class="eyebrow">Contact 3JN Travel OS</span>

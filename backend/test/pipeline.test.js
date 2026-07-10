@@ -4507,3 +4507,46 @@ test('wave6 wired: adjustedReliability blends real reviews into a supplier score
 test('wave6 wired: Mozio transfer overlay is a safe no-op when the door is shut', async () => {
   assert.equal(await mozioScanW6({ destAirport: 'DXB', destCity: 'Dubai' }), null);
 });
+
+// ---- Revenue features: sponsored placements + priority/group fees -----------
+import { createSponsoredPlacement as createPlW6, sponsoredPlacementsFor as sponForW6, sponsoredPlacementRevenueGBP as splRevW6, listSponsoredPlacements as listPlW6 } from '../src/store.js';
+
+test('revenue: sponsored placements persist, filter by section/destination, and total revenue', () => {
+  const before = splRevW6();
+  const r = createPlW6({ partner: 'Rove Hotels', section: 'destination pages', destination: 'Dubai', feeGBPMonth: 400 });
+  assert.equal(r.ok, true);
+  assert.ok(r.placement.id.startsWith('spl_'));
+  assert.equal(r.placement.labelled, true, 'always labelled');
+  // Invalid section is rejected.
+  assert.equal(createPlW6({ partner: 'X', section: 'homepage takeover' }).ok, false);
+  // Section + destination filter (a '*' placement matches any destination).
+  createPlW6({ partner: 'Global eSIM', section: 'destination pages', destination: '*', feeGBPMonth: 100 });
+  const dubai = sponForW6('destination pages', 'Dubai');
+  assert.ok(dubai.some((p) => p.partner === 'Rove Hotels') && dubai.some((p) => p.partner === 'Global eSIM'));
+  assert.ok(dubai.every((p) => p.sponsored && p.labelled), 'every returned placement is marked sponsored');
+  const paris = sponForW6('destination pages', 'Paris');
+  assert.ok(paris.some((p) => p.partner === 'Global eSIM') && !paris.some((p) => p.partner === 'Rove Hotels'), '* matches Paris, Dubai-only does not');
+  assert.equal(splRevW6(), before + 400 + 100, 'active monthly revenue accrues');
+});
+
+test('revenue: sponsored placement admin endpoints require admin; injected into search response', async () => {
+  process.env.STAFF_ACCESS_PIN = 'pin-rev-1';
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // Anonymous cannot create placements.
+    const anon = await fetch(`${base}/api/admin/placements`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ partner: 'Sneaky', section: 'recommended deals' }) });
+    assert.ok(anon.status === 401 || anon.status === 403, 'placement create is admin-only');
+    // Group quote is public and returns the fee schedule.
+    const gq = await (await fetch(`${base}/api/group/quote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ headcount: 30, tripValueGBP: 15000 }) })).json();
+    assert.equal(gq.planningFeeGBP, 149, '25+ travellers → £149 planning fee');
+    assert.equal(gq.groupBookingFeeGBP, 150, '£5 × 30 coordination fee');
+    assert.equal(gq.totalUpfrontGBP, 299);
+    assert.ok(Array.isArray(gq.segments) && gq.segments.length === 8);
+    // Priority-search tiers endpoint lists the paid bands.
+    const pt = await (await fetch(`${base}/api/search/priority-tiers`)).json();
+    assert.ok(pt.tiers.some((t) => t.level === 'urgent' && t.feeGBP === 10));
+    assert.ok(pt.tiers.some((t) => t.level === 'emergency' && t.feeGBP === 25));
+  } finally { server.close(); delete process.env.STAFF_ACCESS_PIN; }
+});

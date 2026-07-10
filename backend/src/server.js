@@ -68,7 +68,9 @@ import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, m
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
-import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE } from './revenue.js';
+import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS } from './revenue.js';
+import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
+import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
@@ -408,7 +410,76 @@ app.get('/api/destinations', safe((req, res) => {
   const ctx = detectContext(req, { country: req.query.country, currencyCountry: req.query.country });
   const cur = ctx.currency;
   const catalog = destinationsCatalog().map((d) => ({ ...d, fromLocal: Math.round(d.fromUSD * cur.rateFromUSD), currency: cur.code, symbol: cur.symbol }));
-  res.json({ destinations: catalog, addOns: ['Tours', 'Local drivers', 'Photographers', 'Guides', 'Restaurant bookings', 'Event tickets', 'Airport pickup', 'Translators', 'eSIM data', 'Travel insurance'] });
+  // Clearly-LABELLED sponsored placements for the destination-pages section
+  // (never reorders the catalogue — a separate marked strip).
+  res.json({ destinations: catalog, sponsored: sponsoredPlacementsFor('destination pages'), addOns: ['Tours', 'Local drivers', 'Photographers', 'Guides', 'Restaurant bookings', 'Event tickets', 'Airport pickup', 'Translators', 'eSIM data', 'Travel insurance'] });
+}));
+
+// ---- Sponsored placements (labelled supplier ads — a real revenue stream) ---
+// Admin creates/pauses placements; they surface as a clearly-marked "Sponsored"
+// strip in curated sections. HARD RULE (enforced in store): a placement never
+// overrides the reliability floor or reorders the cheapest-reliable pick.
+app.get('/api/admin/placements', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ placements: listSponsoredPlacements(), sections: PLACEMENT_SECTIONS_LIST, monthlyRevenueGBP: sponsoredPlacementRevenueGBP() });
+}));
+app.post('/api/admin/placements', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { partner, section, destination, feeGBPMonth } = req.body || {};
+  const r = createSponsoredPlacement({ partner, section, destination, feeGBPMonth });
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
+}));
+app.patch('/api/admin/placements/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = setSponsoredPlacementActive(req.params.id, req.body?.active !== false);
+  if (!r.ok) return res.status(404).json(r);
+  res.json(r);
+}));
+app.delete('/api/admin/placements/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = removeSponsoredPlacement(req.params.id);
+  if (!r.ok) return res.status(404).json(r);
+  res.json(r);
+}));
+
+// ---- Priority search (paid fast/urgent/emergency scan tiers) ----------------
+app.get('/api/search/priority-tiers', safe((req, res) => {
+  const ctx = detectContext(req);
+  const tiers = Object.entries(PRIORITY_SEARCH_FEES)
+    .filter(([, t]) => !t.aliasOf)
+    .map(([level, t]) => ({ level, feeGBP: t.feeGBP, feeLocal: Math.round(t.feeGBP / 0.79 * ctx.currency.rateFromUSD), note: t.note }));
+  res.json({ tiers, currency: ctx.currency.code, symbol: ctx.currency.symbol });
+}));
+// Create a Stripe checkout for a paid priority-search tier (credential-gated).
+app.post('/api/search/priority-checkout', safe(async (req, res) => {
+  const fee = prioritySearchFee(req.body?.level);
+  if (!fee.feeGBP) return res.json({ ok: true, level: fee.level, feeGBP: 0, note: 'Standard search is free — no payment needed.' });
+  if (!stripeEnabled()) return res.status(400).json({ error: 'stripe-not-configured', level: fee.level, feeGBP: fee.feeGBP });
+  const user = currentUser(req);
+  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const session = await createCheckoutSession({
+    amountMinor: Math.round(fee.feeGBP * 100), currency: 'GBP',
+    description: `3JN priority search — ${fee.level} (${fee.note})`,
+    bookingId: `pri_${fee.level}`, userId: user?.id || '', customerEmail: user?.email,
+    successUrl: `${origin}/?priority=${fee.level}&paid=1`, cancelUrl: `${origin}/?priority=0`,
+  });
+  if (!session.ok) return res.status(400).json(session);
+  res.json({ ...session, level: fee.level, feeGBP: fee.feeGBP });
+}));
+
+// ---- Group travel quote (churches, schools, teams, diaspora groups) ---------
+app.post('/api/group/quote', safe((req, res) => {
+  const headcount = Math.max(1, Math.min(2000, Number(req.body?.headcount) || 10));
+  const tripValueGBP = Math.max(0, Number(req.body?.tripValueGBP) || 0);
+  const fees = groupTravelFees(headcount, tripValueGBP);
+  const ctx = detectContext(req);
+  res.json({
+    headcount, tripValueGBP, segments: GROUP_SEGMENTS,
+    ...fees,
+    currency: ctx.currency.code, symbol: ctx.currency.symbol,
+    contact: MAIN_CONTACT,
+  });
 }));
 
 // ---- Contact form → emails info@3jntravel.com (reply-to sender) -----------
@@ -1210,6 +1281,11 @@ app.post('/api/plan', safe(async (req, res) => {
       query: typeof text === 'string' ? text.slice(0, 140) : undefined,
     },
   });
+  // Clearly-LABELLED sponsored deals for the searched destination (a marked
+  // strip only — never mixed into or reordering the ranked package options).
+  if (result.stage === 'options' && result.intent?.destination?.city) {
+    result.sponsored = sponsoredPlacementsFor('recommended deals', result.intent.destination.city);
+  }
   res.json(result);
 }));
 

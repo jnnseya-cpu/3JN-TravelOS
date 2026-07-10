@@ -18,6 +18,7 @@ import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, dueReminders } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
+import { PLACEMENT_SECTIONS } from './partners.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -60,6 +61,7 @@ const db = {
   vendorPayouts: [], // weekly Friday payout batches { id, vendorId, amountGbp, saleIds, status, at }
   benchmarks: [], // Market Benchmark runs: live fares vs market-leader prices
   fulfilmentOrders: [], // Ops Fulfilment Desk: per-component orders on paid bookings
+  sponsoredPlacements: [], // Suppliers paying for LABELLED placement in curated sections { id, partner, section, destination, feeGBPMonth, active, since }
 };
 
 // Ring-buffer cap for the high-frequency append-only logs. Without this they
@@ -2009,12 +2011,48 @@ export function searchToBookStats() {
   return { searches, bookings };
 }
 
+// ---- Sponsored placements (persisted revenue) -----------------------------
+// Suppliers pay a monthly fee to appear in a LABELLED section. HARD RULE: a
+// placement never overrides the reliability floor and never reorders the
+// cheapest-reliable pick — it only adds a clearly-marked "Sponsored" strip.
+export function createSponsoredPlacement({ partner, section, destination = '*', feeGBPMonth = 250 }) {
+  if (!partner || !PLACEMENT_SECTIONS.includes(section)) return { ok: false, error: 'invalid-placement', message: `section must be one of: ${PLACEMENT_SECTIONS.join(', ')}` };
+  const rec = { id: id('spl'), partner: String(partner).slice(0, 80), section, destination: destination || '*', feeGBPMonth: Math.max(0, Math.round(Number(feeGBPMonth) || 0)), active: true, labelled: true, since: nowISO() };
+  db.sponsoredPlacements.push(rec);
+  recordAudit({ actor: 'admin', role: 'admin', action: 'placement.created', entity: 'placement', entityId: rec.id, summary: `${rec.partner} · ${rec.section} · £${rec.feeGBPMonth}/mo` });
+  return { ok: true, placement: rec };
+}
+export function listSponsoredPlacements() { return db.sponsoredPlacements.slice().reverse(); }
+export function setSponsoredPlacementActive(placementId, active) {
+  const p = db.sponsoredPlacements.find((x) => x.id === placementId);
+  if (!p) return { ok: false, error: 'not-found' };
+  p.active = !!active;
+  return { ok: true, placement: p };
+}
+export function removeSponsoredPlacement(placementId) {
+  const i = db.sponsoredPlacements.findIndex((x) => x.id === placementId);
+  if (i < 0) return { ok: false, error: 'not-found' };
+  const [removed] = db.sponsoredPlacements.splice(i, 1);
+  return { ok: true, removed };
+}
+// The labelled sponsored offers for a section (optionally a destination). Only
+// ACTIVE placements; a '*' placement matches every destination.
+export function sponsoredPlacementsFor(section, destination = null) {
+  const dest = destination ? String(destination).toLowerCase() : null;
+  return db.sponsoredPlacements
+    .filter((r) => r.active && r.section === section && (r.destination === '*' || !dest || String(r.destination).toLowerCase() === dest))
+    .map((r) => ({ id: r.id, partner: r.partner, section: r.section, destination: r.destination, sponsored: true, labelled: true }));
+}
+export function sponsoredPlacementRevenueGBP() {
+  return db.sponsoredPlacements.filter((r) => r.active).reduce((s, r) => s + (r.feeGBPMonth || 0), 0);
+}
+
 // ---- Persistence snapshot / hydrate (for Firebase RTDB / Firestore) -------
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements'];
 
 // ---- Bot Defence: dormant-bot sweep + quarantine -------------------------------
 // Flags accounts with machine-generated names/emails AND zero activity.
