@@ -43,7 +43,9 @@ import {
   getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
   saveBenchmarkRun, latestBenchmarkRun, recordBenchmarkMarket,
   userPaymentHistory, enforceInstalments,
+  listFulfilmentOrders, completeFulfilmentOrder, updateFulfilmentOrder,
 } from './store.js';
+import { supplierDoors } from './extras-suppliers.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
@@ -638,6 +640,23 @@ app.post('/api/benchmark/flights/market', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const { runId, rowId, source, priceGbp, selfTransfer, caveat } = req.body || {};
   res.json(recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTransfer, caveat }));
+}));
+
+// ---- Ops Fulfilment Desk + Supplier Doors -----------------------------------
+// The "automatic way" around manual supplier portals (Rayna, etc.): paid
+// bookings decompose into channel-routed orders with pre-packed payloads; the
+// operator completes each in one visit; the OS confirms to the customer.
+app.get('/api/admin/fulfilment', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ orders: listFulfilmentOrders({ status: req.query.status || undefined }), doors: supplierDoors() });
+}));
+app.post('/api/admin/fulfilment/:id/complete', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(completeFulfilmentOrder(req.params.id, { supplierRef: req.body?.supplierRef, note: req.body?.note }));
+}));
+app.post('/api/admin/fulfilment/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json(updateFulfilmentOrder(req.params.id, { status: req.body?.status, note: req.body?.note }));
 }));
 
 // ---- Profitability Dashboard (spec §17): real-time money view --------------

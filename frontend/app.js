@@ -2149,6 +2149,7 @@ async function renderAdmin() {
         }</div></div>
       </div>
     </div>
+    <div id="fulfilmentPanel" style="margin-top:24px"></div>
     <div id="benchmarkPanel" style="margin-top:24px"></div>
     <div class="section-head left" style="margin:28px 0 10px"><h2 style="font-size:20px">Enterprise AI agents</h2></div>
     <div class="console-grid">
@@ -2179,7 +2180,78 @@ async function renderAdmin() {
     </div>
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
   renderBenchmark();
+  renderFulfilment();
 }
+
+// ---- Ops Fulfilment Desk + Supplier Doors ------------------------------------
+// Every paid booking's non-auto components land here, channel-routed (Rayna
+// portal, visa desk, vendor marketplace…) with a pre-packed payload. Complete
+// an order = paste the supplier confirmation; the OS updates the customer's
+// documents and notifies them. The doors list is the API acquisition tracker.
+async function renderFulfilment() {
+  const el = $('#fulfilmentPanel'); if (!el) return;
+  let d; try { d = await api('/api/admin/fulfilment'); } catch { return; }
+  const open = (d.orders || []).filter((o) => o.status !== 'completed');
+  const done = (d.orders || []).filter((o) => o.status === 'completed').slice(0, 6);
+  const CH = {
+    'ops:rayna': ['🟠 Rayna portal', 'var(--gold)'], 'ops:visa-desk': ['🛂 Visa desk', 'var(--blue-bright)'],
+    'ops:vendor-marketplace': ['🧑‍🤝‍🧑 Vendor marketplace', 'var(--green)'], 'ops:activities': ['🎟 Activities', 'var(--muted)'],
+    'ops:transfers': ['🚘 Transfers', 'var(--muted)'], 'ops:insurance-signpost': ['🛡 Insurance (signpost only — FCA)', '#ff8a8a'],
+    'ops:carhire': ['🚗 Car hire', 'var(--muted)'], 'ops:ground': ['🚆 Ground transport', 'var(--muted)'],
+    'ops:hotels': ['🏨 Hotel manual', 'var(--muted)'], 'auto:esim-api': ['📶 eSIM auto', 'var(--green)'],
+    'auto:esim-inhouse': ['📶 eSIM auto (in-OS)', 'var(--green)'], 'auto:host-marketplace': ['🏠 Host auto', 'var(--green)'],
+    'ops:viator-api': ['🎟 Viator', 'var(--blue-bright)'], 'ops:mozio-api': ['🚘 Mozio', 'var(--blue-bright)'], 'ops:insurance-api': ['🛡 Insurance', 'var(--blue-bright)'],
+  };
+  const chip = (c) => { const [label, color] = CH[c] || [c, 'var(--muted)']; return `<span class="ch-chip" style="color:${color};border-color:currentColor;font-size:10.5px">${label}</span>`; };
+  const ageH = (iso) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 3600000));
+  const rows = open.map((o) => `
+    <div style="padding:10px 0;border-bottom:1px solid rgba(223,229,238,.08)">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+        <strong>${esc(o.componentLabel)}</strong>
+        <span>${chip(o.channel)} <span class="muted" style="font-size:11px">${ageH(o.createdAt)}h old${ageH(o.createdAt) > 24 ? ' ⚠' : ''}</span></span></div>
+      <div class="muted" style="font-size:12px;margin-top:3px">${esc(o.destination || '')}${o.serviceDate ? ' · ' + esc(o.serviceDate) : ''}${o.pax ? ' · ' + o.pax + ' pax' : ''} · ${esc(o.symbol)}${o.sellPrice} · booking ${esc(o.bookingId)}${o.customer?.name ? ' · ' + esc(o.customer.name) : ''}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="copyFulfilPayload('${esc(o.id)}')">📋 Copy portal payload</button>
+        ${o.channel === 'ops:rayna' ? '<a class="btn btn-ghost btn-sm" href="https://agents.raynab2b.com" target="_blank" rel="noopener">Open Rayna portal ↗</a>' : ''}
+        <input class="in" id="ffref-${esc(o.id)}" placeholder="Supplier confirmation no." style="max-width:200px;font-size:12px">
+        <button class="btn btn-gold btn-sm" onclick="completeFulfil('${esc(o.id)}')">✓ Complete → notify customer</button>
+      </div>
+      <textarea id="ffpay-${esc(o.id)}" style="position:absolute;left:-9999px">${esc(o.portalPayload || '')}</textarea>
+    </div>`).join('') || '<p class="muted" style="font-size:12.5px">Nothing waiting — every paid component is fulfilled. New paid bookings appear here automatically.</p>';
+  const doneRows = done.map((o) => `<div class="kv"><span>${esc(o.componentLabel)} <span class="muted">· ${esc(o.channel)}</span></span><span style="color:var(--green)">✓ ${esc(o.supplierRef || '')}${o.completedBy === 'auto' ? ' · auto' : ''}</span></div>`).join('');
+  const doors = (d.doors || []).map((dr) => `
+    <div class="kv"><span>${dr.open ? '🟢' : '⚪'} <strong>${esc(dr.provider)}</strong> <span class="muted" style="font-size:11px">· ${esc(dr.covers)}</span></span>
+    <span class="muted" style="font-size:11px;text-align:right;max-width:45%">${dr.open ? 'OPEN' : `${esc(dr.envVar)} · ${esc(dr.signup)}`}</span></div>`).join('');
+  el.innerHTML = `
+    <div class="section-head left" style="margin:0 0 10px"><h2 style="font-size:20px">🛠 Ops Fulfilment Desk — the automatic way around manual portals</h2></div>
+    <div class="console-grid">
+      <div class="card pad">
+        <span class="eyebrow">Open orders (${open.length})</span>
+        <p class="muted" style="font-size:12px;margin:6px 0">Each order is pre-packed: copy the payload, complete it in the supplier portal (Rayna at net rates), paste the confirmation — the customer's documents update and they're notified automatically.</p>
+        ${rows}
+        ${doneRows ? `<div style="margin-top:12px"><span class="eyebrow">Recently completed</span>${doneRows}</div>` : ''}
+      </div>
+      <div class="card pad">
+        <span class="eyebrow">Supplier doors — API acquisition tracker</span>
+        <p class="muted" style="font-size:12px;margin:6px 0">Each door opens the moment its key lands in Vercel env vars — no code changes. ⚪ = start the signup; 🟢 = live.</p>
+        ${doors}
+      </div>
+    </div>`;
+}
+window.copyFulfilPayload = (id) => {
+  const ta = $(`#ffpay-${id}`); if (!ta) return;
+  navigator.clipboard?.writeText(ta.value).then(() => toast('📋 Payload copied — paste it in the supplier portal.'), () => { ta.select(); document.execCommand('copy'); toast('📋 Copied.'); });
+};
+window.completeFulfil = async (id) => {
+  const supplierRef = $(`#ffref-${id}`)?.value?.trim();
+  if (!supplierRef) { toast('Paste the supplier confirmation number first — the customer document depends on it.'); return; }
+  try {
+    const r = await api(`/api/admin/fulfilment/${id}/complete`, { method: 'POST', body: JSON.stringify({ supplierRef }) });
+    if (!r.ok) { toast(r.message || r.error || 'Could not complete.'); return; }
+    toast('✅ Completed — customer notified, documents updated.');
+    renderFulfilment();
+  } catch { toast('Could not complete the order.'); }
+};
 
 // ---- Market Benchmark: are we unbeatable? -----------------------------------
 // Runs real routes through the SAME live Duffel search + checkout pricing the

@@ -3740,3 +3740,57 @@ test('tiered take-rate: partners earn a share of the flight take + lifetime attr
   const sale2 = (await import('../src/store.js')).vendorDashboard(v.id).recentSales.find((s) => s.bookingId === b2.id);
   assert.ok(sale2 && sale2.vendorGbp >= 1000 * 0.03 - 0.01, 'the package pays the partner their full 3% carve');
 });
+
+// ---- Ops Fulfilment Desk: the automatic way around manual supplier portals ---
+test('paid booking decomposes into channel-routed fulfilment orders; eSIM auto-completes; Rayna completes with a confirmation', async () => {
+  const { createBooking: mkB, saveQuote: mkQ, recordPayment, listFulfilmentOrders, completeFulfilmentOrder, getBooking, listNotifications } = await import('../src/store.js');
+  const u = createUser({ name: 'Fulfil Test', email: 'fulfil.test@example.com' });
+  const option = {
+    tier: 'Standard', totalUSD: 500,
+    destination: { city: 'Dubai', country: 'AE' },
+    dates: { checkIn: '2026-10-01' },
+    pricing: { currency: 'GBP', symbol: '£', feeModel: 'commission-10', lines: { totalUSD: 500, commissionUSD: 50 }, local: { total: 395 }, revenue: { commissionUSD: 50, savingsShareUSD: 0 } },
+    components: [
+      { type: 'activity', supplier: 'Desert Safari & BBQ', agent: true, agentId: 'AGT-48973', verified: true, reliabilityScore: 92, priceUSD: 130, details: { date: '2026-10-02', passengers: 2 } },
+      { type: 'esim', supplier: 'Airalo', verified: true, reliabilityScore: 92, priceUSD: 12, details: {} },
+      { type: 'visa', supplier: 'UAE eVisa', verified: true, reliabilityScore: 90, priceUSD: 95, details: {} },
+    ],
+  };
+  const q = mkQ({ option, intent: { dates: { checkIn: '2026-10-01' } } });
+  const b = mkB({ quoteId: q.id, option, instalment: null, userId: u.id, paymentMethod: 'card', lead: { fullName: 'Fulfil Test', nationality: 'GB' } });
+  recordPayment(b.id, { type: 'full', amount: 395, gateway: 'stripe' });
+  // give the async auto-fulfil a beat
+  await new Promise((r) => setTimeout(r, 20));
+  const mine = listFulfilmentOrders().filter((o) => o.bookingId === b.id);
+  assert.equal(mine.length, 3, 'one order per fulfilable component');
+  const rayna = mine.find((o) => o.componentType === 'activity');
+  assert.equal(rayna.channel, 'ops:rayna', 'agent-sourced activity routes to the Rayna portal channel');
+  assert.match(rayna.portalPayload, /Rayna agent portal/, 'payload carries the portal instruction');
+  assert.match(rayna.portalPayload, /Fulfil Test/, 'payload carries the lead traveller');
+  const visa = mine.find((o) => o.componentType === 'visa');
+  assert.equal(visa.channel, 'ops:rayna', 'Dubai visa also routes to Rayna (their product)');
+  const esim = mine.find((o) => o.componentType === 'esim');
+  assert.equal(esim.status, 'completed', 'eSIM fulfils itself automatically');
+  assert.ok(esim.supplierRef, 'auto-fulfilled eSIM carries a real ICCID reference');
+  // Completing an ops order without a confirmation number is refused.
+  assert.equal(completeFulfilmentOrder(rayna.id, {}).ok, false, 'no confirmation → refused');
+  // With the Rayna confirmation: component updated + customer notified.
+  const done = completeFulfilmentOrder(rayna.id, { supplierRef: 'RTL-778812' });
+  assert.equal(done.ok, true);
+  assert.equal(getBooking(b.id).option.components[0].details.confirmation, 'RTL-778812', 'confirmation lands in the booking → documents');
+  const notes = listNotifications(u.id);
+  assert.ok(notes.some((n) => /confirmed/i.test(n.title) && /RTL-778812/.test(n.body)), 'customer told with the real reference');
+});
+
+test('supplier doors report every acquisition target; insurance stays closed without FCA authorisation', async () => {
+  const { supplierDoors, insuranceSaleEnabled } = await import('../src/extras-suppliers.js');
+  const doors = supplierDoors();
+  for (const provider of ['Duffel', 'Amadeus', 'eSIM Access', 'Viator', 'Mozio', 'Rayna']) {
+    assert.ok(doors.some((d) => d.provider.includes(provider)), `${provider} door listed`);
+  }
+  const rayna = doors.find((d) => d.channel === 'activities-rayna');
+  assert.equal(rayna.open, true, 'Rayna channel is always operable (ops desk)');
+  const vendors = doors.find((d) => d.channel === 'local-services');
+  assert.equal(vendors.open, true, 'vendor marketplace is our own supply');
+  assert.equal(insuranceSaleEnabled(), false, 'insurance sales fail CLOSED without key + INSURANCE_AUTHORISED=true (FCA)');
+});

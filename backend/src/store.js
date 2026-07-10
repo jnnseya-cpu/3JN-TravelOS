@@ -16,6 +16,7 @@ import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, dueReminders } from './instalments.js';
+import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi } from './extras-suppliers.js';
 
 let counter = 1000;
 const id = (prefix) => `${prefix}_${++counter}`;
@@ -57,6 +58,7 @@ const db = {
   vendorSales: [], // { id, vendorId, bookingId, saleGbp, vendorGbp, platformKeepsGbp, status, flags..., at }
   vendorPayouts: [], // weekly Friday payout batches { id, vendorId, amountGbp, saleIds, status, at }
   benchmarks: [], // Market Benchmark runs: live fares vs market-leader prices
+  fulfilmentOrders: [], // Ops Fulfilment Desk: per-component orders on paid bookings
 };
 
 // ---- Communication event delivery log -------------------------------------
@@ -1192,6 +1194,10 @@ export function recordPayment(bookingId, payment) {
       }
     }
   } catch { /* vendor attribution is best-effort */ }
+  // Ops Fulfilment Desk: the FIRST payment decomposes the booking into
+  // per-component fulfilment orders — auto channels complete themselves,
+  // the rest land on the desk pre-packed for one-visit completion.
+  try { createFulfilmentOrders(b); } catch { /* fulfilment desk is best-effort */ }
   return b;
 }
 
@@ -1910,7 +1916,118 @@ export function searchToBookStats() {
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders'];
+
+// ---- Ops Fulfilment Desk ------------------------------------------------------
+// "Whenever a customer does something, I have to complete it manually — I want
+// the automatic way." This is it: every PAID booking auto-decomposes into
+// per-component fulfilment orders, each routed to its channel (Rayna portal,
+// eSIM API, vendor marketplace, visa desk…) and carrying a pre-packed portal
+// payload with EVERYTHING needed to complete it in one visit. Auto-capable
+// channels complete themselves; the rest sit in the desk until the operator
+// pastes the supplier confirmation — the OS then writes the confirmation into
+// the customer's documents and notifies them. Nothing waits on memory.
+const FULFILMENT_LABELS = {
+  activity: 'Activity / tour', activities: 'Activity / tour', visa: 'Visa application',
+  esim: 'eSIM', insurance: 'Insurance policy', transfer: 'Airport transfer',
+  carhire: 'Car hire', restaurant: 'Restaurant booking', photographer: 'Photographer',
+  guide: 'Local guide', translator: 'Translator', driver: 'Local driver',
+  train: 'Rail ticket', coach: 'Coach ticket', ferry: 'Ferry crossing', cruise: 'Cruise',
+  hotel: 'Hotel (manual confirmation)',
+};
+export function createFulfilmentOrders(booking) {
+  if (!booking || booking.fulfilmentOrdersCreated) return [];
+  const comps = booking.option?.components || [];
+  const destCountry = booking.option?.destination?.country || null;
+  const lead = booking.leadTraveller || {};
+  const sym = booking.option?.pricing?.symbol || '£';
+  const rate = (booking.option?.pricing?.local?.total || 0) / (booking.option?.pricing?.lines?.totalUSD || 1);
+  const created = [];
+  comps.forEach((c, idx) => {
+    const channel = fulfilmentChannelFor(c, destCountry);
+    if (!channel) return; // live flights/hotels auto-ticket via their own path
+    const order = {
+      id: id('ford'), bookingId: booking.id, componentIndex: idx,
+      componentType: c.type, componentLabel: `${FULFILMENT_LABELS[c.type] || c.type} — ${c.supplier || ''}`.trim(),
+      channel, status: 'new',
+      destination: booking.option?.destination?.city || null,
+      serviceDate: c.details?.date || booking.option?.dates?.checkIn || null,
+      pax: c.details?.passengers || c.details?.pax || null,
+      sellPrice: Math.round((c.priceUSD || 0) * rate * 100) / 100, symbol: sym,
+      customer: { name: lead.fullName || null, email: lead.email || null, phone: lead.phone || null, nationality: lead.nationality || null, passport: lead.passportNumber || null },
+      userId: booking.userId || null,
+      supplierRef: null, note: null, createdAt: nowISO(), completedAt: null,
+    };
+    order.portalPayload = portalPayload(order);
+    db.fulfilmentOrders.push(order);
+    created.push(order);
+  });
+  booking.fulfilmentOrdersCreated = true;
+  if (created.length) {
+    recordAudit({ actor: 'system', role: 'system', action: 'fulfilment.orders.created', entity: 'booking', entityId: booking.id, summary: `${created.length} order(s): ${created.map((o) => o.channel).join(', ')}` });
+    // Fire-and-forget auto-fulfilment for the channels that can.
+    for (const o of created) autoFulfilOrder(o).catch(() => {});
+  }
+  return created;
+}
+
+// Channels that complete themselves: eSIM (via API when the door is open,
+// else in-OS provisioning — both put a REAL activation code in the customer's
+// documents), and host-marketplace stays (our own inventory).
+async function autoFulfilOrder(order) {
+  if (!order.channel.startsWith('auto:')) return;
+  if (order.channel === 'auto:esim-api' || order.channel === 'auto:esim-inhouse') {
+    let profile = null;
+    if (order.channel === 'auto:esim-api') {
+      profile = await provisionEsimViaApi({ destinationCountry: order.destination, dataGB: 5, days: 9, ourRef: order.id }).catch(() => null);
+    }
+    if (!profile) {
+      const rec = provisionEsim(order.userId, { destination: order.destination || 'Regional' });
+      profile = { provider: rec.provider, iccid: rec.iccid, lpa: null, live: false };
+    }
+    return completeFulfilmentOrder(order.id, { supplierRef: profile.iccid, note: `${profile.provider}${profile.lpa ? ' · LPA ' + profile.lpa : ''}`, auto: true });
+  }
+  if (order.channel === 'auto:host-marketplace') {
+    return completeFulfilmentOrder(order.id, { supplierRef: order.bookingId, note: '3JN host marketplace — host notified automatically', auto: true });
+  }
+}
+
+export function listFulfilmentOrders({ status } = {}) {
+  const all = [...db.fulfilmentOrders].reverse();
+  return status ? all.filter((o) => o.status === status) : all;
+}
+
+export function completeFulfilmentOrder(orderId, { supplierRef, note, auto = false } = {}) {
+  const o = db.fulfilmentOrders.find((x) => x.id === orderId);
+  if (!o) return { ok: false, error: 'order-not-found' };
+  if (o.status === 'completed') return { ok: true, order: o, already: true };
+  if (!auto && !String(supplierRef || '').trim()) return { ok: false, error: 'confirmation-required', message: 'Paste the supplier confirmation number — the customer document depends on it.' };
+  o.status = 'completed';
+  o.supplierRef = String(supplierRef || '').trim() || o.supplierRef;
+  o.note = note || o.note;
+  o.completedAt = nowISO();
+  o.completedBy = auto ? 'auto' : 'ops';
+  // Write the confirmation INTO the booking component so documents + Console
+  // show the real supplier reference from this moment on.
+  const b = db.bookings.get(o.bookingId);
+  const comp = b?.option?.components?.[o.componentIndex];
+  if (comp) {
+    comp.details = comp.details || {};
+    comp.details.confirmation = o.supplierRef;
+    comp.details.fulfilledVia = o.channel;
+  }
+  recordAudit({ actor: o.completedBy, role: auto ? 'system' : 'admin', action: 'fulfilment.completed', entity: 'booking', entityId: o.bookingId, summary: `${o.componentLabel} · ref ${o.supplierRef} · ${o.channel}` });
+  if (o.userId) pushNotification(o.userId, { type: 'success', icon: '✅', title: `${FULFILMENT_LABELS[o.componentType] || o.componentType} confirmed`, body: `Your ${(FULFILMENT_LABELS[o.componentType] || o.componentType).toLowerCase()} is booked — confirmation ${o.supplierRef}. Full details are in Console → your booking → 📄 Documents.` });
+  return { ok: true, order: o };
+}
+
+export function updateFulfilmentOrder(orderId, { status, note } = {}) {
+  const o = db.fulfilmentOrders.find((x) => x.id === orderId);
+  if (!o) return { ok: false, error: 'order-not-found' };
+  if (status && ['new', 'in-progress', 'blocked'].includes(status)) o.status = status;
+  if (note != null) o.note = String(note).slice(0, 300);
+  return { ok: true, order: o };
+}
 
 // ---- AI Smart Instalment Engine: history + enforcement ----------------------
 // Payment history feeding the risk engine: paid bookings, cancellations,
