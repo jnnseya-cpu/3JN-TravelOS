@@ -139,14 +139,24 @@ export async function airaloPickPackage({ countryCode, minGB = 1 }) {
   });
   const countries = res?.data;
   if (!Array.isArray(countries)) return null;
-  // Response nests operators→packages under each country entry.
+  // Response nests operators→packages under each country entry. Per the schema
+  // a package's data size is `amount` in MB (with `is_unlimited`), validity is
+  // `day`, price is `price`. Skip KYC-required operators — they can't be
+  // auto-provisioned without identity capture and would fail the order.
   const pkgs = [];
-  for (const c of countries) for (const op of c.operators || []) for (const p of op.packages || []) {
-    const gb = (p.data || '').toUpperCase() === 'UNLIMITED' ? 999 : (parseFloat(p.data) || 0);
-    if (gb >= minGB) pkgs.push({ id: p.id, title: p.title, gb, days: p.day || p.validity, priceUSD: Number(p.price) || null });
+  for (const c of countries) for (const op of c.operators || []) {
+    if (op.is_kyc_verify) continue;
+    for (const p of op.packages || []) {
+      if (p.type && p.type !== 'sim') continue; // skip top-ups
+      const gb = p.is_unlimited ? 999 : (Number(p.amount) || 0) / 1000; // amount is MB
+      if (gb >= minGB) pkgs.push({ id: p.id, title: p.title, gb, days: p.day || null, priceUSD: Number(p.price) || null, apnValue: op.apn_value || null, apnType: op.apn_type || null });
+    }
   }
-  if (!pkgs.length) return null;
-  return pkgs.filter((p) => p.priceUSD != null).sort((a, b) => a.priceUSD - b.priceUSD)[0] || pkgs[0];
+  const priced = pkgs.filter((p) => p.priceUSD != null);
+  if (!priced.length) return null;
+  // Cheapest package that clears the data need; if the need can't be met,
+  // fall back to the largest available so a trip is never left without data.
+  return priced.sort((a, b) => a.priceUSD - b.priceUSD)[0];
 }
 
 // Submit an Airalo order and normalise the eSIM into our activation shape.
