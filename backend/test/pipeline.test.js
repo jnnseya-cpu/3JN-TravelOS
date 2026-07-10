@@ -3095,13 +3095,18 @@ test('vendor lifecycle: AI risk review → approved → attributed sale → Frid
   const shady = createUser({ email: 'shady@x.co', name: 'No Docs' });
   const appS = applyVendor(shady.id, {});
   assert.notEqual(appS.profile.status, 'approved', 'incomplete applications never auto-approve');
-  // Attributed sale on first payment (commission carved from the 10% fee).
+  // Attributed sale on first payment. The carve is 3% of the FEE-EXCLUSIVE
+  // supplier base (net £1,000), NOT the fee-inclusive total — so 3JN's 7%
+  // keep-floor is preserved. netSuppliersUSD £1,000 ≈ $1,266 at the 0.79 anchor.
   const cust = createUser({ email: 'vcust@x.co', name: 'C' });
-  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1000 }, revenue: { commissionUSD: 127 } }, totalUSD: 1270, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: cust.id, vendorCode: appd.profile.vendorCode });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1100 }, lines: { netSuppliersUSD: 1265.82 }, revenue: { commissionUSD: 126.58 } }, totalUSD: 1392, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: cust.id, vendorCode: appd.profile.vendorCode });
   recordPayment(b.id, { type: 'deposit', amount: 200 });
   const dash = vendorDashboard(v.id);
-  assert.equal(dash.commissionEarnedGbp, 30, '3% of £1,000');
+  assert.equal(dash.commissionEarnedGbp, 30, '3% of the £1,000 net supplier base');
   assert.equal(dash.pendingPayoutGbp, 30);
+  // 7% KEEP-FLOOR: after paying the 3% vendor carve, 3JN keeps ≥7% of the base.
+  const sale = dash.recentSales.find((sl) => sl.bookingId === b.id);
+  assert.ok(sale.platformKeepsGbp >= sale.saleGbp * 0.07 - 0.01, '3JN keeps at least 7% (floor preserved)');
   // Weekly run pays and is idempotent.
   const run = runWeeklyVendorPayouts();
   assert.ok(run.batches.some((x) => x.vendorId === v.id && x.amountGbp === 30));
@@ -3127,7 +3132,7 @@ test('vendor commission is HELD until the trip completes (departure/checkout pas
   const v = createUser({ email: 'vhold@x.co', name: 'Hold V' });
   const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@h'], businessHistory: true });
   const cust = createUser({ email: 'vhc@x.co', name: 'C' });
-  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1000 } }, totalUSD: 1270, travellers: { total: 1 }, components: [
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1100 }, lines: { netSuppliersUSD: 1265.82 }, revenue: { commissionUSD: 126.58 } }, totalUSD: 1392, travellers: { total: 1 }, components: [
     { type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2097-10-03' }, inbound: { from: 'DXB', to: 'LHR', date: '2097-10-10' } } },
     { type: 'hotel', supplier: 'Rove', details: { nights: 7, checkIn: '2097-10-03', checkOut: '2097-10-10' } },
   ] }, userId: cust.id, vendorCode: appd.profile.vendorCode });

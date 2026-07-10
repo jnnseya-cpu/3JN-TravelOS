@@ -128,6 +128,11 @@ export function buildSmartInstalmentPlan({ totalLocal, currency, departISO, toda
   const maxN = risk?.adjustments?.maxInstalments ?? Infinity;
   if (entries.length > maxN) entries = entries.slice(entries.length - maxN);
 
+  // No instalments (Instant Purchase, or a schedule risk-capped to nothing) →
+  // the deposit MUST be 100%. A trusted-customer −5% delta on an empty
+  // schedule previously left 5% of the booking uncollected forever.
+  if (entries.length === 0) depositPct = 1;
+
   const depart = new Date(String(departISO) + 'T00:00:00Z');
   const deposit = round2(totalLocal * depositPct);
   const remainder = round2(totalLocal - deposit);
@@ -191,7 +196,7 @@ export function dueReminders(booking, todayISO) {
   if (!inst || inst.engine !== 'ai-smart' || !inst.schedule?.length) return [];
   const today = todayISO || new Date().toISOString().slice(0, 10);
   const sent = new Set(booking.instalmentRemindersSent || []);
-  const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const paid = planPaid(booking);
   const out = [];
   let cumulative = inst.deposit;
   for (const item of inst.schedule) {
@@ -207,6 +212,17 @@ export function dueReminders(booking, todayISO) {
   return out;
 }
 
+// Only payments that fund the PLAN count toward instalment coverage — the
+// deposit, instalments, and a full/stripe payment. A booking-change charge
+// (extra owed) and a negative price-guard refund must NOT reduce or inflate
+// coverage, or a good booking would default (refund) / under-collect (change).
+const PLAN_PAYMENT_TYPES = new Set(['deposit', 'instalment', 'full', 'stripe-checkout']);
+function planPaid(booking) {
+  return (booking.payments || [])
+    .filter((p) => PLAN_PAYMENT_TYPES.has(p.type) && Number(p.amount) > 0)
+    .reduce((s, p) => s + Number(p.amount), 0);
+}
+
 // ---- Instalment state machine -------------------------------------------------
 // Cumulative view: how much SHOULD have been paid by `today` vs how much HAS
 // been. Drives dunning: on-track → due → in-grace → defaulted.
@@ -214,7 +230,7 @@ export function instalmentState(booking, todayISO) {
   const inst = booking?.instalment;
   if (!inst || inst.engine !== 'ai-smart') return { status: 'not-smart-plan' };
   const today = todayISO || new Date().toISOString().slice(0, 10);
-  const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const paid = planPaid(booking);
   const total = round2(inst.deposit + inst.schedule.reduce((s, x) => s + x.amount, 0));
   if (paid + 0.01 >= total) return { status: 'settled', paid, total };
 
@@ -248,7 +264,7 @@ export function instalmentState(booking, todayISO) {
 // (the booking's structured refundPolicy governs what actually returns).
 export function defaultOutcome(booking) {
   const inst = booking?.instalment;
-  const paid = (booking?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const paid = planPaid(booking);
   const deposit = inst?.deposit || 0;
   return {
     forfeitedDeposit: round2(Math.min(paid, deposit)),

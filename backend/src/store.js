@@ -1187,10 +1187,16 @@ export function recordPayment(bookingId, payment) {
       const vendor = findVendorByCode(b.vendorCode);
       if (vendor && vendor.userId !== b.userId) {
         const flightsOnly = b.option?.pricing?.feeModel === 'flight-flat' || b.option?.pricing?.feeModel === 'flight-flat-member-free';
-        const saleGbp = (b.option?.pricing?.local?.total && b.option?.pricing?.symbol === '£')
-          ? b.option.pricing.local.total
-          : (b.option?.totalUSD || 0) / VENDOR_GBP_TO_USD;
-        const takeGbp = (b.option?.pricing?.revenue?.commissionUSD || 0) / VENDOR_GBP_TO_USD;
+        // The vendor carve is 3-4% of the FEE-EXCLUSIVE supplier base, so 10%
+        // of it equals 3JN's actual commission and the 7% keep-floor holds.
+        // (Carving off the fee-inclusive total overpaid vendors and dropped
+        // the real keep below 7%.) One GBP anchor (0.79) everywhere.
+        const pr = b.option?.pricing || {};
+        const saleGbp = pr.lines?.netSuppliersUSD != null ? round2(pr.lines.netSuppliersUSD * GBP_ANCHOR)
+          : pr.revenue?.commissionUSD ? round2((pr.revenue.commissionUSD / 0.10) * GBP_ANCHOR)
+          : pr.local?.total && pr.symbol === '£' ? round2(pr.local.total / 1.10) // strip the 10% fee from a GBP total
+          : round2(((b.option?.totalUSD || 0) / 1.10) * GBP_ANCHOR);
+        const takeGbp = round2((pr.revenue?.commissionUSD ? pr.revenue.commissionUSD * GBP_ANCHOR : saleGbp * 0.10));
         const r = recordVendorSale({ vendorId: vendor.userId, bookingId: b.id, saleGbp, customerId: b.userId, flightsOnly, takeGbp });
         if (r.ok) {
           b.vendorSaleProcessed = true;
@@ -1250,8 +1256,11 @@ export function allReviews() {
 // GLOBAL REWARDS & INFLUENCER PROGRAMME (docs/REWARDS-INFLUENCER-PROGRAMME.md)
 // Travel Together. Earn Together. Grow Together.
 // ===========================================================================
+// ONE customer-facing GBP anchor (matches geo.js GB rateFromUSD 0.79). All
+// internal GBP<->USD conversions use it so ledgers agree with the storefront.
+const GBP_ANCHOR = 0.79;
 const REWARDS_GBP_TO_USD = 1.27;
-const gbpFromUsd = (usd) => Math.round(((usd || 0) / REWARDS_GBP_TO_USD) * 100) / 100;
+const gbpFromUsd = (usd) => Math.round(((usd || 0) * GBP_ANCHOR) * 100) / 100;
 
 // §1 — award ACU for a traveller reward action. `once` actions are granted a
 // single time per user (tracked on the user). Returns the ACU granted.

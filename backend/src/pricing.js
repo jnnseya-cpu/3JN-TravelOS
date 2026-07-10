@@ -61,7 +61,12 @@ export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) 
 
 export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, duffelOrderValueUSD = null }) {
   const tier = tierForPoints(loyaltyPoints);
-  const loyaltyDiscountUSD = componentsUSD * tier.discount;
+  // Loyalty discount comes out of 3JN's MARGIN. On a package the 10%
+  // commission funds it; on a FLIGHTS-ONLY booking our only income is the flat
+  // £4.99 fee, so a % off the fare would sell below airline cost. Members
+  // already get flights fee-free (their loyalty perk); non-members take no
+  // fare discount on flights-only.
+  const loyaltyDiscountUSD = flightsOnly ? 0 : componentsUSD * tier.discount;
   const netComponentsUSD = componentsUSD - loyaltyDiscountUSD;
 
   // TIERED TAKE-RATE: a flights-only booking pays a small FLAT fee (free for
@@ -125,10 +130,16 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
       savingsVsMarket: conv(savingsVsMarketUSD),
     },
     // 3JN's earnings on this package (internal — shown in admin/dev view).
+    // savingsShare is NOT added to the customer total anywhere, so it is not
+    // collected — reporting it as revenue overstated income. It stays visible
+    // as an eligibility figure but revenue.totalUSD counts only what we
+    // actually charge (the commission / flat fee). Re-enable when a REAL
+    // observed market price (not the synthetic marketRef) backs the saving.
     revenue: {
       commissionUSD: round2(commissionUSD),
       savingsShareUSD: round2(savingsShareUSD),
-      totalUSD: round2(commissionUSD + savingsShareUSD),
+      savingsShareCollected: false,
+      totalUSD: round2(commissionUSD),
     },
     totals: {
       totalUSD: round2(totalUSD),
