@@ -3521,11 +3521,28 @@ async function fetchHumanChallenge() {
   const el = $('#humanQ');
   if (el && HUMAN.challenge) el.textContent = HUMAN.challenge.question + ' =';
 }
-// ---- Meta Pixel (ID 1176409173894579) ---------------------------------------
-// Safe wrapper: never throws if the pixel is blocked by an ad-blocker/consent
-// tool — analytics must never break the product.
+// ---- Analytics: Meta Pixel (1176409173894579) + GTM (GTM-WRNTT4HN) -----------
+// One call feeds BOTH rails: fbq for Meta ads, dataLayer for GTM -> GA4 /
+// Google Ads (with GA4-convention event names). Safe wrapper: never throws
+// when a pixel is blocked — analytics can never break the product.
+const GA4_EVENT_MAP = {
+  Search: 'search',
+  InitiateCheckout: 'begin_checkout',
+  CompleteRegistration: 'sign_up',
+  Purchase: 'purchase',
+};
 function metaTrack(event, params) {
-  try { if (typeof fbq === 'function') fbq('track', event, params || {}); } catch { /* pixel blocked — fine */ }
+  const p = params || {};
+  try { if (typeof fbq === 'function') fbq('track', event, p); } catch { /* blocked — fine */ }
+  try {
+    window.dataLayer = window.dataLayer || [];
+    const ga = { event: GA4_EVENT_MAP[event] || event.toLowerCase() };
+    if (p.search_string) ga.search_term = p.search_string;
+    if (p.value != null) { ga.value = p.value; ga.currency = p.currency || 'GBP'; }
+    if (p.content_name) ga.item_name = p.content_name;
+    if (event === 'Purchase' && p.content_ids && p.content_ids[0]) ga.transaction_id = p.content_ids[0];
+    window.dataLayer.push(ga);
+  } catch { /* blocked — fine */ }
 }
 
 function humanCheckPayload(full) {
