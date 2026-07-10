@@ -52,8 +52,19 @@ const OAG_BASE = env.OAG_BASE_URL || 'https://api.oag.com';
 const TEQUILA_KEY = env.TEQUILA_API_KEY || env.KIWI_TEQUILA_KEY || '';
 const TEQUILA_BASE = env.TEQUILA_BASE_URL || 'https://api.tequila.kiwi.com';
 
+// Travelpayouts / Aviasales Data API — the SELF-SERVE market-data door.
+// Kiwi Tequila went invitation-only, but Travelpayouts issues a token to any
+// account immediately after signup (travelpayouts.com → Tools → API). Data is
+// real fares from recent user searches (7-day cache) and INCLUDES Ryanair /
+// Jet2 / Wizz — the carriers Duffel lacks. Cached market prices are NOT
+// guaranteed bookable, so they NEVER enable real payment: they calibrate
+// estimates and auto-fill the Market Benchmark with honest market quotes.
+const TRAVELPAYOUTS_TOKEN = env.TRAVELPAYOUTS_TOKEN || env.AVIASALES_TOKEN || '';
+const TRAVELPAYOUTS_BASE = env.TRAVELPAYOUTS_BASE_URL || 'https://api.travelpayouts.com';
+
 export function duffelEnabled() { return !!DUFFEL_TOKEN && typeof fetch === 'function'; }
 export function lccFlightsEnabled() { return !!TEQUILA_KEY && typeof fetch === 'function'; }
+export function marketDataEnabled() { return !!TRAVELPAYOUTS_TOKEN && typeof fetch === 'function'; }
 export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled(); }
 export function liveHotelsEnabled() { return !!(AMADEUS_ID && AMADEUS_SECRET) && typeof fetch === 'function'; }
 export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
@@ -543,6 +554,52 @@ export async function validateTequilaOffer(bookingToken, { adults = 1, children 
     amount: res.conversion?.amount ?? res.total ?? null,
     currency: 'GBP',
   };
+}
+
+// ---- Travelpayouts / Aviasales market fares ---------------------------------
+// Real prices from recent user searches (incl. Ryanair/Jet2/Wizz), cached up
+// to 7 days. NOT bookable offers — used to calibrate estimates and to feed
+// the Market Benchmark automatically. Exported normaliser for tests.
+export function normalizeMarketFare(item) {
+  if (!item || item.price == null) return null;
+  const transfers = Number(item.transfers) || 0;
+  return {
+    carrier: carrierName(item.airline),
+    airlineCode: item.airline || '',
+    flightNumber: item.airline && item.flight_number ? `${item.airline}${item.flight_number}` : null,
+    priceGbp: Math.round(Number(item.price) * 100) / 100,
+    transfers,
+    stopLabel: transfers === 0 ? 'Direct' : `${transfers} stop${transfers > 1 ? 's' : ''}`,
+    departureAt: String(item.departure_at || '').slice(0, 16),
+    returnAt: item.return_at ? String(item.return_at).slice(0, 16) : null,
+    link: item.link ? `https://www.aviasales.com${item.link}` : null,
+    source: 'Aviasales market data (7-day cache)',
+  };
+}
+
+export async function fetchMarketFares(intent, dest, origin) {
+  if (!marketDataEnabled()) return null;
+  const originCode = origin?.airport;
+  const destCode = dest?.code || dest?.airport;
+  if (!originCode || !destCode || !intent?.dates?.checkIn) return null;
+  const q = new URLSearchParams({
+    origin: originCode,
+    destination: destCode,
+    departure_at: intent.dates.checkIn,
+    currency: 'gbp',
+    sorting: 'price',
+    limit: '8',
+    one_way: intent.dates.checkOut ? 'false' : 'true',
+    token: TRAVELPAYOUTS_TOKEN,
+  });
+  if (intent.dates.checkOut) q.set('return_at', intent.dates.checkOut);
+  const res = await httpJSON(`${TRAVELPAYOUTS_BASE}/aviasales/v3/prices_for_dates?${q}`, {
+    headers: { Accept: 'application/json' },
+  });
+  const items = res?.data;
+  if (!Array.isArray(items) || !items.length) return null;
+  const fares = items.map(normalizeMarketFare).filter(Boolean);
+  return fares.length ? fares : null;
 }
 
 export async function fetchLiveFlights(intent, dest, origin) {

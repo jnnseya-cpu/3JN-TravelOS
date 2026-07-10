@@ -3663,3 +3663,20 @@ test('smart instalments v2: reminders fire at 14/7/3/1/0 days, receipts issue, p
   const notes = listNotifications(u.id);
   assert.ok(notes.some((n) => /Receipt rcpt_/.test(n.title) && /remaining/.test(n.body)), 'receipt notification carries the outstanding balance');
 });
+
+// ---- Travelpayouts/Aviasales market-data door (self-serve Tequila fallback) ---
+test('Aviasales market fares normalise with carrier names, stops and honest sourcing', async () => {
+  const { normalizeMarketFare, marketDataEnabled } = await import('../src/live-suppliers.js');
+  const m = normalizeMarketFare({
+    origin: 'EMA', destination: 'BRU', airline: 'FR', flight_number: 664,
+    price: 87, transfers: 0, departure_at: '2026-09-01T07:10:00Z', return_at: '2026-09-05T18:00:00Z',
+    link: '/search/EMA0109BRU05091',
+  });
+  assert.equal(m.carrier, 'Ryanair', 'IATA FR resolves to the carrier the market shows');
+  assert.equal(m.priceGbp, 87);
+  assert.equal(m.stopLabel, 'Direct');
+  assert.match(m.link, /^https:\/\/www\.aviasales\.com\//);
+  assert.match(m.source, /market data/i, 'labelled market data — never presented as a bookable fare');
+  assert.equal(normalizeMarketFare({}), null, 'priceless entries are dropped');
+  assert.equal(marketDataEnabled(), false, 'off without TRAVELPAYOUTS_TOKEN — fail closed');
+});

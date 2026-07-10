@@ -60,7 +60,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -594,7 +594,13 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
       provider: 'Kiwi Tequila', enabled: lccFlightsEnabled(),
       note: lccFlightsEnabled()
         ? 'LCC door OPEN — Ryanair/Jet2/Wizz fares flow live on regional routes (EMA, etc.).'
-        : 'LCC door closed — Ryanair/Jet2/TUI (the airlines serving UK regional airports like East Midlands) do not sell via Duffel. Get a free key at tequila.kiwi.com and set TEQUILA_API_KEY to make routes like EMA→Brussels bookable live.',
+        : 'Kiwi Tequila is now INVITATION-ONLY (B2B partnerships). Alternatives: Duffel already carries easyJet/Vueling LCC content; for bookable Ryanair/Jet2 apply to Travelfusion (sales-led) or Ryanair\'s approved-OTA programme. The adapter activates the moment any partner key lands in TEQUILA_API_KEY.',
+    },
+    marketData: {
+      provider: 'Travelpayouts (Aviasales)', enabled: marketDataEnabled(),
+      note: marketDataEnabled()
+        ? 'Market-data door OPEN — real cached fares (incl. Ryanair/Jet2) calibrate estimates and auto-fill the Market Benchmark.'
+        : 'SELF-SERVE and free: sign up at travelpayouts.com, copy the API token (Tools → API), set TRAVELPAYOUTS_TOKEN. Gives real market prices incl. Ryanair/Jet2 for estimate calibration and automatic benchmark quotes (cached market data — never charged as live).',
     },
     hotels: { provider: 'Amadeus', enabled: liveHotelsEnabled() },
     schedules: { provider: 'OAG', enabled: oagScheduleEnabled() },
@@ -897,6 +903,26 @@ app.post('/api/plan', safe(async (req, res) => {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
       }
     } catch { /* keep the estimated result */ }
+  }
+
+  // REAL MARKET REFERENCE (Aviasales cache incl. Ryanair/Jet2): when our fare
+  // is still estimated, show what the market actually charges on this route —
+  // honest context beside our estimate, and it feeds the Price check box.
+  if (result.stage === 'options' && result.journey && result.priceSource?.flights !== 'live' && marketDataEnabled()) {
+    try {
+      const fares = await fetchMarketFares(result.intent, result.intent.destination, result.origin);
+      if (fares && fares.length) {
+        const cheapest = fares.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b));
+        result.marketLive = {
+          source: 'Aviasales market data (7-day cache)',
+          minGbp: cheapest.priceGbp,
+          maxGbp: Math.max(...fares.map((f) => f.priceGbp)),
+          cheapestCarrier: cheapest.carrier,
+          cheapestStops: cheapest.stopLabel,
+          sampled: fares.length,
+        };
+      }
+    } catch { /* market reference is best-effort */ }
   }
 
   // LIVE MODE (go-live switch, LIVE_MODE=true): NO free AI, full stop. Guests

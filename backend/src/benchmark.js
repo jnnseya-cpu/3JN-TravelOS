@@ -6,7 +6,7 @@
 // the market price in seconds and record it. Verdicts are honest: we either
 // beat the market, sit within 3%, or we're above it by a stated amount.
 
-import { fetchLiveFlights, liveFlightsEnabled, duffelMode } from './live-suppliers.js';
+import { fetchLiveFlights, fetchMarketFares, liveFlightsEnabled, marketDataEnabled, duffelMode } from './live-suppliers.js';
 import { duffelOrderFeesUSD } from './pricing.js';
 import { COMMISSION_RATE } from '../../shared/constants.js';
 
@@ -64,12 +64,12 @@ export function benchmarkVerdict(ourGbp, marketGbp) {
 // Run the live benchmark. Needs the Duffel key, so in practice this runs on
 // production; locally it explains itself instead of silently returning junk.
 export async function runFlightBenchmark({ routes = DEFAULT_BENCHMARK_ROUTES, depart, ret, adults = 1 } = {}) {
-  if (!liveFlightsEnabled()) {
+  if (!liveFlightsEnabled() && !marketDataEnabled()) {
     return {
       ok: false,
       reason: 'live-flights-not-configured',
       mode: duffelMode(),
-      message: 'No live fare key (Duffel or Tequila) in this environment — run the benchmark on production (Vercel), where the live keys are set.',
+      message: 'No live fare key (Duffel) or market-data token (Travelpayouts) in this environment — run the benchmark on production (Vercel), where the keys are set.',
     };
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(depart || ''))) {
@@ -90,7 +90,12 @@ export async function runFlightBenchmark({ routes = DEFAULT_BENCHMARK_ROUTES, de
       market: null, result: null,
     };
     try {
-      const offers = await fetchLiveFlights(intent, { code: dest }, { airport: origin });
+      // Both doors concurrently: OUR bookable fare + the market's real prices
+      // (Aviasales cache incl. Ryanair/Jet2 — auto-recorded, no copy-paste).
+      const [offers, market] = await Promise.all([
+        fetchLiveFlights(intent, { code: dest }, { airport: origin }).catch(() => null),
+        fetchMarketFares(intent, { code: dest }, { airport: origin }).catch(() => null),
+      ]);
       if (offers && offers.length) {
         const best = offers.reduce((a, b) => (a.priceUSD <= b.priceUSD ? a : b));
         const sellUSD = sellPriceUSD(best.priceUSD);
@@ -104,6 +109,18 @@ export async function runFlightBenchmark({ routes = DEFAULT_BENCHMARK_ROUTES, de
       } else {
         row.live = false;
         row.error = 'no-offers';
+      }
+      if (market && market.length) {
+        row.marketQuotes = market.slice(0, 3).map((m) => ({
+          source: `Aviasales · ${m.carrier}${m.stopLabel ? ' · ' + m.stopLabel : ''}`,
+          priceGbp: m.priceGbp,
+          selfTransfer: false,
+          caveat: 'market cache (7-day)',
+          auto: true,
+        }));
+        const lowest = row.marketQuotes.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b));
+        row.market = lowest;
+        if (row.ourPriceGbp != null) row.result = { ...benchmarkVerdict(row.ourPriceGbp, lowest.priceGbp), vs: lowest };
       }
     } catch (e) {
       row.live = false;
