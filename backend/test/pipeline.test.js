@@ -4391,3 +4391,21 @@ test('wave5 PII: an ownerless booking cannot be read by an anonymous caller', as
     assert.equal(doc.status, 403, 'ownerless document is refused too');
   } finally { server.close(); }
 });
+
+// ---- "flights only" must never bundle a hotel (the "stay"/"apartment" trap) --
+test('flights-only: an explicit "only" drops a loosely-triggered stay + keeps the flat fee', () => {
+  const GB2 = { country: 'GB', currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } };
+  // The word "stay" used to fire the hotel trigger → a 10% package with a hotel.
+  const r = plan({ text: 'flights only from London to Bali for my stay 12 to 17 August, 1 adult', context: GB2, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  assert.deepEqual(r.intent.components, ['flights'], 'only flights, no hotel');
+  const o = r.packages.options[0];
+  assert.equal(o.pricing.feeModel, 'flight-flat', 'flat £4.99 fee, not 10% commission');
+  assert.ok(!o.components.some((c) => c.type === 'hotel' || c.type === 'host'), 'no stay bundled in');
+  // "apartment" is likewise not a stay when the request is flight-only.
+  const r2 = plan({ text: 'flight only Bali apartment 12-17 Aug 1 adult', context: GB2, user: null, searchTier: 'smart' });
+  assert.equal(r2.packages.options[0].pricing.feeModel, 'flight-flat');
+  // A genuine package (no "only") still bundles + charges 10%.
+  const r3 = plan({ text: 'Bali from London 12 to 17 August, flights and hotel for 1 adult', context: GB2, user: null, searchTier: 'smart' });
+  assert.equal(r3.packages.options[0].pricing.feeModel, 'commission-10');
+});

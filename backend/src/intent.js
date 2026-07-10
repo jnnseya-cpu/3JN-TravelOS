@@ -332,6 +332,23 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   }
   const requested = parseComponents(raw);
 
+  // "flights only" / "flight-only" / "only flights" — an explicit ONLY qualifier
+  // on a transport mode means JUST that. Drop any stay/package extra that was
+  // loosely triggered (e.g. the word "stay" or "apartment" firing 'hotel'), so a
+  // flights-only request is never bundled into a 10% package with a hotel. Any
+  // explicitly-named utility the traveller ALSO asked for (visa, eSIM) is kept.
+  const onlyMode = raw.match(/\b(flights?|trains?|coach|ferry|cruise)\s*[- ]?\s*only\b/i)
+    || raw.match(/\bonly\s+(flights?|trains?|coach|ferry|cruise)\b/i);
+  if (onlyMode) {
+    const m = onlyMode[1].toLowerCase().replace(/s$/, '');
+    const modeKey = m === 'flight' ? 'flights' : m === 'train' ? 'train' : m;
+    const STAY_AND_TRIP_EXTRAS = ['hotel', 'activities', 'transfer', 'carhire', 'boat', 'photographer', 'guide', 'restaurant', 'driver', 'tickets'];
+    for (const c of [...requested]) {
+      if (c !== modeKey && STAY_AND_TRIP_EXTRAS.includes(c)) requested.delete(c);
+    }
+    requested.add(modeKey);
+  }
+
   // Explicit calendar dates the traveller typed take priority over a bare month.
   const explicit = parseExplicitDates(raw, today);
   const monthInfo = parseMonth(raw) || (explicit ? { index: explicit.monthIndex, name: MONTHS[explicit.monthIndex] } : null);
