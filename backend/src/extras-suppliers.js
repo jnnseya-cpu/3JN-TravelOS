@@ -39,7 +39,14 @@ const AIRALO_SECRET = env.AIRALO_CLIENT_SECRET || '';
 const AIRALO_BASE = env.AIRALO_BASE_URL || 'https://partners-api.airalo.com';
 const AIRALO_BRAND = env.AIRALO_BRAND_SETTINGS_NAME || ''; // optional branded eSIMs Cloud
 const VIATOR_KEY = env.VIATOR_API_KEY || '';
+// Production https://api.viator.com · Sandbox https://api.sandbox.viator.com.
 const VIATOR_BASE = env.VIATOR_BASE_URL || 'https://api.viator.com';
+// Partner tier drives the booking path: 'affiliate' → redirect the customer
+// to the Viator productUrl (commission via cookie); 'merchant' → book via
+// /bookings/cart/hold + /bookings/cart/book. Content/search is identical for
+// both, so search works the moment the key lands regardless of tier.
+const VIATOR_TIER = (env.VIATOR_PARTNER_TIER || 'affiliate').toLowerCase();
+export function viatorPartnerTier() { return VIATOR_TIER; }
 const MOZIO_KEY = env.MOZIO_API_KEY || '';
 const MOZIO_BASE = env.MOZIO_BASE_URL || 'https://api.mozio.com';
 // CarTrawler Mobility (chauffeur/ride). Server-to-server: a Bearer partner
@@ -103,7 +110,7 @@ export function supplierDoors() {
     { channel: 'flights-market', provider: 'Travelpayouts (Aviasales)', envVar: 'TRAVELPAYOUTS_TOKEN', signup: 'https://www.travelpayouts.com — self-serve, token instant', covers: 'Real market prices incl. Ryanair/Jet2 (calibration + benchmark)', fallback: 'synthetic estimates' },
     { channel: 'hotels', provider: 'Amadeus', envVar: 'AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET', signup: 'https://developers.amadeus.com — self-serve', covers: 'Live hotel rates + booking', fallback: 'estimator + ops desk' },
     { channel: 'esim', provider: 'Airalo Partners (or eSIM Access)', envVar: 'AIRALO_CLIENT_ID + AIRALO_CLIENT_SECRET (or ESIMACCESS_API_KEY)', signup: 'https://partners.airalo.com — OAuth2, self-serve; optional AIRALO_BRAND_SETTINGS_NAME for branded eSIMs Cloud', covers: 'Instant eSIM: real ICCID + LPA activation + QR + Apple direct-install + eSIMs Cloud share link, straight into the travel documents', fallback: 'auto-provisioned in-OS, ops verifies' },
-    { channel: 'activities', provider: 'Viator (+ GetYourGuide later)', envVar: 'VIATOR_API_KEY', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities catalogue, ~8% commission', fallback: 'Rayna agent portal (18 countries) / ops desk' },
+    { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission, merchant books via cart/hold+book', fallback: 'Rayna agent portal (18 countries) / ops desk' },
     { channel: 'activities-rayna', provider: 'Rayna Tours (B2B agent — YOUR account)', envVar: 'RAYNA_PORTAL_URL (+ RAYNA_AGENT_ID)', signup: 'agreement in place — no API; portal operated by 3JN', covers: 'Activities + Dubai visa in Rayna’s 18-country footprint at net rates', fallback: 'AUTOMATED OPS DESK (this is the primary route)' },
     { channel: 'transfers', provider: 'Mozio / HolidayTaxis', envVar: 'MOZIO_API_KEY', signup: 'https://www.mozio.com/partners — application', covers: 'Airport transfers, thousands of local operators', fallback: 'ops desk / vendor marketplace' },
     { channel: 'insurance', provider: 'Cover Genius (XCover) / battleface', envVar: 'XCOVER_API_KEY + INSURANCE_AUTHORISED=true', signup: 'https://www.covergenius.com / https://battleface.com — B2B + FCA IAR REQUIRED', covers: 'Travel insurance at 30-40% commission', fallback: 'signpost only — NO sale until FCA authorisation confirmed' },
@@ -266,7 +273,8 @@ export async function searchViatorActivities({ destinationCity, date, pax = 2, c
   const destId = await viatorDestinationId(destinationCity);
   if (destId == null) return null;
   const body = {
-    filtering: { destination: String(destId), ...(date ? { startDate: date, endDate: date } : {}) },
+    // destination is the numeric destination id from /partner/destinations.
+    filtering: { destination: Number(destId), ...(date ? { startDate: date, endDate: date } : {}) },
     sorting: { sort: 'TRAVELER_RATING', order: 'DESCENDING' },
     pagination: { start: 1, count: 10 },
     currency,
