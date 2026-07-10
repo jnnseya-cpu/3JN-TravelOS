@@ -1416,12 +1416,21 @@ function renderTravelProfile() {
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
       <span class="eyebrow" style="margin:0">🪪 Master Travel Profile · Global Customer ID</span>
-      <span class="muted" style="font-size:12px">${filled}/${TRAVEL_PROFILE_FIELDS.length} complete · every booking module pulls from this one profile</span>
+      <span class="muted" style="font-size:12px"><span id="tpCount">${filled}</span>/${TRAVEL_PROFILE_FIELDS.length} complete · <span id="tpSaveStatus" style="color:var(--green)">autosaves as you type</span></span>
     </div>
     ${grouped}
     ${loyaltyHTML}
-    <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="saveTravelProfile()">Save travel profile</button>`;
+    <button class="btn btn-gold btn-sm btn-block" style="margin-top:12px" onclick="saveTravelProfile()">Save travel profile</button>
+    <p class="muted" style="font-size:11px;margin-top:6px">Every field autosaves moments after you stop typing and is shared instantly with every module that needs it — bookings, visa applications, payments, e-tickets, the Assistant. You never re-type your passport.</p>`;
   el.dataset.loyaltyCount = String(accounts.length);
+  // AUTOSAVE: one delegated listener; debounced so it fires moments after the
+  // user stops typing. Silent persists never re-render (that would steal the
+  // cursor) — they update the status chip and completeness counter in place.
+  el.oninput = el.onchange = () => {
+    const st = $('#tpSaveStatus'); if (st) { st.textContent = 'saving…'; st.style.color = 'var(--gold)'; }
+    clearTimeout(window.__tpAutosave);
+    window.__tpAutosave = setTimeout(() => persistTravelProfile(true), 900);
+  };
 }
 window.addLoyaltyRow = () => {
   const el = $('#travelProfileCard');
@@ -1440,7 +1449,7 @@ window.addLoyaltyRow = () => {
     </div>`);
   el.dataset.loyaltyCount = String(i + 1);
 };
-window.saveTravelProfile = async () => {
+function collectTravelProfile() {
   const tp = {};
   TRAVEL_PROFILE_FIELDS.forEach((f) => { const el = $(`#tp_${f.key}`); if (el && el.value.trim()) tp[f.key] = f.type === 'number' ? Number(el.value) : el.value.trim(); });
   // Loyalty programme rows → structured accounts.
@@ -1458,11 +1467,28 @@ window.saveTravelProfile = async () => {
     });
   }
   if (loyaltyAccounts.length) tp.loyaltyAccounts = loyaltyAccounts;
-  let data; try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) }); } catch { return; }
+  return tp;
+}
+// Persist the profile. silent=true → autosave path: update state + the status
+// chip and counter IN PLACE, never re-render (a re-render steals the cursor
+// mid-typing). The saved profile is instantly live everywhere: bookings, visa
+// applications, payments, documents and the Assistant all read state.user.
+async function persistTravelProfile(silent = false) {
+  if (!state.user) return;
+  const tp = collectTravelProfile();
+  const st = $('#tpSaveStatus');
+  let data;
+  try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) }); }
+  catch { if (st) { st.textContent = 'offline — retrying on next change'; st.style.color = '#ff8a8a'; } return; }
   setUser(data.user);
-  toast('✓ Travel profile saved — it now auto-fills your visa & bookings.');
-  renderTravelProfile();
-};
+  const cnt = $('#tpCount'); if (cnt) cnt.textContent = String(TRAVEL_PROFILE_FIELDS.filter((f) => tp[f.key]).length);
+  if (st) { st.textContent = '✓ saved · shared across the OS'; st.style.color = 'var(--green)'; }
+  if (!silent) {
+    toast('✓ Travel profile saved — it now auto-fills your visa & bookings.');
+    renderTravelProfile();
+  }
+}
+window.saveTravelProfile = () => persistTravelProfile(false);
 
 // ---- eSIM Manager ---------------------------------------------------------
 async function renderEsims() {

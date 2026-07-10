@@ -419,9 +419,19 @@ app.get('/api/account/:id', safe((req, res) => {
   res.json({ user, bookings: listBookings(user.id) });
 }));
 
-// Edit an account profile (name, email, bio, role, avatar).
+// Edit an account profile (name, email, bio, avatar, travel profile).
+// OWNERSHIP: only the signed-in account itself (or an all-access admin) may
+// edit — the Master Travel Profile holds passport data. Role changes are
+// stripped here; roles are granted through admin paths only.
 app.patch('/api/account/:id', safe((req, res) => {
-  const user = updateUser(req.params.id, req.body || {});
+  const caller = currentUser(req);
+  if (!caller) return res.status(401).json({ error: 'auth-required' });
+  if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
+    return res.status(403).json({ error: 'not-your-account', message: 'You can only edit your own profile.' });
+  }
+  const body = { ...(req.body || {}) };
+  if (caller.id === req.params.id && !caller.allAccess && caller.role !== 'admin') delete body.role;
+  const user = updateUser(req.params.id, body);
   if (!user) return res.status(404).json({ error: 'not-found' });
   res.json({ user });
 }));
