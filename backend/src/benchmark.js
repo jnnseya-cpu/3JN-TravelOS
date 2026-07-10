@@ -47,9 +47,9 @@ export function compareLinks({ origin, dest, depart, ret }) {
 // actually pays, never a fantasy raw fare.
 export function sellPriceUSD(rawUSD) {
   const flatFeeUSD = FLIGHT_ONLY_FEE_GBP / GBP_PER_USD;
-  const preFee = rawUSD + flatFeeUSD;
-  const fees = duffelOrderFeesUSD({ orderValueUSD: preFee });
-  return Math.round((preFee + fees.totalUSD) * 100) / 100;
+  // Duffel's 1% rides the FLIGHT order value (the fare), not our fee.
+  const fees = duffelOrderFeesUSD({ orderValueUSD: rawUSD });
+  return Math.round((rawUSD + flatFeeUSD + fees.totalUSD) * 100) / 100;
 }
 
 // Honest verdict vs a recorded market-leader price (both in GBP).

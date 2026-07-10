@@ -245,10 +245,13 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
   // A live Duffel flight in this package = a confirmed Duffel order, so its
   // per-order fees are recovered on top of commission (see pricing.js).
   const duffelOrder = selections.some((s2) => s2.type === 'flight' && s2.live && s2.details?.offerId);
+  // The Duffel pass-through is charged on the FLIGHT value only (what Duffel
+  // actually processes), not on the hotel/activities in the same basket.
+  const duffelOrderValueUSD = selections.filter((s2) => s2.type === 'flight' && s2.live && s2.details?.offerId).reduce((t, s2) => t + s2.priceUSD, 0);
   // TIERED TAKE-RATE: a basket of nothing but flights pays the flat flight
   // fee (free for Travel+) instead of 10% — see pricing.js.
   const flightsOnly = selections.length > 0 && selections.every((s2) => s2.type === 'flight');
-  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive });
+  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive, duffelOrderValueUSD: duffelOrder ? duffelOrderValueUSD : null });
 
   // Average reliability across selected suppliers — used for the "reliable"
   // promise and ranking.

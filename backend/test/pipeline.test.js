@@ -3987,3 +3987,22 @@ test('identical tiers dedupe into one honest option; Luxury prefers a REAL premi
   const std = pkg.options.find((o) => o.tier === 'Standard');
   assert.equal(std.components[0].details.cabin, 'Economy', 'Standard stays on the cheapest fare');
 });
+
+// ---- Duffel pass-through rides the FLIGHT value only --------------------------
+test('Duffel fees are charged on the flight order value, never on the whole package', async () => {
+  const { buildPackages: bp } = await import('../src/packager.js');
+  const leg0 = { from: 'LHR', to: 'DXB', date: '2026-08-12', depart: '10:00', arrive: '20:00', stops: 0, stopLabel: 'Direct', layovers: [], durationLabel: '7h 0m' };
+  const scan = {
+    flights: [{ type: 'flight', supplier: 'Gulf Air', verified: true, reliabilityScore: 90, live: true, priceUSD: 3231, details: { outbound: leg0, inbound: leg0, passengers: 4, cabin: 'Economy', offerId: 'off_x', liveAmount: '2552.31', liveCurrency: 'GBP' } }],
+    hotel: [{ type: 'hotel', supplier: 'Rove Hotels', verified: true, reliabilityScore: 88, stars: 4, priceUSD: 900, details: {} }],
+    activities: [{ type: 'activity', supplier: 'Desert Safari & BBQ', verified: true, reliabilityScore: 92, priceUSD: 300, details: {} }],
+  };
+  const intent = { components: ['flights', 'hotel', 'activities'], travellers: { total: 4, adults: 4, children: 0, childAges: [] }, nights: 7, dates: { checkIn: '2026-08-12', checkOut: '2026-08-19' }, flightPrefs: {} };
+  const pkg = bp(scan, intent, { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, 0);
+  const o = pkg.options[0];
+  // Expected: £2.20 order fee (→$2.79) + 1% of the FLIGHT ($3231 → $32.31),
+  // NOT 1% of the whole ~$4.9k package.
+  const fee = o.pricing.lines.duffelFeeUSD;
+  assert.ok(Math.abs(fee - (2.20 * 1.27 + 3231 * 0.01)) < 0.02, `fee is order + 1% of flight only (got $${fee})`);
+  assert.ok(fee < 3231 * 0.011 + 3, 'fee can never scale with the hotel/activities');
+});

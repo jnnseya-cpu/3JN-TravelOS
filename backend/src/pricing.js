@@ -59,7 +59,7 @@ export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) 
   };
 }
 
-export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false }) {
+export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, duffelOrderValueUSD = null }) {
   const tier = tierForPoints(loyaltyPoints);
   const loyaltyDiscountUSD = componentsUSD * tier.discount;
   const netComponentsUSD = componentsUSD - loyaltyDiscountUSD;
@@ -79,7 +79,11 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // Duffel pass-through — added ON TOP of commission on a live Duffel order so
   // our supplier cost never erodes the 10% margin. Zero on non-Duffel bookings.
   const preFeeTotalUSD = netComponentsUSD + commissionUSD;
-  const duffelFees = duffelOrder ? duffelOrderFeesUSD({ orderValueUSD: preFeeTotalUSD, ancillaries }) : { orderUSD: 0, managedContentUSD: 0, ancillariesUSD: 0, totalUSD: 0 };
+  // Duffel's 1% managed-content fee applies to the FLIGHT ORDER VALUE only —
+  // the amount that actually passes through Duffel — never to hotels or
+  // activities riding in the same package. Pass-through at cost, no margin.
+  const duffelBaseUSD = duffelOrderValueUSD != null ? duffelOrderValueUSD : preFeeTotalUSD;
+  const duffelFees = duffelOrder ? duffelOrderFeesUSD({ orderValueUSD: duffelBaseUSD, ancillaries }) : { orderUSD: 0, managedContentUSD: 0, ancillariesUSD: 0, totalUSD: 0 };
   const duffelFeeUSD = duffelFees.totalUSD;
   const totalUSD = preFeeTotalUSD + duffelFeeUSD;
 
