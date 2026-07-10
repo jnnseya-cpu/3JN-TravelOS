@@ -621,7 +621,7 @@ function renderOptions(data) {
 
   $('#plannerOut').innerHTML = gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
-      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. 3JN's 10% fee is shown openly in every breakdown.</p></div>
+      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. Every fee is shown openly in the breakdown — flat £4.99 on flights-only, 10% on packages.</p></div>
     <div class="opt-grid">${opts}</div>` + compareCard(data, sym);
 
   // stash options for booking
@@ -736,7 +736,7 @@ function flightItinBlock(c, o, sym, intent) {
     return `<div style="padding:8px 0;border-top:1px dashed rgba(223,229,238,.12)">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;font-size:12px">
         <span><strong>${title}</strong> · ${esc(dateNice(l.date))} · ${esc(d.cabin || 'Economy')} · ${esc(c.supplier)}${flights ? ` · ${flights}` : ''}</span>
-        <span class="muted">${l.stops ? `${l.stops} stop${l.stops > 1 ? 's' : ''}` : '⭐ Direct'}</span></div>
+        <span class="muted">${l.stops ? ((l.layovers || []).length && l.layovers.every((v) => v.minutes != null && v.minutes <= 180 && !v.overnight) ? '<span style="color:var(--green)">⏱ Short stopover</span>' : `${l.stops} stop${l.stops > 1 ? 's' : ''}`) : '<span style="color:var(--green)">⭐ Direct</span>'}</span></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-top:3px">
         <span style="font-family:'Space Grotesk';font-weight:700;font-size:16px">${esc(l.depart)} – ${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</span>
         <span class="muted" style="font-size:12px">${esc(l.from)} – ${esc(l.to)} · ${esc(l.durationLabel || '')}</span></div>
@@ -882,7 +882,11 @@ window.showComponentInfo = (tier, idx) => {
     const direct = (d.outbound?.stops || 0) === 0 && (d.inbound?.stops || 0) === 0;
     modal(`<span class="eyebrow">Flight details · ${esc(c.supplier)}</span>
       <h3 style="margin:6px 0 2px">${esc(d.outbound?.fromCity || d.outbound?.from)} → ${esc(d.outbound?.toCity || d.outbound?.to)}</h3>
-      <div style="margin:6px 0">${direct ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.1)">⭐ Direct flight — privilege selection</span>' : '<span class="verified-tag">↺ Connecting flight (no non-stop on this route)</span>'}</div>
+      <div style="margin:6px 0">${direct
+        ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.1)">⭐ Direct flight — privilege selection</span>'
+        : ([...(d.outbound?.layovers || []), ...(d.inbound?.layovers || [])].length && [...(d.outbound?.layovers || []), ...(d.inbound?.layovers || [])].every((v) => v.minutes != null && v.minutes <= 180 && !v.overnight))
+          ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.06)">⏱ Short stopover — privilege selection (no non-stop on this route)</span>'
+          : '<span class="verified-tag">↺ Connecting flight (no non-stop or short-stopover option on this route)</span>'}</div>
       <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}${d.flightNumber ? ` · flight ${esc(d.flightNumber)}` : ''}${d.aircraft ? ` · ${esc(d.aircraft)}` : ''}</div>
       ${c.scheduleLive ? '<div class="muted" style="font-size:11.5px;margin-top:4px">🟢 Real operated schedule (OAG) — fare is indicative</div>' : ''}
       ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
@@ -3779,7 +3783,7 @@ const CONTENT = {
   },
   journeys: {
     title: '🚆⛴ Trains, Coaches, Ferries & Cruises — every way to travel, one OS',
-    body: `<p class="muted">3JN is not a flight tool. Ask for <strong>any journey mode</strong> in plain English — “Amsterdam from Newcastle by ferry”, “Paris by Eurostar”, “a 7-night Mediterranean cruise”, “London to Manchester by coach” — and the OS scans verified operators (Eurostar, Trainline, FlixBus, National Express, DFDS, P&O, Brittany Ferries, MSC, Royal Caribbean and more), prices the whole trip and books it with the same transparent 10% fee, instalments and price guard as flights.</p>
+    body: `<p class="muted">3JN is not a flight tool. Ask for <strong>any journey mode</strong> in plain English — “Amsterdam from Newcastle by ferry”, “Paris by Eurostar”, “a 7-night Mediterranean cruise”, “London to Manchester by coach” — and the OS scans verified operators (Eurostar, Trainline, FlixBus, National Express, DFDS, P&O, Brittany Ferries, MSC, Royal Caribbean and more), prices the whole trip and books it with the same openly-shown fees, instalments and price guard as flights.</p>
       <ul class="comp-list"><li><span class="cs">Trains, coaches, ferries, mini cruises & ocean cruises</span></li><li><span class="cs">Car & bike hire, transfers, boats & yacht charters</span></li><li><span class="cs">Mix modes in one package — rail out, ferry back</span></li></ul>`,
     cta: 'planner',
   },

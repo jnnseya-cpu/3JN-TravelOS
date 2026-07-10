@@ -85,14 +85,33 @@ function cheapest(list) {
 function topRated(list) {
   return [...list].sort((a, b) => b.reliabilityScore - a.reliabilityScore || a.priceUSD - b.priceUSD)[0];
 }
-// Direct flights are a privilege: pick from the non-stop subset when any exist,
-// otherwise fall back to the full list (flights with stops are perfectly fine).
+// CONNECTION-QUALITY LADDER — the privilege order for flight selection:
+//   1. DIRECT flights (non-stop both ways),
+//   2. SHORT-STOPOVER connections (every layover ≤3h, none overnight),
+//   3. everything else.
+// Each tier is exhausted before the next is considered, so a cheap 9-hour
+// overnight layover can never beat a slightly dearer 90-minute connection.
 function isDirect(f) {
   return f.type === 'flight' && (f.details?.outbound?.stops || 0) === 0 && (f.details?.inbound?.stops || 0) === 0;
 }
+const SHORT_LAYOVER_MIN = 180; // ≤3h counts as a short stopover
+function isShortStopover(f) {
+  if (f.type !== 'flight' || isDirect(f)) return false;
+  const lays = [...(f.details?.outbound?.layovers || []), ...(f.details?.inbound?.layovers || [])];
+  if (lays.length) {
+    // Live offers carry real layover data — judge every wait exactly.
+    return lays.every((l) => l.minutes != null && l.minutes <= SHORT_LAYOVER_MIN && !l.overnight);
+  }
+  // Estimated offers know only the stop count: a single stop each way is the
+  // best available proxy for a short connection.
+  return (f.details?.outbound?.stops || 0) <= 1 && (f.details?.inbound?.stops || 0) <= 1;
+}
 function preferDirect(list, picker) {
   const direct = list.filter(isDirect);
-  return picker(direct.length ? direct : list);
+  if (direct.length) return picker(direct);
+  const short = list.filter(isShortStopover);
+  if (short.length) return picker(short);
+  return picker(list);
 }
 
 // Departure-time windows (local outbound departure hour).

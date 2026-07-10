@@ -3916,3 +3916,33 @@ test('bot defence: quarantined accounts cannot log in; signup endpoint refuses b
   assert.equal(botUser.suspended, true, 'flagged before login is possible');
   assert.ok(botUser.flaggedBot.reasons.includes('zero-activity'));
 });
+
+// ---- Connection-quality ladder: direct → short stopover → everything else ----
+test('flight selection privileges direct, then SHORT stopovers, before any long/overnight connection', async () => {
+  const { buildPackages } = await import('../src/packager.js');
+  const leg = (stops, layovers = []) => ({ from: 'EMA', to: 'BRU', date: '2026-09-01', depart: '08:00', arrive: '12:00', stops, stopLabel: stops ? `${stops} stop` : 'Direct', layovers, durationLabel: '4h 0m' });
+  const flight = (supplier, priceUSD, out, back) => ({ type: 'flight', supplier, verified: true, reliabilityScore: 90, priceUSD, details: { outbound: out, inbound: back, passengers: 1, cabin: 'Economy' } });
+  const shortLay = [{ airport: 'AMS', city: 'Amsterdam', minutes: 95, durationLabel: '1h 35m', overnight: false, tight: false }];
+  const longLay = [{ airport: 'IST', city: 'Istanbul', minutes: 540, durationLabel: '9h 00m', overnight: true, tight: false }];
+  const intent = { components: ['flights'], travellers: { total: 1, adults: 1, children: 0, childAges: [] }, nights: 4, dates: { checkIn: '2026-09-01', checkOut: '2026-09-05' }, flightPrefs: {} };
+  const currency = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  // Case 1: a CHEAP long-overnight connection vs a dearer SHORT stopover —
+  // the short stopover wins the Standard (cheapest) tier regardless.
+  let scan = { flights: [
+    flight('Cheap Overnight Air', 90, leg(1, longLay), leg(1, longLay)),
+    flight('KLM', 140, leg(1, shortLay), leg(1, shortLay)),
+  ] };
+  let pkg = buildPackages(scan, intent, currency, 0);
+  assert.equal(pkg.options[0].components[0].supplier, 'KLM', 'short stopover beats a cheaper overnight layover');
+  // Case 2: add a direct option — direct wins even at a higher price.
+  scan.flights.push(flight('Brussels Airlines', 180, leg(0), leg(0)));
+  pkg = buildPackages(scan, intent, currency, 0);
+  assert.equal(pkg.options[0].components[0].supplier, 'Brussels Airlines', 'direct is the top privilege');
+  // Case 3: only long connections exist — cheapest of them wins (no starvation).
+  scan = { flights: [
+    flight('Cheap Overnight Air', 90, leg(1, longLay), leg(1, longLay)),
+    flight('Dear Overnight Air', 200, leg(1, longLay), leg(1, longLay)),
+  ] };
+  pkg = buildPackages(scan, intent, currency, 0);
+  assert.equal(pkg.options[0].components[0].supplier, 'Cheap Overnight Air', 'ladder falls through when no better tier exists');
+});
