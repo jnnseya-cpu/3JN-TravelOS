@@ -545,11 +545,22 @@ function withinOneEdit(a, b) {
   }
   return edits + (la - i) + (lb - j) <= 1;
 }
+// Real places that sit one edit from a catalogue city but are GENUINELY
+// different — never "correct" these; let them synthesise on their own name.
+// (e.g. Genova = Italian Genoa ≠ Geneva; Delphi ≠ Delhi.)
+const PROTECTED_REAL_CITIES = new Set([
+  'genova', 'genoa', 'delphi', 'cordoba', 'granada', 'verona', 'bologna',
+  'bilbao', 'porto', 'napoli', 'nice', 'nancy', 'metz', 'graz', 'linz',
+  'turin', 'torino', 'pisa', 'bern', 'basel', 'lyon', 'lille', 'brest',
+]);
 function fuzzyCityMatch(name) {
   const n = String(name || '').trim().toLowerCase();
   if (n.length < 5) return null; // short names are too easy to false-match
+  if (PROTECTED_REAL_CITIES.has(n)) return null; // a real, distinct place
   for (const [key, v] of Object.entries(CITY_AIRPORTS)) {
-    if (withinOneEdit(n, key)) return v;
+    // Typos almost never change the FIRST letter — requiring it to match
+    // stops distinct cities that merely share a middle from cross-matching.
+    if (n[0] === key[0] && withinOneEdit(n, key)) return v;
   }
   return null;
 }

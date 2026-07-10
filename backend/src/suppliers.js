@@ -385,7 +385,11 @@ export function scanHotels(intent, dest) {
         description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${area}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
         ...hotelExtras(rnd, dest, intent, h.stars, 'hotel', h.name),
       },
-      priceUSD: round(nightly * nights * rooms),
+      // Price by the units actually sold: dorms sell one bed PER TRAVELLER,
+      // private rooms sell `rooms`. `units` already resolves to the right count
+      // (dorm → travellers.total, hotel → rooms) so this never underquotes a
+      // multi-traveller dorm the way `rooms` (≈ total/3) did.
+      priceUSD: round(nightly * nights * units),
     };
   });
 
@@ -962,7 +966,12 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
     scan.groupTravel = intent.groupOrigins.resolved.flatMap((party, idx) => {
       const partyIntent = {
         ...intent,
-        travellers: { adults: party.count, children: 0, childAges: [], total: party.count },
+        travellers: {
+          adults: party.adults ?? party.count,
+          children: party.children || 0,
+          childAges: party.childAges || [],
+          total: party.count,
+        },
       };
       // Live per-party fares when available (real bookable); else the estimator.
       const liveParty = live && live.groupFlights && live.groupFlights.find((g) => g.partyIndex === idx);

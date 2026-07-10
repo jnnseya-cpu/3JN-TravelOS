@@ -265,8 +265,18 @@ export async function validateDuffelOffer(offerId) {
       Accept: 'application/json',
     },
   });
-  const offer = res?.data;
-  if (!offer) return { ok: true, live: false, expired: true, reason: 'offer-gone' };
+  // Distinguish "offer genuinely gone" (HTTP 404/410) from "couldn't reach
+  // Duffel" (network/timeout/5xx → httpJSON returns null, or a 5xx __status).
+  // Only the former is a real expiry; a transient failure must NOT be reported
+  // as expired or the caller may cancel/refund a fare that is actually fine.
+  if (res == null || (res.__status && res.__status >= 500)) {
+    return { ok: false, live: false, expired: false, reason: 'unreachable' };
+  }
+  if (res.__status === 404 || res.__status === 410) {
+    return { ok: true, live: false, expired: true, reason: 'offer-gone' };
+  }
+  const offer = res.data;
+  if (!offer) return { ok: false, live: false, expired: false, reason: 'unexpected-response' };
   const expired = offer.expires_at ? (Date.parse(offer.expires_at) < Date.now()) : false;
   const usd = await toUSD(offer.total_amount, offer.total_currency);
   return { ok: true, live: !expired, expired, priceUSD: usd, amount: offer.total_amount, currency: offer.total_currency, expiresAt: offer.expires_at };
@@ -428,6 +438,17 @@ export function normalizeTequilaItinerary(item, priceUSD, travellers) {
     const arr = (s) => String(s.local_arrival || '').slice(0, 19);
     const hh = (iso) => (String(iso).match(/T(\d{2}:\d{2})/) || [])[1] || '';
     const dd = (iso) => String(iso).slice(0, 10);
+    // Duration math MUST use Tequila's UTC epoch seconds (dTime/aTime). The
+    // local_departure/local_arrival strings are wall-clock at each airport and
+    // span different timezones, so subtracting them yields wrong elapsed times
+    // (a westbound leg could even read negative). local_* is display-only.
+    const utcMs = (s, which) => {
+      const v = which === 'dep' ? s.dTime : s.aTime;
+      if (typeof v === 'number' && isFinite(v)) return v * 1000;
+      const iso = which === 'dep' ? s.local_departure : s.local_arrival;
+      const t = Date.parse(String(iso || '').replace(/(\.\d+)?Z?$/, 'Z'));
+      return isFinite(t) ? t : null;
+    };
     const segments = list.map((s) => ({
       carrier: carrierName(s.airline),
       flightNumber: `${s.airline || ''}${s.flight_no || ''}`,
@@ -440,18 +461,20 @@ export function normalizeTequilaItinerary(item, priceUSD, travellers) {
     }));
     const layovers = [];
     for (let i = 1; i < list.length; i++) {
-      const mins = Math.round((new Date(dep(list[i])) - new Date(arr(list[i - 1]))) / 60000);
+      const a = utcMs(list[i - 1], 'arr'); const b = utcMs(list[i], 'dep');
+      const mins = (a != null && b != null) ? Math.round((b - a) / 60000) : null;
       layovers.push({
         airport: list[i].flyFrom || '',
         city: list[i].cityFrom || '',
-        minutes: mins > 0 ? mins : null,
-        durationLabel: mins > 0 ? `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m` : '',
+        minutes: mins != null && mins > 0 ? mins : null,
+        durationLabel: mins != null && mins > 0 ? `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m` : '',
         overnight: dd(dep(list[i])) !== dd(arr(list[i - 1])),
-        tight: mins > 0 && mins < 60,
+        tight: mins != null && mins > 0 && mins < 60,
       });
     }
     const stops = list.length - 1;
-    const totalMins = Math.round((new Date(arr(last)) - new Date(dep(first))) / 60000);
+    const totalMs = (() => { const d = utcMs(first, 'dep'); const a = utcMs(last, 'arr'); return (d != null && a != null) ? a - d : null; })();
+    const totalMins = totalMs != null ? Math.round(totalMs / 60000) : 0;
     const viaLabel = layovers.length
       ? ` · via ${layovers.map((l) => `${l.city || l.airport} (${l.airport})${l.durationLabel ? ' ' + l.durationLabel + ' wait' : ''}`).join(', ')}`
       : '';

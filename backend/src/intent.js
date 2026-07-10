@@ -144,6 +144,31 @@ export function parseExplicitDates(text, today = new Date()) {
     }
   }
 
+  // 1b) Day range with a month name: "17-24 August" or "August 17 to 24". This
+  // MUST run before the single DD/MM matcher below — otherwise "3-9 August" is
+  // eaten by the DD/MM pattern as 3rd of month-9 (September), losing both the
+  // real month and the checkout.
+  {
+    const mn = MONTHS.map((x) => x.slice(0, 3)).join('|');
+    let dm = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|until|[\\-–—])\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(${mn})`, 'i'));
+    if (!dm) dm = text.match(new RegExp(`\\b(${mn})[a-z]*\\s+(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|until|[\\-–—])\\s*(\\d{1,2})`, 'i'));
+    if (dm) {
+      // Which alternative matched? First form starts with a day number; second
+      // starts with the month name. `dm[3]` is truthy in BOTH, so it can't be
+      // the discriminator — test whether group 1 is numeric.
+      const firstIsDay = /^\d+$/.test(dm[1]);
+      const monthTok = (firstIsDay ? dm[3] : dm[1]).toLowerCase().slice(0, 3);
+      const mi = MONTHS.findIndex((x) => x.startsWith(monthTok));
+      const d1 = +(firstIsDay ? dm[1] : dm[2]);
+      const d2 = +(firstIsDay ? dm[2] : dm[3]);
+      if (mi >= 0 && d1 && d2) {
+        const y = rollYear(mi);
+        const nights = Math.max(1, d2 - d1);
+        return { checkIn: iso(y, mi, d1), checkOut: iso(y, mi, d2), nights, monthIndex: mi };
+      }
+    }
+  }
+
   // 2) Single DD/MM[/YYYY] (no range) → use it as check-in.
   const single = /\b(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?\b/;
   m = text.match(single);
@@ -173,21 +198,6 @@ export function parseExplicitDates(text, today = new Date()) {
     return { checkIn: iso(ySingle, moSingle, dSingle), checkOut: null, nights: null, monthIndex: moSingle };
   }
 
-  // 3) Day range with a month name: "17-24 August" or "August 17 to 24".
-  const mn = MONTHS.map((x) => x.slice(0, 3)).join('|');
-  let dm = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|until|[\\-–—])\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(${mn})`, 'i'));
-  if (!dm) dm = text.match(new RegExp(`\\b(${mn})[a-z]*\\s+(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|until|[\\-–—])\\s*(\\d{1,2})`, 'i'));
-  if (dm) {
-    const monthName = (dm[3] || dm[1]).toLowerCase().slice(0, 3);
-    const mi = MONTHS.findIndex((x) => x.startsWith(monthName));
-    const d1 = +(dm[3] ? dm[1] : dm[2]);
-    const d2 = +(dm[3] ? dm[2] : dm[3]);
-    if (mi >= 0 && d1 && d2) {
-      const y = rollYear(mi);
-      const nights = Math.max(1, d2 - d1);
-      return { checkIn: iso(y, mi, d1), checkOut: iso(y, mi, d2), nights, monthIndex: mi };
-    }
-  }
   return null;
 }
 

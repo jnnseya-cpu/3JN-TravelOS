@@ -4185,3 +4185,71 @@ test('destination proposer ranks by vibe, season and budget; planner offers it',
   const built = plan({ text: 'A trip to Bali for 5 nights with flights and hotel', context: GB, user: null, searchTier: 'smart' });
   assert.equal(built.stage, 'options');
 });
+
+// ---- WAVE 4: search/logic regression fixes ----------------------------------
+import { parseExplicitDates } from '../src/intent.js';
+import { scanHotels } from '../src/suppliers.js';
+import { normalizeTequilaItinerary } from '../src/live-suppliers.js';
+
+test('wave4 dates: day-range with month name never misparses; month-first keeps checkout', () => {
+  const today = new Date(Date.UTC(2026, 0, 10));
+  // "3-9 August" used to be eaten by the DD/MM matcher as 3rd of month-9 (Sep).
+  const a = parseExplicitDates('3-9 August', today);
+  assert.equal(a.checkIn, '2026-08-03');
+  assert.equal(a.checkOut, '2026-08-09');
+  assert.equal(a.nights, 6);
+  // Month-first ("August 17 to 24") used to drop the checkout entirely (NaN).
+  const b = parseExplicitDates('August 17 to 24', today);
+  assert.equal(b.checkIn, '2026-08-17');
+  assert.equal(b.checkOut, '2026-08-24');
+  assert.equal(b.nights, 7);
+  // A plain single DD/MM/YYYY still parses as a single check-in.
+  const c = parseExplicitDates('03/10/2026', today);
+  assert.equal(c.checkIn, '2026-10-03');
+  assert.equal(c.checkOut, null);
+});
+
+test('wave4 dorm: a group of 4 in a dorm is priced per BED, not per room', () => {
+  // Build an intent that unlocks budget stays for 4 travellers, 3 nights.
+  const intent = parseIntent('cheap hostel in Barcelona for 4 adults, 3 nights', { country: 'GB' }, new Date(Date.UTC(2026, 5, 30)));
+  intent.budgetStay = true;
+  const offers = scanHotels(intent, intent.destination);
+  const dorm = offers.find((o) => /dorm/i.test(o.details.roomType || ''));
+  assert.ok(dorm, 'a dorm option is offered to a budget group');
+  assert.equal(dorm.details.rooms, 4, 'four beds sold for four travellers');
+  // Priced per BED: total ≈ nightly × nights × 4 (±1 for display rounding), and
+  // decisively NOT the old ÷(rooms≈2) underquote.
+  const perBed = dorm.details.nightlyUSD * dorm.details.nights;
+  assert.ok(Math.abs(dorm.priceUSD - perBed * 4) <= 1, `priced for 4 beds (${dorm.priceUSD})`);
+  assert.ok(dorm.priceUSD > perBed * 3, 'not the halved underquote');
+});
+
+test('wave4 tequila TZ: duration uses UTC epochs, not wall-clock across timezones', () => {
+  // Westbound: London 10:00 local (09:00Z) → New York 13:00 local (18:00Z).
+  // Wall-clock subtraction would give a bogus 3h; the true elapsed is 9h.
+  const item = {
+    route: [{
+      airline: 'BA', flight_no: '175',
+      flyFrom: 'LHR', cityFrom: 'London', flyTo: 'JFK', cityTo: 'New York',
+      local_departure: '2026-08-17T10:00:00.000Z', local_arrival: '2026-08-17T13:00:00.000Z',
+      dTime: Date.UTC(2026, 7, 17, 9, 0, 0) / 1000, aTime: Date.UTC(2026, 7, 17, 18, 0, 0) / 1000,
+      return: 0,
+    }],
+    booking_token: 'tok', baglimit: { hold_weight: 23 },
+  };
+  const offer = normalizeTequilaItinerary(item, 240, { adults: 1, children: 0, childAges: [], total: 1 });
+  assert.equal(offer.details.outbound.durationLabel, '9h 0m');
+  assert.equal(offer.details.outbound.depart, '10:00', 'display time stays LOCAL');
+});
+
+test('wave4 scanSummary: empty categories report null cheapest, never Infinity', () => {
+  const res = plan({ text: 'Barcelona from London in September for 4 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  for (const [, s] of Object.entries(res.scanSummary || {})) {
+    assert.ok(s.cheapestUSD === null || Number.isFinite(s.cheapestUSD), `cheapestUSD finite or null (${s.cheapestUSD})`);
+  }
+});
+
+test('wave4 one-way: a flights-only one-way search does not crash', () => {
+  const res = plan({ text: 'one way flight from London to Barcelona on 15/08/2026 for 2 adults', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(res.stage, 'options');
+});

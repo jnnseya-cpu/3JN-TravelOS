@@ -121,10 +121,25 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Multi-origin group: resolve each party's own departure city — every party
   // flies from its own airport, everyone shares the stay, dates and booking.
   if (intent.groupOrigins) {
-    intent.groupOrigins.resolved = intent.groupOrigins.parties.map((p) => ({
-      count: p.count,
-      origin: resolveOrigin(p.city) || origin,
-    }));
+    // Distribute the group's children (and their ages) across the origin parties
+    // so each party's flight prices its OWN child fares — not everyone billed as
+    // an adult. Each party keeps at least one adult so the per-party leg stays
+    // bookable (an unaccompanied-minor flight is not).
+    const ages = Array.isArray(intent.travellers?.childAges) ? [...intent.travellers.childAges] : [];
+    let childrenLeft = Math.max(0, intent.travellers?.children || 0);
+    intent.groupOrigins.resolved = intent.groupOrigins.parties.map((p) => {
+      const take = Math.min(childrenLeft, Math.max(0, p.count - 1));
+      childrenLeft -= take;
+      const childAges = [];
+      for (let i = 0; i < take; i++) childAges.push(ages.length ? ages.shift() : 8);
+      return {
+        count: p.count,
+        origin: resolveOrigin(p.city) || origin,
+        adults: Math.max(1, p.count - take),
+        children: take,
+        childAges,
+      };
+    });
   }
   // Community host supply: 3JN-verified listings for this destination compete
   // with hotels inside the same scan (fetched early: it keys the cache too).
@@ -225,10 +240,27 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // no paid AI. Fresh funded results are written back for the next traveller.
   // Key on the EXACT request (raw text captures every parsed nuance) plus the
   // out-of-text inputs that change results: toggles, loyalty, live host supply.
-  const cacheKey = [intent.raw.toLowerCase(), origin.airport,
-    intent.dates?.checkIn || '-',
+  // The key MUST include every out-of-text input that changes the result, or a
+  // cache hit silently serves another traveller's answer. The same sentence from
+  // a UK visitor and a Nigerian visitor differs in currency, visa (nationality)
+  // and converted prices; a couple and a family of four differ in party; a
+  // Business tier and free tier differ in depth — none of that is in raw text.
+  const t = intent.travellers || {};
+  const cacheKey = [
+    intent.raw.toLowerCase(),
+    intent.destination.code,                                  // resolved destination
+    origin.airport,
+    intent.dates?.checkIn || '-', intent.dates?.checkOut || '-',
+    (intent.components || []).slice().sort().join(','),       // flights-only ≠ full package
+    `${t.adults || 0}a${t.children || 0}c`,                   // party composition
     intent.flightPrefs.directOnly ? 'D1' : 'D0', intent.flightPrefs.departureWindow || '-',
-    user ? (user.points || 0) : 0, communityHosts.length].join('|');
+    intent.boardBasis || '-', intent.budgetStay ? 'B1' : 'B0',
+    context.currency?.code || 'USD',                          // pricing currency
+    context.country || '-', intent.nationality || '-',        // visa + regional pricing
+    // NB: search tier is deliberately NOT keyed — a funded search populates the
+    // database and the free tier serves that same richer result (spec §16).
+    user ? (user.points || 0) : 0, communityHosts.length,
+  ].join('|');
   // CHECK CACHE FIRST — before spending ACUs, at EVERY tier (Cache-First
   // Intelligence Engine, spec §16). Confidence decays with age: above the 85%
   // serve threshold the answer is served with NO AI COST; the free tier serves
@@ -275,7 +307,12 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
 
   // Was "direct only" honoured? (false when the route has no non-stop option.)
   const recFlight = (packages.options[0]?.components || []).find((c) => c.type === 'flight');
-  const chosenDirect = recFlight ? (recFlight.details.outbound.stops || 0) === 0 && (recFlight.details.inbound.stops || 0) === 0 : false;
+  // A one-way / mixed-mode flight has inbound === null — guard it, or plan()
+  // throws and the whole search 500s. Direct = outbound direct, and inbound
+  // direct only when there IS an inbound.
+  const chosenDirect = recFlight
+    ? (recFlight.details.outbound?.stops || 0) === 0 && ((recFlight.details.inbound?.stops ?? 0) === 0)
+    : false;
 
   // REAL-PRICE POLICY: mark every option's price basis. A component is "real"
   // when it came from a live supplier feed OR is our own committed marketplace
@@ -473,11 +510,14 @@ function buildDecision(packages, priceDive, farePrediction, intent) {
 function summariseScan(scan) {
   const out = {};
   for (const [k, offers] of Object.entries(scan)) {
+    if (!Array.isArray(offers)) continue; // some scan slots hold metadata, not offer arrays
     out[k] = {
       scanned: offers.length,
       verified: offers.filter((o) => o.verified).length,
       reliable: offers.filter((o) => o.reliabilityScore >= 70).length,
-      cheapestUSD: Math.min(...offers.map((o) => o.priceUSD)),
+      // Empty category → no cheapest. Math.min(...[]) is Infinity, which would
+      // report a bogus "cheapest" (and serialise to null anyway); be explicit.
+      cheapestUSD: offers.length ? Math.min(...offers.map((o) => o.priceUSD)) : null,
     };
   }
   return out;
