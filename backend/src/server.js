@@ -1364,7 +1364,9 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
     bookingId: booking.id,
     userId: user?.id || booking.userId || '',
     customerEmail: user?.email,
-    successUrl: `${origin}/console?paid=1&booking=${booking.id}`,
+    // `amt` feeds the Meta Pixel Purchase event on the success page — the
+    // authoritative payment record is still the signed Stripe webhook.
+    successUrl: `${origin}/console?paid=1&booking=${booking.id}&amt=${encodeURIComponent(total)}`,
     cancelUrl: `${origin}/console?paid=0&booking=${booking.id}`,
   });
   if (!session.ok) return res.status(400).json(session);

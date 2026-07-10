@@ -322,6 +322,17 @@ function applyDeepLink() {
   const views = new Set(['home', 'planner', 'how', 'marketplace', 'blog', 'visaos', 'membership', 'rewards', 'vendors', 'hosting', 'api', 'console', 'business', 'admin']);
   const pathMap = { '': 'home', 'app': 'home', 'how-it-works': 'how', 'api-portal': 'api', 'destinations': 'marketplace' };
   let target = '';
+  // Meta Pixel: Stripe success returns to /console?paid=1&booking=... —
+  // that IS the purchase moment. Guarded per booking id so refreshes never
+  // double-count a conversion.
+  const payQ = new URLSearchParams(location.search);
+  if (payQ.get('paid') === '1' && payQ.get('booking')) {
+    const pk = 'fbq_purchase_' + payQ.get('booking');
+    if (!localStorage.getItem(pk)) {
+      localStorage.setItem(pk, '1');
+      metaTrack('Purchase', { value: Number(payQ.get('amt')) || 0, currency: 'GBP', content_ids: [payQ.get('booking')], content_type: 'product' });
+    }
+  }
   const qv = new URLSearchParams(location.search).get('view');
   if (qv && views.has(qv)) target = qv;
   else {
@@ -412,6 +423,8 @@ async function runPlan(overrides = {}) {
   } catch { out.innerHTML = ''; return; }
 
   state.lastPlan = data;
+  // Meta Pixel: a completed search with results is a Search event.
+  if (data.stage === 'options') metaTrack('Search', { search_string: text.slice(0, 100), content_category: data.intent?.destination?.city || '' });
   if (data.appliedDiveLever) {
     const al = data.appliedDiveLever;
     const bits = [];
@@ -1039,6 +1052,7 @@ window.openBooking = async (tier) => {
   } catch { return; }
   state.lastQuote = data.quote;
   state.lastReqs = reqs;
+  metaTrack('InitiateCheckout', { value: option.pricing.local.total, currency: option.pricing.currency || 'GBP', content_name: `${tier} · ${intent.destination?.city || ''}` });
   const inst = data.quote.instalment;
   const sym = option.pricing.symbol;
 
@@ -3507,6 +3521,13 @@ async function fetchHumanChallenge() {
   const el = $('#humanQ');
   if (el && HUMAN.challenge) el.textContent = HUMAN.challenge.question + ' =';
 }
+// ---- Meta Pixel (ID 1176409173894579) ---------------------------------------
+// Safe wrapper: never throws if the pixel is blocked by an ad-blocker/consent
+// tool — analytics must never break the product.
+function metaTrack(event, params) {
+  try { if (typeof fbq === 'function') fbq('track', event, params || {}); } catch { /* pixel blocked — fine */ }
+}
+
 function humanCheckPayload(full) {
   const c = HUMAN.challenge || {};
   return {
@@ -3594,6 +3615,7 @@ window.doSignup = async () => {
   const body = { name, email, role: $('#auRole').value, referredByCode: $('#auRef').value.trim() || undefined, humanCheck: humanCheckPayload(true) };
   let d; try { d = await api('/api/account', { method: 'POST', body: JSON.stringify(body) }); } catch { fetchHumanChallenge(); return; }
   setUser(d.user); closeModal(); toast(`✓ Welcome, ${d.user.name}!`); nav('console');
+  metaTrack('CompleteRegistration', { status: true });
 };
 window.doLogin = async () => {
   const email = $('#liEmail').value.trim();
