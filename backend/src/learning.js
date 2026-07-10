@@ -131,15 +131,23 @@ export function journeyDashboard(userId, context) {
   const risk = riskFeed(code);
   const weatherLayer = risk.ok ? risk.layers.find((l) => l.layer === 'Weather') : null;
 
-  // Savings synthesised from the destination cost basis (deterministic).
+  // Reference cost basis (real per-destination data) and honest, clearly-labelled
+  // savings ESTIMATES derived from it. Nothing here is a booked fact — the copy
+  // says "from" / "est." so the traveller is never shown a fake confirmed status.
+  const flightFromUSD = dest.flightBaseUSD;
+  const hotelStayUSD = dest.hotelNightBaseUSD * nights;
+  const transferFromUSD = dest.transferBaseUSD || dest.carDayBaseUSD || 30;
   const flightSaveUSD = Math.round(dest.flightBaseUSD * 0.32);
   const hotelUpgradeUSD = Math.round(dest.hotelNightBaseUSD * 0.45 * nights * 0.18);
-  const windowSaveUSD = Math.round((dest.flightBaseUSD + dest.hotelNightBaseUSD * nights) * 0.07);
+  const windowSaveUSD = Math.round((dest.flightBaseUSD + hotelStayUSD) * 0.07);
   const totalSaveUSD = flightSaveUSD + windowSaveUSD + hotelUpgradeUSD;
 
-  // Visa status for the user's nationality (their detected region).
+  // Visa status for the user's nationality (their detected region) — show the
+  // actual rule (type + fee) instead of a vague "ready".
   const visa = visaRule(dest, ctx.country);
-  const visaValue = visa.required ? 'eVisa ready' : 'Visa-free';
+  const visaValue = visa.required
+    ? `${visa.type || 'eVisa'}${visa.costUSD ? ` · ${money(visa.costUSD)}` : ''}`
+    : (visa.type || 'Visa-free');
 
   // Currency pair: user's currency → destination-country currency.
   const toCur = CURRENCY_BY_COUNTRY[dest.country];
@@ -154,11 +162,11 @@ export function journeyDashboard(userId, context) {
   const monthLabel = profile.preferredMonth ? profile.preferredMonth[0].toUpperCase() + profile.preferredMonth.slice(1) : 'flexible dates';
 
   const rows = [
-    { icon: ICONS.flight, label: 'Cheapest Flight Found', value: `${money(flightSaveUSD)} saved`, kind: 'good' },
-    { icon: ICONS.hotel, label: 'AI Negotiating Hotel Upgrade', value: `Suite +${money(hotelUpgradeUSD)}`, kind: 'blue' },
-    { icon: ICONS.visa, label: `Visa · ${dest.city} (${COUNTRY_NAMES[ctx.country] || ctx.country})`, value: visaValue, kind: 'good' },
-    { icon: ICONS.transfer, label: 'Airport Transfer · Driver Assigned', value: 'Confirmed', kind: 'good' },
-    { icon: ICONS.window, label: `Best Travel Window · ${monthLabel}`, value: `${money(windowSaveUSD)} saved`, kind: 'good' },
+    { icon: ICONS.flight, label: `Cheapest flight · ${dest.city}`, value: `from ${money(flightFromUSD)} · est. save ${money(flightSaveUSD)}`, kind: 'good' },
+    { icon: ICONS.hotel, label: `Hotel · ${nights} nights`, value: `from ${money(hotelStayUSD)} · upgrade value +${money(hotelUpgradeUSD)}`, kind: 'blue' },
+    { icon: ICONS.visa, label: `Visa · ${dest.city} (${COUNTRY_NAMES[ctx.country] || ctx.country})`, value: visaValue, kind: visa.required ? 'blue' : 'good' },
+    { icon: ICONS.transfer, label: 'Airport transfer', value: `from ${money(transferFromUSD)} · ready to add`, kind: 'blue' },
+    { icon: ICONS.window, label: `Best travel window · ${monthLabel}`, value: `est. save ${money(windowSaveUSD)}`, kind: 'good' },
     { icon: ICONS.risk, label: 'Travel Risk Score', value: risk.ok ? `${risk.riskScore} · ${risk.level}` : '—', kind: 'good' },
     { icon: ICONS.weather, label: `Weather · ${dest.city}`, value: weatherLayer ? weatherLayer.note : '—', kind: 'blue' },
     currencyRow,
@@ -176,7 +184,14 @@ export function journeyDashboard(userId, context) {
     confidence: profile.confidence,
     currency: { code: cur.code, symbol: cur.symbol },
     rows,
-    savings: { local: toLocal(totalSaveUSD), display: money(totalSaveUSD) },
+    savings: {
+      local: toLocal(totalSaveUSD),
+      display: money(totalSaveUSD),
+      headline: `Est. saving ${money(totalSaveUSD)}`,
+      note: learned
+        ? `Projected across flight, hotel upgrade and flexible dates for ${dest.city}. Run the search for a live, bookable price.`
+        : `Typical saving for ${dest.city}. Search your real dates to lock an exact, bookable price.`,
+    },
     agents: learningAgents(profile, top, ctx),
     aiRouting: route('behaviourLearning'),
   };

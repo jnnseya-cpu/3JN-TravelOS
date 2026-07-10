@@ -4001,7 +4001,10 @@ async function refreshJourney() {
   const learned = $('#journeyLearned');
   if (learned) learned.textContent = d.learnedFrom || '';
   const save = $('#journeySave');
-  if (save && d.savings) save.textContent = `You Save ${d.savings.display}`;
+  if (save && d.savings) {
+    save.textContent = d.savings.headline || `Est. saving ${d.savings.display}`;
+    if (d.savings.note) save.title = d.savings.note;
+  }
   const agentsEl = $('#journeyAgents');
   if (agentsEl) {
     agentsEl.innerHTML = (d.agents || []).map((a) => `
