@@ -4319,3 +4319,48 @@ test('wave5 fulfilment: a live hotel routes to the ops desk (never charged-but-u
   assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true }, 'AE'), 'ops:hotels');
   assert.equal(fulfilmentChannelFor({ type: 'hotel', live: false }, 'AE'), 'ops:hotels');
 });
+
+// ---- WAVE 5b: payment-architecture regressions ------------------------------
+import { applyDepositCreditToBooking as applyCreditW5, placeSearchDeposit as placeDepW5, convertDepositToBooking as convertDepW5, processReferralOnPaidBooking as procRefW5, getUserRaw as getUserRawW5 } from '../src/store.js';
+
+const LIVE_OPT_W5 = () => ({ tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', local: { total: 1000 }, lines: { totalUSD: 1266 }, revenue: { commissionUSD: 100 } }, components: [{ type: 'flight', supplier: 'BA', live: true, priceUSD: 1266, details: {} }] });
+const INST_W5 = () => ({ deposit: 200, schedule: [{ due: '2026-08-01', amount: 400, status: 'scheduled' }, { due: '2026-09-01', amount: 400, status: 'scheduled' }] });
+
+test('wave5 deposit: Stripe-captured booking records no optimistic deposit (no double-count)', () => {
+  const u = createUser({ name: 'Payer', email: `pay${Date.now()}@x.co` });
+  // Stripe live + a live fare → the webhook is authoritative, so NO pre-recorded deposit.
+  const b = createBooking({ quoteId: 'q_p1a', option: LIVE_OPT_W5(), instalment: INST_W5(), userId: u.id, stripeLive: true });
+  assert.equal(b.awaitExternalCapture, true);
+  assert.ok(!b.payments.some((p) => p.type === 'deposit'), 'no optimistic deposit when Stripe captures externally');
+  // Stripe off (current default) → optimistic deposit recorded, behaviour unchanged.
+  const b2 = createBooking({ quoteId: 'q_p1b', option: LIVE_OPT_W5(), instalment: INST_W5(), userId: u.id, stripeLive: false });
+  assert.ok(b2.payments.some((p) => p.type === 'deposit' && p.amount === 200), 'optimistic deposit still recorded with Stripe off');
+});
+
+test('wave5 search deposit: converting it actually credits the booking (money no longer vanishes)', () => {
+  const u = createUser({ name: 'Corp', email: `corp${Date.now()}@x.co` });
+  const dep = placeDepW5({ userId: u.id, tier: 'corporate' }); // £50
+  assert.ok(dep.ok || dep.deposit, 'deposit placed');
+  const b = createBooking({ quoteId: 'q_p3', option: LIVE_OPT_W5(), instalment: INST_W5(), userId: u.id });
+  const credit = convertDepW5(u.id, b.id);
+  assert.ok(credit && credit.amountGBP === 50, 'credit is the £50 corporate deposit');
+  applyCreditW5(b, credit.amountGBP);
+  assert.ok(b.payments.some((p) => p.type === 'deposit-credit' && p.amount === 50), 'credit counted as paid');
+  const cashDue = b.instalment.deposit + b.instalment.schedule.reduce((s, x) => s + x.amount, 0);
+  assert.ok(Math.abs(cashDue - 950) < 0.01, `cash still due = total − credit (£${cashDue})`);
+});
+
+test('wave5 referral: 250 ACU fires once (first paid booking), not on every booking', () => {
+  const referrer = createUser({ name: 'Referrer', email: `ref${Date.now()}@x.co` });
+  const rr = getUserRawW5(referrer.id); rr.referralCode = `RC${Date.now()}`;
+  const friend = createUser({ name: 'Friend', email: `fr${Date.now()}@x.co` });
+  const fr = getUserRawW5(friend.id); fr.referredByCode = rr.referralCode;
+  const mk = (n) => { const b = createBooking({ quoteId: `q_ref${n}`, option: LIVE_OPT_W5(), instalment: null, userId: friend.id }); b.referralProcessed = false; return b; };
+  const before = getUserRawW5(referrer.id).acuBalance || 0;
+  const r1 = procRefW5(mk(1));
+  const r2 = procRefW5(mk(2));
+  assert.equal(r1.acu, 250, 'first paid booking mints 250 ACU');
+  assert.equal(r2.acu, 0, 'second booking mints NO further signup ACU');
+  const gained = (getUserRawW5(referrer.id).acuBalance || 0) - before;
+  assert.ok(gained >= 250 && gained < 500, `only one 250-ACU grant (got ${gained})`);
+});

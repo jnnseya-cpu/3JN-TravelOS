@@ -739,6 +739,41 @@ export function convertDepositToBooking(userId, bookingId) {
   d.convertedAt = nowISO();
   return { depositId: d.id, amountGBP: d.amountGBP, note: 'Refundable search deposit deducted from the final payment' };
 }
+// ACTUALLY apply that credit to the booking: the pre-paid search deposit counts
+// as a payment toward the trip AND reduces the cash still due, so the customer is
+// charged total − credit (never the full total on top). Without this the deposit
+// was marked "converted" (blocking a refund) yet never credited — money vanished.
+export function applyDepositCreditToBooking(booking, creditGbp) {
+  if (!booking || !(creditGbp > 0) || booking.depositCreditApplied) return null;
+  const cur = booking.option?.pricing?.currency || 'GBP';
+  const totalLocal = booking.option?.pricing?.local?.total || 0;
+  const totalUSD = booking.option?.totalUSD || 0;
+  // Search deposits are GBP; express the credit in the booking's display currency.
+  const creditLocal = cur === 'GBP' ? creditGbp
+    : (totalUSD > 0 && totalLocal > 0) ? round2((creditGbp / GBP_ANCHOR) / totalUSD * totalLocal)
+    : creditGbp;
+  const applied = round2(Math.min(creditLocal, totalLocal || creditLocal));
+  // Counts toward planPaid/fully-paid (pushed directly, NOT via recordPayment, so
+  // it does not prematurely fire referral/vendor rewards).
+  booking.payments.push({ type: 'deposit-credit', amount: applied, gateway: 'search-deposit', at: nowISO(), status: 'paid', note: 'Refundable search deposit applied' });
+  // Reduce the cash due: off the deposit first, then the latest instalments.
+  if (booking.instalment) {
+    let remaining = applied;
+    const cut = Math.min(booking.instalment.deposit || 0, remaining);
+    booking.instalment.deposit = round2((booking.instalment.deposit || 0) - cut);
+    remaining = round2(remaining - cut);
+    const sched = booking.instalment.schedule;
+    if (Array.isArray(sched)) {
+      for (let i = sched.length - 1; i >= 0 && remaining > 0.005; i--) {
+        const c = Math.min(sched[i].amount, remaining);
+        sched[i].amount = round2(sched[i].amount - c);
+        remaining = round2(remaining - c);
+      }
+    }
+  }
+  booking.depositCreditApplied = { amountGBP: creditGbp, amountLocal: applied, at: nowISO() };
+  return booking.depositCreditApplied;
+}
 export function listSearchDeposits(userId) {
   return db.searchDeposits.filter((d) => d.userId === userId);
 }
@@ -1071,7 +1106,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false }) {
   const bookingId = id('bkg');
   // PAYMENT RAIL POLICY: until BitriPay completes, Stripe is the ONLY live
   // money-in rail. Any BitriPay/mobile-money selection settles on Stripe.
@@ -1128,14 +1163,24 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
       : null,
     createdAt: nowISO(),
   };
-  // First payment = deposit.
-  if (instalment) {
+  // First payment = deposit. But when Stripe will actually CAPTURE the money
+  // (live key + a live-fare booking), the signed Stripe webhook is the single
+  // source of truth — pre-recording a 'paid' deposit here would double-count it
+  // against the webhook's 'stripe-checkout' line (2× the deposit on planPaid).
+  // With Stripe off (current default), behaviour is unchanged: the optimistic
+  // deposit stands in for the simulated capture.
+  const awaitExternalCapture = stripeLive && booking.priceBasis === 'live';
+  if (instalment && !awaitExternalCapture) {
     booking.payments.push({ type: 'deposit', amount: instalment.deposit, gateway, method: paymentMethod, at: nowISO(), status: 'paid' });
   }
+  booking.awaitExternalCapture = awaitExternalCapture;
   db.bookings.set(bookingId, booking);
 
-  // Award loyalty points — 1 point per £2 spent (POINTS_PER_USD per $1).
-  if (userId) addPoints(userId, option.totalUSD * POINTS_PER_USD);
+  // Award loyalty points — 1 point per £2 spent (POINTS_PER_USD per $1). When
+  // Stripe captures externally, points accrue on the real payment (in
+  // recordPayment) instead, so an abandoned-after-deposit trip can't bank the
+  // full-trip points.
+  if (userId && !awaitExternalCapture) addPoints(userId, option.totalUSD * POINTS_PER_USD);
 
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'booking.created', entity: 'booking', entityId: bookingId, summary: `${option.tier} via ${gateway} ($${option.totalUSD})` });
   if (userId) pushNotification(userId, { type: 'success', icon: '✅', title: 'Booking confirmed', body: `${option.tier} package — deposit paid. Price Guard is now active.` });
@@ -1174,6 +1219,17 @@ export function recordPayment(bookingId, payment) {
       ? { type: 'success', icon: '🧾', title: `Receipt ${receiptId}`, body: `Payment of ${sym}${amt.toFixed(2)} received. Paid ${sym}${paid.toFixed(2)} of ${sym}${total.toFixed(2)} — ${remaining > 0 ? `${sym}${remaining.toFixed(2)} remaining${b.instalment?.finalDue ? `, fully settled by ${b.instalment.finalDue}` : ''}` : 'fully settled'}.` }
       : { type: 'success', icon: '🧾', title: `Refund ${receiptId}`, body: `Refund of ${sym}${Math.abs(amt).toFixed(2)} processed to your payment method.` });
   }
+  // Loyalty points for Stripe-captured bookings accrue on ACTUAL payments,
+  // proportional to the fraction of the trip paid — so points track real money
+  // in (and an abandoned-after-deposit trip banks only the deposit's share),
+  // instead of an optimistic full-trip grant at booking time. Non-Stripe
+  // bookings keep the createBooking grant (this block is inert for them).
+  if (b.userId && b.awaitExternalCapture && ['deposit', 'instalment', 'full', 'stripe-checkout'].includes(payment.type) && Number(payment.amount) > 0) {
+    const totalLocal = b.option?.pricing?.local?.total || 0;
+    const totalPts = (b.option?.totalUSD || 0) * POINTS_PER_USD;
+    if (totalLocal > 0 && totalPts > 0) addPoints(b.userId, totalPts * (Number(payment.amount) / totalLocal));
+  }
+
   // Rewards: the first payment makes this a "paid booking" — fire the referral
   // engine once (250 ACU + revenue-share accrual). Guarded so it never double-pays.
   try { if (!b.referralProcessed) processReferralOnPaidBooking(b); } catch { /* rewards are best-effort */ }
@@ -1259,7 +1315,7 @@ export function allReviews() {
 // ONE customer-facing GBP anchor (matches geo.js GB rateFromUSD 0.79). All
 // internal GBP<->USD conversions use it so ledgers agree with the storefront.
 const GBP_ANCHOR = 0.79;
-const REWARDS_GBP_TO_USD = 1.27;
+const REWARDS_GBP_TO_USD = 1 / GBP_ANCHOR; // platform anchor reciprocal, consistent everywhere
 const gbpFromUsd = (usd) => Math.round(((usd || 0) * GBP_ANCHOR) * 100) / 100;
 
 // §1 — award ACU for a traveller reward action. `once` actions are granted a
@@ -1340,14 +1396,15 @@ export function processReferralOnPaidBooking(booking) {
   }
   booking.referralProcessed = true;
 
-  // 250 ACU for every successful paid referral booking (§2).
-  rewardAcu(referrer.id, REFERRAL_ACU, `referral:paid-booking:${booking.id}`);
-
-  // Count a DISTINCT referred customer's first paid booking toward the 20-unlock.
-  friend.hasPaidBooking = friend.hasPaidBooking || false;
-  if (!friend.hasPaidBooking) {
+  // 250 ACU for a referred customer's FIRST paid booking ONLY (§2). Minting it on
+  // EVERY booking let a colluding second account farm unlimited ACU (≈ wallet
+  // cash) with repeat cheap bookings — revenue-share is capped per customer, the
+  // ACU bonus was not. Tie it to the same distinct-customer unlock below.
+  const firstPaid = !friend.hasPaidBooking;
+  if (firstPaid) {
     friend.hasPaidBooking = true;
     rp.paidReferrals = (rp.paidReferrals || 0) + 1;
+    rewardAcu(referrer.id, REFERRAL_ACU, `referral:first-paid-booking:${booking.id}`);
   }
 
   // Revenue share on 3JN net revenue from this booking (§2/§3/§6).
@@ -1363,8 +1420,9 @@ export function processReferralOnPaidBooking(booking) {
       db.revshareLedger.push({ id: id('rsh'), partnerId: referrer.id, customerId: friend.id, bookingId: booking.id, netRevenueGbp, rate, amountGbp: shareGbp, at: nowISO() });
     }
   }
-  recordAudit({ actor: 'system', role: 'system', action: 'referral.rewarded', entity: 'booking', entityId: booking.id, summary: `+${REFERRAL_ACU} ACU · revshare £${shareGbp} @ ${(rate * 100).toFixed(2)}%` });
-  return { ok: true, acu: REFERRAL_ACU, revshareGbp: shareGbp, rate };
+  const acuAwarded = firstPaid ? REFERRAL_ACU : 0;
+  recordAudit({ actor: 'system', role: 'system', action: 'referral.rewarded', entity: 'booking', entityId: booking.id, summary: `+${acuAwarded} ACU · revshare £${shareGbp} @ ${(rate * 100).toFixed(2)}%` });
+  return { ok: true, acu: acuAwarded, revshareGbp: shareGbp, rate };
 }
 
 // §4 — the partner dashboard (real-time, derived from the ledgers).
@@ -1558,7 +1616,7 @@ export function operatorConfirm(bookingId) {
 // VENDOR PARTNER PROGRAMME (docs/VENDOR-PARTNER-PROGRAMME.md)
 // Sell More. Earn Weekly. Grow Without Owning the Platform.
 // ===========================================================================
-const VENDOR_GBP_TO_USD = 1.27;
+const VENDOR_GBP_TO_USD = 1 / GBP_ANCHOR;
 
 // §4 — apply. The AI risk review runs immediately; a clean pass auto-approves,
 // a sanctions hit rejects, anything else goes to manual compliance review.
@@ -1760,7 +1818,7 @@ export function profitabilityDashboard() {
   const aiCostEstimatedUSD = round4(db.aiRequestCosts.reduce((s, r) => s + r.estimatedCostUSD, 0));
   const aiCostActualUSD = round4(db.aiRequestCosts.reduce((s, r) => s + r.actualCostUSD, 0));
 
-  const GBP_TO_USD = 1.27;
+  const GBP_TO_USD = 1 / GBP_ANCHOR;
   const streams = {
     commissionRevenueUSD: sumB((b) => b.option?.pricing?.revenue?.commissionUSD),
     supplierRevenueUSD: sumB((b) => b.supplierEarnings?.totalUSD),

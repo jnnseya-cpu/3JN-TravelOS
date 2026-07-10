@@ -247,7 +247,7 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       offerExpiresAt: offer.expires_at || null,
       liveAmount: offer.total_amount || null,
       liveCurrency: offer.total_currency || null,
-      offerPassengers: (offer.passengers || []).map((p) => ({ id: p.id, type: p.type })),
+      offerPassengers: (offer.passengers || []).map((p) => ({ id: p.id, type: p.type, age: p.age })),
     },
     priceUSD,
   };
@@ -358,13 +358,27 @@ export async function payDuffelOrder({ orderId, amount, currency }) {
 }
 
 // Build Duffel passenger records for order creation from stored traveller data.
-export function duffelOrderPassengers(offerPassengers = [], lead = {}) {
+// Duffel validates born_on against each passenger TYPE's age band, so a single
+// hardcoded adult DOB made every child/infant order fail. Derive a plausible DOB
+// per type/age (anchored to the departure year when known) so family orders
+// ticket. NOTE: non-lead passenger NAMES are still placeholders — real per-
+// passenger name capture is a separate data-collection task.
+export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}) {
+  const depYear = Number(String(opts.departureDate || '').slice(0, 4)) || new Date().getUTCFullYear();
+  const dobFor = (p) => {
+    if (p.born_on) return p.born_on;
+    const age = Number.isFinite(p.age) ? p.age
+      : p.type === 'infant_without_seat' ? 1
+      : p.type === 'child' ? 8
+      : 30;
+    return `${depYear - age}-01-01`;
+  };
   return (offerPassengers.length ? offerPassengers : [{ type: 'adult' }]).map((p, i) => ({
     id: p.id || undefined,
     type: p.type || 'adult',
     given_name: i === 0 ? (String(lead.fullName || 'Guest').split(' ')[0] || 'Guest') : 'Guest',
     family_name: i === 0 ? (String(lead.fullName || 'Traveller').split(' ').slice(-1)[0] || 'Traveller') : 'Traveller',
-    born_on: p.born_on || '1990-01-01',
+    born_on: dobFor(p),
     email: lead.email || undefined,
     phone_number: lead.phone || undefined,
     gender: p.gender || 'm',

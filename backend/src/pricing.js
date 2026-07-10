@@ -36,7 +36,9 @@ export function formatMoney(localAmount, currency) {
 // ---- Duffel pass-through fees (recovered ON TOP of 3JN commission) ----------
 // Duffel charges us per confirmed order — these are OUR supplier costs, so we
 // add them to the customer total on live Duffel flight bookings, preserving the
-// full 10% margin. GBP fees are converted to USD internally at £1≈$1.27.
+// full 10% margin. GBP fees convert to USD at the SINGLE platform anchor
+// (0.79 GBP/USD → £1≈$1.266), not a separate ~1.27 rate, so every internal
+// GBP↔USD conversion in the OS is consistent and reciprocal.
 export const DUFFEL_FEES = {
   orderGBP: 2.20,            // per confirmed order
   managedContentPct: 0.01,  // 1% of total order value
@@ -44,7 +46,7 @@ export const DUFFEL_FEES = {
   excessSearchGBP: 0.004,   // per search beyond the 1500:1 search-to-book ratio
   searchToBookRatio: 1500,
 };
-const GBP_USD = 1.27;
+const GBP_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266), consistent everywhere
 // Per-order Duffel cost we recover on a live flight booking.
 export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) {
   const orderUSD = DUFFEL_FEES.orderGBP * GBP_USD;

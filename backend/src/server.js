@@ -30,7 +30,7 @@ import {
   registerHost, updateHostListing, hostBookings, hostDashboard, updateHostPayout,
   grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT, usageStats,
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
-  placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
+  placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, applyDepositCreditToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest,
@@ -235,7 +235,7 @@ async function autoTicketFlight(booking) {
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
   if (!flight || !liveFlightsEnabled()) return;
   const ful = () => (booking.fulfilment = booking.fulfilment || {});
-  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.lead || {});
+  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.lead || {}, { departureDate: flight.details.outbound?.date });
   const fullyPaid = bookingFullyPaid(booking);
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------
@@ -1322,12 +1322,17 @@ app.post('/api/book', safe((req, res) => {
   // paying more, earlier is always allowed.
   const instalment = smartPlanForRequest(req, quote.option, quote.intent);
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
   // Refundable search deposit (spec §6): a booking converts the user's active
   // deposit — its value comes OFF the final payment, never double-charged.
   if (user) {
     const depositCredit = convertDepositToBooking(user.id, booking.id);
-    if (depositCredit) booking.depositCredit = depositCredit;
+    if (depositCredit) {
+      booking.depositCredit = depositCredit;
+      // Actually apply it — reduce the cash due and count it as paid (previously
+      // the deposit was marked converted but never credited).
+      applyDepositCreditToBooking(booking, depositCredit.amountGBP);
+    }
   }
   recordBehaviour(user?.id, {
     event: 'book',
@@ -1455,9 +1460,15 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
   // a fare we can no longer ticket.
   const flightComp = (booking.option?.components || []).find((c) => c.type === 'flight' && (c.details?.offerId || c.details?.bookingToken) && c.live);
   if (flightComp && liveFlightsEnabled()) {
+    // Re-price with the REAL party split (adults + children), not the combined
+    // headcount — passing total-as-adults reprices a family as all-adults and
+    // wrongly trips the "fare changed" guard, blocking a legitimate checkout.
+    const party = booking.option?.travellers || {};
+    const revAdults = party.adults || party.total || 1;
+    const revChildren = party.children || 0;
     const check = flightComp.details.offerId
       ? await validateDuffelOffer(flightComp.details.offerId)
-      : await validateTequilaOffer(flightComp.details.bookingToken, { adults: booking.option?.components?.find((c) => c.type === 'flight')?.details?.passengers || 1 });
+      : await validateTequilaOffer(flightComp.details.bookingToken, { adults: revAdults, children: revChildren });
     // FAIL CLOSED: if we could not reach the provider to re-validate a LIVE fare
     // (network/5xx → ok:false, reason 'unreachable'), do NOT charge and hope —
     // block checkout and ask the traveller to retry, rather than capture money
@@ -1480,9 +1491,17 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
     }
   }
   const cur = booking.option?.pricing?.currency || 'GBP';
-  const total = booking.instalment?.deposit && kind !== 'full'
-    ? booking.instalment.deposit
-    : booking.option?.pricing?.local?.total || 0;
+  // "Full" settles the OUTSTANDING balance (total − already paid), not the whole
+  // price again — otherwise a customer who paid a deposit and then chose to
+  // settle in full would be charged the full total on top of the deposit.
+  const fullTotal = booking.option?.pricing?.local?.total || 0;
+  const paidSoFar = (booking.payments || [])
+    .filter((p) => ['deposit', 'instalment', 'full', 'stripe-checkout', 'deposit-credit'].includes(p.type) && Number(p.amount) > 0)
+    .reduce((s, p) => s + Number(p.amount), 0);
+  const total = kind === 'full'
+    ? Math.max(0, Math.round((fullTotal - paidSoFar) * 100) / 100)
+    : (booking.instalment?.deposit || fullTotal);
+  if (total <= 0) return res.status(409).json({ error: 'nothing-to-pay', message: 'This booking is already fully settled.' });
   const origin = req.headers.origin || `https://${req.headers.host}`;
   const user = currentUser(req);
   const session = await createCheckoutSession({
