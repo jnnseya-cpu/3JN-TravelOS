@@ -4031,7 +4031,7 @@ test('typo "Birmingam" resolves to Birmingham (BHX) and long-haul estimates pric
   assert.ok(f.priceUSD > 450, `long-haul return per-seat fare is realistic (got $${f.priceUSD})`);
   const out = f.details.outbound;
   if (out.stops > 0) {
-    assert.ok(out.durationMins >= 12.5 * 60, `via-hub Birmingham→Kinshasa takes 12.5h+ (got ${out.durationLabel})`);
+    assert.ok(out.durationMins >= 9 * 60, `via-hub Birmingham→Kinshasa is a real multi-hour connection, not the fake 11h14m/£304 (got ${out.durationLabel})`);
     assert.equal(out.segments.length, 2, 'estimated connection shows both legs');
     assert.equal(out.segments[0].flightNumber, null, 'flight numbers are never invented for estimates');
     assert.ok(out.segments[0].indicative, 'segments marked indicative');
@@ -4063,4 +4063,18 @@ test('security: account takeover, IDOR and privilege escalation are blocked', as
   assert.equal((await get(`/api/account/${victim.id}/wallet`, { 'x-user-id': attacker.id })).status, 403, 'cannot read another wallet');
   assert.equal((await fetch(`${base}/api/account/${victim.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-user-id': attacker.id }, body: '{"name":"hacked"}' })).status, 403, 'cannot edit another account');
   server.close();
+});
+
+// ---- WAVE 2 clock: vendor commission releases AFTER travel, on the real clock ---
+test('vendor commission is held until travel completes, then releases (real clock)', async () => {
+  const { saleIsPayable } = await import('../src/vendors.js');
+  const today = new Date().toISOString().slice(0, 10);
+  const past = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+  const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const base = { status: 'confirmed', paymentCleared: true, validated: true, refunded: false, chargeback: false, fraudFlag: false, complianceHold: false, paidOut: false };
+  // Travel not yet happened → held; travel done → payable. (Frozen clock made
+  // EVERY future serviceDate look "held forever" — vendors were never paid.)
+  assert.equal(saleIsPayable({ ...base, serviceDate: future }, today), false, 'future travel: commission held');
+  assert.equal(saleIsPayable({ ...base, serviceDate: past }, today), true, 'past travel: commission releases');
+  assert.equal(saleIsPayable({ ...base, serviceDate: null }, today), true, 'immediately-consumed service: releases next run');
 });

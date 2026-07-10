@@ -1834,9 +1834,12 @@ export function adminOverview() {
 }
 
 function nowISO() {
-  // Deterministic-friendly: callers don't depend on exact time, and Date.now is
-  // unavailable in some sandboxes. Use a monotonic stamp.
-  return new Date(Date.UTC(2026, 5, 30, 12, 0, counter % 60)).toISOString();
+  // REAL wall clock. A frozen stamp mixed with Date.now()-based comparisons
+  // elsewhere silently broke: vendor commission never released (service-date
+  // gate always in the future vs a frozen "today"), the abuse throttle never
+  // tripped, and the dormant-bot sweep could never age an account. All three
+  // heal once stamps and comparisons share one real clock.
+  return new Date().toISOString();
 }
 function round2(n) { return Math.round(n * 100) / 100; }
 function round4(n) { return Math.round(n * 10000) / 10000; }

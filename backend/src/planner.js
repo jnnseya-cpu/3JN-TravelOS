@@ -31,7 +31,10 @@ const NEED_MAP = {
 };
 
 export function plan({ text, context, user, searchTier = 'smart', overrides = {}, preferences = {}, live = null, usage = {} }) {
-  const intent = parseIntent(text, context, new Date(Date.UTC(2026, 5, 30)));
+  // Parse relative dates against the REAL current date — a frozen "today"
+  // made "in August" / "05/07" resolve into the past, so live providers
+  // rejected the departure_date and nothing was bookable.
+  const intent = parseIntent(text, context, new Date());
 
   // Flight preferences: explicit toggles win, else inferred from the request text.
   const win = ['morning', 'afternoon', 'evening', 'night'].find((w) => new RegExp(`\\b${w}\\b`, 'i').test(text || ''));
