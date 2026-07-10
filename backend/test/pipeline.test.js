@@ -2253,15 +2253,19 @@ test('USPs: decision (advisor not search), Travel CFO, negotiation perks, diaspo
   for (const v of Object.values(r.intelligenceScore.scores)) assert.ok(v >= 0 && v <= 100);
 });
 
-test('USP #2: guaranteed savings — beaten quote reports saving; unbeaten refunds the ACUs', () => {
+test('USP #2: guaranteed savings — beaten quote reports saving; unbeaten refunds the ACUs actually spent', () => {
   const u = createUser({ name: 'Guarantee User', email: 'guarantee@example.com' });
   buyAcu(u.id, 'starter');
+  spendAcu(u.id, 57, 'deep-search'); // the user really spends 57 ACU on a search
   const won = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 2000, ourTotalUSD: 1700, acuSpent: 57 });
   assert.equal(won.refunded, false);
   assert.equal(won.savedUSD, 300);
   const lost = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 1500, ourTotalUSD: 1700, acuSpent: 57 });
   assert.equal(lost.refunded, true);
   assert.equal(lost.acuRefunded, 57);
+  // ANTI-ABUSE: a second claim can't refund more than was really spent (57).
+  const abuse = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 1, ourTotalUSD: 999999, acuSpent: 1000000 });
+  assert.equal(abuse.acuRefunded, 0, 'cannot mint ACU beyond real unrefunded search spend');
   assert.match(SAVINGS_GUARANTEE, /refund your search credits/i);
 });
 
@@ -2593,8 +2597,10 @@ test('demo accounts: seed-roles returns fully loaded accounts for every role', a
     const tester = d.accounts.find((a) => a.email === 'tester@3jntravel.com');
     assert.ok(tester.membership?.active, 'consumer has an active membership');
     assert.ok(tester.acuBalance > 0, 'consumer holds ACUs');
-    const consoleRes = await (await fetch(`${base}/api/account/${tester.id}`)).json();
+    const consoleRes = await (await fetch(`${base}/api/account/${tester.id}`, { headers: { 'x-user-id': tester.id } })).json();
     assert.ok((consoleRes.bookings || []).length >= 1, 'consumer has a real booking');
+    // SECURITY: reading an account without auth (401) or as another user (403).
+    assert.equal((await fetch(`${base}/api/account/${tester.id}`)).status, 401, 'unauthenticated account read is blocked');
     // Host demo published a photo-complete listing.
     const login = await fetch(`${base}/api/host/listings`).then((r) => r.json()).catch(() => null);
     if (login && login.listings) assert.ok(login.listings.some((l) => l.city === 'Dubai'), 'demo host listing live');
@@ -2602,7 +2608,7 @@ test('demo accounts: seed-roles returns fully loaded accounts for every role', a
     assert.ok(listVisaApplications().length >= 3, 'visa queue has demo cases');
     // Idempotent: running again does not duplicate bookings.
     await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' });
-    const again = await (await fetch(`${base}/api/account/${tester.id}`)).json();
+    const again = await (await fetch(`${base}/api/account/${tester.id}`, { headers: { 'x-user-id': tester.id } })).json();
     assert.equal((again.bookings || []).length, (consoleRes.bookings || []).length, 'seed is idempotent');
   } finally {
     server.close();
@@ -4032,4 +4038,29 @@ test('typo "Birmingam" resolves to Birmingham (BHX) and long-haul estimates pric
     assert.ok(out.layovers[0].minutes >= 90, 'layover length is stated');
     assert.match(out.stopLabel, /via .* wait/, 'summary names the hub and the wait');
   }
+});
+
+// ---- WAVE 1 security: auth/IDOR/escalation are closed ------------------------
+test('security: account takeover, IDOR and privilege escalation are blocked', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (p, b, h) => fetch(`${base}${p}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(h || {}) }, body: JSON.stringify(b) });
+  const get = (p, h) => fetch(`${base}${p}`, { headers: h || {} });
+  // Public signup cannot mint an admin.
+  const suRes = await post('/api/account', { name: 'Eve', email: 'eve@example.com', role: 'admin', allAccess: true, humanCheck: { website: '', elapsedMs: 30000, interactions: 40, a: 1, b: 1, answer: 2, token: 't' } });
+  const eve = (await suRes.json()).user;
+  if (eve) { assert.notEqual(eve.role, 'admin', 'signup role forced to consumer'); assert.notEqual(eve.allAccess, true); }
+  // A signed-in consumer cannot self-escalate via PATCH allAccess.
+  const victim = createUser({ name: 'Victim', email: 'victim.sec@example.com' });
+  const esc1 = await fetch(`${base}/api/account/${victim.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-user-id': victim.id }, body: JSON.stringify({ allAccess: true, role: 'admin' }) });
+  const after = (await esc1.json()).user;
+  assert.notEqual(after.allAccess, true, 'self-edit cannot grant allAccess');
+  assert.notEqual(after.role, 'admin', 'self-edit cannot grant a role');
+  // IDOR: attacker cannot read victim's account or edit it.
+  const attacker = createUser({ name: 'Attacker', email: 'attacker.sec@example.com' });
+  assert.equal((await get(`/api/account/${victim.id}`, { 'x-user-id': attacker.id })).status, 403, 'cannot read another account');
+  assert.equal((await get(`/api/account/${victim.id}/wallet`, { 'x-user-id': attacker.id })).status, 403, 'cannot read another wallet');
+  assert.equal((await fetch(`${base}/api/account/${victim.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-user-id': attacker.id }, body: '{"name":"hacked"}' })).status, 403, 'cannot edit another account');
+  server.close();
 });

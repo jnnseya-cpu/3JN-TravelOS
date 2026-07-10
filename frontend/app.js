@@ -339,6 +339,9 @@ function applyDeepLink() {
     const seg = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0];
     target = pathMap[seg] !== undefined ? pathMap[seg] : (views.has(seg) ? seg : '');
   }
+  // A shared post link (/blog/<slug>) opens THAT post, not the whole list.
+  const blogSlug = location.pathname.match(/^\/blog\/([^/]+)\/?$/)?.[1];
+  if (blogSlug) { nav('blog'); openPost(decodeURIComponent(blogSlug)); return; }
   if (target && target !== 'home') nav(target);
 }
 function syncCurrency(country) {
@@ -1251,13 +1254,13 @@ async function renderConsole() {
 
   const profile = `
     <div class="card pad">
-      <div class="cover-banner" style="${u.coverImage ? `background-image:url('${u.coverImage}')` : ''}"></div>
+      <div class="cover-banner" style="${/^data:image\//.test(u.coverImage || '') ? `background-image:url('${encodeURI(u.coverImage)}')` : ''}"></div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
         ${avatarHTML(u, 52)}
-        <div><h3 style="margin:0">${u.name}</h3><div class="muted" style="font-size:12.5px">${u.email}</div>
-        <span class="role-badge">${u.role}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
+        <div><h3 style="margin:0">${esc(u.name)}</h3><div class="muted" style="font-size:12.5px">${esc(u.email)}</div>
+        <span class="role-badge">${esc(u.role)}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
       </div>
-      ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${u.bio}</p>` : ''}
+      ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${esc(u.bio)}</p>` : ''}
       <div class="kv" style="margin-top:12px"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
       <div class="kv"><span>Loyalty points</span><span>${u.points.toLocaleString()}</span></div>
       <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
@@ -1590,9 +1593,11 @@ window.quickIntel = (city) => { const i = $('#intelDestHome'); if (i) i.value = 
 
 // Render an avatar — emoji or uploaded image data URL.
 function avatarHTML(u, size = 32) {
-  const isImg = u.avatar && u.avatar.startsWith('data:');
-  if (isImg) return `<img class="avatar" src="${u.avatar}" style="width:${size}px;height:${size}px" alt="">`;
-  return `<span class="avatar avatar-emoji" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.5)}px">${u.avatar || '🧳'}</span>`;
+  // Only a data:image avatar may become an <img src>; anything else is treated
+  // as text (emoji) and escaped, so an avatar string can never inject markup.
+  const isImg = /^data:image\//.test(u.avatar || '');
+  if (isImg) return `<img class="avatar" src="${encodeURI(u.avatar)}" style="width:${size}px;height:${size}px" alt="">`;
+  return `<span class="avatar avatar-emoji" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.5)}px">${esc(u.avatar || '🧳')}</span>`;
 }
 
 // ---- Editable profile + picture -------------------------------------------
@@ -1613,10 +1618,10 @@ window.editProfile = () => {
         <div class="chips" style="margin-top:4px">${['🧳','💼','🏪','🤝','🛡️','🧑‍✈️','🌍','⭐'].map((e) => `<span class="chip" onclick="pickEmoji('${e}')">${e}</span>`).join('')}</div>
       </div>
     </div>
-    <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="pfName" value="${(u.name || '').replace(/"/g, '&quot;')}"></div>
-    <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="pfEmail" value="${(u.email || '').replace(/"/g, '&quot;')}"></div>
+    <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="pfName" value="${esc(u.name || '')}"></div>
+    <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="pfEmail" value="${esc(u.email || '')}"></div>
     <div class="field" style="margin-top:10px"><label>Role</label><select class="in" id="pfRole">${roleOpts}</select></div>
-    <div class="field" style="margin-top:10px"><label>Bio</label><textarea class="in" id="pfBio" style="width:100%;min-height:60px">${u.bio || ''}</textarea></div>
+    <div class="field" style="margin-top:10px"><label>Bio</label><textarea class="in" id="pfBio" style="width:100%;min-height:60px">${esc(u.bio || '')}</textarea></div>
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveProfile()">Save profile</button>`);
   window.__avatar = u.avatar;
   window.__cover = u.coverImage || null;
@@ -2511,12 +2516,15 @@ function shareButtons(p) {
 }
 window.copyText = (t) => { try { navigator.clipboard.writeText(t); } catch {} toast('✓ Link copied.'); };
 window.openPost = async (slug) => {
-  let data; try { data = await api(`/api/blog/${slug}`); } catch { return; }
+  let data; try { data = await api(`/api/blog/${encodeURIComponent(slug)}`); } catch { return; }
   const p = data.post;
+  if (!p) { toast('That post could not be found.'); return; }
+  // Reflect the post in the URL so the browser back button and re-shares work.
+  try { history.replaceState({}, '', `/blog/${p.slug}`); } catch {}
   modal(`
-    <span class="eyebrow">${p.destination} · ${p.readMins} min read · ${p.author}</span>
-    <h2 style="margin:6px 0 4px;font-size:24px">${p.title}</h2>
-    <div class="muted" style="font-size:12px;margin-bottom:12px">${p.tags.map((t) => '#' + t).join(' ')}</div>
+    <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)}</span>
+    <h2 style="margin:6px 0 4px;font-size:24px">${esc(p.title)}</h2>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">${(p.tags || []).map((t) => '#' + esc(t)).join(' ')}</div>
     <div class="blog-body" onclick="blogLink(event)">${p.body}</div>
     <div style="display:flex;gap:8px;margin-top:16px;align-items:center"><span class="muted" style="font-size:12px">Share:</span>${shareButtons(p)}</div>`);
 };
@@ -3971,8 +3979,8 @@ async function refreshNotifications() {
 async function openNotifications() {
   const items = window.__notifs || [];
   const rows = items.length ? items.map((n) => `
-    <div class="notif ${n.read ? '' : 'unread'}"><span class="notif-ico">${n.icon}</span>
-      <div><strong>${n.title}</strong><div class="muted" style="font-size:12.5px">${n.body}</div></div></div>`).join('')
+    <div class="notif ${n.read ? '' : 'unread'}"><span class="notif-ico">${esc(n.icon)}</span>
+      <div><strong>${esc(n.title)}</strong><div class="muted" style="font-size:12.5px">${esc(n.body)}</div></div></div>`).join('')
     : '<div class="muted" style="font-size:13px">No notifications yet. Book a trip or run the Price Guard to see updates here.</div>';
   modal(`<span class="eyebrow">Notifications</span><h3 style="margin:6px 0 10px">Your alerts</h3>${rows}`);
   try { await api('/api/notifications/read', { method: 'POST', body: '{}' }); } catch {}

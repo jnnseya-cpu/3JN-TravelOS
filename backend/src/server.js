@@ -167,6 +167,25 @@ function requireRole(req, res, roles) {
   return false;
 }
 
+// Escape a string for safe interpolation into outbound HTML email.
+function htmlEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// OWNERSHIP GUARD: the caller must be the account identified by `ownerId`,
+// or an all-access/admin. Returns the caller on success; writes a 401/403 and
+// returns null otherwise. Used on every endpoint that reads/mutates data keyed
+// by a user id in the URL (ids are enumerable — they are NOT secrets).
+function requireOwner(req, res, ownerId) {
+  const u = currentUser(req);
+  if (!u) { res.status(401).json({ error: 'auth-required' }); return null; }
+  if (u.id !== ownerId && !u.allAccess && u.role !== 'admin') {
+    res.status(403).json({ error: 'not-yours', message: 'You can only access your own account data.' });
+    return null;
+  }
+  return u;
+}
+
 // Wrap handlers so a thrown error always returns clean JSON — never the empty
 // "{}" serialization failure the previous build suffered from.
 const safe = (fn) => async (req, res) => {
@@ -379,7 +398,7 @@ app.post('/api/contact', safe(async (req, res) => {
     replyTo: email,
     subject: `Contact form — ${name || email}`,
     text: `From: ${name || ''} <${email}>\n\n${message}`,
-    html: `<p><strong>From:</strong> ${name || ''} &lt;${email}&gt;</p><p>${String(message).replace(/</g, '&lt;')}</p>`,
+    html: `<p><strong>From:</strong> ${htmlEsc(name || '')} &lt;${htmlEsc(email)}&gt;</p><p>${htmlEsc(String(message))}</p>`,
   });
   res.json({ sent: r.ok, queued: !r.ok && r.skipped ? 'email-disabled' : undefined });
 }));
@@ -409,11 +428,21 @@ app.post('/api/account', safe((req, res) => {
     return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
   delete body.humanCheck;
+  // Public signup can NEVER mint a privileged account — role/allAccess are
+  // granted only through admin paths. Force a plain consumer.
+  delete body.role; delete body.allAccess;
   const user = createUser(body);
   res.json({ user });
 }));
 
+// OWNERSHIP: an account holds passport/PII — only the owner (or an all-access
+// admin) may read it, and never another user's raw bookings.
 app.get('/api/account/:id', safe((req, res) => {
+  const caller = currentUser(req);
+  if (!caller) return res.status(401).json({ error: 'auth-required' });
+  if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
+    return res.status(403).json({ error: 'not-your-account' });
+  }
   const user = getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'not-found' });
   res.json({ user, bookings: listBookings(user.id) });
@@ -430,7 +459,9 @@ app.patch('/api/account/:id', safe((req, res) => {
     return res.status(403).json({ error: 'not-your-account', message: 'You can only edit your own profile.' });
   }
   const body = { ...(req.body || {}) };
-  if (caller.id === req.params.id && !caller.allAccess && caller.role !== 'admin') delete body.role;
+  // Self-edits can NEVER change privilege — strip role AND allAccess (leaving
+  // allAccess was a privilege-escalation hole: {allAccess:true} = instant admin).
+  if (!caller.allAccess && caller.role !== 'admin') { delete body.role; delete body.allAccess; }
   const user = updateUser(req.params.id, body);
   if (!user) return res.status(404).json({ error: 'not-found' });
   res.json({ user });
@@ -564,12 +595,14 @@ app.post('/api/account/test', safe((req, res) => {
 }));
 
 app.post('/api/account/:id/acu', safe((req, res) => {
+  if (!requireOwner(req, res, req.params.id)) return;
   const result = buyAcu(req.params.id, (req.body || {}).pack);
   res.json(result);
 }));
 
 // ---- ACU Economy (spec §4): wallet view + typed transaction ledger --------
 app.get('/api/account/:id/wallet', safe((req, res) => {
+  if (!requireOwner(req, res, req.params.id)) return;
   const wallet = acuWallet(req.params.id);
   if (!wallet) return res.status(404).json({ error: 'unknown-user' });
   res.json({ wallet, transactions: acuTransactions(req.params.id) });
@@ -579,14 +612,21 @@ app.get('/api/account/:id/wallet', safe((req, res) => {
 // Deep £5 · Luxury £20 · Corporate £50 — refundable; a booking converts the
 // deposit and deducts it from the final payment.
 app.post('/api/account/:id/deposit', safe((req, res) => {
+  if (!requireOwner(req, res, req.params.id)) return;
   const result = placeSearchDeposit({ userId: req.params.id, tier: (req.body || {}).tier || 'deep', searchId: (req.body || {}).searchId || null });
   if (!result.ok) return res.status(400).json({ ...result, schedule: SEARCH_DEPOSIT_GBP });
   res.json({ ...result, schedule: SEARCH_DEPOSIT_GBP });
 }));
 app.get('/api/account/:id/deposits', safe((req, res) => {
+  if (!requireOwner(req, res, req.params.id)) return;
   res.json({ deposits: listSearchDeposits(req.params.id), schedule: SEARCH_DEPOSIT_GBP });
 }));
 app.post('/api/deposits/:id/refund', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  // A deposit belongs to a user — only its owner (or admin) may refund it.
+  const dep = listSearchDeposits(user.id).find((d) => d.id === req.params.id);
+  if (!dep && !user.allAccess && user.role !== 'admin') return res.status(403).json({ error: 'not-yours' });
   const result = refundSearchDeposit(req.params.id);
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
@@ -822,6 +862,7 @@ app.post('/api/quote-request/:id/pay', safe(async (req, res) => {
 // "If we cannot beat or match your current quote, we refund your search
 // credits." Compares the competing quote to our floor and refunds the ACUs.
 app.post('/api/account/:id/savings-guarantee', safe((req, res) => {
+  if (!requireOwner(req, res, req.params.id)) return;
   const { competitorQuoteUSD, ourTotalUSD, acuSpent } = req.body || {};
   const result = claimSavingsGuarantee(req.params.id, { competitorQuoteUSD, ourTotalUSD, acuSpent });
   if (!result.ok) return res.status(400).json(result);
@@ -1267,10 +1308,23 @@ app.post('/api/book', safe((req, res) => {
 }));
 
 // ---- Pay an instalment ----------------------------------------------------
+// OWNERSHIP + AMOUNT INTEGRITY: only the booking owner (or admin) may pay, the
+// index must be a real unpaid scheduled instalment, and the amount is taken
+// from the SCHEDULE — never a client number (a £0.01 "payment" must not clear
+// an instalment or fire referral/vendor rewards).
 app.post('/api/book/:id/pay', safe((req, res) => {
-  const { amount, index } = req.body || {};
-  const booking = recordPayment(req.params.id, { type: 'instalment', amount, index });
-  if (!booking) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const target = getBooking(req.params.id);
+  if (!target) return res.status(404).json({ error: 'not-found' });
+  if (target.userId && target.userId !== user.id && !user.allAccess && user.role !== 'admin') {
+    return res.status(403).json({ error: 'not-your-booking' });
+  }
+  const index = Number((req.body || {}).index);
+  const item = target.instalment?.schedule?.[index];
+  if (!item) return res.status(400).json({ error: 'bad-instalment-index' });
+  if (item.status === 'paid') return res.json({ booking: target, already: true });
+  const booking = recordPayment(req.params.id, { type: 'instalment', amount: item.amount, index });
   if (booking.instalment?.schedule?.[index]) booking.instalment.schedule[index].status = 'paid';
   res.json({ booking });
 }));
@@ -1278,6 +1332,11 @@ app.post('/api/book/:id/pay', safe((req, res) => {
 app.get('/api/book/:id', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
+  // OWNERSHIP: bookings carry passport + passenger PII — owner or admin only.
+  const user = currentUser(req);
+  if (booking.userId && (!user || (booking.userId !== user.id && !user.allAccess && user.role !== 'admin'))) {
+    return res.status(403).json({ error: 'not-your-booking' });
+  }
   res.json({ booking });
 }));
 

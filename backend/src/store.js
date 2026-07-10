@@ -758,7 +758,14 @@ export function claimSavingsGuarantee(userId, { competitorQuoteUSD, ourTotalUSD,
       savedUSD: round2(competitorQuoteUSD - ourTotalUSD),
     };
   }
-  const refund = Math.max(0, Math.round(acuSpent));
+  // ANTI-ABUSE: the refund can never exceed what the user ACTUALLY spent on
+  // AI searches and hasn't already had refunded — otherwise the endpoint mints
+  // free ACU (=money) from a request-body number. Cap the client's claim to
+  // the true unrefunded search spend from the ledger.
+  const searchSpent = db.acuTxns.filter((t) => t.userId === userId && t.type === 'USAGE' && /search|plan|dive/i.test(t.reason || '')).reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+  const alreadyRefunded = db.acuTxns.filter((t) => t.userId === userId && t.reason === 'savings-guarantee').reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+  const refundable = Math.max(0, searchSpent - alreadyRefunded);
+  const refund = Math.min(Math.max(0, Math.round(acuSpent)), refundable);
   if (refund > 0) refundAcu(userId, refund, 'savings-guarantee');
   recordAudit({ actor: userId, role: u.role, action: 'guarantee.refund', entity: 'acu', entityId: userId, summary: `+${refund} ACU refunded — quote $${competitorQuoteUSD} not beaten ($${ourTotalUSD})` });
   return {
