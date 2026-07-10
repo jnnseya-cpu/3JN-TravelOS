@@ -481,12 +481,14 @@ test('price breakdown funds loyalty discount from commission, never below suppli
   assert.equal(b.lines.suppliersUSD - b.lines.loyaltyDiscountUSD + b.lines.grossCommissionUSD, b.lines.totalUSD);
   assert.ok(b.lines.savingsVsMarketUSD > 0);
 
-  // Elite (10%) must reach break-even, NEVER a loss: the discount is capped at
-  // our commission and the supplier cost is still fully covered.
+  // Elite (8%) keeps real transaction margin — the top tier is never break-even
+  // and never a loss: an 8% rebate out of a 10% commission leaves us 2%.
   const elite = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 15000 });
-  assert.equal(elite.lines.loyaltyDiscountUSD, 100);  // full 10%, capped at commission
-  assert.equal(elite.lines.commissionUSD, 0);         // we keep nothing on the transaction…
-  assert.equal(elite.lines.totalUSD, 1000);           // …but never sell below the $1000 cost
+  assert.equal(elite.lines.loyaltyDiscountUSD, 80);   // 8% rebate to the member
+  assert.equal(elite.lines.grossCommissionUSD, 100);  // full 10% on the receipt
+  assert.equal(elite.lines.commissionUSD, 20);        // we keep 2% — real margin, never £0
+  assert.equal(elite.lines.totalUSD, 1020);
+  assert.ok(elite.lines.commissionUSD > 0, 'top tier still profitable on the transaction');
   assert.ok(elite.lines.totalUSD >= elite.lines.netSuppliersUSD, 'never below supplier cost');
 });
 

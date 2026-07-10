@@ -178,7 +178,7 @@ const LOYALTY = [
   ['Explorer', '0 pts', '0% discount'],
   ['Voyager', '1,000 pts', '3% discount'],
   ['Nomad', '5,000 pts', '6% discount'],
-  ['Elite', '15,000 pts', '10% discount + priority verification'],
+  ['Elite', '15,000 pts', '8% discount + priority verification'],
 ];
 
 function renderStatic() {
