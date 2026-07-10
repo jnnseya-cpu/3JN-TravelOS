@@ -369,7 +369,7 @@ export function duffelMode() {
 
 // Fetch live flights from Duffel. Returns an array of normalised offers, or
 // null when disabled / unreachable / no usable offers.
-async function fetchDuffelFlights(intent, originCode, destCode) {
+async function fetchDuffelFlights(intent, originCode, destCode, cabinClass = 'economy') {
   if (!duffelEnabled()) return null;
   const slices = [{ origin: originCode, destination: destCode, departure_date: intent.dates.checkIn }];
   if (intent.dates.checkOut) slices.push({ origin: destCode, destination: originCode, departure_date: intent.dates.checkOut });
@@ -378,7 +378,7 @@ async function fetchDuffelFlights(intent, originCode, destCode) {
     data: {
       slices,
       passengers: duffelPassengers(intent.travellers),
-      cabin_class: 'economy',
+      cabin_class: cabinClass,
     },
   };
 
@@ -607,14 +607,17 @@ export async function fetchLiveFlights(intent, dest, origin) {
   const originCode = origin?.airport;
   const destCode = dest?.code;
   if (!originCode || !destCode || !intent?.dates?.checkIn) return null;
-  // Query BOTH doors concurrently: Duffel (network carriers) + Tequila (LCCs —
-  // Ryanair/Jet2/Wizz, the airlines serving UK regional airports). Merged and
-  // sorted by price; the packager re-ranks for reliability anyway.
-  const [duffel, tequila] = await Promise.all([
-    fetchDuffelFlights(intent, originCode, destCode).catch(() => null),
+  // Query ALL doors concurrently: Duffel economy (the price fight), Duffel
+  // BUSINESS (so the Luxury tier is genuinely premium, not the same economy
+  // fare relabelled), and Tequila (LCCs — Ryanair/Jet2/Wizz for regional
+  // airports). Merged and sorted by price; the packager re-ranks per tier.
+  const [duffel, duffelBiz, tequila] = await Promise.all([
+    fetchDuffelFlights(intent, originCode, destCode, 'economy').catch(() => null),
+    fetchDuffelFlights(intent, originCode, destCode, 'business').catch(() => null),
     fetchTequilaFlights(intent, originCode, destCode).catch(() => null),
   ]);
-  const merged = [...(duffel || []), ...(tequila || [])].sort((a, b) => a.priceUSD - b.priceUSD).slice(0, 10);
+  const merged = [...(duffel || []), ...(duffelBiz || []), ...(tequila || [])]
+    .sort((a, b) => a.priceUSD - b.priceUSD).slice(0, 14);
   return merged.length ? merged : null;
 }
 

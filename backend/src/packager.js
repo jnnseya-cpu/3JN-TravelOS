@@ -72,7 +72,12 @@ const TIERS = {
   Luxury: {
     label: 'Luxury — Top Rated',
     blurb: 'The highest-rated, most premium verified options available.',
-    pickFlight: (list) => preferDirect(list, topRated),
+    // A REAL premium cabin (Business/First from the live search) outranks a
+    // relabelled economy fare — Luxury must actually be luxury.
+    pickFlight: (list) => preferDirect(list, (l) => {
+      const prem = l.filter((f) => /business|first/i.test(f.details?.cabin || ''));
+      return topRated(prem.length ? prem : l);
+    }),
     pickHotel: (list) => byStars(accommodationPool(list), 5),
     pickPerSupplier: (list) => topRated(list),
     marketMultiplier: 1.30,
@@ -283,9 +288,26 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
 }
 
 export function buildPackages(scan, intent, currency, loyaltyPoints = 0, memberActive = false) {
-  const options = Object.keys(TIERS)
+  let options = Object.keys(TIERS)
     .map((name) => buildOption(name, scan, intent, currency, loyaltyPoints, memberActive))
     .filter((o) => o.components.length > 0);
+  // DEDUPE: when the supplier pool is thin, tiers can converge on the SAME
+  // basket (identical suppliers, identical total). Showing "Premium" at the
+  // Standard price with different savings claims is nonsense — keep the
+  // cheapest-labelled instance and note the merge on it.
+  const seen = new Map();
+  options = options.filter((o) => {
+    const key = `${o.pricing.lines.totalUSD}|${o.components.map((c) => `${c.type}:${c.supplier}:${c.priceUSD}`).join('|')}`;
+    if (seen.has(key)) {
+      const kept = seen.get(key);
+      kept.mergedTiers = [...(kept.mergedTiers || []), o.tier];
+      kept.baseBlurb = kept.baseBlurb || kept.blurb;
+      kept.blurb = `${kept.baseBlurb} (Also the best ${kept.mergedTiers.join(' & ')} pick — the top-rated suppliers here are already the cheapest.)`;
+      return false;
+    }
+    seen.set(key, o);
+    return true;
+  });
 
   // Recommend best value: most reliability per pound. Standard usually wins on
   // pure price, but if a higher tier is only marginally more for a big

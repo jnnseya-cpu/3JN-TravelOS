@@ -3946,3 +3946,44 @@ test('flight selection privileges direct, then SHORT stopovers, before any long/
   pkg = buildPackages(scan, intent, currency, 0);
   assert.equal(pkg.options[0].components[0].supplier, 'Cheap Overnight Air', 'ladder falls through when no better tier exists');
 });
+
+// ---- Budget stays + honest tiers (dedupe, real premium cabins) ---------------
+test('budget travellers get verified hostels/budget chains; ordinary searches never see them', () => {
+  const r = plan({ text: 'Cheap budget hostel and flights to Dubai from London, 1 adult, 4 nights on 2026-09-10', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'options');
+  assert.equal(r.intent.budgetStay, true, 'budget intent detected');
+  const stay = r.packages.options[0].components.find((c) => c.type === 'hotel' || c.type === 'host');
+  // The cheapest verified bed wins the slot — a budget chain/hostel, or a
+  // community HOST that undercuts them (hosts are a budget answer too).
+  assert.ok(stay.type === 'host' || ['ibis budget', 'easyHotel', 'Generator Hostel', "St Christopher's Inn"].includes(stay.supplier), `Standard picked a verified budget stay (got ${stay.supplier})`);
+  assert.ok(stay.verified && stay.reliabilityScore >= 75, 'budget never means unverified');
+  // Premium still climbs the star ladder even on a budget search.
+  const premiumStay = r.packages.options.find((o) => o.tier === 'Premium')?.components.find((c) => c.type === 'hotel' || c.type === 'host');
+  if (premiumStay) assert.ok((premiumStay.stars || 4) >= 3, 'Premium stays premium');
+  // A non-budget search never sees hostel dorms.
+  const r2 = plan({ text: 'Flights and hotel to Dubai from London, 1 adult, 4 nights on 2026-09-10', context: GB, user: null, searchTier: 'smart' });
+  for (const o of r2.packages.options) {
+    const h = o.components.find((c) => c.type === 'hotel');
+    if (h) assert.ok(!['Generator Hostel', "St Christopher's Inn", 'ibis budget', 'easyHotel'].includes(h.supplier), 'no budget brands without budget intent');
+  }
+});
+
+test('identical tiers dedupe into one honest option; Luxury prefers a REAL premium cabin', async () => {
+  const { buildPackages } = await import('../src/packager.js');
+  const leg0 = { from: 'LHR', to: 'DXB', date: '2026-08-12', depart: '10:00', arrive: '20:00', stops: 0, stopLabel: 'Direct', layovers: [], durationLabel: '7h 0m' };
+  const mkFlight = (supplier, priceUSD, cabin, rating = 90) => ({ type: 'flight', supplier, verified: true, reliabilityScore: rating, priceUSD, details: { outbound: leg0, inbound: leg0, passengers: 1, cabin } });
+  const intent = { components: ['flights'], travellers: { total: 1, adults: 1, children: 0, childAges: [] }, nights: 7, dates: { checkIn: '2026-08-12', checkOut: '2026-08-19' }, flightPrefs: {} };
+  const currency = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  // ONE live economy offer: all three tiers converge → ONE option, merge noted.
+  let pkg = buildPackages({ flights: [mkFlight('Gulf Air', 800, 'Economy')] }, intent, currency, 0);
+  assert.equal(pkg.options.length, 1, 'identical baskets never shown twice');
+  assert.ok(pkg.options[0].mergedTiers?.length === 2, 'merge recorded');
+  assert.match(pkg.options[0].blurb, /Also the best/, 'merge explained honestly');
+  // Add a BUSINESS cabin offer: Luxury separates and takes it.
+  pkg = buildPackages({ flights: [mkFlight('Gulf Air', 800, 'Economy'), mkFlight('Emirates', 2400, 'Business', 96)] }, intent, currency, 0);
+  const lux = pkg.options.find((o) => o.tier === 'Luxury');
+  assert.ok(lux, 'Luxury reappears when it can genuinely differ');
+  assert.equal(lux.components[0].details.cabin, 'Business', 'Luxury flies the real premium cabin');
+  const std = pkg.options.find((o) => o.tier === 'Standard');
+  assert.equal(std.components[0].details.cabin, 'Economy', 'Standard stays on the cheapest fare');
+});

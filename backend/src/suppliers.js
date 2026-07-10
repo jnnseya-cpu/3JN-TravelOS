@@ -111,6 +111,16 @@ const HOTEL_BRANDS = [
   { name: 'CityStay Express', stars: 3, rating: 79, verified: true },
   { name: 'BudgetBunk Rooms', stars: 2, rating: 58, verified: false }, // filtered out
 ];
+// BUDGET STAYS — verified hostels, guesthouses and budget chains. Joined to
+// the scan when the traveller asks for a budget/cheap/hostel stay, so people
+// who can't stretch to 3-5★ still get a clean, verified, reliable bed —
+// never the unverified bottom of the barrel.
+const BUDGET_STAYS = [
+  { name: 'ibis budget', stars: 2, rating: 84, verified: true },
+  { name: 'easyHotel', stars: 2, rating: 81, verified: true },
+  { name: 'Generator Hostel', stars: 2, rating: 82, verified: true, dorm: true },
+  { name: "St Christopher's Inn", stars: 2, rating: 79, verified: true, dorm: true },
+];
 
 // eSIM pricing is tiered, not linear — a small base + a low marginal £/GB (big
 // data plans are far cheaper per GB). Calibrated to real Airalo-style fares
@@ -306,9 +316,16 @@ export function scanHotels(intent, dest) {
   const reqArea = intent.hotelArea || null;
   const areaFor = () => reqArea || pick(AREAS, rnd, dest.city);
 
-  const hotels = HOTEL_BRANDS.map((h) => {
-    const nightly = dest.hotelNightBaseUSD * (h.stars / 3) * (0.85 + rnd() * 0.5);
+  // Budget intent unlocks verified hostels/budget chains alongside the hotels.
+  const brands = intent.budgetStay ? [...BUDGET_STAYS, ...HOTEL_BRANDS] : HOTEL_BRANDS;
+  const hotels = brands.map((h) => {
+    // Dorm beds price per PERSON at a fraction of the room base — the true
+    // backpacker rate; budget privates ride the normal stars/3 curve.
+    const nightly = h.dorm
+      ? dest.hotelNightBaseUSD * 0.28 * (0.9 + rnd() * 0.3)
+      : dest.hotelNightBaseUSD * (h.stars / 3) * (0.85 + rnd() * 0.5);
     const area = areaFor();
+    const units = h.dorm ? intent.travellers.total : rooms; // dorms sell BEDS
     return {
       type: 'hotel',
       supplier: h.name,
@@ -317,11 +334,11 @@ export function scanHotels(intent, dest) {
       stars: h.stars,
       details: {
         nights,
-        rooms,
+        rooms: units,
         nightlyUSD: round(nightly),
         board: h.stars >= 4 ? 'Breakfast included' : 'Room only',
-        freeCancellation: h.stars >= 3,
-        roomType: h.stars >= 5 ? 'Deluxe Room, City View' : h.stars >= 4 ? 'Superior Double Room' : 'Standard Double Room',
+        freeCancellation: h.stars >= 3 || !!h.dorm,
+        roomType: h.dorm ? 'Dorm bed (shared room, locker included)' : h.stars >= 5 ? 'Deluxe Room, City View' : h.stars >= 4 ? 'Superior Double Room' : 'Standard Double Room',
         area,
         distanceToCentreKm: Math.round((0.4 + rnd() * 5) * 10) / 10,
         guestRating: Math.round((78 + rnd() * 20)) / 10, // /10 scale e.g. 8.6

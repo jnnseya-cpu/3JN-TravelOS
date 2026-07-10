@@ -479,6 +479,7 @@ function publicIntent(intent) {
     priority: intent.priority,
     nationality: intent.nationality,
     hotelArea: intent.hotelArea || null,
+    budgetStay: !!intent.budgetStay,
     legs: intent.legs ? {
       out: { mode: intent.legs.out.mode, from: intent.legs.resolved?.out?.city || null },
       back: { mode: intent.legs.back.mode, to: intent.legs.resolved?.back?.city || null },

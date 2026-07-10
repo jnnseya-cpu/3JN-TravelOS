@@ -353,6 +353,9 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
 
   // Hotel area / neighbourhood the traveller named ("hotel in Sheikh Zayed Road").
   const hotelArea = parseHotelArea(raw);
+  // Budget-stay intent: hostels, guesthouses and budget hotel chains join the
+  // scan so travellers who can't stretch to 3-5★ still get a verified bed.
+  const budgetStay = /\b(hostel|backpack\w*|guest\s?house|budget\s+(hotel|stay|room|accommodation)|cheap\s+(hotel|stay|room|accommodation)|affordable\s+(hotel|stay|accommodation)|\bbudget\b)/i.test(raw);
 
   const wantsInstalments = /instal?ment|instalments|monthly|pay later|split/i.test(raw);
   const wantsCheapestReliable = /cheapest|reliable|best price|value|affordable/i.test(raw);
@@ -413,6 +416,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     groupOrigins: groupParties ? { parties: groupParties } : null, // multi-origin group, one booking
     miniCruise, // short ferry-cruise rather than an ocean liner
     hotelArea, // requested hotel neighbourhood/road (null if not given)
+    budgetStay, // hostels/guesthouses/budget chains unlocked in the hotel scan
     boardBasis, // requested board (Room only … Ultra all inclusive) or null
     recommendedDestination: destination?.recommendedFromCountry || null,
     unresolved: destination ? [] : ['destination'],
