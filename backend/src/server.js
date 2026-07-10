@@ -9,7 +9,7 @@ import { detectContext, listCurrencies } from './geo.js';
 import { destinationsCatalog, findDestination, resolveOrigin } from './destinations.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, tierForDeparture, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS } from './instalments.js';
 import {
   createUser, getUser, buyAcu, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
@@ -35,10 +35,10 @@ import {
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest,
   searchToBookStats,
-  earnAcu, getPartnerProfile, applyInfluencer, decideInfluencer, partnerDashboard,
+  earnAcu, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
-  createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, latestBookingForUser,
-  applyVendor, getVendorProfile, decideVendor, vendorDashboard, vendorLeaderboard,
+  createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket,
+  applyVendor, decideVendor, vendorDashboard, vendorLeaderboard,
   addVendorService, removeVendorService, recordVendorServiceJob,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
   getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
@@ -53,11 +53,10 @@ import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
-import { supportRespond } from './chatbot.js';
 import { assist } from './assistant.js';
 import { bookingDocument, includedServices } from './documents.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
-import { track as trackBehaviour, learnProfile, journeyDashboard } from './learning.js';
+import { learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS, ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY, VISAOS_REVENUE_MODEL, TRAVEL_OS_INTEGRATION } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication, validateApplicant } from './visa-framework.js';

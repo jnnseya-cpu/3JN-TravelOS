@@ -1057,25 +1057,8 @@ window.payExactQuote = async (id) => {
     if (sess.url) { toast('💳 Opening secure checkout…'); window.location.href = sess.url; }
   } catch (e) { toast(e.message || 'Could not start payment.'); }
 };
-window.requestExactQuote = (tier) => {
-  const o = window.__options?.[tier];
-  if (!o) return;
-  const sym = o.pricing.symbol;
-  const est = o.pricing.local.total;
-  const u = state.user || {};
-  modal(`
-    <span class="eyebrow">Request your exact price</span>
-    <h3 style="margin:6px 0 4px">${esc(tier)} · ${esc(o.pricing ? (window.__intent?.destination?.city || '') : '')}</h3>
-    <p class="muted" style="font-size:13px">This price is an estimate. We'll confirm the exact bookable fare with the live supplier and send you the precise amount to approve — <strong>no charge until you accept it</strong>.</p>
-    <div class="kv" style="margin-top:8px"><span>Estimated total</span><span>${money(est, sym)}</span></div>
-    <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="qrName" value="${esc(u.name || '')}" placeholder="Full name"></div>
-    <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="qrEmail" value="${esc(u.email || '')}" placeholder="you@email.com"></div>
-    <div class="field" style="margin-top:10px"><label>Phone / WhatsApp</label><input class="in" id="qrPhone" placeholder="+44…"></div>
-    <div class="field" style="margin-top:10px"><label>Anything we should know? (optional)</label><textarea class="in" id="qrNote" style="min-height:52px" placeholder="Dates flexible ±2 days, window seat, etc."></textarea></div>
-    <label class="kv" style="margin-top:10px;cursor:pointer"><span>Reserve my price with a £20 refundable deposit intent</span><input type="checkbox" id="qrDeposit" checked></label>
-    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitExactQuote('${tier}')">Request exact quote</button>
-    <p class="muted center" style="font-size:11.5px;margin-top:8px">🔒 Fully refundable. We only take payment once you approve the exact confirmed price.</p>`);
-};
+// (removed requestExactQuote — superseded by openBooking; submitExactQuote below
+// stays live via the console quote-request list.)
 window.submitExactQuote = async (tier) => {
   const o = window.__options?.[tier];
   if (!o) return;
@@ -2906,24 +2889,8 @@ function applicantFromForm() {
   };
 }
 
-async function showVisaChecklist() {
-  const out = $('#visaChecklistOut');
-  out.innerHTML = '<div class="card pad muted" style="font-size:13px"><span class="loader"></span> Building country-specific checklist…</div>';
-  let d;
-  try {
-    d = await api('/api/visa/checklist', { method: 'POST', body: JSON.stringify({ country: $('#vCountry').value, visaType: $('#vType').value, applicant: applicantFromForm() }) });
-  } catch { return; }
-  const sections = d.sections.map((s) => `
-    <div style="margin-top:12px"><span class="eyebrow">${esc(s.title)} · ${s.items.length}</span>
-      <ul class="comp-list">${s.items.map((i) => `<li><span class="cs">${esc(i)}</span></li>`).join('')}</ul></div>`).join('');
-  out.innerHTML = `<div class="card pad">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
-      <strong style="font-family:'Space Grotesk'">${d.country ? d.country.flag + ' ' + esc(d.country.name) : esc($('#vCountry').value)} · ${esc(d.visaType.name)}</strong>
-      <span class="muted" style="font-size:12.5px">${d.totalDocuments} documents required</span>
-    </div>
-    ${d.country?.notes ? `<p class="muted" style="font-size:12px;margin:6px 0 0">${esc(d.country.notes)}</p>` : ''}
-    ${sections}</div>`;
-}
+// (removed showVisaChecklist — a redundant orphan; the live checklist is built
+// and rendered by loadVisaDocs on country change, into #vDocs.)
 function signalToggle(key, label, on) {
   return `<span class="chip vsig ${on ? 'on' : ''}" data-key="${key}" data-on="${on}" onclick="toggleSignal(this)">${on ? '✓' : '○'} ${label}</span>`;
 }
@@ -2975,58 +2942,9 @@ async function submitVisa() {
 
 // Render the full decision-ready file: recommendation + checklist completeness +
 // document verification + fraud battery + the risk decision.
-function renderVisaFile(file) {
-  const recColor = { 'Approve': 'var(--green)', 'Approve with conditions': 'var(--gold)', 'Request more info': 'var(--blue-bright)', 'Escalate to human': 'var(--blue-bright)', 'Refuse': '#ff6b6b' }[file.recommendation] || 'var(--gold)';
-  const dv = file.documentVerification;
-  const fraud = file.fraud;
-  const dvRows = dv.checks.map((c) => `<div class="kv"><span><span class="vstatus ${c.pass ? 'pass' : 'fail'}"></span>${esc(c.check)}</span><span class="muted" style="font-size:12px">${c.pass ? 'clear' : 'FLAG'}</span></div>`).join('');
-  const flagChips = fraud.flags.length
-    ? fraud.flags.map((f) => `<span class="chip" style="color:#ff9b9b;border-color:rgba(255,90,90,0.3)">${esc(f.name)}</span>`).join('')
-    : '<span class="muted" style="font-size:13px">No fraud signals triggered across all 34 checks.</span>';
-
-  $('#visaDecision').innerHTML = `
-    <div class="card pad" style="border-color:${recColor};margin-bottom:16px">
-      <span class="eyebrow">AI Officer Recommendation · decision-ready in ${file.decisionReadyMinutes === 'escalated' ? 'escalation' : file.decisionReadyMinutes + ' min'}</span>
-      <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:${recColor}">${esc(file.recommendation)}</div>
-      <div class="muted" style="font-size:12.5px;margin-top:4px">${file.country ? file.country.flag + ' ' + esc(file.country.name) : ''} · ${esc(file.visaType.name)} · ${esc(file.applicant.name)} (${esc(file.applicant.nationality)})</div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px">
-        <div class="verified-tag">📋 Checklist ${file.completeness.supplied}/${file.completeness.required}</div>
-        <div class="verified-tag">🔬 Docs ${dv.verified}/${dv.total} verified</div>
-        <div class="verified-tag" style="${fraud.flagCount ? 'color:#ff9b9b;background:rgba(255,90,90,0.1);border-color:rgba(255,90,90,0.25)' : ''}">🛡 Fraud ${fraud.flagCount}/${fraud.results.length} flags</div>
-        <div class="verified-tag">📊 Risk ${file.risk.totalScore}/1000</div>
-      </div>
-    </div>
-    <div class="console-grid">
-      <div class="card pad"><span class="eyebrow">Document verification</span>${dvRows}</div>
-      <div class="card pad"><span class="eyebrow">Fraud & risk checks (34)</span><div class="chips" style="margin-top:10px">${flagChips}</div></div>
-    </div>
-    <div id="visaRiskOut" style="margin-top:16px"></div>`;
-  renderVisaDecision(file.risk, '#visaRiskOut');
-}
-
-function renderVisaDecision(a, target = '#visaDecision') {
-  const decColor = { 'Auto Approval': 'var(--green)', 'Conditional Approval': 'var(--gold)', 'Human Review': 'var(--blue-bright)', 'Auto Rejection': '#ff6b6b' }[a.decision];
-  const agentRows = a.agents.map((ag) => `<div class="kv"><span><span class="vstatus ${ag.status}"></span>${ag.agent}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${ag.finding}</span></div>`).join('');
-  const dims = Object.entries(a.risk).map(([k, v]) => `<div class="kv"><span style="text-transform:capitalize">${k} risk</span><span><span class="rel-bar" style="display:inline-block;width:90px;vertical-align:middle"><i style="width:${v}%;background:${v >= 60 ? '#ff6b6b' : v >= 35 ? 'var(--gold)' : 'var(--green)'}"></i></span> ${v}</span></div>`).join('');
-  const cond = a.conditions.length ? `<div style="margin-top:8px"><span class="eyebrow">Conditions</span>${a.conditions.map((c) => `<div class="ok-line"><span class="ck">✓</span>${c}</div>`).join('')}</div>` : '';
-  $(target).innerHTML = `
-    <div class="card pad" style="border-color:${decColor}">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-        <div><span class="eyebrow">Decision · ${a.slaMinutes === 'escalated' ? 'escalated' : 'in ' + a.slaMinutes + ' min'}</span>
-          <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:${decColor}">${a.decision}</div>
-          <div class="muted" style="font-size:13px">${a.applicant.name} · ${a.applicant.nationality} → ${a.applicant.destination} · ${a.applicant.purpose}</div></div>
-        <div style="text-align:right"><div class="t-label">Unified risk (0–1000)</div>
-          <div style="font-family:'Space Grotesk';font-weight:700;font-size:32px;color:${decColor}">${a.totalScore}</div>
-          <div class="muted" style="font-size:12px">${a.band} · ${a.confidence}% confidence</div></div>
-      </div>
-      ${cond}
-    </div>
-    <div class="console-grid" style="margin-top:16px">
-      <div class="card pad"><span class="eyebrow">Agent swarm findings</span>${agentRows}</div>
-      <div class="card pad"><span class="eyebrow">Risk scoring engine</span>${dims}
-        <p class="muted" style="font-size:11px;margin-top:10px">Zero-trust · biometric liveness · device fingerprint · metadata analysis · immutable blockchain audit trail. Anti-corruption: every human override requires reason + approval chain + audit log.</p></div>
-    </div>`;
-}
+// (removed renderVisaFile + renderVisaDecision — dead code that exposed the AI
+// officer verdict; the applicant view is a confidential "under embassy review"
+// receipt via submitVisa, and the embassy view is renderVisaGov.)
 
 async function renderVisaGov() {
   const out = $('#visaosOut');
@@ -3486,7 +3404,6 @@ function setUser(u) {
   // Signed in: Sign in + Full Access buttons disappear (sign-out moves into
   // the account menu); the bar keeps only chip · bell · CTA.
   $('#signBtn')?.classList.add('hidden');
-  $('#testAccountBtn')?.classList.add('hidden');
   applyRoleVisibility();
   refreshNotifications();
 }
@@ -3540,7 +3457,6 @@ window.signOut = () => {
   $('#accountMenu')?.remove();
   const signBtn = $('#signBtn');
   if (signBtn) { signBtn.textContent = 'Sign in'; signBtn.classList.remove('hidden'); }
-  $('#testAccountBtn')?.classList.remove('hidden');
   applyRoleVisibility();
   if (state.lastView === 'admin' || state.lastView === 'business') nav('home');
   toast('Signed out.');
@@ -3767,7 +3683,6 @@ window.provisionTest = async () => {
     nav('console');
   } catch { /* */ }
 };
-$('#testAccountBtn')?.addEventListener('click', window.provisionTest); // button retired from the top bar; demo panel covers it
 
 // ---- Fully-loaded demo accounts (one per role) -----------------------------
 // Seeds all role accounts (admin, business, merchant, partner, consumer,
