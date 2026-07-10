@@ -8,7 +8,7 @@
 
 import { fetchLiveFlights, fetchMarketFares, liveFlightsEnabled, marketDataEnabled, duffelMode } from './live-suppliers.js';
 import { duffelOrderFeesUSD } from './pricing.js';
-import { FLIGHT_ONLY_FEE_GBP } from '../../shared/constants.js';
+import { FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP } from '../../shared/constants.js';
 
 // Matches geo.js GB rate so benchmark GBP figures agree with the storefront.
 const GBP_PER_USD = 0.79;
@@ -42,14 +42,14 @@ export function compareLinks({ origin, dest, depart, ret }) {
 }
 
 // Customer sell price from a raw live fare — the SAME math the checkout uses
-// for a flights-only booking under the tiered take-rate: flat £4.99 flight
-// fee + Duffel pass-through. The benchmark tests the price a customer
-// actually pays, never a fantasy raw fare.
+// for a flights-only booking under the tiered take-rate: a 2% service fee
+// (floored at £4.99, capped at £15) + the Duffel pass-through. The benchmark
+// tests the price a customer actually pays, never a fantasy raw fare.
 export function sellPriceUSD(rawUSD) {
-  const flatFeeUSD = FLIGHT_ONLY_FEE_GBP / GBP_PER_USD;
+  const serviceFeeUSD = Math.min(FLIGHT_ONLY_FEE_CAP_GBP / GBP_PER_USD, Math.max(FLIGHT_ONLY_FEE_GBP / GBP_PER_USD, rawUSD * FLIGHT_ONLY_FEE_RATE));
   // Duffel's 1% rides the FLIGHT order value (the fare), not our fee.
   const fees = duffelOrderFeesUSD({ orderValueUSD: rawUSD });
-  return Math.round((rawUSD + flatFeeUSD + fees.totalUSD) * 100) / 100;
+  return Math.round((rawUSD + serviceFeeUSD + fees.totalUSD) * 100) / 100;
 }
 
 // Honest verdict vs a recorded market-leader price (both in GBP).

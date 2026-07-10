@@ -3716,10 +3716,14 @@ test('tiered take-rate: flights-only pays the flat fee, members fly fee-free, pa
   assert.equal(r1.stage, 'options');
   const opt = r1.packages.options[0];
   assert.ok(opt.components.every((c) => c.type === 'flight'), 'flights-only basket');
-  assert.equal(opt.pricing.feeModel, 'flight-flat');
-  assert.match(opt.pricing.feeLabel, /flat £4\.99/);
+  assert.equal(opt.pricing.feeModel, 'flight-service-fee');
+  assert.match(opt.pricing.feeLabel, /2%/);
+  // 2% of the fare, floored at £4.99 and capped at £15 (all in USD via the anchor).
   const feeUSD = opt.pricing.lines.commissionUSD;
-  assert.ok(Math.abs(feeUSD - FEE_GBP * 1.27) < 0.02, `fee is the flat £${FEE_GBP} (got $${feeUSD})`);
+  const flightUSD = opt.pricing.lines.suppliersUSD; // flights-only → suppliers = the fare
+  const expected = Math.min(15 / 0.79, Math.max(4.99 / 0.79, flightUSD * 0.02));
+  assert.ok(Math.abs(feeUSD - expected) < 0.02, `2% service fee, floored/capped (got $${feeUSD})`);
+  assert.ok(feeUSD >= 4.99 / 0.79 - 0.02 && feeUSD <= 15 / 0.79 + 0.02, 'fee inside the £4.99–£15 band');
   // Same trip WITH a hotel: the classic 10% commission applies.
   const r2 = plan({ text: 'Flights and hotel to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
   const opt2 = r2.packages.options[0];
@@ -3743,7 +3747,7 @@ test('tiered take-rate: partners earn a share of the flight take + lifetime attr
   const code = dec.profile.vendorCode;
   // Customer books FLIGHTS-ONLY via the vendor: partner earns 40% of the flat fee.
   const cust = createUser({ name: 'Attributed Customer', email: 'attributed.cust@example.com' });
-  const flightOption = { tier: 'Standard', totalUSD: 130, pricing: { currency: 'GBP', symbol: '£', feeModel: 'flight-flat', lines: { totalUSD: 130, commissionUSD: 6.34 }, local: { total: 102.7 }, revenue: { commissionUSD: 6.34, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 130, details: {} }] };
+  const flightOption = { tier: 'Standard', totalUSD: 130, pricing: { currency: 'GBP', symbol: '£', feeModel: 'flight-service-fee', lines: { totalUSD: 130, commissionUSD: 6.34 }, local: { total: 102.7 }, revenue: { commissionUSD: 6.34, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 130, details: {} }] };
   const q1 = mkQ({ option: flightOption, intent: { dates: { checkIn: '2026-09-10' } } });
   const b1 = mkB({ quoteId: q1.id, option: flightOption, instalment: null, userId: cust.id, paymentMethod: 'card', vendorCode: code });
   recordPayment(b1.id, { type: 'full', amount: 102.7, gateway: 'stripe' });
@@ -4400,12 +4404,26 @@ test('flights-only: an explicit "only" drops a loosely-triggered stay + keeps th
   assert.equal(r.stage, 'options');
   assert.deepEqual(r.intent.components, ['flights'], 'only flights, no hotel');
   const o = r.packages.options[0];
-  assert.equal(o.pricing.feeModel, 'flight-flat', 'flat £4.99 fee, not 10% commission');
+  assert.equal(o.pricing.feeModel, 'flight-service-fee', '2% service fee, not 10% commission');
   assert.ok(!o.components.some((c) => c.type === 'hotel' || c.type === 'host'), 'no stay bundled in');
   // "apartment" is likewise not a stay when the request is flight-only.
   const r2 = plan({ text: 'flight only Bali apartment 12-17 Aug 1 adult', context: GB2, user: null, searchTier: 'smart' });
-  assert.equal(r2.packages.options[0].pricing.feeModel, 'flight-flat');
+  assert.equal(r2.packages.options[0].pricing.feeModel, 'flight-service-fee');
   // A genuine package (no "only") still bundles + charges 10%.
   const r3 = plan({ text: 'Bali from London 12 to 17 August, flights and hotel for 1 adult', context: GB2, user: null, searchTier: 'smart' });
   assert.equal(r3.packages.options[0].pricing.feeModel, 'commission-10');
+});
+
+// ---- Flights-only service fee: 2% · £4.99 floor · £15 cap -------------------
+test('flights-only fee: 2% of fare, floored at £4.99, capped at £15', () => {
+  const cur = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  const feeGbp = (fareGbp) => priceBreakdown({ componentsUSD: fareGbp / 0.79, marketRefUSD: fareGbp / 0.79 * 1.2, currency: cur, flightsOnly: true }).local.commission;
+  assert.equal(feeGbp(80), 4.99, 'cheap flight → £4.99 floor (never below cost)');
+  assert.equal(feeGbp(150), 4.99, 'still at the floor');
+  assert.ok(Math.abs(feeGbp(450) - 9) < 0.05, 'mid-haul → 2% (£9 on £450)');
+  assert.equal(feeGbp(750), 15, 'exactly at the cap');
+  assert.equal(feeGbp(1500), 15, 'long-haul stays capped at £15 (1%, competitive)');
+  // Members fly fee-free regardless of fare.
+  const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
+  assert.equal(memberFee, 0, 'Travel+ members pay no flight service fee');
 });

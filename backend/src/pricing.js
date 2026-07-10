@@ -7,10 +7,10 @@
 // share one source of truth. Re-exported here for existing call sites.
 import {
   COMMISSION_RATE, SAVINGS_SHARE_RATE, SAVINGS_SHARE_MIN_USD, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
-  FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_MEMBER_FREE,
+  FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP, FLIGHT_ONLY_MEMBER_FREE,
 } from '../../shared/constants.js';
 
-export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_GBP };
+export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP };
 
 export function tierForPoints(points = 0) {
   let tier = LOYALTY_TIERS[0];
@@ -64,14 +64,17 @@ export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) 
 export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, duffelOrderValueUSD = null }) {
   const tier = tierForPoints(loyaltyPoints);
 
-  // TIERED TAKE-RATE: a flights-only booking pays a small FLAT fee (free for
-  // active Travel+ members) instead of 10%, so our flight price stands level
-  // with the metasearch sites. Packages/hotels/extras keep the 10% — that is
-  // where the margin lives, invisible inside a bundle that beats DIY totals.
-  // Convert with the platform's 0.79 GBP anchor (not the 1.27 card-fee rate)
-  // so a £4.99 fee displays as EXACTLY £4.99 after the USD round-trip.
-  const flightFlatUSD = memberActive && FLIGHT_ONLY_MEMBER_FREE ? 0 : FLIGHT_ONLY_FEE_GBP / 0.79;
-  const grossCommissionUSD = flightsOnly ? flightFlatUSD : componentsUSD * COMMISSION_RATE;
+  // TIERED TAKE-RATE: a flights-only booking pays a small % SERVICE FEE (free for
+  // active Travel+ members) instead of 10%, so our flight price stands level with
+  // the metasearch sites. It is 2% of the fare, floored at £4.99 (never below the
+  // Duffel booking cost) and CAPPED at £15 (long-haul stays competitive — the
+  // traveller never pays a runaway fee on a big-ticket fare). Packages/hotels/
+  // extras keep the 10% — that is where the margin lives, invisible inside a
+  // bundle that beats DIY totals. Convert with the 0.79 GBP anchor so the floor/
+  // cap display as exactly £4.99/£15 after the USD round-trip.
+  const flightFeeUSD = memberActive && FLIGHT_ONLY_MEMBER_FREE ? 0
+    : Math.min(FLIGHT_ONLY_FEE_CAP_GBP / 0.79, Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE));
+  const grossCommissionUSD = flightsOnly ? flightFeeUSD : componentsUSD * COMMISSION_RATE;
 
   // LOYALTY DISCOUNT is funded ENTIRELY out of 3JN's commission and is CAPPED at
   // it — it is NEVER taken off the supplier-cost base. The full supplier cost is
@@ -85,9 +88,13 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   const commissionUSD = grossCommissionUSD - loyaltyDiscountUSD; // what 3JN actually keeps
   const netComponentsUSD = componentsUSD; // supplier cost is always collected in full
 
-  const feeModel = flightsOnly ? (grossCommissionUSD === 0 ? 'flight-flat-member-free' : 'flight-flat') : 'commission-10';
+  const feeModel = flightsOnly ? (grossCommissionUSD === 0 ? 'flight-flat-member-free' : 'flight-service-fee') : 'commission-10';
+  // Show the rate + the floor/cap band so the fee reads as small and predictable.
+  const atFloor = flightsOnly && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_GBP / 0.79) < 0.02;
+  const atCap = flightsOnly && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_CAP_GBP / 0.79) < 0.02;
   const feeLabel = flightsOnly
-    ? (grossCommissionUSD === 0 ? '3JN flight fee — FREE (Travel+ member)' : `3JN flight service fee (flat £${FLIGHT_ONLY_FEE_GBP.toFixed(2)})`)
+    ? (grossCommissionUSD === 0 ? '3JN flight fee — FREE (Travel+ member)'
+      : `3JN flight service fee (${(FLIGHT_ONLY_FEE_RATE * 100).toFixed(0)}%${atFloor ? ` · £${FLIGHT_ONLY_FEE_GBP.toFixed(2)} min` : atCap ? ` · £${FLIGHT_ONLY_FEE_CAP_GBP} cap` : ''})`)
     : '3JN commission (10%)';
   // Duffel pass-through — added ON TOP on a live Duffel order so our supplier
   // cost never erodes the margin. Zero on non-Duffel bookings. Customer price =

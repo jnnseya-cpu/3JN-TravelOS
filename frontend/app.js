@@ -670,7 +670,7 @@ function renderOptions(data) {
 
   $('#plannerOut').innerHTML = gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
-      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. Every fee is shown openly in the breakdown — flat £4.99 on flights-only, 10% on packages.</p></div>
+      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.</p></div>
     <div class="opt-grid">${opts}</div>` + compareCard(data, sym);
 
   // stash options for booking
@@ -752,7 +752,7 @@ function compareCard(data, sym) {
   return `<div class="card pad" style="margin-top:26px;border-color:rgba(70,211,154,0.32)">
     <span class="eyebrow">Price check — don't take our word for it</span>
     <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-      <div><div class="t-label">3JN all-in (${rec.pricing.feeModel === 'flight-flat' ? 'flat £4.99 flight fee' : rec.pricing.feeModel === 'flight-flat-member-free' ? 'no fee — Travel+ member' : 'incl. 10% fee'})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
+      <div><div class="t-label">3JN all-in (${rec.pricing.feeModel === 'flight-service-fee' ? '2% flight fee · £4.99–£15' : rec.pricing.feeModel === 'flight-flat-member-free' ? 'no fee — Travel+ member' : 'incl. 10% fee'})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
       ${data.marketLive ? `<div><div class="t-label">Real market price (${esc(data.marketLive.cheapestCarrier || 'live cache')})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px">${money(data.marketLive.minGbp, '£')}<span class="muted" style="font-size:13px;font-weight:400"> – ${money(data.marketLive.maxGbp, '£')} · ${data.marketLive.sampled} fares · ${esc(data.marketLive.cheapestStops || '')}</span></div></div>` : market > our ? `<div><div class="t-label">Typical retail (our estimate)</div><div style="font-size:22px;text-decoration:line-through;color:var(--muted-dim)">${money(market, sym)}</div></div>` : ''}
       ${!data.marketLive && market > our ? `<div><div class="t-label">You save vs retail</div><div style="font-size:22px;color:var(--green);font-weight:700">${money(market - our, sym)}</div></div>` : ''}
     </div>
@@ -2048,7 +2048,7 @@ async function renderVendors() {
   out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>
     <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.3)">
       <span class="eyebrow">✈ Flights-only bookings — different maths, bigger prize</span>
-      <p class="muted" style="font-size:12.5px;margin:6px 0">Flights-only baskets carry a flat <strong>£4.99</strong> platform fee instead of 10% (that's how our flight prices beat the comparison sites). On those you earn <strong>40% of the fee (~£2 per ticket)</strong> — but you keep <strong>lifetime attribution</strong>: every hotel, package or extra that customer ever books afterwards pays your full ${'3–4%'} rate automatically, no code needed. Bring us a customer once, earn on everything they ever book.</p>
+      <p class="muted" style="font-size:12.5px;margin:6px 0">Flights-only baskets carry a small <strong>2%</strong> service fee (min £4.99, capped at £15) instead of 10% (that's how our flight prices beat the comparison sites). On those you earn <strong>40% of the fee</strong> — but you keep <strong>lifetime attribution</strong>: every hotel, package or extra that customer ever books afterwards pays your full ${'3–4%'} rate automatically, no code needed. Bring us a customer once, earn on everything they ever book.</p>
     </div>
     ${portal}${servicesBlock}
     <p class="center muted" style="font-size:12px;margin-top:18px">Commission is never paid on refunds, chargebacks, fraud, self-referrals or policy violations. The platform always keeps its minimum margin.</p>`;

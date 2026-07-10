@@ -7,11 +7,17 @@
 
 // ---- Commission & savings (3JN's headline economics) ----------------------
 export const COMMISSION_RATE = 0.10;      // 10% final-payment fee
-// TIERED TAKE-RATE: flights-only bookings pay a small FLAT fee instead of 10%
-// (a 10% flight loses every Skyscanner comparison → 10% of nothing). Flights
-// become break-even customer acquisition; hotels/packages/extras keep the 10%
-// where the margin genuinely lives. Free for active Travel+ members.
-export const FLIGHT_ONLY_FEE_GBP = 4.99;
+// TIERED TAKE-RATE: flights-only bookings pay a small % service fee instead of
+// 10% (a 10% flight loses every Skyscanner comparison → 10% of nothing).
+// A flat fee left money on the table on high-value long-haul (3JN's core
+// diaspora market) and over-charged cheap short-haul. So: 2% of the fare, with
+// a £4.99 FLOOR (never below the Duffel order cost) and a £15 CAP (keeps
+// big-ticket long-haul competitive — the traveller never pays a runaway fee).
+// Hotels/packages/extras keep the 10% where the real margin lives. Free for
+// active Travel+ members. The Duffel pass-through is separate and at cost.
+export const FLIGHT_ONLY_FEE_RATE = 0.02;   // 2% of the flight value
+export const FLIGHT_ONLY_FEE_GBP = 4.99;    // floor — never below supplier/booking cost
+export const FLIGHT_ONLY_FEE_CAP_GBP = 15;  // cap — stays competitive on long-haul
 export const FLIGHT_ONLY_MEMBER_FREE = true;
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never

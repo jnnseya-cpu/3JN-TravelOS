@@ -1242,7 +1242,7 @@ export function recordPayment(bookingId, payment) {
     if (b.vendorCode && !b.vendorSaleProcessed) {
       const vendor = findVendorByCode(b.vendorCode);
       if (vendor && vendor.userId !== b.userId) {
-        const flightsOnly = b.option?.pricing?.feeModel === 'flight-flat' || b.option?.pricing?.feeModel === 'flight-flat-member-free';
+        const flightsOnly = b.option?.pricing?.feeModel === 'flight-service-fee' || b.option?.pricing?.feeModel === 'flight-flat-member-free';
         // The vendor carve is 3-4% of the FEE-EXCLUSIVE supplier base, so 10%
         // of it equals 3JN's actual commission and the 7% keep-floor holds.
         // (Carving off the fee-inclusive total overpaid vendors and dropped
