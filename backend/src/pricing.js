@@ -7,9 +7,10 @@
 // share one source of truth. Re-exported here for existing call sites.
 import {
   COMMISSION_RATE, SAVINGS_SHARE_RATE, SAVINGS_SHARE_MIN_USD, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
+  FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_MEMBER_FREE,
 } from '../../shared/constants.js';
 
-export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS };
+export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_GBP };
 
 export function tierForPoints(points = 0) {
   let tier = LOYALTY_TIERS[0];
@@ -58,12 +59,23 @@ export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) 
   };
 }
 
-export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0 }) {
+export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false }) {
   const tier = tierForPoints(loyaltyPoints);
   const loyaltyDiscountUSD = componentsUSD * tier.discount;
   const netComponentsUSD = componentsUSD - loyaltyDiscountUSD;
 
-  const commissionUSD = netComponentsUSD * COMMISSION_RATE;
+  // TIERED TAKE-RATE: a flights-only booking pays a small FLAT fee (free for
+  // active Travel+ members) instead of 10%, so our flight price stands level
+  // with the metasearch sites. Packages/hotels/extras keep the 10% — that is
+  // where the margin lives, invisible inside a bundle that beats DIY totals.
+  // Convert with the platform's 0.79 GBP anchor (not the 1.27 card-fee rate)
+  // so a £4.99 fee displays as EXACTLY £4.99 after the USD round-trip.
+  const flightFlatUSD = memberActive && FLIGHT_ONLY_MEMBER_FREE ? 0 : FLIGHT_ONLY_FEE_GBP / 0.79;
+  const commissionUSD = flightsOnly ? flightFlatUSD : netComponentsUSD * COMMISSION_RATE;
+  const feeModel = flightsOnly ? (commissionUSD === 0 ? 'flight-flat-member-free' : 'flight-flat') : 'commission-10';
+  const feeLabel = flightsOnly
+    ? (commissionUSD === 0 ? '3JN flight fee — FREE (Travel+ member)' : `3JN flight service fee (flat £${FLIGHT_ONLY_FEE_GBP.toFixed(2)})`)
+    : '3JN commission (10%)';
   // Duffel pass-through — added ON TOP of commission on a live Duffel order so
   // our supplier cost never erodes the 10% margin. Zero on non-Duffel bookings.
   const preFeeTotalUSD = netComponentsUSD + commissionUSD;
@@ -86,6 +98,8 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
     symbol: currency.symbol,
     loyaltyTier: tier.name,
     loyaltyDiscountPct: tier.discount,
+    feeModel,
+    feeLabel,
     lines: {
       suppliersUSD: round2(componentsUSD),
       loyaltyDiscountUSD: round2(loyaltyDiscountUSD),

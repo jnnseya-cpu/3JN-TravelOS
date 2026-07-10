@@ -7,6 +7,16 @@
 
 // ---- Commission & savings (3JN's headline economics) ----------------------
 export const COMMISSION_RATE = 0.10;      // 10% final-payment fee
+// TIERED TAKE-RATE: flights-only bookings pay a small FLAT fee instead of 10%
+// (a 10% flight loses every Skyscanner comparison → 10% of nothing). Flights
+// become break-even customer acquisition; hotels/packages/extras keep the 10%
+// where the margin genuinely lives. Free for active Travel+ members.
+export const FLIGHT_ONLY_FEE_GBP = 4.99;
+export const FLIGHT_ONLY_MEMBER_FREE = true;
+// Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
+// (industry standard: affiliates get a % of the platform's commission, never
+// of booking value) — plus lifetime attribution on the customer they brought.
+export const FLIGHT_ONLY_PARTNER_SHARE = 0.40;
 export const SAVINGS_SHARE_RATE = 0.10;   // 10% of value created vs market
 // The savings-share only triggers when the AI creates REAL value: savings must
 // exceed £100 (≈ $127 at the platform's 0.79 GBP anchor) before the 10% share

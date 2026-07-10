@@ -11,7 +11,7 @@ import {
   AI_GROWTH_TOOLS, REFERRAL_ACU, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK,
 } from './rewards.js';
 import { quoteChange, applyChange, quoteCancellation } from './operator.js';
-import { VENDOR_TIERS, commissionSplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
+import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
@@ -1104,7 +1104,10 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     // Lead traveller captured + validated at booking time (passport, DOB, etc).
     leadTraveller: lead || null,
     // Vendor Partner attribution: which approved vendor brought this sale.
-    vendorCode: vendorCode ? String(vendorCode).trim().toUpperCase() : null,
+    // LIFETIME ATTACH: no code on this booking → the customer's original
+    // partner (set on their first attributed paid booking) earns automatically.
+    vendorCode: vendorCode ? String(vendorCode).trim().toUpperCase()
+      : (userId && db.users.get(userId)?.attributedVendor) || null,
     status: 'confirmed',
     payments: [],
     priceGuard: { active: true, baselineUSD: option.totalUSD, events: [] },
@@ -1164,17 +1167,28 @@ export function recordPayment(bookingId, payment) {
   // Rewards: the first payment makes this a "paid booking" — fire the referral
   // engine once (250 ACU + revenue-share accrual). Guarded so it never double-pays.
   try { if (!b.referralProcessed) processReferralOnPaidBooking(b); } catch { /* rewards are best-effort */ }
-  // Vendor Partner attribution: the first payment confirms the sale — record the
-  // vendor commission once (carved from the 10% fee; never on top of it).
+  // Vendor Partner attribution: the first payment confirms the sale — record
+  // the vendor commission once, carved from what 3JN ACTUALLY takes:
+  //   packages/hotels → 3-4% of sale (from the 10% fee), as ever;
+  //   flights-only    → a share of the flat flight fee (see vendors.js).
+  // Either way the partner then holds LIFETIME attribution on this customer.
   try {
     if (b.vendorCode && !b.vendorSaleProcessed) {
       const vendor = findVendorByCode(b.vendorCode);
       if (vendor && vendor.userId !== b.userId) {
+        const flightsOnly = b.option?.pricing?.feeModel === 'flight-flat' || b.option?.pricing?.feeModel === 'flight-flat-member-free';
         const saleGbp = (b.option?.pricing?.local?.total && b.option?.pricing?.symbol === '£')
           ? b.option.pricing.local.total
           : (b.option?.totalUSD || 0) / VENDOR_GBP_TO_USD;
-        const r = recordVendorSale({ vendorId: vendor.userId, bookingId: b.id, saleGbp, customerId: b.userId });
-        if (r.ok) b.vendorSaleProcessed = true;
+        const takeGbp = (b.option?.pricing?.revenue?.commissionUSD || 0) / VENDOR_GBP_TO_USD;
+        const r = recordVendorSale({ vendorId: vendor.userId, bookingId: b.id, saleGbp, customerId: b.userId, flightsOnly, takeGbp });
+        if (r.ok) {
+          b.vendorSaleProcessed = true;
+          // Lifetime attach: the customer stays attributed to the partner who
+          // brought them — future bookings pay the partner without a code.
+          const cust = b.userId ? db.users.get(b.userId) : null;
+          if (cust && !cust.attributedVendor) cust.attributedVendor = b.vendorCode;
+        }
       }
     }
   } catch { /* vendor attribution is best-effort */ }
@@ -1564,12 +1578,17 @@ export function decideVendor(userId, { approve, tier, status } = {}) {
 // §1/§2/§7 — record an eligible sale for an approved vendor. Commission is
 // carved from the 10% fee at the vendor's effective rate (incl. any top-seller
 // bonus for the current month). Self-referrals earn nothing.
-export function recordVendorSale({ vendorId, bookingId, saleGbp, customerId }) {
+export function recordVendorSale({ vendorId, bookingId, saleGbp, customerId, flightsOnly = false, takeGbp = 0 }) {
   const p = db.vendorProfiles.get(vendorId);
   if (!p || p.status !== 'approved') return { ok: false, error: 'vendor-not-approved' };
   if (customerId && customerId === vendorId) return { ok: false, error: 'self-referral' };
   const monthKey = nowISO().slice(0, 7);
-  const split = commissionSplit(saleGbp, p.tier, { hasBonus: p.topSellerMonth === monthKey });
+  // Flights-only: the partner's cut comes from 3JN's flat flight fee (a share
+  // of our TAKE), never from the fare — structurally, no sale can ever pay
+  // out more than it brings in. Packages/hotels keep the classic 3-4% carve.
+  const split = flightsOnly
+    ? flightOnlySplit(takeGbp)
+    : commissionSplit(saleGbp, p.tier, { hasBonus: p.topSellerMonth === monthKey });
   // Service-completion gate: commission releases only AFTER the trip happened —
   // the flight's departure/return date passed, the stay checked out, etc.
   const booking = bookingId ? db.bookings.get(bookingId) : null;

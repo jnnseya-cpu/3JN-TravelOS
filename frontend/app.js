@@ -690,13 +690,16 @@ function compareCard(data, sym) {
   return `<div class="card pad" style="margin-top:26px;border-color:rgba(70,211,154,0.32)">
     <span class="eyebrow">Price check — don't take our word for it</span>
     <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-      <div><div class="t-label">3JN all-in (incl. 10% fee)</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
+      <div><div class="t-label">3JN all-in (${rec.pricing.feeModel === 'flight-flat' ? 'flat £4.99 flight fee' : rec.pricing.feeModel === 'flight-flat-member-free' ? 'no fee — Travel+ member' : 'incl. 10% fee'})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
       ${data.marketLive ? `<div><div class="t-label">Real market price (${esc(data.marketLive.cheapestCarrier || 'live cache')})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px">${money(data.marketLive.minGbp, '£')}<span class="muted" style="font-size:13px;font-weight:400"> – ${money(data.marketLive.maxGbp, '£')} · ${data.marketLive.sampled} fares · ${esc(data.marketLive.cheapestStops || '')}</span></div></div>` : market > our ? `<div><div class="t-label">Typical retail (our estimate)</div><div style="font-size:22px;text-decoration:line-through;color:var(--muted-dim)">${money(market, sym)}</div></div>` : ''}
       ${!data.marketLive && market > our ? `<div><div class="t-label">You save vs retail</div><div style="font-size:22px;color:var(--green);font-weight:700">${money(market - our, sym)}</div></div>` : ''}
     </div>
     ${data.marketLive ? `<p class="muted" style="font-size:11.5px;margin-top:8px">Market range from ${esc(data.marketLive.source)} — real fares travellers found on this route (includes Ryanair/Jet2). Cached market prices aren't guaranteed bookable, so we only charge you a live confirmed fare.</p>` : ''}
     <p class="muted" style="font-size:12.5px;margin:12px 0 10px">Verify the exact trip live — same dates, same passengers — on independent sites. ${realFare ? 'Our flight price is a <strong style="color:var(--green)">real bookable fare</strong> — we book it and issue your e-ticket.' : 'This is an <strong>indicative estimate</strong> while we confirm live availability for this exact route and date. We only take real payment once the fare is confirmed bookable, so you\'re never charged for a price we can\'t ticket.'}</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">${linkBtns || '<span class="muted" style="font-size:12px">Add a departure city and dates to generate verify links.</span>'}</div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed rgba(223,229,238,.12);font-size:12.5px">
+      🛡 <strong>Price-Match Promise</strong> — find this exact trip cheaper like-for-like (same flights, same dates, one protected booking) within 24h of booking and we match it and credit the difference as ACU. That's our answer to the big names: check us, then hold us to it.
+    </div>
   </div>`;
 }
 
@@ -790,7 +793,7 @@ function optionCard(o, sym, intent) {
       <table class="brk">
         <tr><td>Suppliers</td><td>${money2(p.local.suppliers, sym)}</td></tr>
         <tr class="save"><td>Loyalty discount (${p.loyaltyTier} · ${(p.loyaltyDiscountPct * 100).toFixed(0)}%)</td><td>-${money2(p.local.loyaltyDiscount, sym)}</td></tr>
-        <tr><td>3JN commission (10%)</td><td>${money2(p.local.commission, sym)}</td></tr>
+        <tr><td>${esc(p.feeLabel || '3JN commission (10%)')}</td><td>${p.local.commission > 0 ? money2(p.local.commission, sym) : '<span style="color:var(--green)">FREE</span>'}</td></tr>
         ${p.local.duffelFee > 0 ? `<tr><td>Airline booking fees (Duffel)</td><td>${money2(p.local.duffelFee, sym)}</td></tr>` : ''}
         <tr class="total"><td>Total</td><td>${money2(p.local.total, sym)}</td></tr>
       </table>

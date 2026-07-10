@@ -139,7 +139,7 @@ function key0PickJourney(tier, pool, scan, intent) {
   return pick;
 }
 
-function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
+function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActive = false) {
   const tier = TIERS[tierName];
   const selections = [];
   let componentsUSD = 0;
@@ -221,7 +221,10 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   // A live Duffel flight in this package = a confirmed Duffel order, so its
   // per-order fees are recovered on top of commission (see pricing.js).
   const duffelOrder = selections.some((s2) => s2.type === 'flight' && s2.live && s2.details?.offerId);
-  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder });
+  // TIERED TAKE-RATE: a basket of nothing but flights pays the flat flight
+  // fee (free for Travel+) instead of 10% — see pricing.js.
+  const flightsOnly = selections.length > 0 && selections.every((s2) => s2.type === 'flight');
+  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive });
 
   // Average reliability across selected suppliers — used for the "reliable"
   // promise and ranking.
@@ -260,9 +263,9 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints) {
   };
 }
 
-export function buildPackages(scan, intent, currency, loyaltyPoints = 0) {
+export function buildPackages(scan, intent, currency, loyaltyPoints = 0, memberActive = false) {
   const options = Object.keys(TIERS)
-    .map((name) => buildOption(name, scan, intent, currency, loyaltyPoints))
+    .map((name) => buildOption(name, scan, intent, currency, loyaltyPoints, memberActive))
     .filter((o) => o.components.length > 0);
 
   // Recommend best value: most reliability per pound. Standard usually wins on

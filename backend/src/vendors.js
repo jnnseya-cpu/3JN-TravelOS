@@ -53,6 +53,27 @@ export function commissionSplit(saleGbp, tierKey, { hasBonus = false } = {}) {
   };
 }
 
+// FLIGHTS-ONLY sales: 3JN's take is the small flat flight fee, not 10% — so
+// the partner earns a SHARE OF THE TAKE (industry standard: affiliates get a
+// % of the platform's commission, never of booking value). Small per ticket,
+// but the partner keeps LIFETIME attribution on the customer: every future
+// hotel/package that customer books pays the partner their full carve.
+import { FLIGHT_ONLY_PARTNER_SHARE } from '../../shared/constants.js';
+export function flightOnlySplit(takeGbp) {
+  const take = round2(Math.max(0, Number(takeGbp) || 0));
+  const vendorGbp = round2(take * FLIGHT_ONLY_PARTNER_SHARE);
+  return {
+    model: 'flight-only',
+    saleGbp: take, // ledger compat: the "sale" base for a flight is our take
+    platformFeeGbp: take,
+    vendorRate: FLIGHT_ONLY_PARTNER_SHARE,
+    vendorGbp,
+    platformKeepsGbp: round2(take - vendorGbp),
+    platformKeepsRate: round2(1 - FLIGHT_ONLY_PARTNER_SHARE),
+    bonusApplied: false,
+  };
+}
+
 // §3/§7 — is a recorded sale releasable in a weekly payout run?
 // `todayISO` gates on SERVICE COMPLETION: commission on a flight releases only
 // after the departure/return date has PASSED, a stay only after checkout, etc.

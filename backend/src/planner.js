@@ -250,7 +250,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Build packages (the scan already ran; gate decides depth/labelling).
   const currency = context.currency;
   const points = user ? user.points : 0;
-  const packages = buildPackages(scan, intent, currency, points);
+  // Active Travel+ members pay NO flat fee on flights-only bookings.
+  const memberActive = !!(user && user.membership?.active);
+  const packages = buildPackages(scan, intent, currency, points, memberActive);
 
   // Was "direct only" honoured? (false when the route has no non-stop option.)
   const recFlight = (packages.options[0]?.components || []).find((c) => c.type === 'flight');

@@ -3393,9 +3393,10 @@ test('the Nottingham→Brussels test query plans end-to-end with realistic econo
 });
 
 test('market benchmark: sell price mirrors checkout math and verdicts are honest', () => {
-  // £100 raw fare: +10% commission, + Duffel pass-through (£2.20 order + 1%).
+  // £100 raw fare under the tiered take-rate: + flat £4.99 flight fee (~$6.32)
+  // + Duffel pass-through (£2.20 order + 1%) — NOT 10%.
   const sell = sellPriceUSD(100);
-  assert.ok(sell > 110 && sell < 120, `raw $100 sells ~$114 (got $${sell})`);
+  assert.ok(sell > 108 && sell < 113, `raw $100 sells ~$110 flights-only (got $${sell})`);
   // Verdicts in GBP.
   assert.equal(benchmarkVerdict(95, 100).verdict, 'unbeatable');
   assert.equal(benchmarkVerdict(100, 100).verdict, 'unbeatable');
@@ -3679,4 +3680,63 @@ test('Aviasales market fares normalise with carrier names, stops and honest sour
   assert.match(m.source, /market data/i, 'labelled market data — never presented as a bookable fare');
   assert.equal(normalizeMarketFare({}), null, 'priceless entries are dropped');
   assert.equal(marketDataEnabled(), false, 'off without TRAVELPAYOUTS_TOKEN — fail closed');
+});
+
+// ---- Tiered take-rate: flat flight fee + partner share of the take ----------
+import { FLIGHT_ONLY_FEE_GBP as FEE_GBP, FLIGHT_ONLY_PARTNER_SHARE as PARTNER_SHARE } from '../../shared/constants.js';
+import { flightOnlySplit } from '../src/vendors.js';
+
+test('tiered take-rate: flights-only pays the flat fee, members fly fee-free, packages keep 10%', () => {
+  // Flights-only, guest: flat £4.99 (~$6.32), never 10%.
+  const r1 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r1.stage, 'options');
+  const opt = r1.packages.options[0];
+  assert.ok(opt.components.every((c) => c.type === 'flight'), 'flights-only basket');
+  assert.equal(opt.pricing.feeModel, 'flight-flat');
+  assert.match(opt.pricing.feeLabel, /flat £4\.99/);
+  const feeUSD = opt.pricing.lines.commissionUSD;
+  assert.ok(Math.abs(feeUSD - FEE_GBP * 1.27) < 0.02, `fee is the flat £${FEE_GBP} (got $${feeUSD})`);
+  // Same trip WITH a hotel: the classic 10% commission applies.
+  const r2 = plan({ text: 'Flights and hotel to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
+  const opt2 = r2.packages.options[0];
+  assert.equal(opt2.pricing.feeModel, 'commission-10');
+  assert.ok(opt2.pricing.lines.commissionUSD > feeUSD * 3, 'package commission is the real margin');
+  // Active Travel+ member: the flight fee disappears entirely.
+  const member = createUser({ name: 'Member Flyer', email: 'member.flyer@example.com' });
+  subscribeMembership(member.id, 'nomad');
+  const r3 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: findUserByEmail('member.flyer@example.com'), searchTier: 'smart' });
+  const opt3 = r3.packages.options[0];
+  assert.equal(opt3.pricing.feeModel, 'flight-flat-member-free');
+  assert.equal(opt3.pricing.lines.commissionUSD, 0, 'Travel+ members pay no flight fee');
+});
+
+test('tiered take-rate: partners earn a share of the flight take + lifetime attribution', async () => {
+  const { applyVendor, decideVendor, createBooking: mkB, saveQuote: mkQ, recordPayment, getBooking } = await import('../src/store.js');
+  // Approved vendor with a code.
+  const v = createUser({ name: 'Flight Affiliate', email: 'flight.affiliate@example.com' });
+  applyVendor(v.id, { businessName: 'FA Travel', tier: 'independent', documents: ['Government ID', 'Proof of address', 'Selfie verification'], experienceYears: 3, salesChannel: 'Instagram travel page' });
+  const dec = decideVendor(v.id, { approve: true });
+  const code = dec.profile.vendorCode;
+  // Customer books FLIGHTS-ONLY via the vendor: partner earns 40% of the flat fee.
+  const cust = createUser({ name: 'Attributed Customer', email: 'attributed.cust@example.com' });
+  const flightOption = { tier: 'Standard', totalUSD: 130, pricing: { currency: 'GBP', symbol: '£', feeModel: 'flight-flat', lines: { totalUSD: 130, commissionUSD: 6.34 }, local: { total: 102.7 }, revenue: { commissionUSD: 6.34, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 130, details: {} }] };
+  const q1 = mkQ({ option: flightOption, intent: { dates: { checkIn: '2026-09-10' } } });
+  const b1 = mkB({ quoteId: q1.id, option: flightOption, instalment: null, userId: cust.id, paymentMethod: 'card', vendorCode: code });
+  recordPayment(b1.id, { type: 'full', amount: 102.7, gateway: 'stripe' });
+  const sale1 = (await import('../src/store.js')).vendorDashboard(v.id).recentSales.find((s) => s.bookingId === b1.id);
+  assert.equal(sale1.model, 'flight-only');
+  const expectedTake = 6.34 / 1.27; // our take in GBP
+  assert.ok(Math.abs(sale1.vendorGbp - Math.round(expectedTake * PARTNER_SHARE * 100) / 100) < 0.02, `partner gets ${PARTNER_SHARE * 100}% of the take (got £${sale1.vendorGbp})`);
+  // Split maths never pays out more than the take.
+  const split = flightOnlySplit(4.99);
+  assert.ok(split.vendorGbp + split.platformKeepsGbp <= split.platformFeeGbp + 0.001, 'structurally cannot pay more than 3JN takes');
+  // LIFETIME ATTACH: the customer's NEXT booking (a package, NO code passed)
+  // still credits the same partner — at the full package carve.
+  const pkgOption = { tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', feeModel: 'commission-10', lines: { totalUSD: 1266, commissionUSD: 126.6 }, local: { total: 1000 }, revenue: { commissionUSD: 126.6, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 500, details: {} }, { type: 'hotel', supplier: 'Rove Hotels', verified: true, reliabilityScore: 88, priceUSD: 766, details: {} }] };
+  const q2 = mkQ({ option: pkgOption, intent: { dates: { checkIn: '2026-11-01' } } });
+  const b2 = mkB({ quoteId: q2.id, option: pkgOption, instalment: null, userId: cust.id, paymentMethod: 'card' });
+  assert.equal(getBooking(b2.id).vendorCode, code, 'no code passed — lifetime attribution supplies the partner');
+  recordPayment(b2.id, { type: 'full', amount: 1000, gateway: 'stripe' });
+  const sale2 = (await import('../src/store.js')).vendorDashboard(v.id).recentSales.find((s) => s.bookingId === b2.id);
+  assert.ok(sale2 && sale2.vendorGbp >= 1000 * 0.03 - 0.01, 'the package pays the partner their full 3% carve');
 });
