@@ -847,8 +847,8 @@ function optionCard(o, sym, intent) {
       ${o.recommended ? '<span class="rec-tag">★ Recommended</span>' : ''}
       <span class="verified-tag">✓ ${o.verified ? '100% Verified' : 'Mixed'} · reliability ${o.avgReliability}</span>
       <div class="rel-bar"><i style="width:${o.avgReliability}%"></i></div>
-      <h3>${o.tier}</h3>
-      <div class="blurb">${o.blurb}</div>
+      <h3>${esc(o.tier)}</h3>
+      <div class="blurb">${esc(o.blurb)}</div>
       <div class="price-big">${money(p.local.total, sym)}</div>
       ${p.local.savingsVsMarket > 0 ? `<div class="save-tag">You save ${money(p.local.savingsVsMarket, sym)} vs market</div>` : '<div class="save-tag">&nbsp;</div>'}
       <ul class="comp-list">${comps}</ul>

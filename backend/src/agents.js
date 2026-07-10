@@ -105,17 +105,22 @@ export function marketingPlan() {
 function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 70); }
 let blogCounter = 0;
 
+const blogEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 export function createPost({ topic, destination, now } = {}) {
-  const dest = destination || DESTS[blogCounter % DESTS.length];
-  const title = topic || `Cheapest reliable ${dest} holiday: flights, hotel, visa & transfers`;
+  const dest = String(destination || DESTS[blogCounter % DESTS.length]).slice(0, 80);
+  const title = String(topic || `Cheapest reliable ${dest} holiday: flights, hotel, visa & transfers`).slice(0, 160);
   const slug = slugify(title) + '-' + (++blogCounter);
-  // Body with internal hyperlinks (to the planner, destination, VisaOS, membership).
+  // The body is rendered as raw HTML on a PUBLIC page, so the caller-supplied
+  // destination MUST be escaped here or it becomes stored XSS (the endpoint is
+  // also admin-gated as the primary defence). Title/excerpt render as text.
+  const dh = blogEsc(dest);
   const body = [
-    `<p><strong>${dest}</strong> doesn't have to be expensive. With <a href="/planner">3JN Travel OS</a> you describe your trip in one sentence and the AI builds the cheapest <em>reliable</em> package — flights, hotel, activities, visa, transfers and eSIM — then keeps monitoring the price after you book.</p>`,
-    `<h3>How much is a ${dest} trip?</h3><p>Open the <a href="/marketplace">Destination Marketplace</a> to see live "from" prices in your currency, or <a href="/planner">get an instant quote</a>. Most travellers pay a 20% deposit and spread the rest over interest-free instalments.</p>`,
-    `<h3>Do I need a visa for ${dest}?</h3><p>Check your <a href="/visaos">visa approval probability</a> before you book — <a href="/visaos">3JN VisaOS</a> tells you the requirement, cost, processing time and document checklist for your nationality in seconds.</p>`,
+    `<p><strong>${dh}</strong> doesn't have to be expensive. With <a href="/planner">3JN Travel OS</a> you describe your trip in one sentence and the AI builds the cheapest <em>reliable</em> package — flights, hotel, activities, visa, transfers and eSIM — then keeps monitoring the price after you book.</p>`,
+    `<h3>How much is a ${dh} trip?</h3><p>Open the <a href="/marketplace">Destination Marketplace</a> to see live "from" prices in your currency, or <a href="/planner">get an instant quote</a>. Most travellers pay a 20% deposit and spread the rest over interest-free instalments.</p>`,
+    `<h3>Do I need a visa for ${dh}?</h3><p>Check your <a href="/visaos">visa approval probability</a> before you book — <a href="/visaos">3JN VisaOS</a> tells you the requirement, cost, processing time and document checklist for your nationality in seconds.</p>`,
     `<h3>Why 3JN?</h3><p>Verified suppliers only, transparent 10% fee, a 24/7 price guard that rebooks or refunds if the price drops, and loyalty rewards that grow with every trip — see <a href="/membership">membership tiers</a>.</p>`,
-    `<p>Ready? <a href="/planner">Plan your ${dest} trip now →</a></p>`,
+    `<p>Ready? <a href="/planner">Plan your ${dh} trip now →</a></p>`,
   ].join('');
   const post = {
     id: 'blog_' + slug, slug, title, destination: dest,

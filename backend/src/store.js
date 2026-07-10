@@ -2054,6 +2054,12 @@ export function vendorServicesForCity(city, type = null) {
 export function recordVendorServiceJob({ vendorId, bookingId, orderId, priceGbp, serviceDate }) {
   const p = db.vendorProfiles.get(vendorId);
   if (!p || p.status !== 'approved') return { ok: false, error: 'vendor-not-approved' };
+  // IDEMPOTENCY: one earnings row per fulfilment order. A re-confirm (or replay)
+  // must not mint a second 90% payout for the same job.
+  if (orderId) {
+    const existing = db.vendorSales.find((s) => s.orderId === orderId && s.model === 'service-delivery');
+    if (existing) return { ok: true, sale: existing, already: true };
+  }
   const price = Math.round(Number(priceGbp) * 100) / 100;
   const vendorGbp = Math.round(price * 0.90 * 100) / 100;
   const sale = {
@@ -2106,7 +2112,11 @@ export function createFulfilmentOrders(booking) {
       destCountry: booking.option?.destination?.country || destCountry || null,
       serviceDate: c.details?.date || booking.option?.dates?.checkIn || null,
       pax: c.details?.passengers || c.details?.pax || null,
+      // sellPrice is in the customer's DISPLAY currency (for the ops payload);
+      // sellGbp is the same value in GBP via the platform anchor, so the vendor
+      // 90/10 payout is computed in real GBP no matter the booking currency.
       sellPrice: Math.round((c.priceUSD || 0) * rate * 100) / 100, symbol: sym,
+      sellGbp: Math.round((c.priceUSD || 0) * GBP_ANCHOR * 100) / 100,
       customer: { name: lead.fullName || null, email: lead.email || null, phone: lead.phone || null, nationality: lead.nationality || null, passport: lead.passportNumber || null },
       userId: booking.userId || null,
       vendorId: c.details?.vendorId || null,

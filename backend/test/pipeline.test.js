@@ -4266,3 +4266,56 @@ test('wave4 one-way: a flights-only one-way search does not crash', () => {
   const res = plan({ text: 'one way flight from London to Barcelona on 15/08/2026 for 2 adults', context: GB, user: null, searchTier: 'smart' });
   assert.equal(res.stage, 'options');
 });
+
+// ---- WAVE 5: security + idempotency + routing regressions -------------------
+import { fulfilmentChannelFor } from '../src/extras-suppliers.js';
+import { createPost as createBlogPost } from '../src/agents.js';
+import { recordVendorServiceJob, applyVendor as applyVendorW5 } from '../src/store.js';
+
+test('wave5 blog: generator requires admin; destination is escaped in the HTML body', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // No auth → refused (was unauthenticated → stored XSS).
+    const anon = await fetch(`${base}/api/blog/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ destination: 'Dubai' }) });
+    assert.ok(anon.status === 401 || anon.status === 403, 'blog generation is not public');
+  } finally { server.close(); }
+  // Even via the internal function, a script payload is neutralised in the body.
+  const post = createBlogPost({ destination: '<img src=x onerror=alert(1)>' });
+  assert.ok(!/<img/i.test(post.body), 'raw <img> never reaches the rendered body');
+  assert.ok(post.body.includes('&lt;img'), 'destination is HTML-escaped');
+});
+
+test('wave5 IDOR: disruption + price-guard reject a non-owner', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const owner = createUser({ name: 'Owner', email: `own${Date.now()}@x.co` });
+    const other = createUser({ name: 'Attacker', email: `atk${Date.now()}@x.co` });
+    const opt = { tier: 'Standard', pricing: { symbol: '£', local: { total: 500 }, lines: { totalUSD: 633 } }, totalUSD: 633, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] };
+    const b = createBooking({ quoteId: 'q_w5', option: opt, instalment: null, userId: owner.id });
+    const call = (path, uid) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(uid ? { 'x-user-id': uid } : {}) }, body: '{}' });
+    assert.equal((await call(`/api/book/${b.id}/disruption`, other.id)).status, 403, 'non-owner cannot run disruption');
+    assert.equal((await call(`/api/book/${b.id}/price-guard`, other.id)).status, 403, 'non-owner cannot run price-guard');
+    assert.equal((await call(`/api/book/${b.id}/price-guard`, owner.id)).status, 200, 'owner can');
+  } finally { server.close(); }
+});
+
+test('wave5 vendor job: re-confirm never double-mints the 90% payout', () => {
+  const v = createUser({ email: `vend${Date.now()}@x.co`, name: 'Photo Vendor' });
+  const appd = applyVendorW5(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@p'], businessHistory: true });
+  assert.equal(appd.profile.status, 'approved');
+  const args = { vendorId: v.id, bookingId: 'bk_w5', orderId: 'ford_w5', priceGbp: 100, serviceDate: '2026-09-01' };
+  const first = recordVendorServiceJob(args);
+  const second = recordVendorServiceJob(args);
+  assert.equal(first.ok, true);
+  assert.equal(second.already, true, 'second confirm is idempotent');
+  assert.equal(second.sale.id, first.sale.id, 'same earnings row returned, not a new one');
+});
+
+test('wave5 fulfilment: a live hotel routes to the ops desk (never charged-but-unbooked)', () => {
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true }, 'AE'), 'ops:hotels');
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: false }, 'AE'), 'ops:hotels');
+});

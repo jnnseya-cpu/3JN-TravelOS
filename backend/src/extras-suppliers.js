@@ -359,9 +359,12 @@ export function fulfilmentChannelFor(component, destCountry) {
   if (t === 'carhire') return 'ops:carhire';
   if (['photographer', 'guide', 'restaurant', 'translator', 'driver'].includes(t)) return 'ops:vendor-marketplace';
   if (['train', 'coach', 'ferry', 'cruise'].includes(t)) return 'ops:ground';
-  if (t === 'hotel' && !component.live) return 'ops:hotels';
+  // Hotels ALWAYS route to the ops desk. There is no automated Amadeus hotel-
+  // order adapter yet, so a "live" hotel that fell through here would be charged
+  // but never booked and never surfaced — the ops desk reserves it manually.
+  if (t === 'hotel') return 'ops:hotels';
   if (t === 'host') return 'auto:host-marketplace';
-  return null; // live flights/hotels auto-ticket elsewhere
+  return null; // live flights auto-ticket via autoTicketFlight
 }
 
 // The pre-packed payload the ops operator pastes into the supplier portal —

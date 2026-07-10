@@ -261,6 +261,11 @@ async function autoTicketFlight(booking) {
   }
 
   // --- FULLY PAID: issue the ticket ----------------------------------------
+  // IDEMPOTENCY: Stripe legitimately re-delivers checkout.session.completed. If
+  // the ticket is already issued, stop — otherwise we'd create a SECOND Duffel
+  // order (double ticket + double charge), or re-pay an already-paid hold order
+  // and wrongly flag a correctly-ticketed booking for refund.
+  if (booking.fulfilment?.ticketing === 'issued') return;
   let order;
   if (booking.fulfilment?.holdOrderId) {
     // Pay off the held order → issues the ticket.
@@ -563,10 +568,11 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
   }
   const accounts = seedAllRoles();
   const demoLoaded = fullyLoadDemoAccounts();
-  // Staff-PIN protection: with a PIN configured and absent from the request,
-  // privileged demo accounts are listed but their sign-in identity is redacted
-  // (a user id IS the session credential in this architecture).
-  const unlocked = staffPinOk(req);
+  // Staff-PIN protection: privileged demo identities are ONLY revealed when a
+  // PIN is configured AND supplied. Critically, "no PIN configured" must NOT
+  // unlock them — otherwise any anonymous caller would receive a working admin
+  // id (the id IS the session credential in this architecture).
+  const unlocked = !!staffPin() && staffPinOk(req);
   // Include the fully-loaded HOST account (a consumer with hosting capability
   // and a published, pre-approved listing) alongside the role accounts.
   const host = findUserByEmail('host@3jntravel.com');
@@ -584,10 +590,12 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
 // One-click FULL-ACCESS account — a single account that can use every section of
 // the OS (admin, business, merchant, consumer, VisaOS government).
 app.post('/api/account/test', safe((req, res) => {
-  // A full-access account IS an admin credential — behind the staff PIN when
-  // one is configured, and fail-closed in live mode.
-  if (LIVE_MODE() && !staffPin()) return res.status(403).json({ error: 'demo-disabled', message: 'Demo accounts are disabled in live mode.' });
-  if (!staffPinOk(req)) return res.status(403).json({ error: 'staff-pin-required', message: 'Full-access demo accounts require the staff access PIN.' });
+  // A full-access account IS an admin credential, so this fails CLOSED: it needs
+  // a configured staff PIN that is also supplied. Without a PIN set, "no gate"
+  // must mean DENY (never mint an anonymous admin), regardless of LIVE_MODE.
+  if (!staffPin() || !staffPinOk(req)) {
+    return res.status(403).json({ error: 'staff-pin-required', message: 'Full-access demo accounts require the staff access PIN (set STAFF_ACCESS_PIN).' });
+  }
   const user = createUser({ name: 'Full-Access Traveller', role: 'admin', allAccess: true });
   addPoints(user.id, 1250 - user.points); // land in Voyager tier (~1,250 pts)
   creditAcu(user.id, 10000, 'full-access-demo'); // funded so every paid feature works
@@ -720,9 +728,15 @@ app.post('/api/admin/bot-sweep/:userId/unflag', safe((req, res) => {
 // customer-facing status on the booking, and notify the traveller live.
 app.post('/api/webhooks/cartrawler', safe((req, res) => {
   const secret = cartrawlerWebhookSecret();
+  // FAIL CLOSED when the door is OPEN: if CarTrawler is live but no secret is
+  // configured, refuse — otherwise anyone could flip a real ride's status. When
+  // CarTrawler is disabled (dev/test), there is no real ride to hijack, so the
+  // event is processed as a harmless simulation.
   if (secret) {
     const got = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
     if (got !== secret) return res.status(401).json({ error: 'bad-webhook-secret' });
+  } else if (cartrawlerEnabled()) {
+    return res.status(503).json({ error: 'webhook-secret-unconfigured', message: 'CarTrawler is live but CARTRAWLER_WEBHOOK_SECRET is not set — inbound events are refused until it is.' });
   }
   const body = req.body || {};
   const event = String(body.event || body.eventType || body.state || '').toUpperCase();
@@ -1444,6 +1458,13 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
     const check = flightComp.details.offerId
       ? await validateDuffelOffer(flightComp.details.offerId)
       : await validateTequilaOffer(flightComp.details.bookingToken, { adults: booking.option?.components?.find((c) => c.type === 'flight')?.details?.passengers || 1 });
+    // FAIL CLOSED: if we could not reach the provider to re-validate a LIVE fare
+    // (network/5xx → ok:false, reason 'unreachable'), do NOT charge and hope —
+    // block checkout and ask the traveller to retry, rather than capture money
+    // against a fare we could not confirm is still ticketable.
+    if (!check.ok && check.reason === 'unreachable') {
+      return res.status(503).json({ error: 'fare-unverifiable', message: 'We could not confirm this live fare with the airline just now — please try again in a moment. No payment was taken.' });
+    }
     if (check.ok && (check.expired || check.live === false)) {
       return res.status(409).json({ error: 'fare-expired', message: 'This live fare has expired since your search — please re-search so we quote and charge the current bookable price.' });
     }
@@ -1643,7 +1664,9 @@ app.post('/api/vendors/jobs/:id/confirm', safe((req, res) => {
   if (!ref) return res.status(400).json({ error: 'confirmation-required', message: 'Enter your booking/confirmation reference for the customer.' });
   const done = completeFulfilmentOrder(order.id, { supplierRef: ref, completedBy: 'vendor' });
   if (!done.ok) return res.json(done);
-  const sale = recordVendorServiceJob({ vendorId: user.id, bookingId: order.bookingId, orderId: order.id, priceGbp: order.sellPrice, serviceDate: order.serviceDate });
+  // Already completed → do NOT create a second earnings row (double-payout).
+  if (done.already) return res.json({ ok: true, order: done.order, already: true });
+  const sale = recordVendorServiceJob({ vendorId: user.id, bookingId: order.bookingId, orderId: order.id, priceGbp: order.sellGbp ?? order.sellPrice, serviceDate: order.serviceDate });
   res.json({ ok: true, order: done.order, earnings: sale.ok ? sale.sale : null });
 }));
 // Admin: applications queue, decisions, weekly payout run, top-seller award.
@@ -1928,6 +1951,13 @@ app.get('/api/host/earnings', safe((req, res) => {
 
 // ---- Disruption Agent: monitors booked flights, rebooks automatically ------
 app.post('/api/book/:id/disruption', safe((req, res) => {
+  // OWNERSHIP: this mutates a booking (rebooks/refunds) — owner or admin only.
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  if (booking.userId && (!user || (booking.userId !== user.id && !user.allAccess && user.role !== 'admin'))) {
+    return res.status(403).json({ error: 'not-your-booking' });
+  }
   const force = req.body && 'force' in req.body ? !!req.body.force : null;
   res.json(runDisruptionGuard(req.params.id, force));
 }));
@@ -1958,6 +1988,13 @@ app.get('/api/os/integration-map', safe((req, res) => {
 
 // ---- Price guard ----------------------------------------------------------
 app.post('/api/book/:id/price-guard', safe((req, res) => {
+  // OWNERSHIP: mutates a booking (price-guard rebook/refund) — owner or admin only.
+  const target = getBooking(req.params.id);
+  if (!target) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  if (target.userId && (!user || (target.userId !== user.id && !user.allAccess && user.role !== 'admin'))) {
+    return res.status(403).json({ error: 'not-your-booking' });
+  }
   const { drift } = req.body || {};
   const event = runPriceGuard(req.params.id, typeof drift === 'number' ? drift : undefined);
   res.json({ event, booking: getBooking(req.params.id) });
@@ -1965,7 +2002,12 @@ app.post('/api/book/:id/price-guard', safe((req, res) => {
 
 // ---- Reviews & supplier scoring ------------------------------------------
 app.post('/api/reviews', safe((req, res) => {
-  const result = submitReview(req.body || {});
+  // Signed-in only: anonymous review submission let scripts move supplier/host
+  // reliability scores and the public leaderboard at will. Tie every review to
+  // a real account (and stamp it) so bulk manipulation is attributable.
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to leave a review.' });
+  const result = submitReview({ ...(req.body || {}), userId: user.id });
   // Reviews → Host Marketplace: guest voice moves listing reliability live.
   if (req.body?.supplier && syncHostReliabilityFromReviews(req.body.supplier) != null) bumpOSLink('review→host');
   res.json(result);
@@ -2107,7 +2149,12 @@ app.get('/api/blog/:slug', safe((req, res) => {
   if (!post) return res.status(404).json({ error: 'not-found' });
   res.json({ post });
 }));
-app.post('/api/blog/generate', safe((req, res) => res.json({ post: createPost(req.body || {}) })));
+// Admin-only: the blog body is public HTML, so untrusted callers must never
+// reach the generator (stored-XSS vector). Content is also escaped in createPost.
+app.post('/api/blog/generate', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ post: createPost(req.body || {}) });
+}));
 
 // ---- Public "white-label" partner endpoint (returns a package) -----------
 // Demonstrates the API other businesses would integrate.
