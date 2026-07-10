@@ -13,6 +13,7 @@ import { visaRule, destExperiences } from './destinations.js';
 import { stayQuote, stayIsAvailable } from './host-listing.js';
 import { routeFareBaseUSD, marketFactor, airportCoords, haversineKm } from './airports.js';
 import { applySourcing } from './partners.js';
+import { adjustedReliability } from './reviews.js';
 import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
 
 // Deterministic pseudo-random so results are stable for a given seed (no
@@ -1076,7 +1077,11 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
   }
   if (wanted.has('visa')) { const v = scanVisa(intent, dest); scan.visa = v ? [v] : []; }
   if (wanted.has('insurance')) scan.insurance = scanInsurance(intent);
-  if (wanted.has('transfer')) scan.transfer = scanTransfers(intent, dest);
+  if (wanted.has('transfer')) {
+    scan.transfer = (live && Array.isArray(live.transfers) && live.transfers.length)
+      ? live.transfers
+      : scanTransfers(intent, dest);
+  }
   if (wanted.has('carhire')) scan.carhire = scanCarHire(intent, dest);
   if (wanted.has('tickets')) scan.tickets = scanTickets(intent);
   if (wanted.has('boat')) scan.boat = scanBoat(intent);
@@ -1086,6 +1091,18 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
   // agent net rates (e.g. Rayna Tours for Dubai land products).
   for (const key of Object.keys(scan)) {
     scan[key] = scan[key].map((offer) => applySourcing(offer, dest.country));
+  }
+
+  // Post-trip reviews feed BACK into ranking: blend each supplier's live review
+  // average into its reliabilityScore, so genuinely well-reviewed suppliers
+  // surface more often. A no-op for suppliers with no reviews yet.
+  for (const key of Object.keys(scan)) {
+    if (!Array.isArray(scan[key])) continue;
+    for (const offer of scan[key]) {
+      if (offer && offer.supplier && typeof offer.reliabilityScore === 'number') {
+        offer.reliabilityScore = adjustedReliability(offer.reliabilityScore, offer.supplier);
+      }
+    }
   }
 
   return scan;

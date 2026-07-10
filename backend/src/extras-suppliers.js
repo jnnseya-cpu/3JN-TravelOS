@@ -339,6 +339,25 @@ export async function searchMozioTransfers({ from, to, dateTimeISO, pax = 2 }) {
   })).filter((r) => r.priceGbp != null);
 }
 
+// Live airport transfers normalised to the scan offer shape (priceUSD + details),
+// so real Mozio prices drop straight into the package the same way live flights/
+// hotels/activities do. Round transfer (arrival + departure) to match the
+// synthetic scanTransfers model. Returns null when the door is shut or empty.
+export async function mozioTransfersForScan({ destAirport, destCity, dateTimeISO, pax = 2 }) {
+  if (!mozioEnabled() || !destCity) return null;
+  const raw = await searchMozioTransfers({
+    from: `${destAirport || destCity} Airport`, to: destCity,
+    dateTimeISO: dateTimeISO || `${new Date().toISOString().slice(0, 10)}T12:00:00`, pax,
+  }).catch(() => null);
+  if (!raw || !raw.length) return null;
+  return raw.map((r) => ({
+    type: 'transfer', supplier: r.supplier, verified: true, reliabilityScore: 86,
+    live: true, sourcedVia: r.sourcedVia, sourcedType: 'transfer aggregator',
+    details: { vehicle: r.vehicle || 'Standard', trips: 2, capacity: pax <= 3 ? '1-3 pax' : '4-6 pax (MPV)', mozioSearchId: r.searchId, mozioResultId: r.resultId },
+    priceUSD: Math.round((r.priceGbp / 0.79) * 2 * 100) / 100, // ×2 = arrival + departure
+  }));
+}
+
 // ---- Fulfilment channel routing -------------------------------------------------
 // Which lane completes each paid component TODAY, given the doors that are
 // open? 'auto' = fully automatic; anything else lands on the Ops Fulfilment

@@ -47,7 +47,7 @@ import {
   listFulfilmentOrders, completeFulfilmentOrder, updateFulfilmentOrder,
   sweepBotAccounts, unflagBotAccount, applyMobilityEvent,
 } from './store.js';
-import { supplierDoors, viatorEnabled, viatorActivitiesForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
+import { supplierDoors, viatorEnabled, viatorActivitiesForScan, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -1073,7 +1073,12 @@ app.post('/api/plan', safe(async (req, res) => {
         const acts = await viatorActivitiesForScan({ destinationCity: dest.city, date: intent.dates?.checkIn, pax: intent.travellers?.total }).catch(() => null);
         if (acts && acts.length) live = { ...live, activities: acts };
       }
-      const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length) || (live.activities && live.activities.length);
+      // LIVE Mozio airport transfers when a transfer is requested and the door is open.
+      if (mozioEnabled() && (result.intent?.components || []).includes('transfer') && dest?.city) {
+        const trs = await mozioTransfersForScan({ destAirport: dest.airport, destCity: dest.city, dateTimeISO: intent.dates?.checkIn ? `${intent.dates.checkIn}T12:00:00` : undefined, pax: intent.travellers?.total }).catch(() => null);
+        if (trs && trs.length) live = { ...live, transfers: trs };
+      }
+      const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length) || (live.activities && live.activities.length) || (live.transfers && live.transfers.length);
       if (hasLive) {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
       }

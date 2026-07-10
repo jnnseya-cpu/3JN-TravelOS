@@ -117,11 +117,16 @@ export function derivePartnerMetrics({
   bookingValueGbp = 0, revenueGbp = 0, withdrawals = [], rank = null, tier = 'referrer',
   paidReferrals = 0,
 } = {}) {
-  const lifetime = revshareRows.reduce((s, r) => s + (r.amountGbp || 0), 0);
+  // Reversed rows (cancelled/refunded bookings) are subtracted from lifetime via
+  // netRevenueAfterReversals, and excluded from the monthly figure — a partner
+  // does not keep commission on a booking that was cancelled.
+  const grossLifetime = revshareRows.reduce((s, r) => s + (r.amountGbp || 0), 0);
+  const reversedGbp = revshareRows.filter((r) => r.reversed).reduce((s, r) => s + (r.amountGbp || 0), 0);
+  const lifetime = netRevenueAfterReversals({ grossCommissionGbp: grossLifetime, reversedGbp });
   const paid = withdrawals.filter((w) => w.status === 'paid').reduce((s, w) => s + (w.amountGbp || 0), 0);
   const pending = Math.round((lifetime - paid) * 100) / 100;
   const now = thisMonthKey(revshareRows);
-  const monthly = revshareRows.filter((r) => (r.at || '').slice(0, 7) === now).reduce((s, r) => s + (r.amountGbp || 0), 0);
+  const monthly = revshareRows.filter((r) => !r.reversed && (r.at || '').slice(0, 7) === now).reduce((s, r) => s + (r.amountGbp || 0), 0);
   const conversion = referrals.length ? Math.round((paidReferrals / referrals.length) * 1000) / 10 : 0;
   return {
     tier,

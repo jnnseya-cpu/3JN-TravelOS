@@ -1614,6 +1614,10 @@ export function operatorConfirm(bookingId) {
     const refund = pa.quote.refundGbp || 0;
     b.status = 'cancelled';
     b.cancelledAt = nowISO();
+    // A cancelled booking must not pay out partner/vendor commission: reverse the
+    // referral revenue-share row(s) for it and kill any not-yet-paid vendor sale.
+    for (const r of db.revshareLedger) if (r.bookingId === b.id) r.reversed = true;
+    for (const s of db.vendorSales) if (s.bookingId === b.id && !s.paidOut) s.refunded = true;
     if (refund > 0) {
       b.payments.push({ type: 'refund', amount: -refund, gateway: b.gateway, at: nowISO(), status: 'refunded' });
     }

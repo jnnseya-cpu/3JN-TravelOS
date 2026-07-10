@@ -4480,3 +4480,30 @@ test('wave6 dates: a backwards range is swapped, not turned into a 1-night inver
   assert.equal(r.checkOut, '2026-08-24');
   assert.equal(r.nights, 7);
 });
+
+// ---- WAVE 6: wired-up (formerly dead) functions -----------------------------
+import { derivePartnerMetrics as derivePMW6, netRevenueAfterReversals as netRevW6 } from '../src/rewards.js';
+import { mozioTransfersForScan as mozioScanW6 } from '../src/extras-suppliers.js';
+import { adjustedReliability as adjRelW6, submitReview as submitReviewW6b } from '../src/reviews.js';
+
+test('wave6 wired: reversed (cancelled) revshare rows are subtracted from partner lifetime', () => {
+  const rows = [
+    { amountGbp: 100, at: '2026-07-01' },
+    { amountGbp: 50, at: '2026-07-01', reversed: true }, // cancelled booking
+  ];
+  const m = derivePMW6({ revshareRows: rows });
+  assert.equal(m.lifetimeEarningsGbp, 100, 'reversed £50 excluded from lifetime');
+  assert.equal(netRevW6({ grossCommissionGbp: 150, reversedGbp: 50 }), 100);
+});
+
+test('wave6 wired: adjustedReliability blends real reviews into a supplier score', () => {
+  for (let i = 0; i < 6; i++) submitReviewW6b({ supplier: `Stellar Air ${i % 1}`, rating: 5 });
+  const lifted = adjRelW6(70, 'Stellar Air 0');
+  assert.ok(lifted > 70, `5-star reviews lift reliability (got ${lifted})`);
+  // A supplier with no reviews is unchanged (safe no-op).
+  assert.equal(adjRelW6(80, 'Never Reviewed Airlines'), 80);
+});
+
+test('wave6 wired: Mozio transfer overlay is a safe no-op when the door is shut', async () => {
+  assert.equal(await mozioScanW6({ destAirport: 'DXB', destCity: 'Dubai' }), null);
+});
