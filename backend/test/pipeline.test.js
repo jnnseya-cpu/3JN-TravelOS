@@ -4321,7 +4321,7 @@ test('wave5 fulfilment: a live hotel routes to the ops desk (never charged-but-u
 });
 
 // ---- WAVE 5b: payment-architecture regressions ------------------------------
-import { applyDepositCreditToBooking as applyCreditW5, placeSearchDeposit as placeDepW5, convertDepositToBooking as convertDepW5, processReferralOnPaidBooking as procRefW5, getUserRaw as getUserRawW5 } from '../src/store.js';
+import { applyDepositCreditToBooking as applyCreditW5, placeSearchDeposit as placeDepW5, convertDepositToBooking as convertDepW5, processReferralOnPaidBooking as procRefW5, getUserRaw as getUserRawW5, applyMobilityEvent as applyMobilityEventW5 } from '../src/store.js';
 
 const LIVE_OPT_W5 = () => ({ tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', local: { total: 1000 }, lines: { totalUSD: 1266 }, revenue: { commissionUSD: 100 } }, components: [{ type: 'flight', supplier: 'BA', live: true, priceUSD: 1266, details: {} }] });
 const INST_W5 = () => ({ deposit: 200, schedule: [{ due: '2026-08-01', amount: 400, status: 'scheduled' }, { due: '2026-09-01', amount: 400, status: 'scheduled' }] });
@@ -4363,4 +4363,31 @@ test('wave5 referral: 250 ACU fires once (first paid booking), not on every book
   assert.equal(r2.acu, 0, 'second booking mints NO further signup ACU');
   const gained = (getUserRawW5(referrer.id).acuBalance || 0) - before;
   assert.ok(gained >= 250 && gained < 500, `only one 250-ACU grant (got ${gained})`);
+});
+
+// ---- WAVE 5c: mobility dedup + ownerless-booking PII ------------------------
+test('wave5 mobility: an out-of-order repeat of an earlier event is deduped (not just the last)', () => {
+  const u = createUser({ name: 'Rider2', email: `r2${Date.now()}@x.co` });
+  const b = createBooking({ quoteId: 'q_mob', option: LIVE_OPT_W5(), instalment: null, userId: u.id });
+  b.mobility = { orderRef: 'CT-OOO-1', events: [] };
+  const send = (event) => applyMobilityEventW5({ event, orderRef: 'CT-OOO-1', status: event.toLowerCase(), title: `Ride ${event}` });
+  assert.equal(send('CAR_DISPATCHED').duplicate, undefined);
+  assert.equal(send('CAR_ARRIVED').duplicate, undefined);
+  // A retry of the EARLIER event (not the latest) must still be a no-op.
+  assert.equal(send('CAR_DISPATCHED').duplicate, true, 'non-adjacent repeat deduped');
+  assert.equal(b.mobility.events.length, 2, 'no phantom third event appended');
+});
+
+test('wave5 PII: an ownerless booking cannot be read by an anonymous caller', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const b = createBooking({ quoteId: 'q_pii', option: LIVE_OPT_W5(), instalment: null, userId: null, lead: { fullName: 'Jane Doe', passportNumber: 'X1234567' } });
+    assert.equal(b.userId, null);
+    const anon = await fetch(`${base}/api/book/${b.id}`);
+    assert.equal(anon.status, 403, 'anonymous read of an ownerless booking is refused');
+    const doc = await fetch(`${base}/api/book/${b.id}/document`);
+    assert.equal(doc.status, 403, 'ownerless document is refused too');
+  } finally { server.close(); }
 });

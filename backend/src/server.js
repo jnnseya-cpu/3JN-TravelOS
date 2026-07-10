@@ -125,6 +125,18 @@ function currentUser(req) {
   return uid ? getUser(uid) : null;
 }
 
+// A booking with NO owner (userId null) must not be readable by an anonymous
+// caller — its passport/passenger PII would leak by id enumeration. The creator
+// already holds the object from the POST response; anything else needs admin.
+// (The app always provisions a user before booking, so this only blocks abuse.)
+function ownerlessBookingBlocked(req, res, booking) {
+  if (booking.userId) return false; // owned bookings use the normal owner check
+  const user = currentUser(req);
+  if (user && (user.allAccess || user.role === 'admin')) return false;
+  res.status(403).json({ error: 'not-your-booking' });
+  return true;
+}
+
 // Role guard for privileged endpoints (admin / business / partner consoles).
 // Returns true if the caller may proceed; otherwise sends a 403 JSON and returns
 // false so the handler can `if (!requireRole(...)) return;`. allAccess accounts
@@ -1390,6 +1402,7 @@ app.get('/api/book/:id', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   // OWNERSHIP: bookings carry passport + passenger PII — owner or admin only.
+  if (ownerlessBookingBlocked(req, res, booking)) return;
   const user = currentUser(req);
   if (booking.userId && (!user || (booking.userId !== user.id && !user.allAccess && user.role !== 'admin'))) {
     return res.status(403).json({ error: 'not-your-booking' });
@@ -1403,6 +1416,7 @@ app.get('/api/book/:id', safe((req, res) => {
 app.get('/api/book/:id/documents', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
+  if (ownerlessBookingBlocked(req, res, booking)) return;
   const user = currentUser(req);
   if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
   const ful = booking.fulfilment || {};
@@ -1421,6 +1435,7 @@ app.get('/api/book/:id/documents', safe((req, res) => {
 app.get('/api/book/:id/document', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
+  if (ownerlessBookingBlocked(req, res, booking)) return;
   const user = currentUser(req);
   // Only the owner (or an admin) may fetch a booking document.
   if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
@@ -1487,6 +1502,15 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
       const drift = shown > 0 ? Math.abs(check.priceUSD - shown) / shown : 0;
       if (drift > 0.02) {
         return res.status(409).json({ error: 'fare-changed', message: 'The airline price changed since your search — please re-search to see and confirm the current fare before paying.', wasUSD: shown, nowUSD: check.priceUSD });
+      }
+      // ANTI-TAMPER (loss floor): the option (incl. pricing) is client-supplied,
+      // so verify the booking total covers at least the airline's REAL validated
+      // fare — the one number we trust. A tampered total below supplier cost
+      // would have us pay the airline more than we collect. Uses the trusted
+      // Duffel amount, not the client's pricing lines.
+      const totalUSD = booking.option?.pricing?.lines?.totalUSD || 0;
+      if (totalUSD > 0 && totalUSD < check.priceUSD * 0.98) {
+        return res.status(409).json({ error: 'price-integrity', message: 'This quote no longer reflects the current bookable fare — please re-search so we charge the correct price.' });
       }
     }
   }

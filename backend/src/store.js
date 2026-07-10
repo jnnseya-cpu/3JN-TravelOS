@@ -2297,9 +2297,14 @@ export function applyMobilityEvent({ event, orderRef, status, icon, title, body,
   db.audit && recordAudit({ actor: 'cartrawler', role: 'system', action: `mobility.${ev.toLowerCase()}`, entity: 'booking', entityId: booking?.id || orderRef || '-', summary: title || ev });
   if (!booking) return { ok: true, matched: false, note: 'no booking matched this ride reference (logged)' };
   booking.mobility = booking.mobility || { orderRef, events: [] };
-  // Idempotent: skip a duplicate of the latest event.
-  const last = booking.mobility.events[booking.mobility.events.length - 1];
-  if (last && last.event === ev) return { ok: true, matched: true, duplicate: true, booking: booking.id };
+  // Idempotent on a STABLE key against ALL prior events (not just the last):
+  // webhooks retry and arrive out of order, so a re-sent earlier event
+  // (DISPATCHED after ARRIVED) must not append again or re-notify. Prefer the
+  // provider's event id; else the event TYPE (each ride event fires once).
+  const evKey = (raw && (raw.eventId || raw.id)) ? `id:${raw.eventId || raw.id}` : `ev:${ev}`;
+  booking.mobility.seen = booking.mobility.seen || [];
+  if (booking.mobility.seen.includes(evKey)) return { ok: true, matched: true, duplicate: true, booking: booking.id };
+  booking.mobility.seen.push(evKey);
   booking.mobility.events.push(entry);
   booking.mobility.status = status || booking.mobility.status;
   booking.mobility.lastEventAt = entry.at;
