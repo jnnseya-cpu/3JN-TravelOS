@@ -31,6 +31,13 @@ async function httpJSON(url, opts = {}) {
 // ---- Door keys ----------------------------------------------------------------
 const ESIMACCESS_KEY = env.ESIMACCESS_API_KEY || '';
 const ESIMACCESS_BASE = env.ESIMACCESS_BASE_URL || 'https://api.esimaccess.com';
+// Airalo Partners API — OAuth2 client-credentials (24h token), then submit an
+// order to provision a real eSIM (ICCID + LPA activation + QR + eSIMs Cloud
+// sharing link). Sandbox: https://sandbox-partners-api.airalo.com.
+const AIRALO_ID = env.AIRALO_CLIENT_ID || '';
+const AIRALO_SECRET = env.AIRALO_CLIENT_SECRET || '';
+const AIRALO_BASE = env.AIRALO_BASE_URL || 'https://partners-api.airalo.com';
+const AIRALO_BRAND = env.AIRALO_BRAND_SETTINGS_NAME || ''; // optional branded eSIMs Cloud
 const VIATOR_KEY = env.VIATOR_API_KEY || '';
 const VIATOR_BASE = env.VIATOR_BASE_URL || 'https://api.viator.com';
 const MOZIO_KEY = env.MOZIO_API_KEY || '';
@@ -41,7 +48,8 @@ const INSURANCE_KEY = env.XCOVER_API_KEY || env.BATTLEFACE_API_KEY || '';
 const INSURANCE_AUTHORISED = env.INSURANCE_AUTHORISED === 'true';
 const RAYNA_PORTAL_URL = env.RAYNA_PORTAL_URL || 'https://agents.raynab2b.com';
 
-export function esimApiEnabled() { return !!ESIMACCESS_KEY && typeof fetch === 'function'; }
+export function esimApiEnabled() { return (!!ESIMACCESS_KEY || airaloEnabled()) && typeof fetch === 'function'; }
+export function airaloEnabled() { return !!(AIRALO_ID && AIRALO_SECRET) && typeof fetch === 'function'; }
 export function viatorEnabled() { return !!VIATOR_KEY && typeof fetch === 'function'; }
 export function mozioEnabled() { return !!MOZIO_KEY && typeof fetch === 'function'; }
 export function insuranceSaleEnabled() { return !!INSURANCE_KEY && INSURANCE_AUTHORISED && typeof fetch === 'function'; }
@@ -55,7 +63,7 @@ export function supplierDoors() {
     { channel: 'flights-lcc', provider: 'Travelfusion / Kiwi partner', envVar: 'TEQUILA_API_KEY', signup: 'https://www.travelfusion.com (sales) · Ryanair approved-OTA programme', covers: 'Ryanair/Jet2 bookable content', fallback: 'ops desk books on airline site' },
     { channel: 'flights-market', provider: 'Travelpayouts (Aviasales)', envVar: 'TRAVELPAYOUTS_TOKEN', signup: 'https://www.travelpayouts.com — self-serve, token instant', covers: 'Real market prices incl. Ryanair/Jet2 (calibration + benchmark)', fallback: 'synthetic estimates' },
     { channel: 'hotels', provider: 'Amadeus', envVar: 'AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET', signup: 'https://developers.amadeus.com — self-serve', covers: 'Live hotel rates + booking', fallback: 'estimator + ops desk' },
-    { channel: 'esim', provider: 'eSIM Access', envVar: 'ESIMACCESS_API_KEY', signup: 'https://esimaccess.com — self-serve reseller, wholesale rates', covers: 'Instant eSIM provisioning (QR/LPA into documents automatically)', fallback: 'auto-provisioned in-OS, ops verifies' },
+    { channel: 'esim', provider: 'Airalo Partners (or eSIM Access)', envVar: 'AIRALO_CLIENT_ID + AIRALO_CLIENT_SECRET (or ESIMACCESS_API_KEY)', signup: 'https://partners.airalo.com — OAuth2, self-serve; optional AIRALO_BRAND_SETTINGS_NAME for branded eSIMs Cloud', covers: 'Instant eSIM: real ICCID + LPA activation + QR + Apple direct-install + eSIMs Cloud share link, straight into the travel documents', fallback: 'auto-provisioned in-OS, ops verifies' },
     { channel: 'activities', provider: 'Viator (+ GetYourGuide later)', envVar: 'VIATOR_API_KEY', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities catalogue, ~8% commission', fallback: 'Rayna agent portal (18 countries) / ops desk' },
     { channel: 'activities-rayna', provider: 'Rayna Tours (B2B agent — YOUR account)', envVar: 'RAYNA_PORTAL_URL (+ RAYNA_AGENT_ID)', signup: 'agreement in place — no API; portal operated by 3JN', covers: 'Activities + Dubai visa in Rayna’s 18-country footprint at net rates', fallback: 'AUTOMATED OPS DESK (this is the primary route)' },
     { channel: 'transfers', provider: 'Mozio / HolidayTaxis', envVar: 'MOZIO_API_KEY', signup: 'https://www.mozio.com/partners — application', covers: 'Airport transfers, thousands of local operators', fallback: 'ops desk / vendor marketplace' },
@@ -69,7 +77,7 @@ export function supplierDoors() {
       : d.channel === 'flights-lcc' ? !!env.TEQUILA_API_KEY
       : d.channel === 'flights-market' ? !!env.TRAVELPAYOUTS_TOKEN
       : d.channel === 'hotels' ? !!(env.AMADEUS_CLIENT_ID && env.AMADEUS_CLIENT_SECRET)
-      : d.channel === 'esim' ? esimApiEnabled()
+      : d.channel === 'esim' ? (airaloEnabled() || esimApiEnabled())
       : d.channel === 'activities' ? viatorEnabled()
       : d.channel === 'transfers' ? mozioEnabled()
       : d.channel === 'insurance' ? insuranceSaleEnabled()
@@ -95,6 +103,84 @@ export async function provisionEsimViaApi({ destinationCountry, dataGB, days, ou
     iccid: profile.iccid || null,
     lpa: profile.ac || profile.activationCode || null, // LPA:1$... activation string
     qrData: profile.qrCodeUrl || null,
+    live: true,
+  };
+}
+
+// ---- Airalo Partners API ------------------------------------------------------
+// OAuth2 client-credentials token, cached until ~1h before expiry (24h life,
+// 3 req/min limit). Then submit an order → a real eSIM with ICCID, LPA
+// activation string, QR, Apple direct-install URL and eSIMs Cloud share link.
+let _airaloToken = null; // { access_token, expiresAtMs }
+async function airaloToken() {
+  if (!airaloEnabled()) return null;
+  if (_airaloToken && _airaloToken.expiresAtMs > Date.now() + 60000) return _airaloToken.access_token;
+  const form = new URLSearchParams({ client_id: AIRALO_ID, client_secret: AIRALO_SECRET, grant_type: 'client_credentials' });
+  const res = await httpJSON(`${AIRALO_BASE}/v2/token`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const tok = res?.data?.access_token;
+  if (!tok) return null;
+  const expiresIn = Number(res.data.expires_in) || 82800; // ~23h default
+  _airaloToken = { access_token: tok, expiresAtMs: Date.now() + expiresIn * 1000 };
+  return tok;
+}
+
+// Pick the cheapest Airalo package covering `countryCode` with >= dataGB. The
+// catalogue is large, so filter by country server-side.
+export async function airaloPickPackage({ countryCode, minGB = 1 }) {
+  const tok = await airaloToken();
+  if (!tok || !countryCode) return null;
+  const q = new URLSearchParams({ 'filter[type]': 'local', 'filter[country]': String(countryCode).toUpperCase(), limit: '100' });
+  const res = await httpJSON(`${AIRALO_BASE}/v2/packages?${q}`, {
+    headers: { Accept: 'application/json', Authorization: `Bearer ${tok}` },
+  });
+  const countries = res?.data;
+  if (!Array.isArray(countries)) return null;
+  // Response nests operators→packages under each country entry.
+  const pkgs = [];
+  for (const c of countries) for (const op of c.operators || []) for (const p of op.packages || []) {
+    const gb = (p.data || '').toUpperCase() === 'UNLIMITED' ? 999 : (parseFloat(p.data) || 0);
+    if (gb >= minGB) pkgs.push({ id: p.id, title: p.title, gb, days: p.day || p.validity, priceUSD: Number(p.price) || null });
+  }
+  if (!pkgs.length) return null;
+  return pkgs.filter((p) => p.priceUSD != null).sort((a, b) => a.priceUSD - b.priceUSD)[0] || pkgs[0];
+}
+
+// Submit an Airalo order and normalise the eSIM into our activation shape.
+export async function provisionEsimViaAiralo({ countryCode, minGB = 1, ourRef }) {
+  const tok = await airaloToken();
+  if (!tok) return null;
+  const pkg = await airaloPickPackage({ countryCode, minGB });
+  if (!pkg) return null;
+  const form = new URLSearchParams({ quantity: '1', package_id: pkg.id, type: 'sim', description: `3JN ${ourRef || ''}`.trim() });
+  if (AIRALO_BRAND) form.set('brand_settings_name', AIRALO_BRAND);
+  const res = await httpJSON(`${AIRALO_BASE}/v2/orders`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', Authorization: `Bearer ${tok}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const sim = res?.data?.sims?.[0];
+  if (!sim) return null;
+  return {
+    provider: 'Airalo',
+    packageTitle: res.data.package || pkg.title,
+    dataLabel: res.data.data || `${pkg.gb}GB`,
+    validityDays: res.data.validity || pkg.days || null,
+    iccid: sim.iccid || null,
+    lpa: sim.qrcode || (sim.lpa && sim.matching_id ? `LPA:1$${sim.lpa}$${sim.matching_id}` : null), // LPA:1$smdp$matchingId
+    smdp: sim.lpa || null,
+    matchingId: sim.matching_id || null,
+    qrData: sim.qrcode || null,
+    qrUrl: sim.qrcode_url || null,
+    appleInstallUrl: sim.direct_apple_installation_url || null,
+    apnValue: sim.apn_value || null,
+    apnType: sim.apn_type || null,
+    isRoaming: sim.is_roaming !== false,
+    shareLink: res.data.sharing?.link || null,
+    shareAccessCode: res.data.sharing?.access_code || null,
     live: true,
   };
 }

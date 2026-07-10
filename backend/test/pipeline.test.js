@@ -4083,3 +4083,33 @@ test('vendor commission is held until travel completes, then releases (real cloc
   assert.equal(saleIsPayable({ ...base, serviceDate: past }, today), true, 'past travel: commission releases');
   assert.equal(saleIsPayable({ ...base, serviceDate: null }, today), true, 'immediately-consumed service: releases next run');
 });
+
+// ---- Airalo eSIM adapter: env-gated, correct normalisation -------------------
+test('Airalo adapter is env-gated and normalises an order into a real activation', async () => {
+  const { airaloEnabled, provisionEsimViaAiralo } = await import('../src/extras-suppliers.js');
+  assert.equal(airaloEnabled(), false);
+  assert.equal(await provisionEsimViaAiralo({ countryCode: 'GB' }), null, 'no credentials → null (in-OS fallback provisions)');
+});
+
+test('a provisioned Airalo eSIM renders its real activation in the travel document', async () => {
+  const { bookingDocument } = await import('../src/documents.js');
+  const booking = {
+    id: 'bkg_esim1', leadTraveller: { fullName: 'Traveller One' },
+    fulfilment: {}, payments: [{ type: 'full', amount: 100, status: 'paid' }],
+    option: {
+      tier: 'Standard', dates: { checkIn: '2026-09-01' }, destination: { city: 'Dubai', country: 'AE' },
+      pricing: { symbol: '£', local: { total: 100 }, lines: { totalUSD: 127 } },
+      components: [{ type: 'esim', supplier: 'Airalo', priceUSD: 10, details: { esim: {
+        live: true, provider: 'Airalo', iccid: '891000000000009125',
+        lpa: 'LPA:1$lpa.airalo.com$TEST', smdp: 'lpa.airalo.com', matchingId: 'TEST',
+        qrUrl: 'https://sandbox.airalo.com/qr?id=1', appleInstallUrl: 'https://esimsetup.apple.com/x',
+        shareLink: 'https://esims.cloud/he4qy-kqc8u68t', shareAccessCode: '8319',
+        packageTitle: 'Dubai 1GB 7 days', dataLabel: '1 GB', validityDays: 7, isRoaming: true,
+      } } }],
+    },
+  };
+  const html = bookingDocument(booking, { currencySymbol: '£' });
+  for (const must of ['891000000000009125', 'LPA:1$lpa.airalo.com$TEST', 'lpa.airalo.com', 'esims.cloud/he4qy-kqc8u68t', '8319', 'esimsetup.apple.com']) {
+    assert.ok(html.includes(must), `document shows ${must}`);
+  }
+});

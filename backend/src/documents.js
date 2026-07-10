@@ -235,12 +235,26 @@ export function serviceBlockData(booking, c, i, { startDate = '', endDate = '' }
     rows.push(['How it works', `Arrival: after baggage claim, your driver waits at the arrivals exit holding a <b>3JN board with your name</b>${startDate ? ` on ${esc(startDate)}` : ''}. The driver's name and phone number are sent to you by SMS and email <b>24 hours before pickup</b>. Departure: pickup time is confirmed the evening before.`]);
     rows.push(['Can\'t find your driver?', 'Message the 3JN Assistant in the app or email support@3jntravel.com quoting your booking ref — we locate the driver live. Please don\'t book alternative transport without contacting us first.']);
   } else if (c.type === 'esim') {
-    const iccid = confRef(booking.id, i, '8944');
-    rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
-    rows.push(['ICCID', `<b class="ticketno">${esc(iccid)}</b>`]);
-    rows.push(['Activation code', `<b class="ticketno">LPA:1$sm.3jntravel.com$${esc(iccid.replace(/[^0-9A-Za-z]/g, ''))}</b> — Settings → Mobile/Cellular → Add eSIM → <b>Enter Details Manually</b>`]);
-    rows.push(['How to activate', '1) Scan the QR in your activation email — or enter the activation code above manually. 2) Install the eSIM over WiFi <b>before departure</b>. 3) On landing, enable data roaming on the 3JN eSIM line — it activates on first connection abroad and your validity starts then.']);
-    rows.push(['Didn\'t get the QR?', 'Ask the 3JN Assistant "resend my eSIM" or email support@3jntravel.com — reissued in minutes.']);
+    // REAL eSIM (Airalo/eSIM Access) once provisioned — genuine ICCID, LPA
+    // activation string, SM-DP+ address, QR and the eSIMs Cloud share link.
+    const live = d.esim && d.esim.live && d.esim.iccid ? d.esim : null;
+    if (live) {
+      rows.push(['Provider · plan', `${esc(live.provider)} · ${esc(live.packageTitle || d.planLabel || '')}${live.dataLabel ? ' · ' + esc(live.dataLabel) : ''}`]);
+      if (live.validityDays) rows.push(['Validity', `${live.validityDays} days (starts on first connection abroad)`]);
+      rows.push(['ICCID', `<b class="ticketno">${esc(live.iccid)}</b>`]);
+      if (live.lpa) rows.push(['Activation code (LPA)', `<b class="ticketno">${esc(live.lpa)}</b> — Settings → Mobile/Cellular → Add eSIM → <b>Enter Details Manually</b>`]);
+      if (live.smdp) rows.push(['SM-DP+ address', `<b>${esc(live.smdp)}</b>${live.matchingId ? ` · activation code <b>${esc(live.matchingId)}</b>` : ''}`]);
+      if (live.qrUrl) rows.push(['QR code', `<a href="${esc(live.qrUrl)}">Open your QR code</a> — scan it on another screen to install`]);
+      if (live.appleInstallUrl) rows.push(['iPhone (iOS 17.4+)', `<a href="${esc(live.appleInstallUrl)}">Tap to install directly</a>`]);
+      if (live.shareLink) rows.push(['All details & instructions', `<a href="${esc(live.shareLink)}">${esc(live.shareLink)}</a>${live.shareAccessCode ? ` · access code <b>${esc(live.shareAccessCode)}</b>` : ''}`]);
+      if (live.apnValue) rows.push(['APN (if needed)', `${esc(live.apnValue)}${live.isRoaming ? ' · enable data roaming' : ''}`]);
+      rows.push(['How to activate', '1) Install over WiFi <b>before departure</b> (scan the QR or enter the LPA/SM-DP+ details manually). 2) On landing, enable data roaming on this line — it activates on first connection abroad and your validity starts then.']);
+    } else {
+      const iccid = confRef(booking.id, i, '8944');
+      rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
+      rows.push(['ICCID', `<b class="ticketno">${esc(iccid)}</b>`]);
+      rows.push(['Activation', 'Your eSIM QR + activation code arrive by email once issued — or ask the 3JN Assistant "resend my eSIM". Install over WiFi before departure; enable data roaming on landing.']);
+    }
   } else if (c.type === 'insurance') {
     rows.push(['Policy number', `<b class="ticketno">${esc(confRef(booking.id, i, 'POL'))}</b>`]);
     rows.push(['Cover', esc(d.cover || 'Medical + cancellation')], ['Insured', `${d.people || o.travellers?.total || 1} traveller(s) · ${d.days || ''} days · valid ${esc(startDate)} → ${esc(endDate || startDate)}`]);

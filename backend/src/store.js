@@ -16,7 +16,7 @@ import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, dueReminders } from './instalments.js';
-import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi } from './extras-suppliers.js';
+import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
 
 let counter = 1000;
@@ -2103,6 +2103,7 @@ export function createFulfilmentOrders(booking) {
       componentType: c.type, componentLabel: `${FULFILMENT_LABELS[c.type] || c.type} — ${c.supplier || ''}`.trim(),
       channel, status: 'new',
       destination: booking.option?.destination?.city || null,
+      destCountry: booking.option?.destination?.country || destCountry || null,
       serviceDate: c.details?.date || booking.option?.dates?.checkIn || null,
       pax: c.details?.passengers || c.details?.pax || null,
       sellPrice: Math.round((c.priceUSD || 0) * rate * 100) / 100, symbol: sym,
@@ -2137,13 +2138,33 @@ async function autoFulfilOrder(order) {
   if (order.channel === 'auto:esim-api' || order.channel === 'auto:esim-inhouse') {
     let profile = null;
     if (order.channel === 'auto:esim-api') {
-      profile = await provisionEsimViaApi({ destinationCountry: order.destination, dataGB: 5, days: 9, ourRef: order.id }).catch(() => null);
+      // Prefer Airalo (real activation + eSIMs Cloud share link); fall back to
+      // eSIM Access; then in-OS provisioning (ops-verified) as a last resort.
+      profile = await provisionEsimViaAiralo({ countryCode: order.destCountry, minGB: 1, ourRef: order.id }).catch(() => null)
+        || await provisionEsimViaApi({ destinationCountry: order.destCountry || order.destination, dataGB: 5, days: 9, ourRef: order.id }).catch(() => null);
     }
     if (!profile) {
       const rec = provisionEsim(order.userId, { destination: order.destination || 'Regional' });
       profile = { provider: rec.provider, iccid: rec.iccid, lpa: null, live: false };
     }
-    return completeFulfilmentOrder(order.id, { supplierRef: profile.iccid, note: `${profile.provider}${profile.lpa ? ' · LPA ' + profile.lpa : ''}`, auto: true });
+    // Write the REAL activation into the booking component so the travel
+    // documents render the QR, LPA code, SM-DP+ address and share link.
+    const b = db.bookings.get(order.bookingId);
+    const comp = b?.option?.components?.[order.componentIndex];
+    if (comp) {
+      comp.details = comp.details || {};
+      comp.details.esim = {
+        provider: profile.provider, iccid: profile.iccid || null,
+        lpa: profile.lpa || null, smdp: profile.smdp || null, matchingId: profile.matchingId || null,
+        qrData: profile.qrData || null, qrUrl: profile.qrUrl || null,
+        appleInstallUrl: profile.appleInstallUrl || null,
+        apnValue: profile.apnValue || null, apnType: profile.apnType || null, isRoaming: profile.isRoaming,
+        shareLink: profile.shareLink || null, shareAccessCode: profile.shareAccessCode || null,
+        packageTitle: profile.packageTitle || null, dataLabel: profile.dataLabel || null, validityDays: profile.validityDays || null,
+        live: !!profile.live,
+      };
+    }
+    return completeFulfilmentOrder(order.id, { supplierRef: profile.iccid, note: `${profile.provider}${profile.lpa ? ' · LPA ' + profile.lpa : ''}${profile.shareLink ? ' · share ' + profile.shareLink : ''}`, auto: true });
   }
   if (order.channel === 'auto:host-marketplace') {
     return completeFulfilmentOrder(order.id, { supplierRef: order.bookingId, note: '3JN host marketplace — host notified automatically', auto: true });
