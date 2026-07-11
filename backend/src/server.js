@@ -156,6 +156,16 @@ function ownerlessBookingBlocked(req, res, booking) {
 // production BEFORE going live.
 const PRIVILEGED_ROLES = new Set(['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate']);
 const staffPin = () => process.env.STAFF_ACCESS_PIN || '';
+// ADMIN_EMAILS is the ONLY way to mint a real admin in production (public signup
+// can never self-elevate). Any email in this comma-separated allowlist becomes an
+// admin account on login — but the staff PIN is still required as the second
+// factor, so knowing the email alone is never enough. e.g.
+//   ADMIN_EMAILS=info@3jntravel.com,ops@3jntravel.com
+const isOwnerEmail = (email) => {
+  const list = String(process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+  const e = String(email || '').trim().toLowerCase();
+  return !!e && list.includes(e);
+};
 // Go-live switch: LIVE_MODE=true removes every demo/free-AI affordance —
 // guests get cached results only, all AI actions are ACU-funded, and demo
 // account surfaces fail closed unless the staff PIN is configured AND supplied.
@@ -1235,10 +1245,13 @@ app.post('/api/login', safe((req, res) => {
   // Privileged accounts (admin, business, embassy…) can NEVER be opened by email
   // alone. Fail CLOSED: the staff PIN must be CONFIGURED and supplied — an unset
   // PIN must mean DENY, not open (otherwise a default deployment hands out admin).
-  if ((PRIVILEGED_ROLES.has(user.role) || user.allAccess) && (!staffPin() || !staffPinOk(req))) {
+  // An allowlisted owner email counts as privileged too (and is elevated below).
+  const wantsAdmin = isOwnerEmail(email);
+  if ((wantsAdmin || PRIVILEGED_ROLES.has(user.role) || user.allAccess) && (!staffPin() || !staffPinOk(req))) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
   }
-  res.json({ user });
+  const out = (wantsAdmin && user.role !== 'admin') ? (updateUser(user.id, { role: 'admin' }) || user) : user;
+  res.json({ user: out });
 }));
 
 // ---- Membership Programme: subscribe / renew / cancel --------------------
@@ -1306,9 +1319,12 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
   if (existing && (existing.flaggedBot || existing.suspended)) {
     return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. Contact support@3jntravel.com to restore it.' });
   }
-  // Privileged accounts are NEVER opened by a token alone — the staff PIN must be
-  // configured AND supplied (fail closed), same as /api/login.
-  if (existing && (PRIVILEGED_ROLES.has(existing.role) || existing.allAccess) && (!staffPin() || !staffPinOk(req))) {
+  // An allowlisted owner email is (or becomes) an admin. Either way, a privileged
+  // account is NEVER opened by a token alone — the staff PIN must be configured
+  // AND supplied (fail closed), same as /api/login.
+  const wantsAdmin = isOwnerEmail(email);
+  const isPriv = wantsAdmin || (existing && (PRIVILEGED_ROLES.has(existing.role) || existing.allAccess));
+  if (isPriv && (!staffPin() || !staffPinOk(req))) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
   }
   // Verified email still passes the bot name/disposable-domain checks on signup.
@@ -1316,7 +1332,9 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
     const bot = botSignupVerdict({ name, email });
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
-  const user = existing || createUser({ email, name: name || decoded.name || undefined });
+  let user = existing || createUser({ email, name: name || decoded.name || undefined });
+  // Elevate an allowlisted owner to admin (once the PIN has cleared above).
+  if (wantsAdmin && user.role !== 'admin') user = updateUser(user.id, { role: 'admin' }) || user;
   res.json({ user, created: !existing });
 }));
 

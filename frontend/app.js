@@ -3644,7 +3644,19 @@ window.addEventListener('firebase-auth', async (e) => {
   if (firebaseBridging) return;
   firebaseBridging = true;
   try {
-    const d = await api('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ idToken: e.detail.idToken, name: e.detail.name }) });
+    const bridge = () => api('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ idToken: e.detail.idToken, name: e.detail.name, staffPin: state.staffPin || undefined }) });
+    let d;
+    try { d = await bridge(); }
+    catch (err) {
+      // Staff/owner account: collect the PIN once and retry (state.staffPin then
+      // rides on every future request via the x-staff-pin header).
+      if (/PIN/i.test(err?.message || '')) {
+        const pin = window.prompt('This is a staff account. Enter the staff access PIN:');
+        if (!pin) return;
+        state.staffPin = pin;
+        try { d = await bridge(); } catch { toast('PIN not accepted.'); return; }
+      } else return;
+    }
     setUser(d.user); closeModal();
     toast(`✓ Signed in as ${d.user.name}`);
     if (e.detail && e.detail.emailVerified === false) {

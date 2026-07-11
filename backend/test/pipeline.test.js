@@ -4688,6 +4688,33 @@ test('wave7 auth: a privileged account cannot be opened by login without a confi
   } finally { server.close(); }
 });
 
+test('wave7 auth: an ADMIN_EMAILS owner is elevated to admin on login (with the PIN)', async () => {
+  const email = `owner${Date.now()}@x.co`;
+  createUser({ name: 'Owner', email }); // starts as a plain consumer
+  const prevPin = process.env.STAFF_ACCESS_PIN;
+  const prevAdmins = process.env.ADMIN_EMAILS;
+  process.env.STAFF_ACCESS_PIN = 'pin-4242';
+  process.env.ADMIN_EMAILS = `someone@else.co, ${email}`;
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const mkHuman = () => { const ch = issueHumanChallenge(); return { website: '', elapsedMs: MIN_FORM_MS + 500, interactions: 8, a: ch.a, b: ch.b, expiresAt: ch.expiresAt, token: ch.token, answer: ch.a + ch.b }; };
+    // Without the PIN → denied even though the email is allowlisted.
+    const noPin = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, humanCheck: mkHuman() }) });
+    assert.equal(noPin.status, 403, 'allowlisted owner still needs the staff PIN');
+    // With the PIN → elevated to admin.
+    const ok = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-staff-pin': 'pin-4242' }, body: JSON.stringify({ email, humanCheck: mkHuman() }) });
+    assert.equal(ok.status, 200);
+    const d = await ok.json();
+    assert.equal(d.user.role, 'admin', 'owner email is elevated to admin');
+  } finally {
+    server.close();
+    if (prevPin === undefined) delete process.env.STAFF_ACCESS_PIN; else process.env.STAFF_ACCESS_PIN = prevPin;
+    if (prevAdmins === undefined) delete process.env.ADMIN_EMAILS; else process.env.ADMIN_EMAILS = prevAdmins;
+  }
+});
+
 test('wave7 manifest: travellers are matched to offer passengers by TYPE, not index', () => {
   // Offer order is adult, adult, child. The manifest arrives child-FIRST.
   const offerPassengers = [{ id: 'p1', type: 'adult' }, { id: 'p2', type: 'adult' }, { id: 'p3', type: 'child' }];
