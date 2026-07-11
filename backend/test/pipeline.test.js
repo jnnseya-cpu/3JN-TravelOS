@@ -4715,6 +4715,32 @@ test('wave7 auth: an ADMIN_EMAILS owner is elevated to admin on login (with the 
   }
 });
 
+test('wave7 auth: an ADMIN_EMAILS owner reaches admin endpoints on every request without the PIN', async () => {
+  const email = `own${Date.now()}@x.co`;
+  const u = createUser({ name: 'Own', email }); // plain consumer in the store
+  const other = createUser({ name: 'Other', email: `oth${Date.now()}@x.co` });
+  const prevPin = process.env.STAFF_ACCESS_PIN;
+  const prevAdmins = process.env.ADMIN_EMAILS;
+  process.env.STAFF_ACCESS_PIN = 'zzz';
+  process.env.ADMIN_EMAILS = email;
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // No x-staff-pin at all — the owner is admin via the env allowlist (works on
+    // any serverless instance regardless of the stored role).
+    const ov = await fetch(`${base}/api/admin/overview`, { headers: { 'x-user-id': u.id } });
+    assert.equal(ov.status, 200, 'owner reaches the admin API without the staff PIN');
+    // A normal consumer is still blocked.
+    const blocked = await fetch(`${base}/api/admin/overview`, { headers: { 'x-user-id': other.id } });
+    assert.equal(blocked.status, 403, 'a non-owner consumer is still denied');
+  } finally {
+    server.close();
+    if (prevPin === undefined) delete process.env.STAFF_ACCESS_PIN; else process.env.STAFF_ACCESS_PIN = prevPin;
+    if (prevAdmins === undefined) delete process.env.ADMIN_EMAILS; else process.env.ADMIN_EMAILS = prevAdmins;
+  }
+});
+
 test('wave7 auth: loading an allowlisted owner account self-heals to admin (no PIN)', async () => {
   const email = `heal${Date.now()}@x.co`;
   const u = createUser({ name: 'Heal', email }); // plain consumer, created before allowlist

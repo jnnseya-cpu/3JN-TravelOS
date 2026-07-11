@@ -151,9 +151,18 @@ app.use((req, res, next) => {
 });
 
 // Resolve the active user from a header (prototype "auth").
+// Overlay admin role from the ADMIN_EMAILS allowlist. This is computed from the
+// environment on EVERY request, so an allowlisted owner is admin consistently on
+// every (stateless / serverless) instance — even if a stored role change hasn't
+// propagated across instances. The env allowlist is the source of truth for owner
+// admin; it never DEMOTES (only promotes), so normal roles are untouched.
+function applyOwnerRole(user) {
+  if (user && isOwnerEmail(user.email) && user.role !== 'admin') return { ...user, role: 'admin' };
+  return user;
+}
 function currentUser(req) {
   const uid = req.headers['x-user-id'];
-  return uid ? getUser(uid) : null;
+  return applyOwnerRole(uid ? getUser(uid) : null);
 }
 
 // A booking with NO owner (userId null) must not be readable by an anonymous
@@ -181,10 +190,11 @@ function ownerlessBookingBlocked(req, res, booking) {
 const PRIVILEGED_ROLES = new Set(['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate']);
 const staffPin = () => process.env.STAFF_ACCESS_PIN || '';
 // ADMIN_EMAILS is the ONLY way to mint a real admin in production (public signup
-// can never self-elevate). Any email in this comma-separated allowlist becomes an
-// admin account on login — but the staff PIN is still required as the second
-// factor, so knowing the email alone is never enough. e.g.
-//   ADMIN_EMAILS=info@3jntravel.com,ops@3jntravel.com
+// can never self-elevate). Any email in this comma-separated allowlist IS an admin
+// on every request (env-based, so it's consistent across serverless instances).
+// The two factors are the allowlist (env, not user-settable) + an authenticated
+// session for that email (Firebase password), so knowing the email alone is never
+// enough. e.g.  ADMIN_EMAILS=info@3jntravel.com,ops@3jntravel.com
 const isOwnerEmail = (email) => {
   const list = String(process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
   const e = String(email || '').trim().toLowerCase();
@@ -204,8 +214,11 @@ function requireRole(req, res, roles) {
   const u = currentUser(req);
   if (u && (u.allAccess || roles.includes(u.role))) {
     // Privileged areas require the staff PIN when one is configured — even a
-    // correct role/user id is not enough (ids are not secrets).
-    if (roles.some((r) => PRIVILEGED_ROLES.has(r)) && !staffPinOk(req)) {
+    // correct role/user id is not enough (ids are not secrets). An allowlisted
+    // OWNER (ADMIN_EMAILS) is exempt: their env-allowlist + authenticated session
+    // is already the second factor, so they don't also need the PIN (this is what
+    // kept the owner locked out of admin API calls).
+    if (roles.some((r) => PRIVILEGED_ROLES.has(r)) && !isOwnerEmail(u.email) && !staffPinOk(req)) {
       res.status(403).json({ error: 'staff-pin-required', message: 'This area requires the staff access PIN.' });
       return false;
     }
@@ -662,15 +675,12 @@ app.get('/api/account/:id', safe((req, res) => {
   if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
     return res.status(403).json({ error: 'not-your-account' });
   }
-  let user = getUser(req.params.id);
-  if (!user) return res.status(404).json({ error: 'not-found' });
-  // Self-healing admin: if this account's email is on the ADMIN_EMAILS allowlist
-  // but the role isn't admin yet (e.g. the session predates the allowlist being
-  // set), promote it here. Only the account itself (or an admin) can reach this,
-  // and only an allowlisted email is affected — so loading the site while signed
-  // in as the owner reliably lands you in admin, no PIN or re-auth needed.
-  if (isOwnerEmail(user.email) && user.role !== 'admin') user = updateUser(user.id, { role: 'admin' }) || user;
-  res.json({ user, bookings: listBookings(user.id) });
+  const stored = getUser(req.params.id);
+  if (!stored) return res.status(404).json({ error: 'not-found' });
+  // Overlay admin from the env allowlist so loading the site while signed in as
+  // the owner reliably lands in admin — consistent on every serverless instance.
+  const user = applyOwnerRole(stored);
+  res.json({ user, bookings: listBookings(stored.id) });
 }));
 
 // Edit an account profile (name, email, bio, avatar, travel profile).
@@ -1280,8 +1290,7 @@ app.post('/api/login', safe((req, res) => {
   if ((wantsAdmin || PRIVILEGED_ROLES.has(user.role) || user.allAccess) && (!staffPin() || !staffPinOk(req))) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
   }
-  const out = (wantsAdmin && user.role !== 'admin') ? (updateUser(user.id, { role: 'admin' }) || user) : user;
-  res.json({ user: out });
+  res.json({ user: applyOwnerRole(user) });
 }));
 
 // ---- Membership Programme: subscribe / renew / cancel --------------------
@@ -1367,9 +1376,9 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
     const bot = botSignupVerdict({ name, email });
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
-  let user = existing || createUser({ email, name: name || decoded.name || undefined });
-  // Elevate an allowlisted owner to admin (once the PIN has cleared above).
-  if (wantsAdmin && user.role !== 'admin') user = updateUser(user.id, { role: 'admin' }) || user;
+  const created = existing || createUser({ email, name: name || decoded.name || undefined });
+  // Overlay admin from the env allowlist (consistent across serverless instances).
+  const user = applyOwnerRole(created);
   res.json({ user, created: !existing });
 }));
 
@@ -1387,9 +1396,8 @@ app.post('/api/account/elevate', safe((req, res) => {
   if (!staffPin() || !staffPinOk(req)) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Incorrect staff access PIN.' });
   }
-  const out = user.role === 'admin' ? user : (updateUser(user.id, { role: 'admin' }) || user);
   recordAudit({ actor: user.id, role: 'admin', action: 'account.elevated', entity: 'user', entityId: user.id, summary: `${user.email} unlocked admin via staff PIN` });
-  res.json({ user: out });
+  res.json({ user: applyOwnerRole(user) });
 }));
 
 // ---- eSIM Manager ---------------------------------------------------------
