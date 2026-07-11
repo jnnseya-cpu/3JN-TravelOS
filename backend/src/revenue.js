@@ -114,7 +114,7 @@ export function searchAbuseScore({ searchesWithoutBooking = 0, repeatedSearches 
   return { score, band, level, signals: ABUSE_SIGNALS };
 }
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false }) {
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -147,6 +147,28 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
         },
       };
     }
+  }
+
+  // MARGIN PROTECTION for the free 50-ACU starter: the giveaway lets a new user
+  // TRY the cheap Smart search, but it must never fund the more expensive Deep or
+  // Concierge agents before the user has committed. "Committed" = a real signal
+  // the platform will earn: a booking, a paid membership, a search deposit, a
+  // purchased ACU top-up, or a corporate/white-label contract. Without one, the
+  // expensive tier downgrades — so 100% margin protection holds for free accounts.
+  const committed = hasDeposit || subscriptionActive || hasPurchasedAcu || priorBookings > 0
+    || corporateContract || whiteLabelContract || !!(user && user.membership?.active);
+  const smartAcu = (SEARCH_TIERS.smart || {}).acu || 5;
+  const hasStarterAcu = !!(user && user.acuBalance >= smartAcu);
+  // Only bites when the user has the free starter ACU (can afford Smart) but has
+  // NOT committed — then Deep downgrades to Smart. A user with no ACU falls
+  // through to the normal funding checks below (which downgrade to cached/free).
+  if (tier === 'deep' && !committed && hasStarterAcu) {
+    return {
+      allowed: false, downgradeTo: 'smart', tier, reason: 'free-starter-limited-to-smart', aiCostUSD: t.aiCostUSD,
+      requirement: {
+        message: 'Deep search uses premium AI agents, so it needs a commitment first — top up ACU, join a plan, or place a refundable deposit. Your free starter ACU runs the Smart search; showing that instead.',
+      },
+    };
   }
 
   // Abuse throttle (spec §15): the Search Abuse Detection Engine scores seven

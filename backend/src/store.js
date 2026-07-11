@@ -3193,5 +3193,8 @@ export function usageStats(userId) {
   for (const b of week) if (b.destination) destCounts[b.destination] = (destCounts[b.destination] || 0) + 1;
   const sameDestinationRepeats = Math.max(0, ...Object.values(destCounts));
   const priorBookings = [...db.bookings.values()].filter((b) => b.userId === userId).length;
-  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId) };
+  // Has the user COMMITTED money (bought ACU or paid a membership)? Used by the
+  // margin gate: the free 50-ACU starter must not fund the expensive tiers.
+  const hasPurchasedAcu = db.acuTxns.some((t) => t.userId === userId && t.type === 'PURCHASE');
+  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu };
 }

@@ -518,9 +518,17 @@ test('cost-protection gate blocks unfunded deep search and downgrades', () => {
   const ok = costProtectionGate({ tier: 'deep', user: poorUser, expectedBookingUSD: 5000 });
   assert.equal(ok.allowed, true);
 
-  // funded by ACU balance even with no booking intent
-  const acuFunded = costProtectionGate({ tier: 'deep', user: { acuBalance: 5000 }, expectedBookingUSD: 0 });
+  // funded by PURCHASED ACU balance even with no booking intent
+  const acuFunded = costProtectionGate({ tier: 'deep', user: { acuBalance: 5000 }, expectedBookingUSD: 0, hasPurchasedAcu: true });
   assert.equal(acuFunded.allowed, true);
+
+  // MARGIN PROTECTION: the free 50-ACU starter (never purchased, no commitment)
+  // may run Smart but NOT Deep — Deep downgrades until the user commits.
+  const starterDeep = costProtectionGate({ tier: 'deep', user: { acuBalance: 50 }, expectedBookingUSD: 0, hasPurchasedAcu: false });
+  assert.equal(starterDeep.allowed, false);
+  assert.equal(starterDeep.downgradeTo, 'smart');
+  const starterSmart = costProtectionGate({ tier: 'smart', user: { acuBalance: 50 }, expectedBookingUSD: 0, hasPurchasedAcu: false });
+  assert.equal(starterSmart.allowed, true, 'free starter still runs the cheap Smart search');
 });
 
 test('white-label payout is 90/10 split', () => {

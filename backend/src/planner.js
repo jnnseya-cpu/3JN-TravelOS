@@ -232,6 +232,9 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     searchesToday: usage.searchesToday || 0,
     priorBookings: usage.priorBookings || 0,
     sameDestinationRepeats: usage.sameDestinationRepeats || 0,
+    // Commitment signal: has the user actually paid (bought ACU)? The free
+    // starter ACU must not fund the expensive Deep/Concierge tiers.
+    hasPurchasedAcu: !!usage.hasPurchasedAcu,
   });
 
   const effectiveTier = gate.allowed ? searchTier : (gate.downgradeTo || 'free');
