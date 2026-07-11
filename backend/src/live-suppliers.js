@@ -1,6 +1,7 @@
 // Live supplier pricing (flights + hotels) for 3JN Travel OS.
 //
-// Real provider integrations — Duffel for flights, Amadeus for hotels — that
+// Real provider integrations — Duffel for flights, Duffel Stays for hotels (same
+// token; Amadeus is an optional fallback) — that
 // return offers normalised to the SAME shape as the deterministic engine, so
 // the packager/pricing pipeline is unchanged. They follow the live-data.js
 // principles:
@@ -14,7 +15,7 @@
 // numbers from "estimated" to "live". Nothing here fabricates a price: if a
 // provider doesn't answer, we return null rather than a made-up "live" figure.
 
-import { fxRate } from './live-data.js';
+import { fxRate, geocode } from './live-data.js';
 import { estimateFlightFares } from './suppliers.js';
 import { routeFareBaseUSD } from './airports.js';
 
@@ -66,7 +67,11 @@ export function duffelEnabled() { return !!DUFFEL_TOKEN && typeof fetch === 'fun
 export function lccFlightsEnabled() { return !!TEQUILA_KEY && typeof fetch === 'function'; }
 export function marketDataEnabled() { return !!TRAVELPAYOUTS_TOKEN && typeof fetch === 'function'; }
 export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled(); }
-export function liveHotelsEnabled() { return !!(AMADEUS_ID && AMADEUS_SECRET) && typeof fetch === 'function'; }
+// Duffel Stays uses the SAME Duffel token as flights — so hotels can go live the
+// moment flights work, with NO extra credentials. Amadeus stays as a fallback.
+// Set DUFFEL_STAYS=false to disable the Stays path (e.g. to force Amadeus).
+export function duffelStaysEnabled() { return duffelEnabled() && env.DUFFEL_STAYS !== 'false'; }
+export function liveHotelsEnabled() { return (duffelStaysEnabled() || !!(AMADEUS_ID && AMADEUS_SECRET)) && typeof fetch === 'function'; }
 export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
 export function liveSuppliersConfigured() { return liveFlightsEnabled() || liveHotelsEnabled() || oagScheduleEnabled(); }
 
@@ -747,9 +752,87 @@ export function normalizeAmadeusHotel(entry, priceUSD, nights, rooms) {
   };
 }
 
-// Fetch live hotels from Amadeus. Returns normalised offers or null.
+// ===========================================================================
+// HOTELS — Duffel Stays (SAME token as flights; no extra credentials needed)
+// ===========================================================================
+// Normalise one Duffel Stays search result to our hotel-offer shape.
+export function normalizeDuffelStay(result, priceUSD, nights, rooms) {
+  const acc = result.accommodation || {};
+  const stars = Number(acc.rating) || 0;
+  const nightlyUSD = nights ? Math.round((priceUSD / nights) * 100) / 100 : priceUSD;
+  const reviewScore = acc.review_score != null ? Number(acc.review_score) : null; // 0–10
+  return {
+    type: 'hotel',
+    supplier: acc.name || 'Hotel',
+    verified: true,
+    reliabilityScore: reviewScore != null ? Math.round(reviewScore * 10) : (stars >= 4 ? 90 : 82),
+    stars,
+    live: true,
+    sourcedVia: 'Duffel Stays (live)',
+    sourcedType: 'aggregator',
+    details: {
+      nights, rooms: rooms || 1,
+      nightlyUSD,
+      board: 'Room only',
+      freeCancellation: false, // confirmed at rate level before payment
+      roomType: result.rooms?.[0]?.rates?.[0]?.name || 'Standard Room',
+      area: acc.location?.address?.line_one || acc.location?.address?.city_name || '',
+      guestRating: reviewScore != null ? reviewScore : (stars ? Math.round(stars / 5 * 100) / 10 : undefined),
+      photos: (acc.photos || []).map((p) => p.url).filter(Boolean).slice(0, 6),
+      latitude: acc.location?.geographic_coordinates?.latitude,
+      longitude: acc.location?.geographic_coordinates?.longitude,
+      staysSearchResultId: result.id,
+    },
+    priceUSD,
+  };
+}
+
+// Fetch live hotels from Duffel Stays. Geocodes the destination city, searches a
+// radius around it, and normalises the cheapest rate per property. Returns
+// normalised offers or null.
+export async function fetchDuffelStays(intent, dest) {
+  if (!duffelStaysEnabled()) return null;
+  if (!intent?.dates?.checkIn || !intent?.dates?.checkOut || !dest?.city) return null;
+  const geo = await geocode(dest.city).catch(() => null);
+  if (!geo || geo.lat == null || geo.lon == null) return null;
+  const rooms = Math.max(1, Math.ceil((intent.travellers?.total || 1) / 2));
+  const guests = [];
+  for (let i = 0; i < Math.max(1, intent.travellers?.adults || 1); i++) guests.push({ type: 'adult' });
+  for (const age of (intent.travellers?.childAges || [])) guests.push({ type: 'child', age });
+  const body = { data: {
+    rooms,
+    location: { radius: 10, geographic_coordinates: { longitude: geo.lon, latitude: geo.lat } },
+    check_in_date: intent.dates.checkIn,
+    check_out_date: intent.dates.checkOut,
+    guests: guests.length ? guests : [{ type: 'adult' }],
+  } };
+  const res = await httpJSON(`${DUFFEL_BASE}/stays/search`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const results = res?.data?.results;
+  if (!Array.isArray(results) || !results.length) return null;
+  const out = [];
+  for (const r of results.slice(0, 20)) {
+    const amount = r.cheapest_rate_total_amount;
+    if (!amount) continue;
+    const usd = await toUSD(amount, r.cheapest_rate_currency);
+    if (usd == null) continue;
+    out.push(normalizeDuffelStay(r, usd, intent.nights, rooms));
+  }
+  return out.length ? out : null;
+}
+
+// Fetch live hotels. Duffel Stays first (same token as flights, no extra creds),
+// then Amadeus as a fallback. Returns normalised offers or null.
 export async function fetchLiveHotels(intent, dest) {
   if (!liveHotelsEnabled()) return null;
+  if (duffelStaysEnabled()) {
+    const stays = await fetchDuffelStays(intent, dest).catch(() => null);
+    if (stays && stays.length) return stays;
+  }
+  if (!(AMADEUS_ID && AMADEUS_SECRET)) return null;
   const cityCode = dest?.code;
   if (!cityCode || !intent?.dates?.checkIn || !intent?.dates?.checkOut) return null;
   const token = await amadeusAuth();

@@ -4559,3 +4559,37 @@ test('revenue: sponsored placement revenue appears in the admin overview total',
   assert.equal(after.placementRevenueMonthlyGBP, before.placementRevenueMonthlyGBP + 500, 'placement £/mo tracked');
   assert.ok(after.totalRevenueUSD > before.totalRevenueUSD, 'headline revenue includes placement income');
 });
+
+// ---- Duffel Stays (hotel replacement for Amadeus) ---------------------------
+import { normalizeDuffelStay as normStayW6, fetchDuffelStays as fetchStaysW6, duffelStaysEnabled as staysEnabledW6, liveHotelsEnabled as liveHotelsW6 } from '../src/live-suppliers.js';
+
+test('duffel stays: normaliser maps a search result to the hotel-offer shape', () => {
+  const result = {
+    id: 'sr_123',
+    accommodation: {
+      name: 'Marina Bay Hotel', rating: 5, review_score: 9.2,
+      location: { address: { line_one: '12 Marina Walk', city_name: 'Dubai' }, geographic_coordinates: { latitude: 25.1, longitude: 55.2 } },
+      photos: [{ url: 'https://img/1.jpg' }, { url: 'https://img/2.jpg' }],
+    },
+    rooms: [{ rates: [{ name: 'Deluxe King' }] }],
+    cheapest_rate_total_amount: '900.00', cheapest_rate_currency: 'USD',
+  };
+  const o = normStayW6(result, 900, 3, 1);
+  assert.equal(o.type, 'hotel');
+  assert.equal(o.supplier, 'Marina Bay Hotel');
+  assert.equal(o.live, true);
+  assert.equal(o.sourcedVia, 'Duffel Stays (live)');
+  assert.equal(o.stars, 5);
+  assert.equal(o.reliabilityScore, 92, 'review 9.2/10 → reliability 92');
+  assert.equal(o.details.nightlyUSD, 300, '900 / 3 nights');
+  assert.equal(o.details.roomType, 'Deluxe King');
+  assert.equal(o.priceUSD, 900);
+  assert.ok(o.details.photos.length === 2);
+});
+
+test('duffel stays: gated behind the Duffel token; a safe no-op when the door is shut', async () => {
+  // No DUFFEL_TOKEN in tests → Stays door shut, no live hotels claimed.
+  assert.equal(staysEnabledW6(), false);
+  assert.equal(liveHotelsW6(), false);
+  assert.equal(await fetchStaysW6({ dates: { checkIn: '2026-09-01', checkOut: '2026-09-05' }, travellers: { total: 2, adults: 2 }, nights: 4 }, { city: 'Dubai' }), null);
+});
