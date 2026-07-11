@@ -3780,7 +3780,10 @@ function humanBlock() {
 function openAuth(mode = 'signup') {
   HUMAN.formOpenedAt = Date.now();
   const fb = window.firebaseAuth?.available;
-  const googleBtn = fb ? '<button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="googleSignIn()">🇬 Continue with Google</button><div class="muted center" style="font-size:11px;margin-bottom:8px">or with email</div>' : '';
+  // Google is the FRICTIONLESS primary path: one tap, no password to set, no
+  // email to verify (Google addresses are pre-verified). Make it the prominent
+  // button so most customers never touch the email/password fields at all.
+  const googleBtn = fb ? '<button class="btn btn-gold btn-block" style="margin-bottom:6px;font-weight:700" onclick="googleSignIn()">Continue with Google — one tap</button><div class="muted center" style="font-size:11.5px;margin:8px 0 10px">Fastest way in. Or use email below.</div>' : '';
   // SIGNUP and LOGIN are separate, dedicated screens — never mixed.
   if (mode === 'login') {
     modal(`
