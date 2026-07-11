@@ -2247,6 +2247,16 @@ function accessGate(out, area, roles) {
 // works even if the login-time PIN prompt never appeared (cache, etc.). Only
 // succeeds server-side when the account's email is on the ADMIN_EMAILS allowlist.
 window.staffUnlock = async () => {
+  // PRIMARY: re-run the live Firebase sign-in. It verifies a fresh token on the
+  // server, rebuilds a valid session even if the stored one went stale, and
+  // grants an allowlisted owner admin automatically (no PIN). This is the robust
+  // path — the earlier "sign in first" error was a stale session id.
+  if (window.firebaseAuth?.reauth) {
+    toast('Refreshing your admin access…');
+    const ok = await window.firebaseAuth.reauth();
+    if (ok) return; // the firebase-auth handler sets the (now admin) user + navigates
+  }
+  // FALLBACK (no live Firebase session): the prototype PIN elevation.
   if (!state.user) { openAuth('login'); return; }
   const pin = window.prompt('Enter the staff access PIN:');
   if (!pin) return;
@@ -2256,7 +2266,7 @@ window.staffUnlock = async () => {
     setUser(d.user);
     toast(`✓ Admin unlocked — welcome, ${d.user.name}.`);
     nav('admin');
-  } catch (e) { toast(e.message || 'PIN not accepted, or this email is not an admin.'); }
+  } catch (e) { toast(e.message || 'Please sign out and sign in again, then reopen Admin.'); }
 };
 
 // ---- Admin Super Control Centre -------------------------------------------
@@ -3692,7 +3702,12 @@ window.addEventListener('firebase-auth', async (e) => {
     } else {
       $('#verifyBanner')?.remove();
     }
-    if (!$('#view-console').classList.contains('active')) nav('console');
+    // If they were sitting on a privileged view (e.g. the Admin gate) and are now
+    // allowed in, re-render it so it flips straight to the dashboard. Otherwise
+    // land them on the console.
+    const active = $('.view.active')?.id?.replace('view-', '') || '';
+    if (active && VIEW_ROLES[active] && canAccessView(active)) nav(active);
+    else if (!$('#view-console').classList.contains('active')) nav('console');
   } catch {} finally { firebaseBridging = false; }
 });
 window.addEventListener('firebase-signout', () => { $('#verifyBanner')?.remove(); });

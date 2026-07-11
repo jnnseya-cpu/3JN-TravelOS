@@ -48,6 +48,16 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
       async changeEmail(newEmail) { if (!auth.currentUser) return false; await verifyBeforeUpdateEmail(auth.currentUser, newEmail); return true; },
       async signOut() { await signOut(auth); },
       currentEmailVerified() { return !!auth.currentUser?.emailVerified; },
+      // Re-run the verified sign-in bridge with a FRESH token — re-establishes a
+      // valid backend session (fixes a stale/expired session id) and re-applies
+      // role (an allowlisted owner becomes admin). Returns false if not signed in.
+      async reauth() {
+        if (!auth.currentUser) return false;
+        let idToken = null;
+        try { idToken = await auth.currentUser.getIdToken(true); } catch { return false; }
+        emit('firebase-auth', { ...toUser(auth.currentUser), idToken });
+        return true;
+      },
     };
 
     // Auto-bridge: when Firebase auth state changes, tell the app — INCLUDING a
