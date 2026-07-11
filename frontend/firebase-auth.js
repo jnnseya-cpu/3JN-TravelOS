@@ -50,10 +50,14 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
       currentEmailVerified() { return !!auth.currentUser?.emailVerified; },
     };
 
-    // Auto-bridge: when Firebase auth state changes, tell the app.
-    onAuthStateChanged(auth, (u) => {
-      if (u) emit('firebase-auth', toUser(u));
-      else emit('firebase-signout', {});
+    // Auto-bridge: when Firebase auth state changes, tell the app — INCLUDING a
+    // fresh ID token the server verifies (the email is trusted only from that).
+    onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        let idToken = null;
+        try { idToken = await u.getIdToken(); } catch { /* offline */ }
+        emit('firebase-auth', { ...toUser(u), idToken });
+      } else emit('firebase-signout', {});
     });
 
     emit('firebase-ready', {});

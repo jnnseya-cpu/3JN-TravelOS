@@ -1316,8 +1316,14 @@ export function logPriceEvent(bookingId, event) {
 
 // ---- Reviews & supplier scores -------------------------------------------
 export function addReview({ supplier, rating, comment, bookingId, userId }) {
+  // Length-cap the supplier + comment: they render in the admin console and a
+  // raw string is both an XSS vector (also escaped at the sink) and unbounded
+  // Map-key growth from anonymous input.
+  supplier = String(supplier || '').slice(0, 80);
+  comment = comment != null ? String(comment).slice(0, 1000) : comment;
   const review = { id: id('rev'), supplier, rating, comment, bookingId, userId, at: nowISO() };
   db.reviews.push(review);
+  capArr(db.reviews, 20000);
 
   const s = db.supplierScores.get(supplier) || { supplier, sum: 0, count: 0 };
   s.sum += rating;

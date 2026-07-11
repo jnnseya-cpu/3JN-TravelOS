@@ -54,6 +54,16 @@ export function initPersistence({ databaseURL } = {}) {
 
 export function isEnabled() { return enabled; }
 
+// Verify a Firebase ID token server-side and return the decoded claims (incl.
+// the VERIFIED email), or null. This is what makes /api/auth/firebase safe: the
+// email must come from a cryptographically-verified token, never the request
+// body. Fails closed — returns null when firebase-admin isn't initialised.
+export async function verifyFirebaseIdToken(idToken) {
+  if (!idToken || !admin.apps.length) return null;
+  try { return await admin.auth().verifyIdToken(String(idToken)); }
+  catch { return null; }
+}
+
 export async function load() {
   if (!enabled) return null;
   try {

@@ -4638,3 +4638,33 @@ test('flight manifest: falls back to the lead when no manifest is supplied', () 
   assert.equal(pax.length, 1);
   assert.deepEqual([pax[0].given_name, pax[0].family_name], ['Solo', 'Traveller']);
 });
+
+// ---- WAVE 7: pre-launch security launch-blockers ----------------------------
+test('wave7 auth: /api/auth/firebase refuses an unverified token (no more login-as-any-email)', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // Body email with NO verifiable Firebase token → 401 (was: returned the account).
+    const r1 = await fetch(`${base}/api/auth/firebase`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin@3jntravel.com' }) });
+    assert.equal(r1.status, 401, 'no token → unverified');
+    const r2 = await fetch(`${base}/api/auth/firebase`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idToken: 'forged.jwt.here', name: 'x' }) });
+    assert.equal(r2.status, 401, 'a forged token cannot be verified');
+  } finally { server.close(); }
+});
+
+test('wave7 auth: a privileged account cannot be opened by login without a configured staff PIN', async () => {
+  const admin = createUser({ name: 'Priv Admin', email: `priv${Date.now()}@x.co` });
+  updateUser(admin.id, { role: 'admin' });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const ch = issueHumanChallenge();
+    const humanCheck = { website: '', elapsedMs: MIN_FORM_MS + 500, interactions: 8, a: ch.a, b: ch.b, expiresAt: ch.expiresAt, token: ch.token, answer: ch.a + ch.b };
+    const res = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: admin.email, humanCheck }) });
+    assert.equal(res.status, 403, 'fail closed — no PIN configured means DENY for a privileged account');
+    const d = await res.json();
+    assert.equal(d.error, 'staff-pin-required');
+  } finally { server.close(); }
+});

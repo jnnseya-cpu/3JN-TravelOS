@@ -2264,7 +2264,7 @@ async function renderAdmin() {
   const mix = (obj) => Object.entries(obj || {}).map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('') || '<div class="muted" style="font-size:13px">none yet</div>';
 
   const board = (data.leaderboard || []).length
-    ? data.leaderboard.map((s) => `<div class="kv"><span>${s.supplier}</span><span>${s.avgRating}★ · ${s.reviews}</span></div>`).join('')
+    ? data.leaderboard.map((s) => `<div class="kv"><span>${esc(s.supplier)}</span><span>${s.avgRating}★ · ${s.reviews}</span></div>`).join('')
     : '<div class="muted" style="font-size:13px">no reviews yet</div>';
 
   const g = data.gateway;
@@ -2636,10 +2636,10 @@ async function renderBlog() {
   let data; try { data = await api('/api/blog'); } catch { return; }
   const cards = (data.posts || []).map((p) => `
     <div class="card pad blog-card">
-      <span class="eyebrow">${p.destination} · ${p.readMins} min read</span>
-      <h3 style="margin:6px 0 6px;cursor:pointer" onclick="openPost('${p.slug}')">${p.title}</h3>
-      <p class="muted" style="font-size:13.5px">${p.excerpt}</p>
-      <div class="chips" style="margin-top:8px">${p.tags.map((t) => `<span class="chip">#${t}</span>`).join('')}</div>
+      <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read</span>
+      <h3 style="margin:6px 0 6px;cursor:pointer" onclick="openPost('${esc(p.slug)}')">${esc(p.title)}</h3>
+      <p class="muted" style="font-size:13.5px">${esc(p.excerpt)}</p>
+      <div class="chips" style="margin-top:8px">${p.tags.map((t) => `<span class="chip">#${esc(t)}</span>`).join('')}</div>
       <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
         <button class="btn btn-gold btn-sm" onclick="openPost('${p.slug}')">Read</button>
         ${shareButtons(p)}
@@ -3449,7 +3449,7 @@ async function renderBusiness() {
     </div>
     <div class="card pad" style="margin-top:16px">
       <span class="eyebrow">Supplier Contract Manager · AI-negotiated volume deals</span>
-      ${contracts.length ? contracts.map((c) => `<div class="kv"><span>${c.supplier} <span class="muted">${c.category}</span></span><span>$${(c.annualVolumeUSD).toLocaleString()}/yr · <strong style="color:var(--green)">${(c.discountPct * 100).toFixed(1)}%</strong> · ${c.status}</span></div>`).join('') : '<div class="muted" style="font-size:13px">No contracts yet. The Supplier Negotiation Agent scales the discount with committed volume.</div>'}
+      ${contracts.length ? contracts.map((c) => `<div class="kv"><span>${esc(c.supplier)} <span class="muted">${esc(c.category)}</span></span><span>$${(c.annualVolumeUSD).toLocaleString()}/yr · <strong style="color:var(--green)">${(c.discountPct * 100).toFixed(1)}%</strong> · ${esc(c.status)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">No contracts yet. The Supplier Negotiation Agent scales the discount with committed volume.</div>'}
       <div class="composer-row" style="margin-top:12px">
         <div class="field"><label>Supplier</label><input class="in" id="ctrSupplier" placeholder="e.g. Emirates" style="width:150px"></div>
         <div class="field"><label>Category</label><select class="in" id="ctrCat"><option value="hotel">hotel</option><option value="flights">flights</option><option value="carhire">car hire</option><option value="transfer">transfer</option></select></div>
@@ -3586,7 +3586,7 @@ window.addEventListener('firebase-auth', async (e) => {
   if (firebaseBridging) return;
   firebaseBridging = true;
   try {
-    const d = await api('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ email: e.detail.email, name: e.detail.name }) });
+    const d = await api('/api/auth/firebase', { method: 'POST', body: JSON.stringify({ idToken: e.detail.idToken, name: e.detail.name }) });
     setUser(d.user); closeModal();
     toast(`✓ Signed in as ${d.user.name}`);
     if (e.detail && e.detail.emailVerified === false) {

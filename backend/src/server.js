@@ -74,7 +74,7 @@ import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
-import { initPersistence, isEnabled, load, save, scheduleSave } from './persistence.js';
+import { initPersistence, isEnabled, load, save, scheduleSave, verifyFirebaseIdToken } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
 import { stripeEnabled, createCheckoutSession, verifyStripeSignature } from './stripe.js';
@@ -1055,9 +1055,10 @@ app.post('/api/login', safe((req, res) => {
   if (user.flaggedBot || user.suspended) {
     return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. If you are a real person, contact support@3jntravel.com and we will restore it personally.' });
   }
-  // Privileged accounts (admin, business, embassy…) can never be opened by
-  // email alone: when the staff PIN is configured it must accompany the login.
-  if ((PRIVILEGED_ROLES.has(user.role) || user.allAccess) && !staffPinOk(req)) {
+  // Privileged accounts (admin, business, embassy…) can NEVER be opened by email
+  // alone. Fail CLOSED: the staff PIN must be CONFIGURED and supplied — an unset
+  // PIN must mean DENY, not open (otherwise a default deployment hands out admin).
+  if ((PRIVILEGED_ROLES.has(user.role) || user.allAccess) && (!staffPin() || !staffPinOk(req))) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
   }
   res.json({ user });
@@ -1088,25 +1089,30 @@ app.post('/api/membership/cancel', safe((req, res) => {
   res.json(result);
 }));
 
-// Firebase Auth bridge — verified identity comes from Firebase on the client;
-// here we get-or-create the matching backend account by email so loyalty,
-// bookings, etc. attach to it. (A hardened build verifies the Firebase ID token
-// server-side with firebase-admin; the public client config can't be forged for
-// app data because all app state lives behind this account record.)
-app.post('/api/auth/firebase', safe((req, res) => {
-  const { email, name } = req.body || {};
-  if (!email) return res.status(400).json({ error: 'email-required' });
-  const existing = findUserByEmail(email.trim().toLowerCase());
+// Firebase Auth bridge — get-or-create the backend account for a Firebase user.
+// SECURITY: the email is taken ONLY from a server-VERIFIED Firebase ID token,
+// never the request body — otherwise this is a "log in as any email" oracle
+// (full account takeover). Fails closed when the token can't be verified.
+app.post('/api/auth/firebase', safe(async (req, res) => {
+  const { idToken, name } = req.body || {};
+  const decoded = await verifyFirebaseIdToken(idToken);
+  if (!decoded || !decoded.email) return res.status(401).json({ error: 'unverified', message: 'Sign-in could not be verified — please try again.' });
+  const email = String(decoded.email).trim().toLowerCase();
+  const existing = findUserByEmail(email);
   if (existing && (existing.flaggedBot || existing.suspended)) {
     return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. Contact support@3jntravel.com to restore it.' });
   }
-  // Same signup screen as email accounts — Google-verified emails still get
-  // the name/disposable-domain checks (a bot can automate OAuth too).
+  // Privileged accounts are NEVER opened by a token alone — the staff PIN must be
+  // configured AND supplied (fail closed), same as /api/login.
+  if (existing && (PRIVILEGED_ROLES.has(existing.role) || existing.allAccess) && (!staffPin() || !staffPinOk(req))) {
+    return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
+  }
+  // Verified email still passes the bot name/disposable-domain checks on signup.
   if (!existing) {
     const bot = botSignupVerdict({ name, email });
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
-  const user = existing || createUser({ email: email.trim().toLowerCase(), name: name || undefined });
+  const user = existing || createUser({ email, name: name || decoded.name || undefined });
   res.json({ user, created: !existing });
 }));
 
