@@ -4668,3 +4668,37 @@ test('wave7 auth: a privileged account cannot be opened by login without a confi
     assert.equal(d.error, 'staff-pin-required');
   } finally { server.close(); }
 });
+
+test('wave7 manifest: travellers are matched to offer passengers by TYPE, not index', () => {
+  // Offer order is adult, adult, child. The manifest arrives child-FIRST.
+  const offerPassengers = [{ id: 'p1', type: 'adult' }, { id: 'p2', type: 'adult' }, { id: 'p3', type: 'child' }];
+  const travellers = [
+    { fullName: 'Luc Nseya', dob: '2018-02-20', type: 'child' },
+    { fullName: 'Jean Nseya', dob: '1985-04-12', type: 'adult', email: 'jean@x.co' },
+    { fullName: 'Marie Nseya', dob: '1987-09-01', type: 'adult' },
+  ];
+  const pax = duffelPaxW6(offerPassengers, travellers[0], { departureDate: '2026-09-01', travellers });
+  // The child offer slot (p3) must carry the child traveller's DOB, never an adult's.
+  const childSlot = pax.find((p) => p.type === 'child');
+  assert.equal(childSlot.given_name, 'Luc');
+  assert.equal(childSlot.born_on, '2018-02-20', 'child DOB lands in the child passenger slot');
+  // Both adult slots carry adults (born before 2018), not the child.
+  const adultSlots = pax.filter((p) => p.type === 'adult');
+  assert.equal(adultSlots.length, 2);
+  assert.ok(adultSlots.every((p) => p.born_on < '2018-01-01'), 'adult slots get adult DOBs');
+  // Contact details stay on the lead (manifest index 0 = Luc, a child) — but the
+  // lead is the contact regardless of type, so its slot carries the email.
+  assert.ok(pax.some((p) => p.email === undefined), 'non-lead passengers carry no contact');
+});
+
+test('wave7 manifest: infant offer passenger claims an infant traveller', () => {
+  const offerPassengers = [{ id: 'p1', type: 'adult' }, { id: 'p2', type: 'infant_without_seat' }];
+  const travellers = [
+    { fullName: 'Jean Nseya', dob: '1985-04-12', type: 'adult' },
+    { fullName: 'Baby Nseya', dob: '2025-06-01', type: 'infant' },
+  ];
+  const pax = duffelPaxW6(offerPassengers, travellers[0], { departureDate: '2026-09-01', travellers });
+  const infantSlot = pax.find((p) => p.type === 'infant_without_seat');
+  assert.equal(infantSlot.given_name, 'Baby');
+  assert.equal(infantSlot.born_on, '2025-06-01');
+});

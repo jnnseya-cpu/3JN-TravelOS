@@ -77,7 +77,7 @@ import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave, verifyFirebaseIdToken } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
-import { stripeEnabled, createCheckoutSession, verifyStripeSignature } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -224,6 +224,44 @@ function bookingFullyPaid(booking) {
   const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   return total > 0 && paid + 0.01 >= total;
 }
+// Ticketing failed AFTER money was captured. Actually refund the customer (not
+// just tell them we did — there was no refund code before), and ALWAYS raise an
+// ops ticket so a human reconciles if the auto-refund can't fire (e.g. multiple
+// PaymentIntents from instalments, or Stripe unreachable). Never silently strand
+// a paid, unticketed customer.
+async function failTicketingWithRefund(booking, reason) {
+  const ful = (booking.fulfilment = booking.fulfilment || {});
+  ful.ticketing = 'failed'; ful.reason = reason; ful.needsRefund = true;
+  let refunded = false;
+  if (stripeEnabled() && booking.stripePaymentIntent) {
+    const r = await createRefund({ paymentIntentId: booking.stripePaymentIntent }).catch(() => ({ ok: false }));
+    if (r.ok) {
+      refunded = true; ful.refundId = r.refundId; ful.refundedAt = new Date().toISOString();
+      try { recordPayment(booking.id, { type: 'refund', amount: -((r.amount || 0) / 100), gateway: 'stripe', reference: `refund:${r.refundId}` }); } catch {}
+    }
+  }
+  try { createSupportTicket({ userId: booking.userId, intent: 'ops-refund', message: `Ticketing FAILED for booking ${booking.id} (${reason}). ${refunded ? `Auto-refund issued (${ful.refundId}).` : 'AUTO-REFUND DID NOT FIRE — refund the customer manually and check for partial/instalment captures.'}`, reason: 'ticketing-failed' }); } catch {}
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.failed', entity: 'booking', entityId: booking.id, summary: `${reason}${refunded ? ' · refunded' : ' · ops-refund-queued'}` });
+  if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund in progress', body: `We couldn't issue your ticket (${reason}). ${refunded ? 'Your payment has been refunded in full.' : 'Our team is processing your full refund now — you will get a confirmation shortly.'}` });
+}
+
+// The passenger manifest is short of the number of seats on the fare (a group
+// or family flight where not every traveller's name was captured). NEVER
+// fabricate names — a ticket issued as "Guest2 Traveller" is a denied-boarding
+// at the airport. Instead HOLD the booking for ops, ask the customer for the
+// missing traveller details, and let a human complete the manifest before any
+// ticket is issued. No refund: the booking is valid, it just needs names.
+async function failManifestToOps(booking, offerCount, manifestCount) {
+  const ful = (booking.fulfilment = booking.fulfilment || {});
+  if (ful.ticketing === 'manifest-hold') return; // idempotent
+  ful.ticketing = 'manifest-hold';
+  ful.reason = `manifest-incomplete:${manifestCount}/${offerCount}`;
+  ful.manifestHeldAt = new Date().toISOString();
+  try { createSupportTicket({ userId: booking.userId, intent: 'ops-manifest', message: `Booking ${booking.id} is paid but the passenger manifest is incomplete (${manifestCount} of ${offerCount} names). Collect the full traveller list from the customer, complete the manifest, then release for ticketing. DO NOT issue with placeholder names.`, reason: 'manifest-incomplete' }); } catch {}
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.manifest-hold', entity: 'booking', entityId: booking.id, summary: `${manifestCount}/${offerCount} names — held for ops` });
+  if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '📝', title: 'One more step — traveller names', body: `Your booking is secured. We just need the full name (as on passport) for every traveller before we can issue tickets. Please add them in your Console or reply to our team — your seats are held.` });
+}
+
 // The booking → ticket lifecycle (the model: WE book, WE issue the ticket).
 //   • Pay in full  → issue the ticket now (Duffel order, instant).
 //   • Instalments  → HOLD the fare now (Duffel hold order); issue the ticket
@@ -254,19 +292,33 @@ async function autoTicketFlight(booking) {
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
   if (!flight || !liveFlightsEnabled()) return;
   const ful = () => (booking.fulfilment = booking.fulfilment || {});
-  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.leadTraveller || booking.lead || {}, { departureDate: flight.details.outbound?.date, travellers: booking.travellers });
+  // CONCURRENCY CLAIM: two redelivered webhooks can enter here at the same time;
+  // the async createDuffelOrder means both could pass an 'issued' check that is
+  // only set AFTER the await → double order/charge. Claim the booking
+  // SYNCHRONOUSLY (before any await) so only the first proceeds.
+  const stage = booking.fulfilment?.ticketing;
+  if (stage === 'issued' || stage === 'issuing') return;
+  // BUILD the passenger manifest and REFUSE to fabricate names — a group ticket
+  // issued with placeholder names ("Guest2 Traveller") means denied boarding.
+  const offerPax = flight.details.offerPassengers || [];
+  const manifest = Array.isArray(booking.travellers) && booking.travellers.length ? booking.travellers : (booking.leadTraveller ? [booking.leadTraveller] : []);
+  if (offerPax.length > 1 && manifest.filter((t) => t && String(t.fullName || '').trim()).length < offerPax.length) {
+    await failManifestToOps(booking, offerPax.length, manifest.length);
+    return;
+  }
+  const passengers = duffelOrderPassengers(offerPax, booking.leadTraveller || booking.lead || {}, { departureDate: flight.details.outbound?.date, travellers: booking.travellers });
   const fullyPaid = bookingFullyPaid(booking);
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------
   if (!fullyPaid) {
-    if (booking.fulfilment?.holdOrderId || booking.fulfilment?.ticketing === 'issued') return;
+    if (booking.fulfilment?.holdOrderId || booking.fulfilment?.ticketing === 'issued' || booking.fulfilment?.ticketing === 'holding') return;
+    ful().ticketing = 'holding'; // claim before the await
     const check = await validateDuffelOffer(flight.details.offerId);
     if (check.ok && (check.expired || check.live === false)) {
-      ful().ticketing = 'failed'; booking.fulfilment.reason = 'offer-expired'; booking.fulfilment.needsRefund = true;
-      if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Fare expired', body: 'The fare expired before we could hold it — we are refunding your deposit. Please re-search.' });
+      await failTicketingWithRefund(booking, 'offer-expired-before-hold');
       return;
     }
-    const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers });
+    const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers, idempotencyKey: `hold:${booking.id}` });
     if (!hold.ok) { ful().ticketing = 'hold-failed'; booking.fulfilment.reason = hold.error; return; }
     ful();
     booking.fulfilment.ticketing = 'held';
@@ -288,21 +340,18 @@ async function autoTicketFlight(booking) {
   let order;
   if (booking.fulfilment?.holdOrderId) {
     // Pay off the held order → issues the ticket.
-    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: flight.details.liveAmount, currency: flight.details.liveCurrency || 'GBP' });
+    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: flight.details.liveAmount, currency: flight.details.liveCurrency || 'GBP', idempotencyKey: `pay:${booking.id}` });
     order = pay.ok ? { ok: true, order: { id: booking.fulfilment.holdOrderId, bookingReference: pay.order.bookingReference || booking.fulfilment.pnr, ticketNumbers: pay.order.ticketNumbers } } : pay;
   } else {
     const check = await validateDuffelOffer(flight.details.offerId);
     if (check.ok && (check.expired || check.live === false)) {
-      ful().ticketing = 'failed'; booking.fulfilment.reason = 'offer-expired-before-ticketing'; booking.fulfilment.needsRefund = true;
-      if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: 'The fare expired at the final step — refunding in full. Please re-search.' });
+      await failTicketingWithRefund(booking, 'offer-expired-before-ticketing');
       return;
     }
-    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: check.amount || flight.details.liveAmount, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP' });
+    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: check.amount || flight.details.liveAmount, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}` });
   }
   if (!order.ok) {
-    ful().ticketing = 'failed'; booking.fulfilment.reason = order.error; booking.fulfilment.needsRefund = true;
-    if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '⚠️', title: 'Refund being processed', body: `We could not issue your ticket (${order.error}). Your payment is being refunded in full.` });
-    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.failed', entity: 'booking', entityId: booking.id, summary: order.error });
+    await failTicketingWithRefund(booking, order.error || 'ticket-issue-failed');
     return;
   }
   ful();
@@ -327,8 +376,16 @@ async function autoBookStays(booking) {
   const ful = (booking.fulfilment = booking.fulfilment || {});
   if (ful.stayStatus === 'booked') return; // idempotent — webhooks redeliver
   const lead = booking.leadTraveller || booking.lead || {};
-  const parts = String(lead.fullName || 'Guest Traveller').trim().split(/\s+/);
-  const guests = [{ given_name: parts[0] || 'Guest', family_name: parts.slice(1).join(' ') || 'Traveller' }];
+  // Build the FULL guest list — Duffel Stays rejects a room booked for fewer
+  // guests than the rate was quoted for. Use every named traveller on the
+  // booking (a family/group stay), falling back to the lead when that's all we
+  // have. Names are split into given/family the same way the flight manifest is.
+  const toGuest = (t) => {
+    const parts = String(t?.fullName || '').trim().split(/\s+/).filter(Boolean);
+    return { given_name: parts[0] || 'Guest', family_name: parts.slice(1).join(' ') || (parts[0] ? parts[0] : 'Traveller') };
+  };
+  const named = (Array.isArray(booking.travellers) && booking.travellers.length ? booking.travellers : [lead]).filter((t) => t && String(t.fullName || '').trim());
+  const guests = (named.length ? named : [lead]).map(toGuest);
   const r = await bookDuffelStay({
     searchResultId: hotel.details.staysSearchResultId,
     guests, email: lead.email, phone: lead.phone,
@@ -1684,7 +1741,10 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       markQuoteRequestPaid(meta.bookingId, { amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
       if (meta.userId) pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Your ${(amountMinor / 100).toFixed(2)} payment is confirmed — your trip is booked at the exact quoted price.` });
     } else if (meta.bookingId) {
-      const booking = recordPayment(meta.bookingId, { type: 'stripe-checkout', amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
+      const paymentIntent = event.data?.object?.payment_intent || null;
+      const booking = recordPayment(meta.bookingId, { type: 'stripe-checkout', amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id, paymentIntent });
+      // Store the PaymentIntent so a failed ticketing can actually refund it.
+      if (booking && paymentIntent) booking.stripePaymentIntent = paymentIntent;
       if (booking && meta.userId) {
         pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Card payment of ${(amountMinor / 100).toFixed(2)} confirmed via Stripe — your booking is secured.` });
       }

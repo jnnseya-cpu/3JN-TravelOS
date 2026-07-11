@@ -70,6 +70,22 @@ export async function createCheckoutSession({ amountMinor, currency = 'gbp', des
   return { ok: true, sessionId: session.id, url: session.url };
 }
 
+// Refund a captured payment by its PaymentIntent id (full, or a partial amount).
+// Used when fulfilment fails AFTER money was taken (a flight ticket couldn't be
+// issued) so the customer is actually made whole — not just told they are.
+export async function createRefund({ paymentIntentId, amountMinor = null, reason = 'requested_by_customer' } = {}) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
+  if (!paymentIntentId) return { ok: false, error: 'no-payment-intent' };
+  try {
+    const data = { payment_intent: paymentIntentId, reason };
+    if (amountMinor != null && amountMinor > 0) data.amount = Math.round(amountMinor);
+    const r = await stripePost('/refunds', data);
+    return { ok: true, refundId: r.id, status: r.status, amount: r.amount };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'refund-failed' };
+  }
+}
+
 // Verify a Stripe webhook signature (Stripe-Signature: t=...,v1=...).
 // rawBody must be the EXACT bytes Stripe sent — not re-serialised JSON.
 export function verifyStripeSignature(rawBody, signatureHeader, secret = env.STRIPE_WEBHOOK_SECRET, toleranceSec = 300, now = Date.now()) {

@@ -293,7 +293,7 @@ export async function validateDuffelOffer(offerId) {
 // Called on payment success (money already captured). Duffel is paid from the
 // balance (mode 'balance') by default. Returns { ok, order:{...} } or
 // { ok:false, error } — the caller triggers a refund on failure.
-export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance' } = {}) {
+export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance', idempotencyKey = null } = {}) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const body = {
     data: {
@@ -310,6 +310,9 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
       'Duffel-Version': DUFFEL_VERSION,
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      // Idempotency-Key makes a redelivered webhook safe: Duffel returns the
+      // SAME order instead of creating (and charging) a second one.
+      ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
     },
     body: JSON.stringify(body),
   });
@@ -333,11 +336,11 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
 // HOLD order — reserve the fare WITHOUT paying yet (for pay-monthly / instalments).
 // The airline holds the price until payment_required_by; we pay to ticket once
 // the customer has finished paying us. Only works on offers that allow holds.
-export async function createDuffelHoldOrder({ offerId, passengers = [] }) {
+export async function createDuffelHoldOrder({ offerId, passengers = [], idempotencyKey = null }) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/orders`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
     body: JSON.stringify({ data: { type: 'hold', selected_offers: [offerId], passengers } }),
   });
   if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'hold-failed', status: res?.__status };
@@ -346,11 +349,11 @@ export async function createDuffelHoldOrder({ offerId, passengers = [] }) {
 }
 // Pay a held order from balance → ISSUES THE TICKET. Called when the customer
 // has finished paying us (final instalment) or immediately for pay-in-full.
-export async function payDuffelOrder({ orderId, amount, currency }) {
+export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey = null }) {
   if (!duffelEnabled() || !orderId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/payments`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
     body: JSON.stringify({ data: { order_id: orderId, payment: { type: 'balance', amount: String(amount), currency } } }),
   });
   if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'pay-failed', status: res?.__status };
@@ -384,8 +387,25 @@ export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}
     const parts = String(t?.fullName || '').trim().split(/\s+/).filter(Boolean);
     return { given: parts[0] || fallbackGiven, family: parts.slice(1).join(' ') || (parts[0] ? parts[0] : fallbackFamily) };
   };
+  // MATCH BY TYPE, not by index. Duffel offer passengers are typed
+  // (adult/child/infant_without_seat) and the ticket is REJECTED if a traveller's
+  // date of birth doesn't fit its passenger type (a child's DOB in an adult slot,
+  // etc.). The manifest can arrive in any order, so for each offer passenger we
+  // claim the first still-unused traveller whose type matches, falling back to any
+  // remaining traveller only when no typed match is left. The lead (index 0 in the
+  // manifest) is preserved as the contact passenger.
+  const pool = manifest.map((t, idx) => ({ t, idx, used: false }));
+  const claim = (wantType) => {
+    let slot = pool.find((s) => !s.used && (s.t?.type || 'adult') === wantType);
+    if (!slot) slot = pool.find((s) => !s.used);
+    if (slot) { slot.used = true; return slot; }
+    return null;
+  };
   return (offerPassengers.length ? offerPassengers : [{ type: 'adult' }]).map((p, i) => {
-    const t = manifest[i] || {};
+    const want = p.type === 'infant_without_seat' ? 'infant' : (p.type || 'adult');
+    const slot = claim(want);
+    const t = slot?.t || {};
+    const isLead = slot?.idx === 0;
     const nm = nameParts(t, `Guest${i + 1}`, 'Traveller');
     return {
       id: p.id || undefined,
@@ -393,8 +413,8 @@ export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}
       given_name: nm.given,
       family_name: nm.family,
       born_on: dobFor(p, t),
-      email: (i === 0 ? (t.email || lead.email) : undefined) || undefined,
-      phone_number: (i === 0 ? (t.phone || lead.phone) : undefined) || undefined,
+      email: (isLead ? (t.email || lead.email) : undefined) || undefined,
+      phone_number: (isLead ? (t.phone || lead.phone) : undefined) || undefined,
       gender: p.gender || 'm',
       title: p.title || 'mr',
     };

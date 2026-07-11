@@ -247,14 +247,18 @@ export function instalmentState(booking, todayISO) {
     const next = inst.schedule.find((s) => s.due > today);
     return { status: 'on-track', paid, total, nextDue: next || null };
   }
-  // Overdue: inside or past the grace window?
-  const graceDeadline = new Date(new Date(earliestUnpaidDue + 'T00:00:00Z').getTime() + inst.graceHours * 3600000);
+  // Overdue: inside or past the grace window? When the DEPOSIT itself is unpaid
+  // and no instalment is due yet, earliestUnpaidDue is null — the overdue item is
+  // the deposit, effective today. Without this guard, `null + 'T00:00:00Z'` →
+  // Invalid Date → toISOString() throws and aborts the ENTIRE dunning batch.
+  const missedDue = earliestUnpaidDue || today;
+  const graceDeadline = new Date(new Date(missedDue + 'T00:00:00Z').getTime() + inst.graceHours * 3600000);
   const now = new Date(today + 'T00:00:00Z');
   const inGrace = now <= graceDeadline;
   return {
     status: inGrace ? 'in-grace' : 'defaulted',
     paid, total, overdueAmount,
-    missedDue: earliestUnpaidDue,
+    missedDue,
     graceDeadline: graceDeadline.toISOString(),
   };
 }

@@ -1235,6 +1235,13 @@ export function listBookings(userId) {
 export function recordPayment(bookingId, payment) {
   const b = db.bookings.get(bookingId);
   if (!b) return null;
+  // IDEMPOTENCY: Stripe re-delivers checkout.session.completed. A payment with a
+  // reference already on the booking is a redelivery — no-op, or it would double
+  // the paid total (prematurely marking a deposit booking fully paid) AND double
+  // the loyalty points, both of which are real money.
+  if (payment.reference && (b.payments || []).some((p) => p.reference && p.reference === payment.reference)) {
+    return b;
+  }
   const receiptId = `rcpt_${bookingId.slice(-6)}_${b.payments.length + 1}`;
   b.payments.push({ ...payment, receiptId, at: nowISO(), status: 'paid' });
   // AI Payment Protection: a receipt after EVERY successful payment, with the
