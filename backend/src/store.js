@@ -481,10 +481,26 @@ export const ACCESS_LEVELS = {
 const ROLE_AVATAR = { consumer: '🧳', business: '💼', merchant: '🏪', partner: '🤝', admin: '🛡️' };
 
 // ---- Users / loyalty / ACU wallet ----------------------------------------
-export function createUser({ email, name, referredByCode, role, avatar, bio, allAccess } = {}) {
+export const SIGNUP_STARTER_ACU = 50;
+export const MAX_STARTER_GRANTS_PER_IP_DAY = 2;
+// How many accounts were opened from this IP in the last 24h (anti-farming).
+export function accountsFromIpToday(ip) {
+  if (!ip) return 0;
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  let n = 0;
+  for (const u of db.users.values()) if (u.signupIp === ip && Date.parse(u.createdAt || 0) > dayAgo) n += 1;
+  return n;
+}
+export function createUser({ email, name, referredByCode, role, avatar, bio, allAccess, signupIp } = {}) {
   const userId = id('usr');
   const referralCode = '3JN-' + userId.slice(-4).toUpperCase();
   const safeRole = ROLES.includes(role) ? role : 'consumer';
+  // ANTI-FARMING: the free starter ACU is only granted to the first couple of
+  // accounts from an IP per day. Someone spinning up many accounts to multiply
+  // the 50-ACU giveaway gets 0 starter beyond that — they can still browse cached
+  // results and top up, but the free AI can't be farmed. Real households sharing
+  // an IP (a handful of accounts) are unaffected.
+  const starterAcu = signupIp && accountsFromIpToday(signupIp) >= MAX_STARTER_GRANTS_PER_IP_DAY ? 0 : SIGNUP_STARTER_ACU;
   const user = {
     id: userId,
     email: email || `${userId}@guest.3jn`,
@@ -496,11 +512,10 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
     avatar: avatar || ROLE_AVATAR[safeRole], // emoji or image data URL
     bio: bio || '',
     points: SIGNUP_BONUS_POINTS,
-    // Starter ACU so a new account can actually TRY the AI search (searches cost
-    // 5-20 ACU) before topping up — 50 ACU ≈ 10 smart searches. Without this a new
-    // user couldn't search at all. Members top up automatically from their plan;
-    // everyone else buys more when they run low.
-    acuBalance: 50,
+    // Starter ACU so a new account can TRY the AI search before topping up (50 ACU
+    // ≈ 10 smart searches). Capped per IP above so it can't be farmed.
+    acuBalance: starterAcu,
+    signupIp: signupIp || null,
     membership: null, // { tier, name, pricePerMonth, acuPerMonth, active, startedAt, renewsAt }
     referralCode,
     referredByCode: referredByCode || null,
@@ -3196,5 +3211,9 @@ export function usageStats(userId) {
   // Has the user COMMITTED money (bought ACU or paid a membership)? Used by the
   // margin gate: the free 50-ACU starter must not fund the expensive tiers.
   const hasPurchasedAcu = db.acuTxns.some((t) => t.userId === userId && t.type === 'PURCHASE');
-  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu };
+  // Multi-account farming signal: does this account's signup IP have several
+  // sibling accounts? Feeds the abuse throttle (downgrades their searches to cached).
+  const me = db.users.get(userId);
+  const multipleAccounts = !!(me?.signupIp) && accountsFromIpToday(me.signupIp) > MAX_STARTER_GRANTS_PER_IP_DAY;
+  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu, multipleAccounts };
 }

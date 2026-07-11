@@ -712,7 +712,8 @@ app.post('/api/account', safe((req, res) => {
   // Public signup can NEVER mint a privileged account — role/allAccess are
   // granted only through admin paths. Force a plain consumer.
   delete body.role; delete body.allAccess;
-  const user = createUser(body);
+  delete body.signupIp; // caller can't spoof the anti-farming IP
+  const user = createUser({ ...body, signupIp: ip }); // ip → per-IP starter-ACU cap
   sendWelcomeEmail(user);
   res.json({ user });
 }));
@@ -1456,7 +1457,7 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
     const bot = botSignupVerdict({ name, email });
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
-  const created = existing || createUser({ email, name: name || decoded.name || undefined });
+  const created = existing || createUser({ email, name: name || decoded.name || undefined, signupIp: req.headers['x-forwarded-for'] || req.socket?.remoteAddress });
   if (!existing) sendWelcomeEmail(created); // first-time sign-up via Google/email
   // Overlay admin from the env allowlist (consistent across serverless instances).
   const user = applyOwnerRole(created);

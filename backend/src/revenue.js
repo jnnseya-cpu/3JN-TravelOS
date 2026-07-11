@@ -114,7 +114,7 @@ export function searchAbuseScore({ searchesWithoutBooking = 0, repeatedSearches 
   return { score, band, level, signals: ABUSE_SIGNALS };
 }
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false }) {
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false, multipleAccounts = false }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -180,6 +180,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   const abuse = searchAbuseScore({
     searchesWithoutBooking: priorBookings === 0 ? recentSearches : 0,
     repeatedSearches: sameDestinationRepeats,
+    multipleAccounts, // farmed accounts from one IP get throttled to cached
   });
   if ((abuse.level === 'block' || abuse.level === 'throttle' || recentSearches > 20 || sameDestinationRepeats > 10) && priorBookings === 0) {
     return {

@@ -235,6 +235,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     // Commitment signal: has the user actually paid (bought ACU)? The free
     // starter ACU must not fund the expensive Deep/Concierge tiers.
     hasPurchasedAcu: !!usage.hasPurchasedAcu,
+    // Anti-farming: several accounts from one IP → throttle to cached.
+    multipleAccounts: !!usage.multipleAccounts,
   });
 
   const effectiveTier = gate.allowed ? searchTier : (gate.downgradeTo || 'free');

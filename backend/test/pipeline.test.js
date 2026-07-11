@@ -4874,3 +4874,17 @@ test('margin protection: only PURCHASED ACU (not free/reward/bonus) unlocks Deep
   const paidDeep = costProtectionGate({ tier: 'deep', user: { acuBalance: 1050 }, expectedBookingUSD: 0, hasPurchasedAcu: true });
   assert.equal(paidDeep.allowed, true, 'purchased ACU funds Deep');
 });
+
+// ---- Anti-farming: the free starter ACU can't be multiplied across accounts ----
+test('anti-farming: free 50-ACU starter is capped per IP per day', () => {
+  const ip = '203.0.113.7';
+  const a = createUser({ name: 'Farm A', email: `fa${Date.now()}@x.co`, signupIp: ip });
+  const b = createUser({ name: 'Farm B', email: `fb${Date.now()}@x.co`, signupIp: ip });
+  const c = createUser({ name: 'Farm C', email: `fc${Date.now()}@x.co`, signupIp: ip });
+  const d = createUser({ name: 'Farm D', email: `fd${Date.now()}@x.co`, signupIp: ip });
+  assert.equal(a.acuBalance, 50, 'first account from an IP gets the starter');
+  assert.equal(b.acuBalance, 50, 'second too (real households share IPs)');
+  assert.equal(c.acuBalance, 0, 'beyond the per-IP cap, no free ACU — farming gets nothing');
+  assert.equal(d.acuBalance, 0);
+  assert.equal(createUser({ name: 'Other', email: `o${Date.now()}@x.co`, signupIp: '198.51.100.9' }).acuBalance, 50);
+});
