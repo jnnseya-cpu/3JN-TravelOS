@@ -1343,12 +1343,17 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
   if (existing && (existing.flaggedBot || existing.suspended)) {
     return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. Contact support@3jntravel.com to restore it.' });
   }
-  // An allowlisted owner email is (or becomes) an admin. Either way, a privileged
-  // account is NEVER opened by a token alone — the staff PIN must be configured
-  // AND supplied (fail closed), same as /api/login.
+  // An allowlisted owner email is (or becomes) an admin. An allowlisted owner
+  // signing in with a VERIFIED Firebase token is authenticated by two strong
+  // factors already — the email is on the ADMIN_EMAILS allowlist AND they proved
+  // the account's password to Firebase — so no separate staff PIN is required
+  // (that would be a third factor on a login that's already secure, and it's what
+  // made owner sign-in brittle). The staff PIN stays MANDATORY only for OTHER
+  // privileged accounts opened via this bridge (e.g. passwordless demo identities
+  // that aren't on the allowlist).
   const wantsAdmin = isOwnerEmail(email);
-  const isPriv = wantsAdmin || (existing && (PRIVILEGED_ROLES.has(existing.role) || existing.allAccess));
-  if (isPriv && (!staffPin() || !staffPinOk(req))) {
+  const existingPrivNonOwner = !wantsAdmin && existing && (PRIVILEGED_ROLES.has(existing.role) || existing.allAccess);
+  if (existingPrivNonOwner && (!staffPin() || !staffPinOk(req))) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
   }
   // Verified email still passes the bot name/disposable-domain checks on signup.
