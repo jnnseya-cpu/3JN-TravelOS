@@ -149,12 +149,14 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
     }
   }
 
-  // MARGIN PROTECTION for the free 50-ACU starter: the giveaway lets a new user
-  // TRY the cheap Smart search, but it must never fund the more expensive Deep or
-  // Concierge agents before the user has committed. "Committed" = a real signal
-  // the platform will earn: a booking, a paid membership, a search deposit, a
-  // purchased ACU top-up, or a corporate/white-label contract. Without one, the
-  // expensive tier downgrades — so 100% margin protection holds for free accounts.
+  // MARGIN PROTECTION for ALL free/promotional ACU (the 50-ACU signup starter,
+  // referral rewards, bonuses, admin comps — anything NOT bought): it lets a user
+  // TRY the cheap Smart search, but must never fund the more expensive Deep or
+  // Concierge agents before the user has committed. "Committed" is a real signal
+  // the platform will earn — a booking, a paid membership, a PURCHASED ACU top-up,
+  // a search deposit, or a corporate/white-label contract — so free credit of any
+  // kind (which cost the platform, not the user) can't run the premium AI. The
+  // commitment test is "has money changed hands", never "does the user hold ACU".
   const committed = hasDeposit || subscriptionActive || hasPurchasedAcu || priorBookings > 0
     || corporateContract || whiteLabelContract || !!(user && user.membership?.active);
   const smartAcu = (SEARCH_TIERS.smart || {}).acu || 5;

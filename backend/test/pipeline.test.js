@@ -4858,3 +4858,19 @@ test('serverless persistence: a partial merge-save keeps records from other inst
   assert.ok(getUserById(a.id), 'instance C sees A after hydrate');
   assert.ok(getUserById(b.id), 'instance C sees B after hydrate');
 });
+
+// ---- Margin protection covers ALL free/promotional ACU, not just the starter ----
+test('margin protection: only PURCHASED ACU (not free/reward/bonus) unlocks Deep search', () => {
+  const rewarded = createUser({ name: 'Rewarded', email: `rew${Date.now()}@x.co` });
+  rewardAcu(rewarded.id, 500, 'referral-reward'); // free promotional ACU (REWARD, not PURCHASE)
+  assert.equal(usageStatsFn(rewarded.id).hasPurchasedAcu, false, 'reward ACU is not a purchase');
+  const rDeep = costProtectionGate({ tier: 'deep', user: { acuBalance: 550 }, expectedBookingUSD: 0, hasPurchasedAcu: false });
+  assert.equal(rDeep.allowed, false);
+  assert.equal(rDeep.downgradeTo, 'smart', 'free/reward ACU cannot fund the expensive Deep tier');
+
+  // A real top-up flips the commitment signal and unlocks Deep.
+  buyAcu(rewarded.id, 'top5');
+  assert.equal(usageStatsFn(rewarded.id).hasPurchasedAcu, true, 'a top-up is a purchase');
+  const paidDeep = costProtectionGate({ tier: 'deep', user: { acuBalance: 1050 }, expectedBookingUSD: 0, hasPurchasedAcu: true });
+  assert.equal(paidDeep.allowed, true, 'purchased ACU funds Deep');
+});
