@@ -184,22 +184,49 @@ const LOYALTY = [
   ['Elite', '15,000 pts', '8% discount + priority verification'],
 ];
 
+// Membership billing (monthly | yearly). Yearly = 10 months' price = 2 months
+// free (~17% off), so the effective monthly cost is lower and more competitive.
+let membershipBilling = 'monthly';
+function billingToggleHTML() {
+  const on = (m) => membershipBilling === m ? 'background:var(--gold);color:#1a1205;font-weight:700' : 'background:transparent;color:var(--muted)';
+  return `<div style="grid-column:1/-1;text-align:center;margin-bottom:10px">
+    <div style="display:inline-flex;gap:4px;background:rgba(255,255,255,0.06);border-radius:999px;padding:4px">
+      <button class="btn btn-sm" style="${on('monthly')};border:none" onclick="setBilling('monthly')">Monthly</button>
+      <button class="btn btn-sm" style="${on('yearly')};border:none" onclick="setBilling('yearly')">Yearly · 2 months free</button>
+    </div></div>`;
+}
+function tierCardsHTML() {
+  const yearly = membershipBilling === 'yearly';
+  return billingToggleHTML() + TIERS.map((t) => {
+    const yearNum = Math.round(t.priceNum * 10 * 100) / 100;
+    const priceStr = yearly ? `£${yearNum.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : t.price;
+    const per = yearly ? ' /year' : ' /month';
+    const effMonthly = yearly ? (yearNum / 12) : t.priceNum;
+    const acu = (acuAllocation(t.priceNum) * (yearly ? 12 : 1));
+    return `<div class="card tier ${t.feature ? 'feature' : ''}">
+      ${t.feature ? `<span class="badge-top">${t.badge}</span>` : ''}
+      <div class="save-chip">Est. Savings ${t.save}</div>
+      <h3>${t.name}</h3>
+      <div class="price">${priceStr}<span>${per}</span></div>
+      ${yearly ? `<div class="muted" style="font-size:11.5px;margin:-4px 0 8px;color:var(--green)">≈ £${effMonthly.toFixed(2)}/mo · save vs paying monthly</div>` : ''}
+      <div class="acu-fund">⚡ ${acu.toLocaleString()} ACU ${yearly ? 'up front (full year)' : '/mo'} auto-funded<br><span class="muted">10% of your plan · £1 = 100 ACU${yearly ? '' : ' · tops up each month'}</span></div>
+      <ul>${t.benefits.map((b) => `<li>${b}</li>`).join('')}</ul>
+      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.key}')">Join ${t.name.split(' ').pop()}${yearly ? ' · yearly' : ''}</button>
+    </div>`;
+  }).join('');
+}
+function renderTierGrids() {
+  const html = tierCardsHTML();
+  if ($('#tierGrid')) $('#tierGrid').innerHTML = html;
+  if ($('#tierGridFull')) $('#tierGridFull').innerHTML = html;
+}
+window.setBilling = (mode) => { membershipBilling = mode === 'yearly' ? 'yearly' : 'monthly'; renderTierGrids(); };
+
 function renderStatic() {
   $('#agentGrid').innerHTML = AGENTS.map(([ico, name, desc]) => `
     <div class="card agent-card"><div class="ag-ico">${ico}</div><h4>${name}</h4><p>${desc}</p></div>`).join('');
 
-  const tierHTML = TIERS.map((t) => `
-    <div class="card tier ${t.feature ? 'feature' : ''}">
-      ${t.feature ? `<span class="badge-top">${t.badge}</span>` : ''}
-      <div class="save-chip">Est. Savings ${t.save}</div>
-      <h3>${t.name}</h3>
-      <div class="price">${t.price}<span> /month</span></div>
-      <div class="acu-fund">⚡ ${acuAllocation(t.priceNum).toLocaleString()} ACU/mo auto-funded<br><span class="muted">10% of your plan · £1 = 100 ACU · tops up automatically each month</span></div>
-      <ul>${t.benefits.map((b) => `<li>${b}</li>`).join('')}</ul>
-      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.key}')">Join ${t.name.split(' ').pop()}</button>
-    </div>`).join('');
-  $('#tierGrid').innerHTML = tierHTML;
-  $('#tierGridFull').innerHTML = tierHTML;
+  renderTierGrids();
 
   $('#stepsGrid').innerHTML = STEPS.map(([num, tag, title, desc]) => `
     <div class="card step"><span class="num">${num}</span><span class="tag">${tag}</span><h3>${title}</h3><p>${desc}</p></div>`).join('');
@@ -214,12 +241,12 @@ window.selectTier = async (key) => {
     return;
   }
   let data;
-  try { data = await api('/api/membership/subscribe', { method: 'POST', body: JSON.stringify({ tier: key }) }); }
+  try { data = await api('/api/membership/subscribe', { method: 'POST', body: JSON.stringify({ tier: key, billing: membershipBilling }) }); }
   catch { return; }
   // Live mode: a paid plan opens Stripe Checkout; the webhook activates it.
   if (data.checkout) { toast('💳 Opening secure checkout…'); window.location.href = data.checkout; return; }
   if (data.user) setUser(data.user);
-  toast(`✓ ${data.user?.membership?.name} active — ${(data.acuCredited || 0).toLocaleString()} ACU funded (10% of your plan). Renews monthly.`);
+  toast(`✓ ${data.user?.membership?.name} active — ${(data.acuCredited || 0).toLocaleString()} ACU funded. Renews ${membershipBilling === 'yearly' ? 'yearly' : 'monthly'}.`);
 };
 
 // ---- Boot -----------------------------------------------------------------

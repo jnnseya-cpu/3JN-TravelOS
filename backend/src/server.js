@@ -1376,20 +1376,22 @@ app.post('/api/login', safe((req, res) => {
 // SEC-4: a membership is a paid subscription. When Stripe is live, joining or
 // renewing must go through Checkout and is only activated by the signed webhook
 // — otherwise anyone could self-grant a plan (and its monthly ACU) for free.
-async function membershipCheckout(req, res, tierKey, mode) {
+async function membershipCheckout(req, res, tierKey, mode, billing = 'monthly') {
   const user = currentUser(req);
   const plan = MEMBERSHIP_TIERS.find((t) => t.key === tierKey);
   if (!plan) return res.status(400).json({ ok: false, error: 'invalid-tier' });
-  if (!(plan.pricePerMonth > 0)) { // a free tier — no payment needed
-    const r = mode === 'renew' ? renewMembership(user.id) : subscribeMembership(user.id, tierKey);
+  const yearly = billing === 'yearly';
+  const price = yearly ? plan.pricePerYear : plan.pricePerMonth;
+  if (!(price > 0)) { // a free tier — no payment needed
+    const r = mode === 'renew' ? renewMembership(user.id) : subscribeMembership(user.id, tierKey, billing);
     return r.ok ? res.json(r) : res.status(400).json(r);
   }
   const origin = req.headers.origin || `https://${req.headers.host}`;
   const session = await createCheckoutSession({
-    amountMinor: Math.round(plan.pricePerMonth * 100), currency: 'gbp',
-    description: `3JN Travel+ — ${plan.name} (monthly)`,
+    amountMinor: Math.round(price * 100), currency: 'gbp',
+    description: `3JN Travel+ — ${plan.name} (${yearly ? 'yearly · 2 months free' : 'monthly'})`,
     userId: user.id, customerEmail: user.email,
-    metadata: { kind: 'membership', tier: plan.key, mode, userId: user.id },
+    metadata: { kind: 'membership', tier: plan.key, mode, billing: yearly ? 'yearly' : 'monthly', userId: user.id },
     successUrl: `${origin}/console?membership=1`, cancelUrl: `${origin}/console?membership=0`,
   });
   if (!session.ok) return res.status(400).json(session);
@@ -1398,8 +1400,9 @@ async function membershipCheckout(req, res, tierKey, mode) {
 app.post('/api/membership/subscribe', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to join a membership plan.' });
-  if (stripeEnabled()) return membershipCheckout(req, res, (req.body || {}).tier, 'subscribe');
-  const result = subscribeMembership(user.id, (req.body || {}).tier);
+  const billing = (req.body || {}).billing === 'yearly' ? 'yearly' : 'monthly';
+  if (stripeEnabled()) return membershipCheckout(req, res, (req.body || {}).tier, 'subscribe', billing);
+  const result = subscribeMembership(user.id, (req.body || {}).tier, billing);
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
 }));
@@ -1408,7 +1411,7 @@ app.post('/api/membership/renew', safe(async (req, res) => {
   if (!user) return res.status(401).json({ error: 'auth-required' });
   if (stripeEnabled()) {
     if (!user.membership?.tier) return res.status(400).json({ ok: false, error: 'no-active-membership' });
-    return membershipCheckout(req, res, user.membership.tier, 'renew');
+    return membershipCheckout(req, res, user.membership.tier, 'renew', user.membership.billing || 'monthly');
   }
   const result = renewMembership(user.id);
   if (!result.ok) return res.status(400).json(result);
@@ -2047,8 +2050,8 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       const r = buyAcu(meta.userId, meta.pack);
       if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '⚡', title: 'ACU added', body: `Your wallet is topped up — balance ${r.balance} ACU.` });
     } else if (meta.kind === 'membership' && meta.userId && meta.tier) {
-      const r = meta.mode === 'renew' ? renewMembership(meta.userId) : subscribeMembership(meta.userId, meta.tier);
-      if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '⭐', title: 'Travel+ active', body: `Your membership is ${meta.mode === 'renew' ? 'renewed' : 'live'} — enjoy your member benefits and monthly ACU.` });
+      const r = meta.mode === 'renew' ? renewMembership(meta.userId) : subscribeMembership(meta.userId, meta.tier, meta.billing || 'monthly');
+      if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '⭐', title: 'Travel+ active', body: `Your membership is ${meta.mode === 'renew' ? 'renewed' : 'live'} (${meta.billing === 'yearly' ? 'annual' : 'monthly'}) — enjoy your member benefits and ACU.` });
     } else if (meta.kind === 'deposit' && meta.userId && meta.tier) {
       const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null });
       if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '🔎', title: 'Search deposit placed', body: `Your refundable ${meta.tier} search deposit is active — it comes straight off your booking when you travel.` });

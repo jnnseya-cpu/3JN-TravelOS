@@ -843,33 +843,42 @@ export function cacheConfidence(hit) {
 // Joining a plan immediately funds the first billing period's ACUs (10% of the
 // subscription at £1 = 100 ACU). renewMembership() repeats it each period.
 const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
-export function subscribeMembership(userId, tierKey) {
+const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+export function subscribeMembership(userId, tierKey, billing = 'monthly') {
   const u = db.users.get(userId);
   const plan = MEMBERSHIP_TIERS.find((t) => t.key === tierKey);
   if (!u || !plan) return { ok: false, error: 'invalid-tier' };
   const now = Date.now();
+  const yearly = billing === 'yearly';
+  // A year funds the full 12 months of ACU up front; monthly funds one month.
+  const acuCredited = yearly ? (plan.acuPerYear || plan.acuPerMonth * 12) : plan.acuPerMonth;
   u.membership = {
     tier: plan.key,
     name: plan.name,
+    billing: yearly ? 'yearly' : 'monthly',
+    price: yearly ? plan.pricePerYear : plan.pricePerMonth,
     pricePerMonth: plan.pricePerMonth,
+    pricePerYear: plan.pricePerYear,
     acuPerMonth: plan.acuPerMonth,
     active: true,
     startedAt: new Date(now).toISOString(),
-    renewsAt: new Date(now + PERIOD_MS).toISOString(),
+    renewsAt: new Date(now + (yearly ? YEAR_MS : PERIOD_MS)).toISOString(),
   };
-  creditAcu(userId, plan.acuPerMonth, `membership:${plan.key}:initial`);
-  recordAudit({ actor: userId, role: u.role, action: 'membership.subscribed', entity: 'membership', entityId: userId, summary: `${plan.name} · +${plan.acuPerMonth} ACU/period` });
-  return { ok: true, user: publicUser(u), acuCredited: plan.acuPerMonth };
+  creditAcu(userId, acuCredited, `membership:${plan.key}:${yearly ? 'annual' : 'initial'}`);
+  recordAudit({ actor: userId, role: u.role, action: 'membership.subscribed', entity: 'membership', entityId: userId, summary: `${plan.name} · ${yearly ? 'yearly' : 'monthly'} · +${acuCredited} ACU` });
+  return { ok: true, user: publicUser(u), acuCredited };
 }
 
-// Simulate a billing-period renewal: re-fund the period's ACU allocation.
+// Renew for the SAME billing cadence the member is on — re-fund the period's ACU
+// (12 months for a yearly plan, one month for monthly) and extend the term.
 export function renewMembership(userId) {
   const u = db.users.get(userId);
   if (!u || !u.membership?.active) return { ok: false, error: 'no-active-membership' };
-  const credited = u.membership.acuPerMonth;
+  const yearly = u.membership.billing === 'yearly';
+  const credited = yearly ? (u.membership.acuPerMonth * 12) : u.membership.acuPerMonth;
   creditAcu(userId, credited, `membership:${u.membership.tier}:renewal`);
-  u.membership.renewsAt = new Date(Date.now() + PERIOD_MS).toISOString();
-  recordAudit({ actor: userId, role: u.role, action: 'membership.renewed', entity: 'membership', entityId: userId, summary: `${u.membership.name} · +${credited} ACU` });
+  u.membership.renewsAt = new Date(Date.now() + (yearly ? YEAR_MS : PERIOD_MS)).toISOString();
+  recordAudit({ actor: userId, role: u.role, action: 'membership.renewed', entity: 'membership', entityId: userId, summary: `${u.membership.name} · ${yearly ? 'yearly' : 'monthly'} · +${credited} ACU` });
   return { ok: true, user: publicUser(u), acuCredited: credited };
 }
 

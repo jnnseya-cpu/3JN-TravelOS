@@ -73,7 +73,16 @@ export const MEMBERSHIP_TIERS = [
   { key: 'family', name: 'Travel+ Family Saver', pricePerMonth: 12.99 },
   { key: 'executive', name: 'Travel+ Frequent Flyer', pricePerMonth: 24.99 },
   { key: 'elite', name: 'Travel+ Concierge Elite', pricePerMonth: 49.99 },
-].map((t) => ({ ...t, acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP) }));
+].map((t) => ({
+  ...t,
+  acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP),
+  // YEARLY plan = 10 months' price (2 months free, ~17% off). Monthly reads as
+  // expensive; a discounted annual makes the effective monthly cost lower and
+  // more competitive, while ACU top-ups cover anyone who prefers pay-as-you-go.
+  pricePerYear: Math.round(t.pricePerMonth * 10 * 100) / 100,
+  // A year up front funds the full 12 months of ACU allocation.
+  acuPerYear: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP * 12),
+}));
 
 export const TIER_ACU_ALLOWANCE = Object.fromEntries(
   MEMBERSHIP_TIERS.map((t) => [t.name.replace('Travel+ ', ''), t.acuPerMonth]),
