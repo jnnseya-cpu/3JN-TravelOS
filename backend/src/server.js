@@ -147,16 +147,20 @@ let storeReady = process.env.NODE_ENV === 'test';
 // serverless, flush to Firebase SYNCHRONOUSLY before the response is sent so the
 // write always completes. Long-lived hosts keep the efficient debounced save.
 const IS_SERVERLESS = !!(process.env.VERCEL || process.env.K_SERVICE || process.env.FUNCTION_TARGET);
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
     if (IS_SERVERLESS && isEnabled()) {
-      // Await the persistence write before flushing a successful response.
+      // READ-MODIFY-WRITE for serverless: pull the LATEST store from Firebase
+      // before mutating, so this instance never overwrites another instance's
+      // data with its own stale whole-store snapshot (that clobbering erased
+      // accounts/bookings and logged users out). Then flush synchronously after
+      // the handler, before the response, so the write can't be lost on freeze.
+      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep memory */ }
       const origJson = res.json.bind(res);
       res.json = (body) => {
         if (res.statusCode < 400) {
-          // Cap the wait so a slow/failed write never hangs the response.
           Promise.race([save(snapshot()).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
             .finally(() => origJson(body));
         } else {

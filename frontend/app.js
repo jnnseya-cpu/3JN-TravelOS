@@ -3725,9 +3725,15 @@ window.addEventListener('firebase-auth', async (e) => {
         const pin = window.prompt('This is a staff account. Enter the staff access PIN:');
         if (!pin) return;
         state.staffPin = pin;
-        try { d = await bridge(); } catch { toast('PIN not accepted.'); return; }
-      } else return;
+        try { d = await bridge(); } catch (e2) { toast('⚠ ' + (e2?.message || 'PIN not accepted.')); return; }
+      } else {
+        // Surface the real reason instead of failing silently (e.g. token could
+        // not be verified, or an anti-bot block) so it's actionable.
+        toast('⚠ ' + (err?.message || 'Sign-in could not be completed. Please try again.'));
+        return;
+      }
     }
+    if (!d || !d.user) { toast('⚠ Sign-in did not return an account. Please try again.'); return; }
     setUser(d.user); closeModal();
     toast(`✓ Signed in as ${d.user.name}`);
     // Staff/admin accounts authenticate with the staff PIN, and their login email
