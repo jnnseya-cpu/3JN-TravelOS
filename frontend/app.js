@@ -2287,11 +2287,13 @@ async function renderAdmin() {
 
   out.innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="runSelfTest()">🚦 Launch readiness check</button>
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
       <button class="btn btn-ghost btn-sm" onclick="openPlacements()">💰 Sponsored placements</button>
     </div>
+    <div id="selfTestOut"></div>
     <div class="kpi-grid">${kpiCards}</div>
     ${uh ? (() => {
       const risk = (v) => v?.securityRisk === 'Low' ? '#79d99b' : v?.securityRisk === 'Medium' ? 'var(--gold)' : '#ff6b6b';
@@ -2474,6 +2476,41 @@ async function renderFulfilment() {
       </div>
     </div>`;
 }
+// Launch readiness: one click → plain-English green/red checklist of whether the
+// OS can actually sell, charge, ticket, save and email. No terminal required.
+window.runSelfTest = async () => {
+  const box = $('#selfTestOut');
+  if (box) box.innerHTML = `<div class="card pad" style="margin-bottom:16px"><span class="loader"></span> Checking Duffel, Stripe, Firebase and email from the server…</div>`;
+  let d;
+  try { d = await api('/api/admin/selftest'); }
+  catch { if (box) box.innerHTML = `<div class="card pad" style="margin-bottom:16px;border-color:rgba(255,90,90,0.4)">Couldn't run the check — are you signed in as admin (with the staff PIN)?</div>`; return; }
+  const dot = (ok) => ok ? '<span style="color:#4ade80">✅</span>' : '<span style="color:#ff8a8a">❌</span>';
+  const v = d.verdict || {};
+  const banner = v.readyToGoLive ? { c: '#4ade80', t: '🟢 LIVE-READY' }
+    : v.readyToTest ? { c: 'var(--gold)', t: '🟡 READY TO TEST' }
+    : { c: '#ff8a8a', t: '🔴 NOT READY' };
+  const rows = (d.checks || []).map((c) => `
+    <div class="card pad" style="margin-bottom:8px;border-color:${c.ok ? 'rgba(74,222,128,0.35)' : 'rgba(255,138,138,0.35)'}">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="font-size:16px">${dot(c.ok)}</div>
+        <div>
+          <strong>${esc(c.label)}</strong>
+          <div class="muted" style="font-size:12px;margin-top:3px">${esc(c.detail || '')}</div>
+          ${!c.ok && c.fix ? `<div style="font-size:12px;margin-top:5px;color:var(--gold)">→ ${esc(c.fix)}</div>` : ''}
+        </div>
+      </div>
+    </div>`).join('');
+  if (box) box.innerHTML = `
+    <div class="card pad" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span class="eyebrow">🚦 Launch readiness</span>
+        <strong style="color:${banner.c};font-size:15px">${banner.t}</strong>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin:8px 0 14px">${esc(v.summary || '')}</p>
+      ${rows}
+      <p class="muted" style="font-size:11px;margin-top:8px">Modes — Duffel: <strong>${esc(d.mode?.duffel || '?')}</strong> · Stripe: <strong>${esc(d.mode?.stripe || '?')}</strong> · Live mode: <strong>${d.mode?.liveMode ? 'ON' : 'off'}</strong>${d.mode?.testPayments ? ' · test payments ON' : ''}. Re-run any time.</p>
+    </div>`;
+};
 window.runBotSweep = async () => {
   try {
     const r = await api('/api/admin/bot-sweep', { method: 'POST', body: '{}' });

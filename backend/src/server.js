@@ -77,7 +77,7 @@ import { snapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, load, save, scheduleSave, verifyFirebaseIdToken } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
-import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -903,6 +903,61 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
           ? 'Duffel LIVE and reachable — real bookable fares are flowing. We hold the fare (instalments) or issue the e-ticket (paid in full) automatically.'
           : `Duffel LIVE token set, but the live probe did not return bookable fares: ${diag?.message || 'unknown'} — flights fall back to estimated until this clears.`)
         : 'Duffel not configured — flights are estimated.',
+  });
+}));
+
+// ---- One-click LAUNCH READINESS self-test (admin) -------------------------
+// Answers "am I ready to test / go live?" in plain English, from the SERVER —
+// so a non-technical operator never needs a terminal. Actively probes Duffel
+// and Stripe (reachability + key validity), reports Firebase/email/config, and
+// returns a ready/not-ready verdict per capability with a human next-step.
+app.get('/api/admin/selftest', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const [duffel, stripe] = await Promise.all([
+    duffelDiagnostic().catch((e) => ({ ok: false, reason: 'exception', message: e?.message || 'probe failed' })),
+    stripeDiagnostic().catch((e) => ({ ok: false, reason: 'exception', message: e?.message || 'probe failed' })),
+  ]);
+  const liveMode = process.env.LIVE_MODE === 'true';
+  const staffPinSet = Boolean(staffPin());
+  const persistence = isEnabled();
+  const email = isMailerEnabled();
+  const testPayments = process.env.ALLOW_TEST_PAYMENTS === 'true';
+
+  const check = (ok, label, detail, fix = null) => ({ ok, label, detail, fix });
+  const checks = [
+    check(duffel.ok, 'Flights (Duffel) can sell real fares',
+      duffel.message,
+      duffel.ok ? null : 'Set a valid DUFFEL_TOKEN and make sure this host can reach api.duffel.com.'),
+    check(stripe.ok && stripe.webhookSet, 'Card payments fulfil end-to-end',
+      stripe.ok ? (stripe.webhookSet ? stripe.message : 'Stripe key works, but STRIPE_WEBHOOK_SECRET is missing — payments would capture but never issue the ticket.') : stripe.message,
+      stripe.ok && stripe.webhookSet ? null : (!stripe.ok ? 'Set STRIPE_SECRET_KEY and make sure this host can reach api.stripe.com.' : 'Add STRIPE_WEBHOOK_SECRET (from your Stripe webhook endpoint) and redeploy.')),
+    check(persistence, 'Data survives a restart (Firebase)',
+      persistence ? 'Firebase persistence is on — bookings/users are saved and restored.' : 'No Firebase configured — data is in memory only and resets on every redeploy/scale.',
+      persistence ? null : 'Set FIREBASE_SERVICE_ACCOUNT and FIREBASE_DATABASE_URL.'),
+    check(email, 'Customers get confirmation emails',
+      email ? 'Email is configured — ticket/refund confirmations send.' : 'No email transport — confirmations are logged only, not sent.',
+      email ? null : 'Set SMTP_PASS (and SMTP_FROM); host/port default to Hostinger:465.'),
+    check(staffPinSet, 'Staff areas are protected',
+      staffPinSet ? 'STAFF_ACCESS_PIN is set — admin/embassy areas require it.' : 'No staff PIN — privileged login fails closed, but set one so your team can get in.',
+      staffPinSet ? null : 'Set STAFF_ACCESS_PIN to a long random value.'),
+  ];
+  const readyToTest = duffel.ok && (stripe.ok || testPayments);
+  const readyToGoLive = duffel.mode === 'live' && stripe.mode === 'live' && stripe.ok && stripe.webhookSet && persistence && staffPinSet && liveMode;
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    mode: { liveMode, duffel: duffel.mode, stripe: stripe.mode, testPayments },
+    probes: { duffel, stripe },
+    checks,
+    verdict: {
+      readyToTest,
+      readyToGoLive,
+      summary: readyToGoLive
+        ? 'LIVE-READY — every capability is green in live mode. You can advertise.'
+        : readyToTest
+          ? 'READY TO TEST — run one booking end-to-end (search → pay with a test card → confirm the ticket), then a cancellation to confirm the refund. Not yet in full live mode.'
+          : `NOT READY — ${checks.filter((c) => !c.ok).map((c) => c.label).join('; ') || 'see checks'}.`,
+    },
   });
 }));
 

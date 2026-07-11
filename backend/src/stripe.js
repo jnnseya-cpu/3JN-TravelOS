@@ -89,6 +89,32 @@ export async function createRefund({ paymentIntentId, amountMinor = null, reason
   }
 }
 
+// Live reachability + key probe for the admin readiness check. Does a light
+// authenticated GET (/balance) so it proves BOTH that the network can reach
+// Stripe AND that the secret key is valid — without creating anything.
+export async function stripeDiagnostic() {
+  const key = env.STRIPE_SECRET_KEY || '';
+  const mode = key.startsWith('sk_live') ? 'live' : key.startsWith('sk_test') ? 'test' : 'none';
+  if (!key) return { ok: false, mode, reason: 'not-configured', message: 'No STRIPE_SECRET_KEY set — card checkout is simulated, not real.' };
+  if (typeof fetch !== 'function') return { ok: false, mode, reason: 'no-fetch', message: 'This runtime has no fetch() — cannot reach Stripe.' };
+  const webhookSet = Boolean(env.STRIPE_WEBHOOK_SECRET);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  const startedAt = Date.now();
+  try {
+    const r = await fetch(`${API}/balance`, { headers: { authorization: `Bearer ${key}` }, signal: ctrl.signal });
+    const latencyMs = Date.now() - startedAt;
+    if (r.status === 401) return { ok: false, mode, webhookSet, reason: 'auth-rejected', status: 401, latencyMs, message: 'Stripe rejected the key (HTTP 401) — it may be wrong, rolled, or revoked.' };
+    if (!r.ok) { let p = null; try { p = await r.json(); } catch {} return { ok: false, mode, webhookSet, reason: 'provider-error', status: r.status, latencyMs, message: `Stripe returned an error: ${p?.error?.message || `HTTP ${r.status}`}` }; }
+    return { ok: true, mode, webhookSet, reason: 'ok', status: r.status, latencyMs, message: `Stripe (${mode}) is reachable and the key works${webhookSet ? '' : ' — but STRIPE_WEBHOOK_SECRET is NOT set, so payments would capture but never fulfil'}.` };
+  } catch (e) {
+    const aborted = e?.name === 'AbortError';
+    return { ok: false, mode, webhookSet, reason: aborted ? 'timeout' : 'unreachable', message: aborted ? 'Stripe did not respond within 8s — this host may be unable to reach api.stripe.com (network egress).' : `Could not reach api.stripe.com (${e?.message || 'network error'}). Check outbound network access.` };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // Verify a Stripe webhook signature (Stripe-Signature: t=...,v1=...).
 // rawBody must be the EXACT bytes Stripe sent — not re-serialised JSON.
 export function verifyStripeSignature(rawBody, signatureHeader, secret = env.STRIPE_WEBHOOK_SECRET, toleranceSec = 300, now = Date.now()) {
