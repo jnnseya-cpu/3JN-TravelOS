@@ -3659,7 +3659,11 @@ window.addEventListener('firebase-auth', async (e) => {
     }
     setUser(d.user); closeModal();
     toast(`✓ Signed in as ${d.user.name}`);
-    if (e.detail && e.detail.emailVerified === false) {
+    // Staff/admin accounts authenticate with the staff PIN, and their login email
+    // is often a no-inbox alias (e.g. admin@…) — email verification is redundant
+    // and impossible to action, so never nag them. Only customers see it.
+    const isStaff = d.user.role === 'admin' || d.user.allAccess;
+    if (!isStaff && e.detail && e.detail.emailVerified === false) {
       setTimeout(() => toast('📧 Please verify your email — check your inbox.'), 1600);
       showVerifyBanner();
     } else {
