@@ -880,6 +880,47 @@ export function cancelMembership(userId) {
   return { ok: true, user: publicUser(u) };
 }
 
+// ---- Admin overrides: grant ACU + set membership level --------------------
+// For running the business day-to-day (comp a customer, fix a balance) AND for
+// testing every membership tier without paying. Admin-gated at the route.
+export function adminAdjustAcu(userId, { add = null, setTo = null } = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'not-found', message: 'No user with that id.' };
+  if (setTo != null && Number.isFinite(Number(setTo))) {
+    u.acuBalance = Math.max(0, Math.round(Number(setTo)));
+    db.acuTxns.push({ id: id('acu'), userId, type: 'ADMIN', amount: u.acuBalance, reason: 'admin-set-balance', at: nowISO() });
+  } else if (add != null && Number.isFinite(Number(add)) && Number(add) !== 0) {
+    u.acuBalance = Math.max(0, Math.round((u.acuBalance || 0) + Number(add)));
+    db.acuTxns.push({ id: id('acu'), userId, type: 'ADMIN', amount: Math.round(Number(add)), reason: 'admin-grant', at: nowISO() });
+  } else {
+    return { ok: false, error: 'no-op', message: 'Provide an amount to add or a balance to set.' };
+  }
+  capArr(db.acuTxns, ACU_TXN_CAP);
+  recordAudit({ actor: 'admin', role: 'admin', action: 'acu.admin-adjust', entity: 'user', entityId: userId, summary: `ACU balance now ${u.acuBalance}` });
+  return { ok: true, balance: u.acuBalance, user: publicUser(u) };
+}
+// Set (or clear, with tier 'none') a user's membership level directly — no charge
+// and no auto-ACU, so it's clean for testing each tier. Add ACU separately.
+export function adminSetMembership(userId, tierKey) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'not-found', message: 'No user with that id.' };
+  if (!tierKey || tierKey === 'none') {
+    u.membership = null;
+    recordAudit({ actor: 'admin', role: 'admin', action: 'membership.admin-clear', entity: 'user', entityId: userId, summary: 'membership removed' });
+    return { ok: true, user: publicUser(u) };
+  }
+  const plan = MEMBERSHIP_TIERS.find((t) => t.key === tierKey);
+  if (!plan) return { ok: false, error: 'invalid-tier', message: 'Unknown membership tier.' };
+  const now = Date.now();
+  u.membership = {
+    tier: plan.key, name: plan.name, pricePerMonth: plan.pricePerMonth, acuPerMonth: plan.acuPerMonth,
+    active: true, startedAt: new Date(now).toISOString(), renewsAt: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    grantedByAdmin: true,
+  };
+  recordAudit({ actor: 'admin', role: 'admin', action: 'membership.admin-set', entity: 'user', entityId: userId, summary: plan.name });
+  return { ok: true, user: publicUser(u) };
+}
+
 function publicUser(u) {
   const tier = tierForPoints(u.points);
   return {

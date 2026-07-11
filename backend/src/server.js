@@ -13,7 +13,7 @@ import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_T
 import {
   createUser, getUser, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
-  adminOverview, adminUsers, adminBookings, adminActivity,
+  adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
   adminAudit, saveDraft, getDraft,
@@ -175,22 +175,25 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Re-hydrate-on-miss (serverless consistency): a warm instance hydrated its store
-// once at cold start and never re-reads Firebase, so an account created/updated on
-// ANOTHER instance is invisible here — the signed-in user looks "not found" and
-// gets a 403 / logged out. When an AUTHENTICATED request lands and this instance
-// can't find that account, pull the latest store from Firebase once (throttled) so
-// the account is present before the route's auth check runs.
+// Serverless freshness: a warm instance hydrates its store once at cold start and
+// never re-reads Firebase, so data created/updated on ANOTHER instance is invisible
+// here — a signed-in user looks "not found" (403 / logout), and a newly registered
+// customer never appears in the admin lists. Keep every instance fresh: re-hydrate
+// from Firebase when this instance can't find the caller's account, OR periodically
+// (every few seconds) so cross-instance changes converge quickly.
 let rehydrating = false;
 let lastRehydrateAt = 0;
 app.use(async (req, res, next) => {
   const uid = req.headers['x-user-id'];
-  if (uid && IS_SERVERLESS && isEnabled() && storeReady && !getUser(uid)
-      && !rehydrating && (Date.now() - lastRehydrateAt > 3000)) {
-    rehydrating = true;
-    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep serving from memory */ }
-    lastRehydrateAt = Date.now();
-    rehydrating = false;
+  if (IS_SERVERLESS && isEnabled() && storeReady && !rehydrating) {
+    const missingCaller = uid && !getUser(uid);
+    const stale = Date.now() - lastRehydrateAt > 5000;
+    if (missingCaller || stale) {
+      rehydrating = true;
+      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep serving from memory */ }
+      lastRehydrateAt = Date.now();
+      rehydrating = false;
+    }
   }
   next();
 });
@@ -2605,6 +2608,31 @@ app.get('/api/admin/overview', safe((req, res) => {
 app.get('/api/admin/users', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json({ users: adminUsers() });
+}));
+
+// Admin: look up one user by email or id (for the manage-user panel).
+app.get('/api/admin/user-find', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'no-query' });
+  const u = q.includes('@') ? findUserByEmail(q) : getUser(q);
+  if (!u) return res.status(404).json({ error: 'not-found', message: 'No user with that email or id.' });
+  res.json({ user: getUser(u.id) });
+}));
+// Admin: grant/adjust a user's ACU balance ({ add } or { setTo }).
+app.post('/api/admin/users/:id/acu', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const { add, setTo } = req.body || {};
+  const r = adminAdjustAcu(req.params.id, { add: add != null ? Number(add) : null, setTo: setTo != null ? Number(setTo) : null });
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
+}));
+// Admin: set (or clear) a user's membership tier ({ tier: 'elite' | 'none' | ... }).
+app.post('/api/admin/users/:id/membership', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = adminSetMembership(req.params.id, (req.body || {}).tier);
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
 }));
 
 app.get('/api/admin/bookings', safe((req, res) => {

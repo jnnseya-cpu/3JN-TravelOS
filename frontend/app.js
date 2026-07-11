@@ -2329,6 +2329,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
       <button class="btn btn-ghost btn-sm" onclick="openPlacements()">💰 Sponsored placements</button>
+      <button class="btn btn-ghost btn-sm" onclick="manageUser()">👤 Manage user (ACU / membership)</button>
     </div>
     <div id="selfTestOut"></div>
     <div class="kpi-grid">${kpiCards}</div>
@@ -2557,6 +2558,69 @@ window.sendTestEmail = async () => {
   try { r = await api('/api/admin/test-email', { method: 'POST', body: JSON.stringify({ to: (to || '').trim() }) }); }
   catch { toast('Could not send — are you signed in as admin (with the staff PIN)?'); return; }
   toast(r.ok ? `✅ ${r.message}` : `⚠ ${r.message}`);
+};
+// Admin: grant ACU + set membership level for any user (run the business; test tiers).
+const MEMBERSHIP_OPTIONS = [
+  ['none', 'No membership (free)'],
+  ['nomad', 'Smart Traveller (£4.99)'],
+  ['family', 'Family Saver (£12.99)'],
+  ['executive', 'Frequent Flyer (£24.99)'],
+  ['elite', 'Concierge Elite (£49.99)'],
+];
+window.manageUser = () => {
+  modal(`
+    <span class="eyebrow">👤 Manage user</span>
+    <h3 style="margin:6px 0 4px">Grant ACU &amp; set membership</h3>
+    <p class="muted" style="font-size:12.5px">Find a customer by email (or user id), then adjust their ACU balance or membership tier. Applies immediately.</p>
+    <div class="field" style="margin-top:10px"><label>Customer email or id</label>
+      <div style="display:flex;gap:8px"><input class="in" id="muQuery" placeholder="customer@email.com" style="flex:1"><button class="btn btn-gold btn-sm" onclick="muFind()">Find</button></div></div>
+    <div id="muResult" style="margin-top:14px"></div>`);
+};
+window.muFind = async () => {
+  const q = ($('#muQuery')?.value || '').trim();
+  if (!q) { toast('Enter an email or user id.'); return; }
+  const box = $('#muResult');
+  if (box) box.innerHTML = '<div class="muted" style="font-size:12.5px"><span class="loader"></span> Looking up…</div>';
+  let d;
+  try { d = await api(`/api/admin/user-find?q=${encodeURIComponent(q)}`); }
+  catch (e) { if (box) box.innerHTML = `<div class="muted" style="color:#ff8a8a">${esc(e.message || 'Not found')}</div>`; return; }
+  muRenderUser(d.user);
+};
+function muRenderUser(u) {
+  const box = $('#muResult');
+  if (!box) return;
+  window.__muUser = u;
+  const opts = MEMBERSHIP_OPTIONS.map(([k, label]) => `<option value="${k}"${(u.membership?.tier || 'none') === k ? ' selected' : ''}>${esc(label)}</option>`).join('');
+  box.innerHTML = `
+    <div class="card pad">
+      <strong>${esc(u.name || '(no name)')}</strong> <span class="muted">· ${esc(u.email || '')}</span>
+      <div class="muted" style="font-size:12px;margin-top:4px">Role: ${esc(u.role || 'consumer')} · ACU: <strong id="muBal">${(u.acuBalance || 0).toLocaleString()}</strong> · Membership: <strong>${esc(u.membership?.name || 'none')}</strong></div>
+      <div class="field" style="margin-top:12px"><label>Add ACU (use a negative number to deduct)</label>
+        <div style="display:flex;gap:8px"><input class="in" id="muAcu" type="number" placeholder="e.g. 5000" style="flex:1"><button class="btn btn-gold btn-sm" onclick="muAddAcu()">Add ACU</button></div></div>
+      <div class="field" style="margin-top:12px"><label>Set membership level</label>
+        <div style="display:flex;gap:8px"><select class="in" id="muTier" style="flex:1">${opts}</select><button class="btn btn-gold btn-sm" onclick="muSetTier()">Set</button></div></div>
+    </div>`;
+}
+window.muAddAcu = async () => {
+  const u = window.__muUser; if (!u) return;
+  const add = Number($('#muAcu')?.value || 0);
+  if (!add) { toast('Enter an amount.'); return; }
+  try {
+    const r = await api(`/api/admin/users/${u.id}/acu`, { method: 'POST', body: JSON.stringify({ add }) });
+    window.__muUser = r.user || u;
+    if ($('#muBal')) $('#muBal').textContent = (r.balance || 0).toLocaleString();
+    if ($('#muAcu')) $('#muAcu').value = '';
+    toast(`✓ ACU updated — balance ${(r.balance || 0).toLocaleString()}.`);
+  } catch (e) { toast('⚠ ' + (e.message || 'Failed')); }
+};
+window.muSetTier = async () => {
+  const u = window.__muUser; if (!u) return;
+  const tier = $('#muTier')?.value || 'none';
+  try {
+    const r = await api(`/api/admin/users/${u.id}/membership`, { method: 'POST', body: JSON.stringify({ tier }) });
+    muRenderUser(r.user);
+    toast(`✓ Membership set to ${r.user.membership?.name || 'none'}.`);
+  } catch (e) { toast('⚠ ' + (e.message || 'Failed')); }
 };
 window.runBotSweep = async () => {
   try {
