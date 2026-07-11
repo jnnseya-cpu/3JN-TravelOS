@@ -73,8 +73,8 @@ import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacemen
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
-import { snapshot, hydrate } from './store.js';
-import { initPersistence, isEnabled, load, save, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
+import { snapshot, flatSnapshot, hydrate } from './store.js';
+import { initPersistence, isEnabled, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic } from './stripe.js';
@@ -161,7 +161,8 @@ app.use(async (req, res, next) => {
       const origJson = res.json.bind(res);
       res.json = (body) => {
         if (res.statusCode < 400) {
-          Promise.race([save(snapshot()).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
+          // MERGING write: never deletes records other instances added.
+          Promise.race([saveMerge(flatSnapshot()).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
             .finally(() => origJson(body));
         } else {
           origJson(body);

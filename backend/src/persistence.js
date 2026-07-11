@@ -91,6 +91,21 @@ export async function save(data) {
   }
 }
 
+// MERGING write (Firebase ref.update with path-keyed leaves). Unlike save(), this
+// never deletes records it doesn't include — so two serverless instances writing
+// concurrently merge their accounts/bookings instead of clobbering each other.
+// `flat` comes from store.flatSnapshot(): { 'users/<id>': {...}, audit: [...], … }.
+export async function saveMerge(flat) {
+  if (!enabled) return false;
+  try {
+    await ref.update(JSON.parse(JSON.stringify(flat)));
+    return true;
+  } catch (err) {
+    console.warn('[persist] merge-save failed:', err?.message || err);
+    return false;
+  }
+}
+
 // Debounced write-through: schedule a save shortly after a mutation so bursts
 // of requests collapse into one write.
 export function scheduleSave(getData, ms = 2000) {

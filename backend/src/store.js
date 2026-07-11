@@ -2586,6 +2586,19 @@ export function snapshot() {
   return out;
 }
 
+// A FLAT, path-keyed snapshot for a merging write (Firebase ref.update). Keyed
+// collections are emitted as `users/<id>` leaves so a write MERGES per record
+// instead of replacing the whole node — critical on serverless, where a partial
+// store from one instance would otherwise delete accounts/bookings another
+// instance added. Arrays (append-only logs) and the counter are written whole.
+export function flatSnapshot() {
+  const out = {};
+  out.counter = counter;
+  for (const k of MAP_KEYS) for (const [id, v] of db[k]) out[`${k}/${id}`] = v;
+  for (const k of ARRAY_KEYS) out[k] = db[k];
+  return out;
+}
+
 export function hydrate(s) {
   if (!s || typeof s !== 'object') return false;
   if (typeof s.counter === 'number') counter = Math.max(counter, s.counter);
