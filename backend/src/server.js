@@ -820,9 +820,29 @@ app.get('/api/account/:id/wallet', safe((req, res) => {
 // ---- Refundable search deposits (spec §6): place / list / refund ----------
 // Deep £5 · Luxury £20 · Corporate £50 — refundable; a booking converts the
 // deposit and deducts it from the final payment.
-app.post('/api/account/:id/deposit', safe((req, res) => {
+app.post('/api/account/:id/deposit', safe(async (req, res) => {
   if (!requireOwner(req, res, req.params.id)) return;
-  const result = placeSearchDeposit({ userId: req.params.id, tier: (req.body || {}).tier || 'deep', searchId: (req.body || {}).searchId || null });
+  const tier = (req.body || {}).tier || 'deep';
+  const searchId = (req.body || {}).searchId || null;
+  // A search deposit is real money that later comes OFF the booking total, so if
+  // it is never charged the platform simply collects less on the trip (a loss).
+  // Live mode: take it through Checkout and record it only on the signed webhook.
+  if (stripeEnabled()) {
+    const amountGBP = SEARCH_DEPOSIT_GBP[tier];
+    if (!amountGBP) return res.status(400).json({ ok: false, error: 'invalid', schedule: SEARCH_DEPOSIT_GBP });
+    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const user = currentUser(req);
+    const session = await createCheckoutSession({
+      amountMinor: Math.round(amountGBP * 100), currency: 'gbp',
+      description: `3JN Travel OS — refundable ${tier} search deposit`,
+      userId: req.params.id, customerEmail: user?.email,
+      metadata: { kind: 'deposit', tier, userId: req.params.id, searchId: searchId || '' },
+      successUrl: `${origin}/?deposit=1`, cancelUrl: `${origin}/?deposit=0`,
+    });
+    if (!session.ok) return res.status(400).json(session);
+    return res.json({ ok: true, checkout: session.url, requiresPayment: true, schedule: SEARCH_DEPOSIT_GBP });
+  }
+  const result = placeSearchDeposit({ userId: req.params.id, tier, searchId });
   if (!result.ok) return res.status(400).json({ ...result, schedule: SEARCH_DEPOSIT_GBP });
   res.json({ ...result, schedule: SEARCH_DEPOSIT_GBP });
 }));
@@ -1792,6 +1812,9 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
     } else if (meta.kind === 'membership' && meta.userId && meta.tier) {
       const r = meta.mode === 'renew' ? renewMembership(meta.userId) : subscribeMembership(meta.userId, meta.tier);
       if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '⭐', title: 'Travel+ active', body: `Your membership is ${meta.mode === 'renew' ? 'renewed' : 'live'} — enjoy your member benefits and monthly ACU.` });
+    } else if (meta.kind === 'deposit' && meta.userId && meta.tier) {
+      const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null });
+      if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '🔎', title: 'Search deposit placed', body: `Your refundable ${meta.tier} search deposit is active — it comes straight off your booking when you travel.` });
     } else if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
       // A confirmed exact-quote was paid.
       markQuoteRequestPaid(meta.bookingId, { amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
@@ -1985,13 +2008,31 @@ app.post('/api/admin/vendors/sales/:saleId/flag', safe((req, res) => {
 // Answers customer requests; escalates to a human ONLY when required (explicit
 // request, refund/dispute, complaint/safety, or low confidence). Uses the
 // signed-in user's latest booking as context when available.
-app.post('/api/support/chat', safe((req, res) => {
+app.post('/api/support/chat', safe(async (req, res) => {
   const { message } = req.body || {};
   const user = currentUser(req);
   // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
   // e-tickets, wallet, rewards and visa rules; escalates only when a human must
   // authorise an action — and hands the human a full diagnostic.
   const out = assist(message, user?.id);
+  // A cancellation just flagged a refund due (operatorConfirm). Actually issue
+  // it via Stripe when a captured PaymentIntent is on file — idempotent (guarded
+  // by refundId). The in-module ops ticket remains the fallback if this can't
+  // fire, so the customer is made whole either way.
+  if (user && stripeEnabled()) {
+    for (const b of listBookings(user.id)) {
+      const f = b.fulfilment;
+      if (f && f.needsRefund && f.refundGbp > 0 && !f.refundId && b.stripePaymentIntent) {
+        const r = await createRefund({ paymentIntentId: b.stripePaymentIntent, amountMinor: Math.round(f.refundGbp * 100) }).catch(() => ({ ok: false }));
+        if (r.ok) {
+          f.refundId = r.refundId; f.refundedAt = new Date().toISOString(); f.needsRefund = false;
+          const line = (b.payments || []).find((p) => p.type === 'refund' && p.status === 'pending');
+          if (line) line.status = 'refunded';
+          recordAudit({ actor: 'system', role: 'system', action: 'refund.issued', entity: 'booking', entityId: b.id, summary: `£${f.refundGbp} · ${r.refundId}` });
+        }
+      }
+    }
+  }
   let ticket = null;
   if (out.escalate) {
     ticket = createSupportTicket({

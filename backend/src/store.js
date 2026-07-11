@@ -1533,7 +1533,11 @@ export function requestWithdrawal(userId, { amountGbp, method = 'bank' } = {}) {
   if (/bitripay/i.test(String(method)) && !PAYMENT_RAIL.bitripayEnabled()) {
     return { ok: false, error: 'bitripay-coming-soon', message: 'BitriPay is completing certification — withdrawals are paid by bank transfer (via Stripe) for now.' };
   }
-  const lifetime = db.revshareLedger.filter((r) => r.partnerId === userId).reduce((s, r) => s + (r.amountGbp || 0), 0);
+  // Exclude REVERSED rows: a cancelled/refunded booking flags its revshare
+  // reversed (see cancel paths), and the console already nets them out. Summing
+  // them here would let a partner withdraw real cash for commission that was
+  // clawed back — money leaves for a booking that never completed.
+  const lifetime = db.revshareLedger.filter((r) => r.partnerId === userId && !r.reversed).reduce((s, r) => s + (r.amountGbp || 0), 0);
   const drawn = db.rewardWithdrawals.filter((w) => w.partnerId === userId && w.status !== 'rejected').reduce((s, w) => s + (w.amountGbp || 0), 0);
   const available = Math.round((lifetime - drawn) * 100) / 100;
   const amt = Math.round((Number(amountGbp) || available) * 100) / 100;
@@ -1648,10 +1652,18 @@ export function operatorConfirm(bookingId) {
     // referral revenue-share row(s) for it and kill any not-yet-paid vendor sale.
     for (const r of db.revshareLedger) if (r.bookingId === b.id) r.reversed = true;
     for (const s of db.vendorSales) if (s.bookingId === b.id && !s.paidOut) s.refunded = true;
-    if (refund > 0) {
-      b.payments.push({ type: 'refund', amount: -refund, gateway: b.gateway, at: nowISO(), status: 'refunded' });
-    }
     b.fulfilment = b.fulfilment || {};
+    if (refund > 0) {
+      // Record the refund line AND guarantee it actually happens. This module
+      // can't call Stripe (circular import), so flag the refund and raise an
+      // ops ticket — a human issues/reconciles it. Never tell a customer money
+      // is on the way with nothing tracking it. The Stripe auto-refund, when a
+      // PaymentIntent is present, is driven at the server layer off needsRefund.
+      b.payments.push({ type: 'refund', amount: -refund, gateway: b.gateway, at: nowISO(), status: 'pending' });
+      b.fulfilment.needsRefund = true;
+      b.fulfilment.refundGbp = refund;
+      createSupportTicket({ userId: b.userId, intent: 'ops-refund', message: `Cancellation refund of £${refund} due on booking ${b.id}. ${b.stripePaymentIntent ? `Stripe PaymentIntent ${b.stripePaymentIntent} — issue the refund.` : 'No captured PaymentIntent on file — reconcile against the gateway before refunding.'}`, reason: 'cancellation-refund' });
+    }
     b.fulfilment.ticketing = 'cancelled';
     delete b.pendingAction;
     recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.cancelled', entity: 'booking', entityId: b.id, summary: `refund £${refund} of £${pa.quote.paidGbp}` });
@@ -2468,6 +2480,13 @@ export function enforceInstalments(todayISO) {
       const outcome = defaultOutcome(b);
       b.status = 'cancelled-instalment-default';
       b.instalmentDefault = { at: nowISO(), ...outcome, missedDue: state.missedDue };
+      // A defaulted booking is cancelled and refunded down to the forfeited
+      // deposit — so it must NOT pay partner/vendor commission (same as a manual
+      // cancel). Reverse the revshare row(s) and kill any not-yet-paid vendor
+      // sale; otherwise the vendor sale, held only until the future travel date,
+      // would later become payable on a Friday run for a trip that never happened.
+      for (const r of db.revshareLedger) if (r.bookingId === b.id) r.reversed = true;
+      for (const s of db.vendorSales) if (s.bookingId === b.id && !s.paidOut) s.refunded = true;
       results.defaulted += 1;
       results.actions.push({ bookingId: b.id, action: 'auto-cancelled', ...outcome });
       recordAudit({ actor: 'system', role: 'system', action: 'instalment.defaulted', entity: 'booking', entityId: b.id, summary: `missed ${state.missedDue}; deposit ${b.instalment.symbol}${outcome.forfeitedDeposit} forfeited; refundable ${b.instalment.symbol}${outcome.refundableBalance}` });

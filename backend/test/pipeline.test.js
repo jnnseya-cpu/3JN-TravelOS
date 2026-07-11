@@ -3720,6 +3720,8 @@ test('Aviasales market fares normalise with carrier names, stops and honest sour
   assert.match(m.link, /^https:\/\/www\.aviasales\.com\//);
   assert.match(m.source, /market data/i, 'labelled market data — never presented as a bookable fare');
   assert.equal(normalizeMarketFare({}), null, 'priceless entries are dropped');
+  assert.equal(normalizeMarketFare({ airline: 'FR', price: 'n/a' }), null, 'a non-numeric price is dropped, not surfaced as £NaN');
+  assert.equal(normalizeMarketFare({ airline: 'FR', price: '' }), null, 'an empty price is dropped');
   assert.equal(marketDataEnabled(), false, 'off without TRAVELPAYOUTS_TOKEN — fail closed');
 });
 

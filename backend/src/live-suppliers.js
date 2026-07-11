@@ -634,12 +634,17 @@ export async function validateTequilaOffer(bookingToken, { adults = 1, children 
 // the Market Benchmark automatically. Exported normaliser for tests.
 export function normalizeMarketFare(item) {
   if (!item || item.price == null) return null;
+  // A non-null but non-numeric price ("n/a" → NaN) or an empty/zero price
+  // ("" → 0) would pass the null-check and surface as a "£NaN"/"£0" benchmark
+  // figure — a real market fare is always a positive number, so drop the rest.
+  const priceGbp = Number(item.price);
+  if (!Number.isFinite(priceGbp) || priceGbp <= 0) return null;
   const transfers = Number(item.transfers) || 0;
   return {
     carrier: carrierName(item.airline),
     airlineCode: item.airline || '',
     flightNumber: item.airline && item.flight_number ? `${item.airline}${item.flight_number}` : null,
-    priceGbp: Math.round(Number(item.price) * 100) / 100,
+    priceGbp: Math.round(priceGbp * 100) / 100,
     transfers,
     stopLabel: transfers === 0 ? 'Direct' : `${transfers} stop${transfers > 1 ? 's' : ''}`,
     departureAt: String(item.departure_at || '').slice(0, 16),
@@ -1065,6 +1070,11 @@ export async function fetchOagFlights(intent, dest, origin) {
     const outLeg = oagInstanceToLeg(inst, intent.dates.checkIn);
     const retInst = inboundByCarrier.get(iata);
     const inLeg = retInst ? oagInstanceToLeg(retInst, intent.dates.checkOut) : null;
+    // A RETURN was requested but this carrier has no indexed return leg on the
+    // date: the fare estimate is a full round trip, so selling this outbound-only
+    // offer would charge a return price for a one-way itinerary. Skip it — other
+    // carriers (or the synthetic fallback) fill the round-trip package correctly.
+    if (intent.dates.checkOut && !inLeg) continue;
     offers.push({
       type: 'flight',
       supplier: carrierName(iata),

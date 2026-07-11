@@ -524,6 +524,8 @@ window.placeConciergeDeposit = async () => {
   if (!state.user) { toast('Sign in first to place a deposit.'); return; }
   try {
     const d = await api(`/api/account/${state.user.id}/deposit`, { method: 'POST', body: JSON.stringify({ tier: 'concierge' }) });
+    // Live mode: pay the refundable deposit first; it activates on the webhook.
+    if (d.checkout) { toast('💳 Opening secure checkout for your refundable deposit…'); window.location.href = d.checkout; return; }
     toast(`✓ £${d.deposit.amountGBP} refundable deposit placed — running your Concierge Search.`);
     runPlan();
   } catch { /* api() already surfaced the error */ }
