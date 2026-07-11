@@ -89,11 +89,14 @@ function canAccessView(view) {
 }
 
 function nav(view) {
-  // Block privileged views for the public — redirect home with a prompt.
-  if (!canAccessView(view)) {
-    const roles = VIEW_ROLES[view].join(' or ');
+  // Block privileged views for the PUBLIC (not signed in). A signed-in user whose
+  // role check doesn't pass yet is NOT bounced home — the view's own guard refreshes
+  // the account and either renders or shows an in-page unlock, so serverless instance
+  // lag never kicks a real admin back to the homepage.
+  if (!canAccessView(view) && !state.user) {
+    const roles = (VIEW_ROLES[view] || ['staff']).join(' or ');
     toast(`The ${view} area requires a ${roles} account. Please sign in.`);
-    if (!state.user) openAuth();
+    openAuth();
     view = 'home';
   }
   state.lastView = view;
@@ -2272,7 +2275,7 @@ window.staffUnlock = async () => {
 // ---- Admin Super Control Centre -------------------------------------------
 async function renderAdmin() {
   const out = $('#adminOut');
-  if (!canAccessView('admin')) { accessGate(out, 'Admin', 'admin'); return; }
+  if (!(await ensurePrivilegedView('admin'))) { accessGate(out, 'Admin', 'admin'); return; }
   let data, auditData, sec, ops, seo, mkt;
   try {
     data = await api('/api/admin/overview'); auditData = await api('/api/admin/audit?limit=20');
@@ -3414,7 +3417,7 @@ window.saveEmbassySettings = async (country) => {
 async function renderComms() {
   const out = $('#commsOut');
   if (!out) return;
-  if (!canAccessView('comms')) { accessGate(out, 'Communications', 'admin'); return; }
+  if (!(await ensurePrivilegedView('comms'))) { accessGate(out, 'Communications', 'admin'); return; }
   let d;
   try { d = (await api('/api/comms/architecture')).architecture; } catch { accessGate(out, 'Communications', 'admin'); return; }
   window.__comms = d;
@@ -3490,7 +3493,7 @@ window.commsTest = async () => {
 // ---- Business / Enterprise Command Centre ---------------------------------
 async function renderBusiness() {
   const out = $('#businessOut');
-  if (!canAccessView('business')) { accessGate(out, 'Business', 'business or admin'); return; }
+  if (!(await ensurePrivilegedView('business'))) { accessGate(out, 'Business', 'business or admin'); return; }
   let data, contractData;
   try { data = await api('/api/business/approvals'); contractData = await api('/api/business/contracts'); } catch { accessGate(out, 'Business', 'business or admin'); return; }
   const bookings = data.bookings || [];
@@ -3614,6 +3617,30 @@ function setUser(u) {
   $('#signBtn')?.classList.add('hidden');
   applyRoleVisibility();
   refreshNotifications();
+}
+
+// Re-fetch the signed-in account from the server (re-applies admin from the env
+// allowlist, and forces a serverless instance to re-read the store if it was
+// missing the account). Used to recover from a TRANSIENT privilege miss before
+// showing an access gate, so instance-to-instance lag never locks staff out.
+async function refreshUser() {
+  const id = state.user?.id;
+  if (!id) return false;
+  try {
+    const d = await api(`/api/account/${id}`, { silent: true, headers: { 'x-user-id': id } });
+    if (d.user) { setUser(d.user); return true; }
+  } catch {}
+  return false;
+}
+// Confirm access to a privileged view, refreshing the account once (and retrying)
+// before giving up — smooths over serverless instance inconsistency.
+async function ensurePrivilegedView(view) {
+  if (canAccessView(view)) return true;
+  await refreshUser();
+  if (canAccessView(view)) return true;
+  await new Promise((r) => setTimeout(r, 600));
+  await refreshUser();
+  return canAccessView(view);
 }
 
 function toggleAccountMenu() {
