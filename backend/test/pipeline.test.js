@@ -4550,3 +4550,12 @@ test('revenue: sponsored placement admin endpoints require admin; injected into 
     assert.ok(pt.tiers.some((t) => t.level === 'emergency' && t.feeGBP === 25));
   } finally { server.close(); delete process.env.STAFF_ACCESS_PIN; }
 });
+
+test('revenue: sponsored placement revenue appears in the admin overview total', async () => {
+  const { adminOverview } = await import('../src/store.js');
+  const before = adminOverview();
+  createPlW6({ partner: 'KPI Test Partner', section: 'business travel pages', destination: '*', feeGBPMonth: 500 });
+  const after = adminOverview();
+  assert.equal(after.placementRevenueMonthlyGBP, before.placementRevenueMonthlyGBP + 500, 'placement £/mo tracked');
+  assert.ok(after.totalRevenueUSD > before.totalRevenueUSD, 'headline revenue includes placement income');
+});

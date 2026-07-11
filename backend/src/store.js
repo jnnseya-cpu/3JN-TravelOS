@@ -1911,8 +1911,16 @@ export function adminOverview() {
     tierMix[b.option?.tier || '—'] = (tierMix[b.option?.tier || '—'] || 0) + 1;
     gatewayMix[b.gateway || '—'] = (gatewayMix[b.gateway || '—'] || 0) + 1;
   }
+  const rev = revenueSnapshot();
+  // Sponsored placements are a recurring MONTHLY revenue stream (GBP). Fold the
+  // USD-equivalent into the headline total and expose it as its own line.
+  const placementGbp = sponsoredPlacementRevenueGBP();
+  const placementUSD = round2(placementGbp / GBP_ANCHOR);
   return {
-    ...revenueSnapshot(),
+    ...rev,
+    placementRevenueMonthlyGBP: placementGbp,
+    placementRevenueMonthlyUSD: placementUSD,
+    totalRevenueUSD: round2((rev.totalRevenueUSD || 0) + placementUSD),
     gmvUSD: round2(gmvUSD),
     tierMix,
     gatewayMix,

@@ -351,6 +351,28 @@ function syncCurrency(country) {
 
 // ---- Planner --------------------------------------------------------------
 $('#planBtn').addEventListener('click', runPlan);
+
+// Priority search: populate the paid scan tiers (in the visitor's currency) and
+// let the traveller pay for a faster/dedicated scan. Standard stays free.
+(async function initPriorityTiers() {
+  const sel = $('#prioritySelect');
+  if (!sel) return;
+  let d;
+  try { d = await api('/api/search/priority-tiers'); } catch { return; }
+  const label = { standard: 'Standard', fast: 'Fast', urgent: 'Urgent', emergency: 'Emergency' };
+  sel.innerHTML = (d.tiers || []).map((t) =>
+    `<option value="${esc(t.level)}">${esc(label[t.level] || t.level)}${t.feeGBP ? ` — ${d.symbol}${t.feeLocal}` : ' (free)'}</option>`).join('');
+  sel.addEventListener('change', async () => {
+    const level = sel.value;
+    if (level === 'standard') return;
+    // Take the priority fee up front, then the traveller runs the faster scan.
+    let r;
+    try { r = await api('/api/search/priority-checkout', { method: 'POST', body: JSON.stringify({ level }) }); } catch { return; }
+    if (r.url) { toast(`Priority ${level}: ${d.symbol}${r.feeGBP} — opening secure checkout…`); window.open(r.url, '_blank'); }
+    else if (r.error === 'stripe-not-configured') toast(`Priority ${level} is £${r.feeGBP} — card checkout isn't live yet, so this runs as a standard scan for now.`);
+    else if (r.feeGBP === 0) { /* standard */ }
+  });
+})();
 $$('.chip').forEach((c) => c.addEventListener('click', () => {
   $('#intentInput').value = c.dataset.example;
   autosaveIntent();
@@ -2192,6 +2214,7 @@ async function renderAdmin() {
     ['Savings-share', usd(o.savingsShareUSD)],
     ['ACU sold', (o.acuPurchased || 0).toLocaleString()],
     ['ACU used', (o.acuUsed || 0).toLocaleString()],
+    ['Placements £/mo', '£' + Number(o.placementRevenueMonthlyGBP || 0).toLocaleString()],
     ['Reviews', o.reviews],
     ['Referrals', o.referrals],
   ];
