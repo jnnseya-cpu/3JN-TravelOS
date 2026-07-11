@@ -254,7 +254,7 @@ async function autoTicketFlight(booking) {
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
   if (!flight || !liveFlightsEnabled()) return;
   const ful = () => (booking.fulfilment = booking.fulfilment || {});
-  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.lead || {}, { departureDate: flight.details.outbound?.date });
+  const passengers = duffelOrderPassengers(flight.details.offerPassengers || [], booking.leadTraveller || booking.lead || {}, { departureDate: flight.details.outbound?.date, travellers: booking.travellers });
   const fullyPaid = bookingFullyPaid(booking);
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------
@@ -1443,7 +1443,7 @@ app.post('/api/book/:id/autopay', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod, lead, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
+  const { quoteId, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
   const quote = getQuote(quoteId);
   if (!quote) return res.status(404).json({ error: 'quote-not-found' });
   const user = currentUser(req);
@@ -1455,7 +1455,7 @@ app.post('/api/book', safe((req, res) => {
   // paying more, earlier is always allowed.
   const instalment = smartPlanForRequest(req, quote.option, quote.intent);
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
   // Refundable search deposit (spec §6): a booking converts the user's active
   // deposit — its value comes OFF the final payment, never double-charged.
   if (user) {

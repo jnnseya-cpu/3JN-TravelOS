@@ -362,15 +362,17 @@ export async function payDuffelOrder({ orderId, amount, currency }) {
   return { ok: true, order: { id: orderId, bookingReference: o.booking_reference || null, ticketNumbers } };
 }
 
-// Build Duffel passenger records for order creation from stored traveller data.
-// Duffel validates born_on against each passenger TYPE's age band, so a single
-// hardcoded adult DOB made every child/infant order fail. Derive a plausible DOB
-// per type/age (anchored to the departure year when known) so family orders
-// ticket. NOTE: non-lead passenger NAMES are still placeholders — real per-
-// passenger name capture is a separate data-collection task.
+// Build Duffel passenger records for order creation from the stored manifest.
+// Each offer passenger is matched 1:1 (same order the search built the fare
+// units: adults, then children) to a captured traveller, so a group/family
+// flight ticket-issues with EVERY real name. Duffel validates born_on against
+// each passenger TYPE's age band; a real DOB is used when captured, otherwise a
+// plausible one is derived per type/age so the order still passes.
 export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}) {
+  const manifest = Array.isArray(opts.travellers) && opts.travellers.length ? opts.travellers : [lead];
   const depYear = Number(String(opts.departureDate || '').slice(0, 4)) || new Date().getUTCFullYear();
-  const dobFor = (p) => {
+  const dobFor = (p, t) => {
+    if (t?.dob) return t.dob;
     if (p.born_on) return p.born_on;
     const age = Number.isFinite(p.age) ? p.age
       : p.type === 'infant_without_seat' ? 1
@@ -378,17 +380,25 @@ export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}
       : 30;
     return `${depYear - age}-01-01`;
   };
-  return (offerPassengers.length ? offerPassengers : [{ type: 'adult' }]).map((p, i) => ({
-    id: p.id || undefined,
-    type: p.type || 'adult',
-    given_name: i === 0 ? (String(lead.fullName || 'Guest').split(' ')[0] || 'Guest') : 'Guest',
-    family_name: i === 0 ? (String(lead.fullName || 'Traveller').split(' ').slice(-1)[0] || 'Traveller') : 'Traveller',
-    born_on: dobFor(p),
-    email: lead.email || undefined,
-    phone_number: lead.phone || undefined,
-    gender: p.gender || 'm',
-    title: p.title || 'mr',
-  }));
+  const nameParts = (t, fallbackGiven, fallbackFamily) => {
+    const parts = String(t?.fullName || '').trim().split(/\s+/).filter(Boolean);
+    return { given: parts[0] || fallbackGiven, family: parts.slice(1).join(' ') || (parts[0] ? parts[0] : fallbackFamily) };
+  };
+  return (offerPassengers.length ? offerPassengers : [{ type: 'adult' }]).map((p, i) => {
+    const t = manifest[i] || {};
+    const nm = nameParts(t, `Guest${i + 1}`, 'Traveller');
+    return {
+      id: p.id || undefined,
+      type: p.type || 'adult',
+      given_name: nm.given,
+      family_name: nm.family,
+      born_on: dobFor(p, t),
+      email: (i === 0 ? (t.email || lead.email) : undefined) || undefined,
+      phone_number: (i === 0 ? (t.phone || lead.phone) : undefined) || undefined,
+      gender: p.gender || 'm',
+      title: p.title || 'mr',
+    };
+  });
 }
 
 export function duffelMode() {

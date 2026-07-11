@@ -1122,7 +1122,20 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false }) {
+  // Sanitise the full passenger manifest (every traveller's name/DOB/passport) —
+  // Duffel needs each real name to ticket a group/family flight. Falls back to
+  // just the lead when a manifest wasn't supplied.
+  const cleanTravellers = Array.isArray(travellers) && travellers.length
+    ? travellers.slice(0, 20).map((t) => ({
+        fullName: String(t?.fullName || '').slice(0, 80),
+        dob: String(t?.dob || '').slice(0, 10),
+        type: ['adult', 'child', 'infant'].includes(t?.type) ? t.type : 'adult',
+        nationality: String(t?.nationality || '').slice(0, 3).toUpperCase() || undefined,
+        passportNumber: t?.passportNumber ? String(t.passportNumber).slice(0, 20) : undefined,
+        passportExpiry: t?.passportExpiry ? String(t.passportExpiry).slice(0, 10) : undefined,
+      }))
+    : (lead ? [{ ...lead }] : []);
   const bookingId = id('bkg');
   // PAYMENT RAIL POLICY: until BitriPay completes, Stripe is the ONLY live
   // money-in rail. Any BitriPay/mobile-money selection settles on Stripe.
@@ -1163,7 +1176,9 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     paymentMethod,
     gateway,
     // Lead traveller captured + validated at booking time (passport, DOB, etc).
-    leadTraveller: lead || null,
+    leadTraveller: lead || cleanTravellers[0] || null,
+    // Full passenger manifest for ticketing (names/DOBs for every traveller).
+    travellers: cleanTravellers,
     // Vendor Partner attribution: which approved vendor brought this sale.
     // LIFETIME ATTACH: no code on this booking → the customer's original
     // partner (set on their first attributed paid booking) earns automatically.

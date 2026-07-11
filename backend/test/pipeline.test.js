@@ -4611,3 +4611,30 @@ test('duffel stays booking: a live Stays room auto-books; other hotels go to ops
   // A synthetic/estimated hotel routes to the ops desk.
   assert.equal(fulfilmentChannelFor({ type: 'hotel', live: false, details: {} }, 'AE'), 'ops:hotels');
 });
+
+// ---- Per-passenger name capture (group/family flight ticketing) -------------
+import { duffelOrderPassengers as duffelPaxW6 } from '../src/live-suppliers.js';
+
+test('flight manifest: every captured passenger name/DOB reaches the Duffel order', () => {
+  const offerPassengers = [{ id: 'p1', type: 'adult' }, { id: 'p2', type: 'adult' }, { id: 'p3', type: 'child', age: 8 }];
+  const travellers = [
+    { fullName: 'Jean Nseya', dob: '1985-04-12', type: 'adult', email: 'jean@x.co', phone: '+44700900123' },
+    { fullName: 'Marie Nseya', dob: '1987-09-01', type: 'adult' },
+    { fullName: 'Luc Nseya', dob: '2018-02-20', type: 'child' },
+  ];
+  const pax = duffelPaxW6(offerPassengers, travellers[0], { departureDate: '2026-09-01', travellers });
+  assert.equal(pax.length, 3);
+  assert.deepEqual([pax[0].given_name, pax[0].family_name], ['Jean', 'Nseya']);
+  assert.deepEqual([pax[1].given_name, pax[1].family_name], ['Marie', 'Nseya'], 'second passenger is a REAL name, not a placeholder');
+  assert.deepEqual([pax[2].given_name, pax[2].family_name], ['Luc', 'Nseya']);
+  assert.equal(pax[2].born_on, '2018-02-20', 'child DOB is the captured one');
+  assert.equal(pax[0].email, 'jean@x.co', 'lead carries contact; others do not');
+  assert.equal(pax[1].email, undefined);
+  assert.ok(pax.every((p) => p.family_name && p.family_name !== 'Traveller'), 'no placeholder surnames');
+});
+
+test('flight manifest: falls back to the lead when no manifest is supplied', () => {
+  const pax = duffelPaxW6([{ id: 'p1', type: 'adult' }], { fullName: 'Solo Traveller' }, { departureDate: '2026-09-01' });
+  assert.equal(pax.length, 1);
+  assert.deepEqual([pax[0].given_name, pax[0].family_name], ['Solo', 'Traveller']);
+});

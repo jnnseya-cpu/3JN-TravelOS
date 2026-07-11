@@ -1107,6 +1107,21 @@ window.submitExactQuote = async (tier) => {
   } catch (e) { toast(e.message || 'Could not send your request — please try again.'); }
 };
 
+// The ADDITIONAL passengers (everyone after the lead) whose names Duffel needs
+// to ticket a group/family flight. Order matches the fare-unit order the search
+// used (adults first, then children by age) so the backend maps names 1:1.
+function additionalPassengerList(t) {
+  const party = t || { adults: 1, total: 1 };
+  const adults = Math.max(1, party.adults || 1);
+  const childAges = Array.isArray(party.childAges) ? party.childAges : [];
+  const children = party.children || childAges.length || 0;
+  const out = [];
+  for (let i = 2; i <= adults; i++) out.push({ type: 'adult', label: `Adult ${i}` });
+  childAges.forEach((age, idx) => out.push({ type: 'child', label: `Child ${idx + 1} (age ${age})`, age }));
+  for (let i = childAges.length; i < children; i++) out.push({ type: 'child', label: `Child ${i + 1}` });
+  return out;
+}
+
 window.openBooking = async (tier) => {
   const option = window.__options[tier];
   const intent = window.__intent;
@@ -1163,7 +1178,20 @@ window.openBooking = async (tier) => {
     </div>
     ${international ? '' : '<div class="muted" style="font-size:11.5px;margin-top:4px">🚆 Local trip — no passport or visa required, just photo ID to travel.</div>'}
     ${Object.keys(state.user?.travelProfile || {}).length ? '<div class="muted" style="font-size:11px;margin-top:4px">✓ auto-filled from your Master Travel Profile</div>' : ''}
-    <div class="muted" style="font-size:11.5px;margin-top:6px">${intent.travellers.total > 1 ? `+${intent.travellers.total - 1} more passenger${intent.travellers.total > 2 ? 's' : ''} — details collected after deposit.` : ''}</div>
+    ${(() => {
+      const extra = additionalPassengerList(intent.travellers);
+      if (!extra.length) return '';
+      return `<div style="margin-top:14px"><span class="eyebrow">Other passengers${international ? ' (exact passport spelling)' : ''}</span>
+        <p class="muted" style="font-size:11.5px;margin:2px 0 6px">Every traveller must be named to ticket the flight — enter each one exactly as on their ${international ? 'passport' : 'photo ID'}.</p>
+        ${extra.map((p, n) => `<div class="card pad" style="margin-bottom:8px">
+          <div class="t-label" style="margin-bottom:6px">${esc(p.label)}</div>
+          <div class="composer-row">
+            <div class="field"><label>Full legal name</label><input class="in" id="bkP${n}Name" placeholder="${international ? 'As on passport' : 'As on photo ID'}"></div>
+            <div class="field"><label>Date of birth</label><input class="in" id="bkP${n}Dob" type="date"${p.age != null ? ` title="child, age ${p.age}"` : ''}></div>
+            ${international ? `<div class="field"><label>Passport number</label><input class="in" id="bkP${n}Pass" placeholder="e.g. A1234567"></div>
+            <div class="field"><label>Passport expiry</label><input class="in" id="bkP${n}Exp" type="date"></div>` : ''}
+          </div></div>`).join('')}</div>`;
+    })()}
 
     <div style="margin-top:14px"><span class="eyebrow">Documents needed</span><ul class="comp-list">${docList}</ul></div>
     ${entry ? `<div style="margin-top:6px"><span class="eyebrow">Entry requirements</span>${entry}</div>` : ''}
@@ -1220,12 +1248,25 @@ window.confirmBooking = async () => {
     fullName: $('#bkName')?.value.trim(), dob: $('#bkDob')?.value,
     nationality: ($('#bkNat')?.value || state.country || 'GB').trim().toUpperCase(),
   };
+  lead.type = 'adult';
   if (international) {
     lead.passportNumber = $('#bkPass')?.value.trim();
     lead.passportExpiry = $('#bkExp')?.value;
   } else if ($('#bkIdNum')?.value) {
     lead.idNumber = $('#bkIdNum').value.trim();
   }
+  // Collect EVERY passenger — Duffel needs each real name to ticket a group/
+  // family flight (the lead alone used to be sent, so 2+ pax orders would fail).
+  const extra = additionalPassengerList(intent?.travellers);
+  const others = extra.map((p, n) => {
+    const t = { fullName: $(`#bkP${n}Name`)?.value.trim() || '', dob: $(`#bkP${n}Dob`)?.value || '', type: p.type, nationality: lead.nationality };
+    if (international) { t.passportNumber = $(`#bkP${n}Pass`)?.value.trim() || ''; t.passportExpiry = $(`#bkP${n}Exp`)?.value || ''; }
+    return t;
+  });
+  const travellers = [lead, ...others];
+  // Every passenger must be named before we can ticket.
+  const unnamed = travellers.findIndex((t) => !t.fullName);
+  if (unnamed >= 0) { toast(`Enter the full name for ${unnamed === 0 ? 'the lead traveller' : (extra[unnamed - 1]?.label || 'each passenger')}.`); return; }
   const specialRequests = [...document.querySelectorAll('#bkSSR .chip-on')].map((c) => c.dataset.ssr);
   const hotelRequests = [...document.querySelectorAll('#bkHotelSSR .chip-on')].map((c) => c.dataset.ssr);
   const payment = { cardHolder: $('#payHolder')?.value.trim() || '', billingAddress: $('#payBilling')?.value.trim() || '' };
@@ -1235,7 +1276,7 @@ window.confirmBooking = async () => {
   let val;
   try {
     val = await api('/api/booking/validate', { method: 'POST', body: JSON.stringify({
-      travellers: [lead], travelDate: intent?.dates?.checkIn,
+      travellers, travelDate: intent?.dates?.checkIn,
       nationality: lead.nationality, destination: intent?.destination?.city, international,
     }) });
   } catch { return; }
@@ -1258,7 +1299,7 @@ window.confirmBooking = async () => {
   }
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead, travellers }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
