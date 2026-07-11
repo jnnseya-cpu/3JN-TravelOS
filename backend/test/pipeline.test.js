@@ -4715,6 +4715,24 @@ test('wave7 auth: an ADMIN_EMAILS owner is elevated to admin on login (with the 
   }
 });
 
+test('wave7 auth: loading an allowlisted owner account self-heals to admin (no PIN)', async () => {
+  const email = `heal${Date.now()}@x.co`;
+  const u = createUser({ name: 'Heal', email }); // plain consumer, created before allowlist
+  assert.notEqual(u.role, 'admin');
+  const prev = process.env.ADMIN_EMAILS;
+  process.env.ADMIN_EMAILS = email;
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const d = await fetch(`${base}/api/account/${u.id}`, { headers: { 'x-user-id': u.id } }).then((r) => r.json());
+    assert.equal(d.user.role, 'admin', 'just loading the owner account promotes it to admin');
+  } finally {
+    server.close();
+    if (prev === undefined) delete process.env.ADMIN_EMAILS; else process.env.ADMIN_EMAILS = prev;
+  }
+});
+
 test('wave7 auth: /api/account/elevate flips an allowlisted owner to admin with the PIN', async () => {
   const email = `elev${Date.now()}@x.co`;
   const u = createUser({ name: 'Elev', email }); // plain consumer

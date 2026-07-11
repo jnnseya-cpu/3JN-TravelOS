@@ -3647,7 +3647,9 @@ async function restoreSession() {
   let uid; try { uid = localStorage.getItem('3jn_uid'); } catch {}
   if (!uid) return;
   try {
-    const d = await api(`/api/account/${uid}`, { silent: true });
+    // Send the stored id explicitly so the self-lookup authenticates even before
+    // state.user is set — the endpoint also promotes an allowlisted owner to admin.
+    const d = await api(`/api/account/${uid}`, { silent: true, headers: { 'x-user-id': uid } });
     if (d.user) setUser(d.user);
   } catch (e) {
     // Stale session (e.g. the server's store reset on redeploy) — clear it

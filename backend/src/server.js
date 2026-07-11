@@ -662,8 +662,14 @@ app.get('/api/account/:id', safe((req, res) => {
   if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
     return res.status(403).json({ error: 'not-your-account' });
   }
-  const user = getUser(req.params.id);
+  let user = getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'not-found' });
+  // Self-healing admin: if this account's email is on the ADMIN_EMAILS allowlist
+  // but the role isn't admin yet (e.g. the session predates the allowlist being
+  // set), promote it here. Only the account itself (or an admin) can reach this,
+  // and only an allowlisted email is affected — so loading the site while signed
+  // in as the owner reliably lands you in admin, no PIN or re-auth needed.
+  if (isOwnerEmail(user.email) && user.role !== 'admin') user = updateUser(user.id, { role: 'admin' }) || user;
   res.json({ user, bookings: listBookings(user.id) });
 }));
 
