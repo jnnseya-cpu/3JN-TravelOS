@@ -4593,3 +4593,21 @@ test('duffel stays: gated behind the Duffel token; a safe no-op when the door is
   assert.equal(liveHotelsW6(), false);
   assert.equal(await fetchStaysW6({ dates: { checkIn: '2026-09-01', checkOut: '2026-09-05' }, travellers: { total: 2, adults: 2 }, nights: 4 }, { city: 'Dubai' }), null);
 });
+
+// ---- Duffel Stays automatic booking (quote → book → confirmation) -----------
+import { bookDuffelStay as bookStayW6 } from '../src/live-suppliers.js';
+
+test('duffel stays booking: safe no-op when the door is shut', async () => {
+  const r = await bookStayW6({ searchResultId: 'sr_x', guests: [{ given_name: 'A', family_name: 'B' }] });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'not-configured');
+});
+
+test('duffel stays booking: a live Stays room auto-books; other hotels go to ops', () => {
+  // A live hotel carrying a Stays search-result id is auto-booked (no manual order).
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true, details: { staysSearchResultId: 'sr_1' } }, 'AE'), null);
+  // A live hotel WITHOUT a Stays id (e.g. Amadeus) still routes to the ops desk.
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true, details: {} }, 'AE'), 'ops:hotels');
+  // A synthetic/estimated hotel routes to the ops desk.
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: false, details: {} }, 'AE'), 'ops:hotels');
+});

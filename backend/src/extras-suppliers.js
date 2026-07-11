@@ -378,10 +378,11 @@ export function fulfilmentChannelFor(component, destCountry) {
   if (t === 'carhire') return 'ops:carhire';
   if (['photographer', 'guide', 'restaurant', 'translator', 'driver'].includes(t)) return 'ops:vendor-marketplace';
   if (['train', 'coach', 'ferry', 'cruise'].includes(t)) return 'ops:ground';
-  // Hotels ALWAYS route to the ops desk. There is no automated Amadeus hotel-
-  // order adapter yet, so a "live" hotel that fell through here would be charged
-  // but never booked and never surfaced — the ops desk reserves it manually.
-  if (t === 'hotel') return 'ops:hotels';
+  // Hotels: a live Duffel Stays room (carries a staysSearchResultId) is booked
+  // AUTOMATICALLY on payment by autoBookStays (rates → quote → book), so it needs
+  // no manual order here — like a live flight. Any other hotel routes to the ops
+  // desk so it is reserved manually (never charged-but-unbooked).
+  if (t === 'hotel') return (component.live && component.details?.staysSearchResultId) ? null : 'ops:hotels';
   if (t === 'host') return 'auto:host-marketplace';
   return null; // live flights auto-ticket via autoTicketFlight
 }

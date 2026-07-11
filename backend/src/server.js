@@ -64,7 +64,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -315,6 +315,41 @@ async function autoTicketFlight(booking) {
   if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${order.order.bookingReference}. E-tickets are in your Console and on their way by email.` });
   if (booking.lead?.email) {
     try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${order.order.bookingReference}`, text: `Your flight is ticketed. Airline booking reference: ${order.order.bookingReference}. E-ticket(s): ${(order.order.ticketNumbers || []).join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${order.order.bookingReference}</p>` }); } catch {}
+  }
+}
+
+// AUTO-BOOK the hotel via Duffel Stays once payment is captured — the hotel
+// equivalent of autoTicketFlight. Idempotent; on any failure it hands the room
+// to the ops desk (support ticket) so a paid stay is never left unbooked.
+async function autoBookStays(booking) {
+  const hotel = (booking.option?.components || []).find((c) => c.type === 'hotel' && c.live && c.details?.staysSearchResultId);
+  if (!hotel || !duffelStaysEnabled()) return;
+  const ful = (booking.fulfilment = booking.fulfilment || {});
+  if (ful.stayStatus === 'booked') return; // idempotent — webhooks redeliver
+  const lead = booking.leadTraveller || booking.lead || {};
+  const parts = String(lead.fullName || 'Guest Traveller').trim().split(/\s+/);
+  const guests = [{ given_name: parts[0] || 'Guest', family_name: parts.slice(1).join(' ') || 'Traveller' }];
+  const r = await bookDuffelStay({
+    searchResultId: hotel.details.staysSearchResultId,
+    guests, email: lead.email, phone: lead.phone,
+    maxAmountUSD: hotel.priceUSD || null,
+  }).catch((e) => ({ ok: false, error: e?.message || 'exception' }));
+  if (r.ok) {
+    ful.stayStatus = 'booked';
+    ful.stayReference = r.reference;
+    ful.stayBookingId = r.bookingId;
+    hotel.details.confirmation = r.reference;
+    hotel.details.fulfilledVia = 'auto:stays-api';
+    recordAudit({ actor: 'system', role: 'system', action: 'stays.booked', entity: 'booking', entityId: booking.id, summary: `hotel ref ${r.reference} · ${hotel.supplier}` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🏨', title: 'Hotel confirmed', body: `${hotel.supplier} is booked — confirmation ${r.reference}. Details are in your Console.` });
+    if (lead.email) { try { await sendMail({ to: lead.email, subject: `Your hotel is confirmed — ${r.reference}`, text: `${hotel.supplier} is booked. Confirmation: ${r.reference}.`, html: `<p>${htmlEsc(hotel.supplier)} is booked.</p><p><strong>Confirmation:</strong> ${htmlEsc(r.reference)}</p>` }); } catch {} }
+  } else {
+    // Fail SAFE: hand the paid room to the ops desk to complete on Duffel.
+    ful.stayStatus = 'ops-fallback';
+    ful.stayError = r.error;
+    try { createSupportTicket({ userId: booking.userId, intent: 'ops-hotel', message: `Book hotel for booking ${booking.id} — Duffel Stays auto-book failed (${r.error}). Complete it manually on the Duffel dashboard (search result ${hotel.details.staysSearchResultId}).`, reason: 'stays-auto-book-failed' }); } catch {}
+    recordAudit({ actor: 'system', role: 'system', action: 'stays.ops-fallback', entity: 'booking', entityId: booking.id, summary: `auto-book failed (${r.error}) → ops desk` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🏨', title: 'Hotel being confirmed', body: 'Your payment is secured — our team is finalising your hotel booking now and your confirmation will appear shortly.' });
   }
 }
 
@@ -1651,6 +1686,9 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       // creating the Duffel order. Runs async; failure flags the booking for a
       // refund rather than leaving the traveller paid-but-unticketed.
       if (booking) autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
+      // AUTO-BOOK the hotel too (Duffel Stays: rates → quote → book). Failure
+      // hands off to the ops desk, never a paid-but-unbooked room.
+      if (booking) autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
     }
   }
   res.json({ received: true });

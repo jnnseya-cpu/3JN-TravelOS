@@ -824,6 +824,43 @@ export async function fetchDuffelStays(intent, dest) {
   return out.length ? out : null;
 }
 
+// Duffel Stays booking flow — rates → quote → book — the hotel equivalent of the
+// flight order path. Called on payment so a paid hotel ticket-issues itself.
+function staysHeaders() {
+  return { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' };
+}
+export async function bookDuffelStay({ searchResultId, guests = [], email, phone, maxAmountUSD = null } = {}) {
+  if (!duffelStaysEnabled() || !searchResultId) return { ok: false, error: 'not-configured' };
+  // 1) FRESH rates for the stored search result (rates/search results expire —
+  //    this re-prices right before we book, like the flight fresh-fare check).
+  const rres = await httpJSON(`${DUFFEL_BASE}/stays/search_results/${encodeURIComponent(searchResultId)}/actions/fetch_all_rates`, { method: 'POST', headers: staysHeaders() });
+  if (rres == null || (rres.__status && rres.__status >= 500)) return { ok: false, error: 'rates-unreachable' };
+  if (rres.__status === 404 || rres.__status === 410 || rres.__status === 422) return { ok: false, error: 'rates-expired' };
+  const rooms = rres?.data?.accommodation?.rooms || rres?.data?.rooms || [];
+  const rates = rooms.flatMap((r) => r.rates || []);
+  if (!rates.length) return { ok: false, error: 'no-rates' };
+  // Cheapest bookable rate.
+  const rate = rates.reduce((a, b) => (Number(a.total_amount) <= Number(b.total_amount) ? a : b));
+  // 2) Quote — Duffel confirms the exact bookable amount.
+  const qres = await httpJSON(`${DUFFEL_BASE}/stays/quotes`, { method: 'POST', headers: staysHeaders(), body: JSON.stringify({ data: { rate_id: rate.id } }) });
+  const quote = qres?.data;
+  if (!quote?.id) return { ok: false, error: 'quote-failed', detail: qres?.__error };
+  const usd = await toUSD(quote.total_amount, quote.total_currency);
+  // Never book materially above what the customer paid — flag for ops instead.
+  if (maxAmountUSD != null && usd != null && usd > maxAmountUSD * 1.02) {
+    return { ok: false, error: 'price-changed', nowUSD: usd, wasUSD: maxAmountUSD };
+  }
+  // 3) Book — Duffel is the merchant of record (paid from the Duffel balance).
+  const guestList = guests.length ? guests : [{ given_name: 'Guest', family_name: 'Traveller' }];
+  const bres = await httpJSON(`${DUFFEL_BASE}/stays/bookings`, {
+    method: 'POST', headers: staysHeaders(),
+    body: JSON.stringify({ data: { quote_id: quote.id, guests: guestList, email: email || undefined, phone_number: phone || undefined } }),
+  });
+  const bk = bres?.data;
+  if (!bk?.id) return { ok: false, error: 'booking-failed', detail: bres?.__error };
+  return { ok: true, reference: bk.reference || bk.id, bookingId: bk.id, status: bk.status || 'confirmed', checkIn: bk.check_in_date, checkOut: bk.check_out_date, amountUSD: usd };
+}
+
 // Fetch live hotels. Duffel Stays first (same token as flights, no extra creds),
 // then Amadeus as a fallback. Returns normalised offers or null.
 export async function fetchLiveHotels(intent, dest) {
