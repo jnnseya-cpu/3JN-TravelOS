@@ -3654,9 +3654,16 @@ async function restoreSession() {
     const d = await api(`/api/account/${uid}`, { silent: true, headers: { 'x-user-id': uid } });
     if (d.user) setUser(d.user);
   } catch (e) {
-    // Stale session (e.g. the server's store reset on redeploy) — clear it
-    // quietly instead of popping a "not-found" toast on every load.
-    if (e.status === 404) { try { localStorage.removeItem('3jn_uid'); } catch {} state.user = null; }
+    // A 404 can mean the account genuinely doesn't exist OR (right after a deploy /
+    // on a fresh serverless instance) just isn't loaded here yet. Don't log the
+    // user out outright: if Firebase can re-authenticate, let it rebuild the
+    // session (and re-apply admin). Only clear the stored id when there's no
+    // Firebase session to fall back on.
+    if (e.status === 404) {
+      if (window.firebaseAuth?.reauth) { try { if (await window.firebaseAuth.reauth()) return; } catch {} }
+      try { localStorage.removeItem('3jn_uid'); } catch {}
+      state.user = null;
+    }
   }
 }
 window.signOut = () => {

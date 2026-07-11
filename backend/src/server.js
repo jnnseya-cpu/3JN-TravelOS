@@ -141,11 +141,32 @@ app.get('/api/auth/precheck', (req, res) => {
 // collections would be silently erased, and an early save would persist an empty
 // store over good data. Reads may proceed. Tests run on a fresh store (ready).
 let storeReady = process.env.NODE_ENV === 'test';
+// On a serverless host the instance FREEZES the moment it sends a response, so a
+// debounced/background save (setTimeout) never runs and the write is lost — the
+// account/booking vanishes and the user is logged out on the next request. When
+// serverless, flush to Firebase SYNCHRONOUSLY before the response is sent so the
+// write always completes. Long-lived hosts keep the efficient debounced save.
+const IS_SERVERLESS = !!(process.env.VERCEL || process.env.K_SERVICE || process.env.FUNCTION_TARGET);
 app.use((req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
-    res.on('finish', () => { if (res.statusCode < 400) scheduleSave(snapshot); });
+    if (IS_SERVERLESS && isEnabled()) {
+      // Await the persistence write before flushing a successful response.
+      const origJson = res.json.bind(res);
+      res.json = (body) => {
+        if (res.statusCode < 400) {
+          // Cap the wait so a slow/failed write never hangs the response.
+          Promise.race([save(snapshot()).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
+            .finally(() => origJson(body));
+        } else {
+          origJson(body);
+        }
+        return res;
+      };
+    } else {
+      res.on('finish', () => { if (res.statusCode < 400) scheduleSave(snapshot); });
+    }
   }
   next();
 });
