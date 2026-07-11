@@ -184,48 +184,35 @@ const LOYALTY = [
   ['Elite', '15,000 pts', '8% discount + priority verification'],
 ];
 
-// Membership billing. Default to YEARLY: travel is occasional, so a monthly
-// subscription for months you don't travel puts people off — the headline is
-// pay-as-you-go (ACU, no subscription) with an annual plan for frequent
-// travellers. Monthly stays available but de-emphasised.
+// Pricing model: pay-as-you-go is the headline (search costs 5-20 ACU; no
+// subscription), and membership is a cheap ONE-OFF ANNUAL fee (2× the old
+// monthly) that unlocks the perks and returns 10% as ACU. Monthly is gone.
 let membershipBilling = 'yearly';
 function payAsYouGoHTML() {
   return `<div class="card pad" style="grid-column:1/-1;margin-bottom:14px;border-color:rgba(216,180,106,0.4)">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div>
         <strong style="font-size:16px">No subscription needed — pay only for what you use</strong>
-        <p class="muted" style="font-size:12.5px;margin:4px 0 0">Search for free. Top up ACU (£1 = 100 ACU) and spend it only when the AI works for you. Perfect if you don't travel every month.</p>
+        <p class="muted" style="font-size:12.5px;margin:4px 0 0">Browse free (cached results, 5/day). A live AI search costs just <strong>5–20 ACU (~5–20p)</strong> — top up ACU and spend only when the AI actually works for you. New accounts start with 50 ACU free.</p>
       </div>
       <button class="btn btn-gold" onclick="buyAcuFlow()">⚡ Top up ACU</button>
     </div>
   </div>
-  <div style="grid-column:1/-1;text-align:center;margin:4px 0 12px"><span class="muted" style="font-size:12.5px">Travel often? Travel+ members save more and get ACU funded automatically —</span></div>`;
-}
-function billingToggleHTML() {
-  const on = (m) => membershipBilling === m ? 'background:var(--gold);color:#1a1205;font-weight:700' : 'background:transparent;color:var(--muted)';
-  return `<div style="grid-column:1/-1;text-align:center;margin-bottom:10px">
-    <div style="display:inline-flex;gap:4px;background:rgba(255,255,255,0.06);border-radius:999px;padding:4px">
-      <button class="btn btn-sm" style="${on('yearly')};border:none" onclick="setBilling('yearly')">Yearly · best value</button>
-      <button class="btn btn-sm" style="${on('monthly')};border:none" onclick="setBilling('monthly')">Monthly</button>
-    </div></div>`;
+  <div style="grid-column:1/-1;text-align:center;margin:4px 0 12px"><span class="muted" style="font-size:12.5px">Travel often? A one-off yearly membership unlocks fee-free flights, priority &amp; savings — and returns 10% as ACU:</span></div>`;
 }
 function tierCardsHTML() {
-  const yearly = membershipBilling === 'yearly';
-  return payAsYouGoHTML() + billingToggleHTML() + TIERS.map((t) => {
-    const yearNum = Math.round(t.priceNum * 10 * 100) / 100;
-    const priceStr = yearly ? `£${yearNum.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : t.price;
-    const per = yearly ? ' /year' : ' /month';
-    const effMonthly = yearly ? (yearNum / 12) : t.priceNum;
-    const acu = (acuAllocation(t.priceNum) * (yearly ? 12 : 1));
+  return payAsYouGoHTML() + TIERS.map((t) => {
+    const yearNum = Math.round(t.priceNum * 2 * 100) / 100;       // annual one-off = 2× old monthly
+    const acu = Math.round(yearNum * 0.10 * 100);                  // 10% back as ACU (£1 = 100 ACU)
     return `<div class="card tier ${t.feature ? 'feature' : ''}">
       ${t.feature ? `<span class="badge-top">${t.badge}</span>` : ''}
       <div class="save-chip">Est. Savings ${t.save}</div>
       <h3>${t.name}</h3>
-      <div class="price">${priceStr}<span>${per}</span></div>
-      ${yearly ? `<div class="muted" style="font-size:11.5px;margin:-4px 0 8px;color:var(--green)">≈ £${effMonthly.toFixed(2)}/mo · save vs paying monthly</div>` : ''}
-      <div class="acu-fund">⚡ ${acu.toLocaleString()} ACU ${yearly ? 'up front (full year)' : '/mo'} auto-funded<br><span class="muted">10% of your plan · £1 = 100 ACU${yearly ? '' : ' · tops up each month'}</span></div>
+      <div class="price">£${yearNum.toLocaleString(undefined, { minimumFractionDigits: 2 })}<span> /year</span></div>
+      <div class="muted" style="font-size:11.5px;margin:-4px 0 8px">one-off annual · no monthly charge</div>
+      <div class="acu-fund">⚡ ${acu.toLocaleString()} ACU back on joining<br><span class="muted">10% of your fee · £1 = 100 ACU · plus member perks below</span></div>
       <ul>${t.benefits.map((b) => `<li>${b}</li>`).join('')}</ul>
-      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.key}')">Join ${t.name.split(' ').pop()}${yearly ? ' · yearly' : ''}</button>
+      <button class="btn ${t.feature ? 'btn-gold' : 'btn-ghost'} btn-block" onclick="selectTier('${t.key}')">Join ${t.name.split(' ').pop()} · yearly</button>
     </div>`;
   }).join('');
 }

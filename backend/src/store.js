@@ -496,9 +496,11 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
     avatar: avatar || ROLE_AVATAR[safeRole], // emoji or image data URL
     bio: bio || '',
     points: SIGNUP_BONUS_POINTS,
-    // No free ACUs: members fund ACUs from 10% of their subscription, everyone
-    // else buys them. Balance must be positive before any ACU-metered action.
-    acuBalance: 0,
+    // Starter ACU so a new account can actually TRY the AI search (searches cost
+    // 5-20 ACU) before topping up — 50 ACU ≈ 10 smart searches. Without this a new
+    // user couldn't search at all. Members top up automatically from their plan;
+    // everyone else buys more when they run low.
+    acuBalance: 50,
     membership: null, // { tier, name, pricePerMonth, acuPerMonth, active, startedAt, renewsAt }
     referralCode,
     referredByCode: referredByCode || null,

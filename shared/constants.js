@@ -76,12 +76,13 @@ export const MEMBERSHIP_TIERS = [
 ].map((t) => ({
   ...t,
   acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP),
-  // YEARLY plan = 10 months' price (2 months free, ~17% off). Monthly reads as
-  // expensive; a discounted annual makes the effective monthly cost lower and
-  // more competitive, while ACU top-ups cover anyone who prefers pay-as-you-go.
-  pricePerYear: Math.round(t.pricePerMonth * 10 * 100) / 100,
-  // A year up front funds the full 12 months of ACU allocation.
-  acuPerYear: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP * 12),
+  // Membership is sold as a cheap ONE-OFF ANNUAL fee = 2× the old monthly price.
+  // Travel is occasional, so a small once-a-year fee for the member perks
+  // (fee-free flights, priority, savings, lounge, visa support) beats a recurring
+  // monthly charge — the real usage revenue comes from ACU top-ups per search.
+  pricePerYear: Math.round(t.pricePerMonth * 2 * 100) / 100,
+  // 10% of the annual fee is credited back as ACU (£1 = 100 ACU).
+  acuPerYear: Math.round(t.pricePerMonth * 2 * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP),
 }));
 
 export const TIER_ACU_ALLOWANCE = Object.fromEntries(

@@ -46,16 +46,22 @@ export const SEARCH_TIERS = {
     name: 'Cached / Free', acu: 0, aiCostUSD: 0, depth: 'cached', actions: [],
     features: ['Cached results', 'Top deals', 'Destination suggestions', 'Previous searches', 'Limited searches (5/day)', 'No expensive AI'],
   },
+  // Customer-facing ACU prices are kept small and predictable (5 / 10 / 20 ACU =
+  // ~5p / 10p / 20p per search) so pay-per-use feels cheap vs a subscription. The
+  // `acu` override sets the CHARGE; `actions` still lists the agents each depth runs.
   smart: {
     ...tierFrom('Smart Search', 'standard', ['intent', 'flightSearch', 'hotelSearch']),
+    acu: 5,
     agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent'],
   },
   deep: {
     ...tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
+    acu: 10,
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent'],
   },
   concierge: {
     ...tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
+    acu: 20,
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
     // Tier 4 pairs the AI agents with a HUMAN travel expert — human time is
     // never funded speculatively, so access requires a real commitment.
