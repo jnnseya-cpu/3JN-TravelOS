@@ -12,7 +12,7 @@ import {
   createApiKey, listApiKeys, revokeApiKey, useApiKey, adminOverview,
   recordAudit, adminAudit, saveDraft, getDraft,
   createPaymentLink, settlePaymentLink, merchantSettlement,
-  listApprovals, decideApproval,
+  listApprovals, decideApproval, flatSnapshot, getUser as getUserById,
 } from '../src/store.js';
 import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
@@ -4816,4 +4816,37 @@ test('wave7 manifest: infant offer passenger claims an infant traveller', () => 
   const infantSlot = pax.find((p) => p.type === 'infant_without_seat');
   assert.equal(infantSlot.given_name, 'Baby');
   assert.equal(infantSlot.born_on, '2025-06-01');
+});
+
+// ---- Serverless persistence: merge-save must not clobber other instances -----
+test('serverless persistence: a partial merge-save keeps records from other instances', () => {
+  // Mock Firebase RTDB node with the two write modes the code uses.
+  const node = { users: {} };
+  const setPath = (obj, path, val) => {
+    const parts = path.split('/'); let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) { cur[parts[i]] = cur[parts[i]] || {}; cur = cur[parts[i]]; }
+    cur[parts[parts.length - 1]] = JSON.parse(JSON.stringify(val));
+  };
+  const update = (flat) => { for (const [k, v] of Object.entries(flat)) setPath(node, k, v); }; // ref.update (merge)
+
+  // Instance A: a fresh instance holding only user A saves its store.
+  const emailA = `insA${Date.now()}@x.co`;
+  const a = createUser({ email: emailA, name: 'Inst A user' });
+  update(flatSnapshot());
+  assert.ok(node.users[a.id], 'A persisted to Firebase');
+
+  // Instance B: a DIFFERENT fresh instance that never saw A (its store is hydrated
+  // from an empty view) creates user B and saves. With the OLD whole-store set this
+  // wiped A; with the merge write it must NOT.
+  hydrate({ users: {} }); // simulate a cold instance that only knows about B
+  const b = createUser({ email: `insB${Date.now()}@x.co`, name: 'Inst B user' });
+  update(flatSnapshot());
+
+  assert.ok(node.users[a.id], 'A SURVIVED B\'s partial save — no clobber');
+  assert.ok(node.users[b.id], 'B persisted too');
+
+  // And a cold instance C hydrating from Firebase sees BOTH.
+  hydrate({ users: node.users });
+  assert.ok(getUserById(a.id), 'instance C sees A after hydrate');
+  assert.ok(getUserById(b.id), 'instance C sees B after hydrate');
 });
