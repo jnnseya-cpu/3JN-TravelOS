@@ -171,6 +171,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// Re-hydrate-on-miss (serverless consistency): a warm instance hydrated its store
+// once at cold start and never re-reads Firebase, so an account created/updated on
+// ANOTHER instance is invisible here — the signed-in user looks "not found" and
+// gets a 403 / logged out. When an AUTHENTICATED request lands and this instance
+// can't find that account, pull the latest store from Firebase once (throttled) so
+// the account is present before the route's auth check runs.
+let rehydrating = false;
+let lastRehydrateAt = 0;
+app.use(async (req, res, next) => {
+  const uid = req.headers['x-user-id'];
+  if (uid && IS_SERVERLESS && isEnabled() && storeReady && !getUser(uid)
+      && !rehydrating && (Date.now() - lastRehydrateAt > 3000)) {
+    rehydrating = true;
+    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep serving from memory */ }
+    lastRehydrateAt = Date.now();
+    rehydrating = false;
+  }
+  next();
+});
+
 // Resolve the active user from a header (prototype "auth").
 // Overlay admin role from the ADMIN_EMAILS allowlist. This is computed from the
 // environment on EVERY request, so an allowlisted owner is admin consistently on
