@@ -961,6 +961,30 @@ app.get('/api/admin/selftest', safe(async (req, res) => {
   });
 }));
 
+// Send a real test email so the operator can confirm confirmations actually
+// ARRIVE in an inbox — one click, no SMTP debugging. Defaults to the admin's own
+// address; accepts an explicit `to` for sending to a personal inbox.
+app.post('/api/admin/test-email', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  if (!isMailerEnabled()) {
+    return res.json({ ok: false, reason: 'not-configured', message: 'Email is not configured yet — set SMTP_PASS (and SMTP_FROM) so confirmations can send.' });
+  }
+  const admin = currentUser(req);
+  const to = String((req.body || {}).to || admin?.email || '').trim();
+  if (!to || /@guest\.3jn$/.test(to)) {
+    return res.json({ ok: false, reason: 'no-recipient', message: 'No real email address to send to — add an email to your account or pass one in.' });
+  }
+  const when = new Date().toISOString();
+  const r = await sendMail({
+    to,
+    subject: '3JN Travel OS — test email ✅',
+    text: `This is a 3JN Travel OS test email sent at ${when}. If you received it, your customer confirmations (tickets, refunds) will send correctly.`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#0a1020;color:#eef2fb;padding:24px;border-radius:12px"><h2 style="color:#d8b46a;margin:0 0 8px">3JN Travel OS</h2><p>✅ Your email is working. Customer confirmations (tickets, refunds) will send correctly.</p><p style="color:#6b7799;font-size:12px">Test sent ${when}.</p></div>`,
+  }).catch((e) => ({ ok: false, error: e?.message || 'send-failed' }));
+  if (r.ok) return res.json({ ok: true, to, message: `Test email sent to ${to} — check the inbox (and spam). If it arrives, confirmations are working.` });
+  return res.json({ ok: false, reason: 'send-failed', to, message: `Email is configured but the send failed: ${r.error || 'unknown error'}. Check the SMTP credentials/host.` });
+}));
+
 // ---- Market Benchmark: prove live fares against the market leaders ---------
 // Runs real routes through the SAME live Duffel search + checkout pricing the
 // customer gets, and hands the admin prefilled Skyscanner/Google Flights/Kayak

@@ -2288,6 +2288,7 @@ async function renderAdmin() {
   out.innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="runSelfTest()">🚦 Launch readiness check</button>
+      <button class="btn btn-ghost btn-sm" onclick="sendTestEmail()">✉️ Send test email</button>
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
@@ -2510,6 +2511,16 @@ window.runSelfTest = async () => {
       ${rows}
       <p class="muted" style="font-size:11px;margin-top:8px">Modes — Duffel: <strong>${esc(d.mode?.duffel || '?')}</strong> · Stripe: <strong>${esc(d.mode?.stripe || '?')}</strong> · Live mode: <strong>${d.mode?.liveMode ? 'ON' : 'off'}</strong>${d.mode?.testPayments ? ' · test payments ON' : ''}. Re-run any time.</p>
     </div>`;
+};
+// One-click email test: sends a real message to a chosen inbox and reports back.
+window.sendTestEmail = async () => {
+  const to = prompt('Send a test email to which address? (leave blank to use your account email)', state.user?.email || '');
+  if (to === null) return; // cancelled
+  toast('✉️ Sending test email…');
+  let r;
+  try { r = await api('/api/admin/test-email', { method: 'POST', body: JSON.stringify({ to: (to || '').trim() }) }); }
+  catch { toast('Could not send — are you signed in as admin (with the staff PIN)?'); return; }
+  toast(r.ok ? `✅ ${r.message}` : `⚠ ${r.message}`);
 };
 window.runBotSweep = async () => {
   try {
