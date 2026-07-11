@@ -74,7 +74,7 @@ import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, hydrate } from './store.js';
-import { initPersistence, isEnabled, load, save, scheduleSave, verifyFirebaseIdToken } from './persistence.js';
+import { initPersistence, isEnabled, load, save, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth } from './human-verify.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic } from './stripe.js';
@@ -107,6 +107,30 @@ app.get('/api/health', (req, res) => res.json({
   liveData: liveDataEnabled(), liveFlights: liveFlightsEnabled(), liveHotels: liveHotelsEnabled(),
   liveSchedules: oagScheduleEnabled(),
 }));
+
+// Admin-login PRECHECK — visit in a browser to diagnose why admin login fails,
+// WITHOUT being admin and WITHOUT a terminal. Reveals only yes/no config states
+// (never any secret value). e.g. /api/auth/precheck?email=admin@3jntravel.com
+app.get('/api/auth/precheck', (req, res) => {
+  const email = String(req.query.email || '').trim().toLowerCase();
+  const firebaseVerifyReady = firebaseAdminReady();
+  const staffPinConfigured = Boolean(staffPin());
+  const adminEmailsConfigured = String(process.env.ADMIN_EMAILS || '').trim().length > 0;
+  const emailAllowlisted = email ? isOwnerEmail(email) : null;
+  // Plain-English verdict so a non-technical operator knows the exact fix.
+  let readyForAdminLogin = firebaseVerifyReady && staffPinConfigured && adminEmailsConfigured;
+  const problems = [];
+  if (!firebaseVerifyReady) problems.push('FIREBASE_SERVICE_ACCOUNT is missing or invalid — the server cannot verify your sign-in (you would see "could not be verified").');
+  if (!adminEmailsConfigured) problems.push('ADMIN_EMAILS is not set — no email can become admin.');
+  else if (email && !emailAllowlisted) problems.push(`${email} is NOT in ADMIN_EMAILS — this email will log in as a normal customer, not admin.`);
+  if (!staffPinConfigured) problems.push('STAFF_ACCESS_PIN is not set — the second factor is missing, so privileged login is denied.');
+  res.json({
+    firebaseVerifyReady, persistence: isEnabled(), mailerReady: isMailerEnabled(),
+    staffPinConfigured, adminEmailsConfigured, emailAllowlisted, liveMode: LIVE_MODE(),
+    readyForAdminLogin: email ? (readyForAdminLogin && emailAllowlisted === true) : readyForAdminLogin,
+    verdict: problems.length ? problems : ['All admin-login prerequisites are set. If login still fails, the Firebase user (email+password) may not exist, or your browser is running a cached old version — hard-refresh.'],
+  });
+});
 
 // Persist the store to Firebase RTDB shortly after any successful mutation
 // (debounced). No-op when persistence is disabled (offline / no credentials).

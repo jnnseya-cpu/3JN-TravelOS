@@ -53,6 +53,10 @@ export function initPersistence({ databaseURL } = {}) {
 }
 
 export function isEnabled() { return enabled; }
+// Can the server VERIFY a Firebase sign-in token? True once firebase-admin has
+// initialised (FIREBASE_SERVICE_ACCOUNT valid). Admin login needs this — without
+// it, every Firebase sign-in returns "could not be verified".
+export function firebaseAdminReady() { return admin.apps.length > 0; }
 
 // Verify a Firebase ID token server-side and return the decoded claims (incl.
 // the VERIFIED email), or null. This is what makes /api/auth/firebase safe: the
