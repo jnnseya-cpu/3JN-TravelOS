@@ -184,20 +184,34 @@ const LOYALTY = [
   ['Elite', '15,000 pts', '8% discount + priority verification'],
 ];
 
-// Membership billing (monthly | yearly). Yearly = 10 months' price = 2 months
-// free (~17% off), so the effective monthly cost is lower and more competitive.
-let membershipBilling = 'monthly';
+// Membership billing. Default to YEARLY: travel is occasional, so a monthly
+// subscription for months you don't travel puts people off — the headline is
+// pay-as-you-go (ACU, no subscription) with an annual plan for frequent
+// travellers. Monthly stays available but de-emphasised.
+let membershipBilling = 'yearly';
+function payAsYouGoHTML() {
+  return `<div class="card pad" style="grid-column:1/-1;margin-bottom:14px;border-color:rgba(216,180,106,0.4)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div>
+        <strong style="font-size:16px">No subscription needed — pay only for what you use</strong>
+        <p class="muted" style="font-size:12.5px;margin:4px 0 0">Search for free. Top up ACU (£1 = 100 ACU) and spend it only when the AI works for you. Perfect if you don't travel every month.</p>
+      </div>
+      <button class="btn btn-gold" onclick="buyAcuFlow()">⚡ Top up ACU</button>
+    </div>
+  </div>
+  <div style="grid-column:1/-1;text-align:center;margin:4px 0 12px"><span class="muted" style="font-size:12.5px">Travel often? Travel+ members save more and get ACU funded automatically —</span></div>`;
+}
 function billingToggleHTML() {
   const on = (m) => membershipBilling === m ? 'background:var(--gold);color:#1a1205;font-weight:700' : 'background:transparent;color:var(--muted)';
   return `<div style="grid-column:1/-1;text-align:center;margin-bottom:10px">
     <div style="display:inline-flex;gap:4px;background:rgba(255,255,255,0.06);border-radius:999px;padding:4px">
+      <button class="btn btn-sm" style="${on('yearly')};border:none" onclick="setBilling('yearly')">Yearly · best value</button>
       <button class="btn btn-sm" style="${on('monthly')};border:none" onclick="setBilling('monthly')">Monthly</button>
-      <button class="btn btn-sm" style="${on('yearly')};border:none" onclick="setBilling('yearly')">Yearly · 2 months free</button>
     </div></div>`;
 }
 function tierCardsHTML() {
   const yearly = membershipBilling === 'yearly';
-  return billingToggleHTML() + TIERS.map((t) => {
+  return payAsYouGoHTML() + billingToggleHTML() + TIERS.map((t) => {
     const yearNum = Math.round(t.priceNum * 10 * 100) / 100;
     const priceStr = yearly ? `£${yearNum.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : t.price;
     const per = yearly ? ' /year' : ' /month';
