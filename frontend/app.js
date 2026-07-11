@@ -4640,18 +4640,23 @@ updateCalc();
 // Registers the offline/installable shell. Network-first for app code keeps it
 // from ever serving stale builds (see sw.js). Auto-applies updates on next load.
 if ('serviceWorker' in navigator) {
+  let refreshing = false;
+  // Whether a service worker was ALREADY controlling this page when it loaded.
+  // If so, a controllerchange means a NEW version just deployed and took over →
+  // reload once to actually run the fresh code. (On a first-ever visit there is
+  // no prior controller, so we skip the reload to avoid a flash for new users.)
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing || !hadController) return;
+    refreshing = true;
+    window.location.reload(); // pick up the just-deployed app.js automatically
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then((reg) => {
-      reg.addEventListener('updatefound', () => {
-        const sw = reg.installing;
-        if (!sw) return;
-        sw.addEventListener('statechange', () => {
-          // A new SW has taken control while an old one was running — refresh once.
-          if (sw.state === 'activated' && navigator.serviceWorker.controller) {
-            if (!window.__reloadedForSW) { window.__reloadedForSW = true; }
-          }
-        });
-      });
+      // Proactively check for a new version now and whenever the tab refocuses,
+      // so an open tab never lingers on stale code between deploys.
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
     }).catch(() => { /* SW optional — app works without it */ });
   });
 }
