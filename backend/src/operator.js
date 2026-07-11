@@ -19,7 +19,7 @@ export const OPERATOR_FEES = {
   shortNoticeGbp: 60,    // date change within 30 days of departure
   roomUpgradeGbp: 55,    // hotel room upgrade service fee (rate delta on top)
 };
-const GBP_TO_USD = 1.27;
+const GBP_TO_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266) — consistent everywhere
 const BOARD_UPGRADE = { 'Bed & breakfast': 0.06, 'Half board': 0.16, 'Full board': 0.26, 'All inclusive': 0.42 };
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }

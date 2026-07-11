@@ -3069,7 +3069,8 @@ test('assistant operates on hotels too (add nights, upgrade room/board)', () => 
   assert.ok(/CONFIRM/i.test(assist('add 2 nights to my hotel', u.id).reply));
   assist('confirm', u.id);
   assert.equal(b.option.components[1].details.nights, 9, 'stay extended by 2 nights');
-  assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 200), '2 × £100/night charged');
+  // £127/night at the 0.79 anchor (1/0.79 ≈ 1.266) = £100.33/night → £200.66 for 2.
+  assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 200.66), '2 × £100.33/night charged at the platform anchor');
   // Whole-trip date change moves flight AND hotel
   assist('move my trip to 15 November 2027', u.id);
   assist('confirm', u.id);

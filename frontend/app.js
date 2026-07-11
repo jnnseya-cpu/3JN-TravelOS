@@ -386,11 +386,14 @@ let autosaveT;
 function autosaveIntent() {
   const status = $('#autosaveStatus');
   const text = $('#intentInput')?.value || '';
+  // Drafts are per-account (SEC-6). With no signed-in user there is nowhere
+  // private to save — skip the call silently rather than nag an anon visitor.
+  if (!state.user) { if (status) status.textContent = ''; return; }
   if (status) status.textContent = '✍ saving…';
   clearTimeout(autosaveT);
   autosaveT = setTimeout(async () => {
     try {
-      const d = await api('/api/drafts/intent', { method: 'PUT', body: JSON.stringify({ payload: { text } }) });
+      const d = await api('/api/drafts/intent', { method: 'PUT', body: JSON.stringify({ payload: { text } }), silent: true });
       if (status) status.textContent = '✓ autosaved';
     } catch { if (status) status.textContent = ''; }
   }, 700);

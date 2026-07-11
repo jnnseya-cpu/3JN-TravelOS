@@ -111,7 +111,7 @@ export function estimateRequestCost(routeInfo) {
 // Every metered AI action must sell for at least (1 + MIN_AI_MARGIN)× its
 // provider cost — i.e. a 100% minimum margin. ACU sells at £1 = ACU_PER_GBP.
 export const MIN_AI_MARGIN = 1.0; // 100%
-const GBP_TO_USD = 1.27;
+const GBP_TO_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266) — consistent everywhere
 // The provider cost of an action expressed in ACU (what it costs us, in ACU).
 export function providerCostInAcu(costUSD) {
   return ((costUSD || 0) / GBP_TO_USD) * ACU_PER_GBP;

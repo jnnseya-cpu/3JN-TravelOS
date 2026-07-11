@@ -983,7 +983,7 @@ app.get('/api/admin/profitability', safe((req, res) => {
   const dash = profitabilityDashboard();
   const costs = aiCostReport();
   // ACU economics: what each AI provider costs us vs what ACUs earn.
-  const GBP_TO_USD = 1.27;
+  const GBP_TO_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266) — consistent everywhere
   const acuRevenueUSD = dash.streams.acuSalesRevenueUSD || 0;
   const aiActualUSD = costs.totalActualUSD || 0;
   const grossProfitUSD = Math.round((acuRevenueUSD - aiActualUSD) * 100) / 100;
@@ -2367,14 +2367,21 @@ app.get('/api/admin/audit', safe((req, res) => {
 }));
 
 // ---- Autosave drafts ------------------------------------------------------
+// SEC-6: a draft holds half-entered booking PII (name, passport). It MUST be
+// per-account — an anonymous save landed in a single shared "anon:" bucket, so
+// one visitor could read another visitor's draft. Require a signed-in account;
+// the app always provisions one before the booking form, so real users are
+// unaffected while the cross-session leak is closed.
 app.put('/api/drafts/:key', safe((req, res) => {
   const user = currentUser(req);
-  const rec = saveDraft(user?.id, req.params.key, (req.body || {}).payload);
+  if (!user) return res.status(401).json({ error: 'auth-required', saved: false });
+  const rec = saveDraft(user.id, req.params.key, (req.body || {}).payload);
   res.json({ saved: true, savedAt: rec.savedAt });
 }));
 app.get('/api/drafts/:key', safe((req, res) => {
   const user = currentUser(req);
-  res.json({ draft: getDraft(user?.id, req.params.key) });
+  if (!user) return res.json({ draft: null });
+  res.json({ draft: getDraft(user.id, req.params.key) });
 }));
 
 // ---- BitriPay Merchant Portal ---------------------------------------------

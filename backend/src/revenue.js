@@ -33,7 +33,7 @@ export { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE };
 function acuSum(actions) {
   return actions.reduce((s, a) => s + (ACU_ACTIONS[a] || 0), 0);
 }
-const GBP_TO_USD = 1.27;
+const GBP_TO_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266) — consistent everywhere
 function tierFrom(name, depth, actions) {
   const acu = acuSum(actions);
   return { name, depth, acu, aiCostUSD: Math.round(acu * ACU_GBP * GBP_TO_USD * 100) / 100, actions };
