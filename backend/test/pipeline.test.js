@@ -3099,6 +3099,22 @@ test('vendor commission model matches the spec (£1,000 examples + bonus)', () =
   assert.equal(regB.vendorGbp, 50); assert.equal(regB.platformKeepsGbp, 50, 'platform never keeps less than 5%');
 });
 
+test('wave7 MONEY-1: a loyalty-discounted sale never pays a vendor more than 3JN kept', () => {
+  // £1,000 supplier base, but an Elite member's discount left 3JN with only £20
+  // of the £100 headline fee. The vendor's 3% carve (£30 of gross) would exceed
+  // the actual fee → a net LOSS. With the actual fee passed, the carve scales.
+  const s = commissionSplit(1000, 'independent', { actualPlatformFeeGbp: 20 });
+  assert.equal(s.platformFeeGbp, 20, 'reports the actual fee, not the gross 10%');
+  assert.ok(s.vendorGbp <= s.platformFeeGbp, 'vendor never paid more than the fee collected');
+  assert.ok(s.platformKeepsGbp >= 0, 'platform never books a loss on the sale');
+  // Proportional floor holds: independent keeps 7/10 of whatever fee remained.
+  assert.equal(s.vendorGbp, 6, '3/10 of the £20 actual fee');
+  assert.equal(s.platformKeepsGbp, 14, '7/10 of the £20 actual fee');
+  // No actual fee supplied → legacy behaviour (carve off the gross 10%).
+  const legacy = commissionSplit(1000, 'independent');
+  assert.equal(legacy.vendorGbp, 30); assert.equal(legacy.platformKeepsGbp, 70);
+});
+
 test('vendor lifecycle: AI risk review → approved → attributed sale → Friday payout', () => {
   const v = createUser({ email: 'vlife@x.co', name: 'Vendor Life' });
   const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@v'], businessHistory: true });

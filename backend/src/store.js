@@ -1718,7 +1718,9 @@ export function recordVendorSale({ vendorId, bookingId, saleGbp, customerId, fli
   // out more than it brings in. Packages/hotels keep the classic 3-4% carve.
   const split = flightsOnly
     ? flightOnlySplit(takeGbp)
-    : commissionSplit(saleGbp, p.tier, { hasBonus: p.topSellerMonth === monthKey });
+    // Pass the ACTUAL fee 3JN kept (takeGbp, post-loyalty) so a discounted
+    // booking never pays a vendor more commission than the platform earned.
+    : commissionSplit(saleGbp, p.tier, { hasBonus: p.topSellerMonth === monthKey, actualPlatformFeeGbp: takeGbp > 0 ? takeGbp : null });
   // Service-completion gate: commission releases only AFTER the trip happened —
   // the flight's departure/return date passed, the stay checked out, etc.
   const booking = bookingId ? db.bookings.get(bookingId) : null;

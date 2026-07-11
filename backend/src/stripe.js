@@ -48,9 +48,12 @@ async function stripePost(path, data) {
 // Create a hosted Checkout session for a booking payment (deposit or balance).
 // amountMinor is in the currency's minor unit (pence/cents). Returns the
 // hosted payment page URL — the frontend simply redirects to it.
-export async function createCheckoutSession({ amountMinor, currency = 'gbp', description, bookingId, userId, successUrl, cancelUrl, customerEmail }) {
+export async function createCheckoutSession({ amountMinor, currency = 'gbp', description, bookingId, userId, successUrl, cancelUrl, customerEmail, metadata = {} }) {
   if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
   if (!(amountMinor > 0)) return { ok: false, error: 'invalid-amount' };
+  // Base metadata (bookingId/userId) plus any caller-supplied keys (e.g. an ACU
+  // or membership purchase carries kind/pack/tier so the webhook fulfils it).
+  const meta = { bookingId: bookingId || '', userId: userId || '', ...metadata };
   const session = await stripePost('/checkout/sessions', {
     mode: 'payment',
     success_url: successUrl,
@@ -64,8 +67,8 @@ export async function createCheckoutSession({ amountMinor, currency = 'gbp', des
         product_data: { name: description || '3JN Travel OS booking payment' },
       },
     }],
-    metadata: { bookingId: bookingId || '', userId: userId || '' },
-    payment_intent_data: { metadata: { bookingId: bookingId || '', userId: userId || '' } },
+    metadata: meta,
+    payment_intent_data: { metadata: meta },
   });
   return { ok: true, sessionId: session.id, url: session.url };
 }

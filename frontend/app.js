@@ -213,8 +213,10 @@ window.selectTier = async (key) => {
   let data;
   try { data = await api('/api/membership/subscribe', { method: 'POST', body: JSON.stringify({ tier: key }) }); }
   catch { return; }
+  // Live mode: a paid plan opens Stripe Checkout; the webhook activates it.
+  if (data.checkout) { toast('💳 Opening secure checkout…'); window.location.href = data.checkout; return; }
   if (data.user) setUser(data.user);
-  toast(`✓ ${data.user?.membership?.name} active — ${data.acuCredited.toLocaleString()} ACU funded (10% of your plan). Renews monthly.`);
+  toast(`✓ ${data.user?.membership?.name} active — ${(data.acuCredited || 0).toLocaleString()} ACU funded (10% of your plan). Renews monthly.`);
 };
 
 // ---- Boot -----------------------------------------------------------------
@@ -525,6 +527,7 @@ window.placeConciergeDeposit = async () => {
 };
 window.renewMembership = async () => {
   let d; try { d = await api('/api/membership/renew', { method: 'POST', body: '{}' }); } catch { return; }
+  if (d.checkout) { toast('💳 Opening secure checkout…'); window.location.href = d.checkout; return; }
   if (d.user) setUser(d.user);
   toast(`✓ Renewed — ${d.acuCredited?.toLocaleString()} ACU added. Balance ${d.user?.acuBalance?.toLocaleString()} ACU.`);
 };
@@ -3485,6 +3488,8 @@ window.buyAcuFlow = () => {
 window.buyAcu = async (pack) => {
   if (!state.user) { const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ humanCheck: humanCheckPayload(false) }) }); setUser(u.user); }
   try { const data = await api(`/api/account/${state.user.id}/acu`, { method: 'POST', body: JSON.stringify({ pack }) });
+    // Live mode: pay first — the wallet credits when the webhook confirms.
+    if (data.checkout) { toast('💳 Opening secure checkout…'); window.location.href = data.checkout; return; }
     toast(`✓ ${data.charged ? '£' + data.charged + ' charged · ' : ''}balance ${data.balance.toLocaleString()} ACU`);
     setUser({ ...state.user, acuBalance: data.balance });
   } catch { return; }

@@ -9,9 +9,12 @@
 import { RELIABILITY_FLOOR, INTEGRITY_CHECKS } from './suppliers.js';
 import { priceBreakdown } from './pricing.js';
 
-// Keep only verified suppliers at or above the reliability floor.
+// Keep only verified suppliers at or above the reliability floor. A finite
+// priceUSD is mandatory: every downstream picker sorts on priceUSD, and a NaN/
+// undefined price poisons the sort AND the package total (the customer would
+// see "£NaN"). Drop such an offer rather than let it reach a quote.
 function reliableVerified(offers) {
-  return offers.filter((o) => o.verified && o.reliabilityScore >= RELIABILITY_FLOOR);
+  return offers.filter((o) => o && o.verified && o.reliabilityScore >= RELIABILITY_FLOOR && Number.isFinite(o.priceUSD));
 }
 
 // ---- Accommodation privilege rule -------------------------------------------

@@ -58,7 +58,11 @@ export function learnProfile(userId, now = Date.now()) {
   let totalWeight = 0;
 
   for (const ev of events) {
-    const ageDays = Math.max(0, (now - Date.parse(ev.at)) / 86400000);
+    // A missing/malformed `at` makes Date.parse NaN, which cascades NaN through
+    // every weight and poisons the ENTIRE profile. Treat an unparseable date as
+    // "just now" (no decay) so one bad event can't wipe out the learning.
+    const parsedAt = Date.parse(ev.at);
+    const ageDays = Number.isFinite(parsedAt) ? Math.max(0, (now - parsedAt) / 86400000) : 0;
     const decay = Math.pow(0.5, ageDays / HALF_LIFE_DAYS);
     const w = (EVENT_WEIGHTS[ev.event] ?? 0.3) * decay;
     totalWeight += w;

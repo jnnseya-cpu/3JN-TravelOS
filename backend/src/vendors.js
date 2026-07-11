@@ -38,12 +38,29 @@ function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
 // The commission split for one eligible sale. `hasBonus` = seller holds this
 // month's top-seller bonus. Returns every line so the ledger is transparent.
-export function commissionSplit(saleGbp, tierKey, { hasBonus = false } = {}) {
+//
+// PROFITABILITY PROTECTION (MONEY-1): the vendor carve is a share of the 10%
+// fee, and the platform keeps the rest — but a loyalty member's discount is
+// funded OUT OF that fee, so on a discounted booking 3JN actually collects LESS
+// than the headline 10%. Paying the vendor its full 3-4%-of-sale from a fee
+// that has already been eaten by the discount would pay out more than 3JN
+// earned (a NET LOSS on Elite bookings). When the caller knows the ACTUAL fee
+// collected, pass it as `actualPlatformFeeGbp`: the carve then scales to the
+// real fee so the platform keeps its proportional floor and never a loss.
+export function commissionSplit(saleGbp, tierKey, { hasBonus = false, actualPlatformFeeGbp = null } = {}) {
   const tier = VENDOR_TIERS[tierKey] || VENDOR_TIERS.independent;
   const sale = Math.max(0, Number(saleGbp) || 0);
-  const platformFeeGbp = round2(sale * PLATFORM_FEE_RATE);
+  const grossFeeGbp = round2(sale * PLATFORM_FEE_RATE);
+  // The fee 3JN ACTUALLY kept on this sale (post-loyalty). Falls back to the
+  // gross 10% when the caller doesn't supply it → unchanged legacy behaviour.
+  const platformFeeGbp = actualPlatformFeeGbp != null ? round2(Math.max(0, Number(actualPlatformFeeGbp) || 0)) : grossFeeGbp;
   const rate = hasBonus ? tier.bonusRate : tier.commissionRate;
-  const vendorGbp = round2(sale * rate);
+  // Vendor's share of the gross fee, but CAPPED to the same share of the ACTUAL
+  // fee — so platformKeeps = platformFee - vendor is always ≥ 0 and holds the
+  // (PLATFORM_FEE_RATE - rate)/PLATFORM_FEE_RATE proportional floor.
+  const desiredVendorGbp = round2(sale * rate);
+  const maxVendorGbp = round2(platformFeeGbp * (rate / PLATFORM_FEE_RATE));
+  const vendorGbp = Math.min(desiredVendorGbp, maxVendorGbp);
   return {
     tier: tier.key, saleGbp: round2(sale), platformFeeGbp,
     vendorRate: rate, vendorGbp,

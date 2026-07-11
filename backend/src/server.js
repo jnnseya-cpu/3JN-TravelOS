@@ -11,7 +11,7 @@ import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
 import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS } from './instalments.js';
 import {
-  createUser, getUser, buyAcu, saveQuote, getQuote, createBooking,
+  createUser, getUser, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
   adminOverview, adminUsers, adminBookings, adminActivity,
   updateUser, seedAllRoles, ROLES,
@@ -782,9 +782,30 @@ app.post('/api/account/test', safe((req, res) => {
   res.json({ user: getUser(user.id), note: 'Full-access account provisioned — every section unlocked.' });
 }));
 
-app.post('/api/account/:id/acu', safe((req, res) => {
+app.post('/api/account/:id/acu', safe(async (req, res) => {
   if (!requireOwner(req, res, req.params.id)) return;
-  const result = buyAcu(req.params.id, (req.body || {}).pack);
+  const pack = (req.body || {}).pack;
+  // SEC-4: an ACU top-up is a PURCHASE. When Stripe is live it must be paid for
+  // through Checkout — the wallet is credited only by the signed webhook. Never
+  // hand out ACU (which unlock paid features and discounts) for free in
+  // production. Offline/prototype (no Stripe) keeps the simulated instant credit.
+  if (stripeEnabled()) {
+    const p = ACU_PACKS[pack];
+    if (!p) return res.status(400).json({ ok: false, error: 'invalid' });
+    if (p.custom) return res.status(400).json({ ok: false, error: 'contact-sales', message: 'Enterprise ACU volume is priced individually — contact sales@3jntravel.com.' });
+    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const user = currentUser(req);
+    const session = await createCheckoutSession({
+      amountMinor: Math.round(p.gbp * 100), currency: 'gbp',
+      description: `3JN Travel OS — ${p.name} (${p.acu} ACU)`,
+      userId: req.params.id, customerEmail: user?.email,
+      metadata: { kind: 'acu', pack, userId: req.params.id },
+      successUrl: `${origin}/console?acu=1`, cancelUrl: `${origin}/console?acu=0`,
+    });
+    if (!session.ok) return res.status(400).json(session);
+    return res.json({ ok: true, checkout: session.url, requiresPayment: true });
+  }
+  const result = buyAcu(req.params.id, pack);
   res.json(result);
 }));
 
@@ -1124,16 +1145,43 @@ app.post('/api/login', safe((req, res) => {
 // ---- Membership Programme: subscribe / renew / cancel --------------------
 // Joining a plan auto-funds the period's ACUs (10% of the subscription at
 // £1 = 100 ACU). Requires a signed-in account.
-app.post('/api/membership/subscribe', safe((req, res) => {
+// SEC-4: a membership is a paid subscription. When Stripe is live, joining or
+// renewing must go through Checkout and is only activated by the signed webhook
+// — otherwise anyone could self-grant a plan (and its monthly ACU) for free.
+async function membershipCheckout(req, res, tierKey, mode) {
+  const user = currentUser(req);
+  const plan = MEMBERSHIP_TIERS.find((t) => t.key === tierKey);
+  if (!plan) return res.status(400).json({ ok: false, error: 'invalid-tier' });
+  if (!(plan.pricePerMonth > 0)) { // a free tier — no payment needed
+    const r = mode === 'renew' ? renewMembership(user.id) : subscribeMembership(user.id, tierKey);
+    return r.ok ? res.json(r) : res.status(400).json(r);
+  }
+  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const session = await createCheckoutSession({
+    amountMinor: Math.round(plan.pricePerMonth * 100), currency: 'gbp',
+    description: `3JN Travel+ — ${plan.name} (monthly)`,
+    userId: user.id, customerEmail: user.email,
+    metadata: { kind: 'membership', tier: plan.key, mode, userId: user.id },
+    successUrl: `${origin}/console?membership=1`, cancelUrl: `${origin}/console?membership=0`,
+  });
+  if (!session.ok) return res.status(400).json(session);
+  return res.json({ ok: true, checkout: session.url, requiresPayment: true });
+}
+app.post('/api/membership/subscribe', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in to join a membership plan.' });
+  if (stripeEnabled()) return membershipCheckout(req, res, (req.body || {}).tier, 'subscribe');
   const result = subscribeMembership(user.id, (req.body || {}).tier);
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
 }));
-app.post('/api/membership/renew', safe((req, res) => {
+app.post('/api/membership/renew', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (stripeEnabled()) {
+    if (!user.membership?.tier) return res.status(400).json({ ok: false, error: 'no-active-membership' });
+    return membershipCheckout(req, res, user.membership.tier, 'renew');
+  }
   const result = renewMembership(user.id);
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
@@ -1736,7 +1784,15 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
   if (event.type === 'checkout.session.completed') {
     const meta = event.data?.object?.metadata || {};
     const amountMinor = event.data?.object?.amount_total || 0;
-    if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
+    // SEC-4 fulfilment: a paid ACU top-up / membership is credited ONLY here,
+    // by a signature-verified event — never on the unauthenticated POST.
+    if (meta.kind === 'acu' && meta.userId && meta.pack) {
+      const r = buyAcu(meta.userId, meta.pack);
+      if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '⚡', title: 'ACU added', body: `Your wallet is topped up — balance ${r.balance} ACU.` });
+    } else if (meta.kind === 'membership' && meta.userId && meta.tier) {
+      const r = meta.mode === 'renew' ? renewMembership(meta.userId) : subscribeMembership(meta.userId, meta.tier);
+      if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '⭐', title: 'Travel+ active', body: `Your membership is ${meta.mode === 'renew' ? 'renewed' : 'live'} — enjoy your member benefits and monthly ACU.` });
+    } else if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
       // A confirmed exact-quote was paid.
       markQuoteRequestPaid(meta.bookingId, { amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id });
       if (meta.userId) pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Your ${(amountMinor / 100).toFixed(2)} payment is confirmed — your trip is booked at the exact quoted price.` });
@@ -2506,9 +2562,15 @@ if (process.env.NODE_ENV !== 'test') {
     }).catch((e) => console.error('[persist] load failed:', e?.message || e))
       .finally(() => { storeReady = true; });
     // Belt-and-braces periodic flush (covers long-lived Cloud Run instances).
-    const flushEvery = setInterval(() => save(snapshot()), 15000);
+    // GATE on storeReady: before hydrate() lands, the in-memory store is EMPTY,
+    // and snapshotting it would overwrite the real saved data in Firebase with
+    // nothing. Never flush (periodic OR on shutdown) until the load has settled.
+    const flushEvery = setInterval(() => { if (storeReady) save(snapshot()); }, 15000);
     if (flushEvery.unref) flushEvery.unref();
-    const flush = () => { save(snapshot()).finally(() => process.exit(0)); };
+    const flush = () => {
+      if (!storeReady) { process.exit(0); return; } // load never finished — save nothing over good data
+      save(snapshot()).finally(() => process.exit(0));
+    };
     process.on('SIGTERM', flush);
     process.on('SIGINT', flush);
   } else {
