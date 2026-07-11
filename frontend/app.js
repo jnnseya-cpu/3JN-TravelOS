@@ -3454,6 +3454,7 @@ async function renderComms() {
     </div>`).join('');
 
   out.innerHTML = `
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px" onclick="nav('admin')">← Back to Admin</button>
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
       <div class="card pad"><span class="eyebrow">Channel coverage</span><p class="muted" style="font-size:12px;margin:6px 0 8px">How many catalogue events fire on each channel by default</p>${coverage}</div>
@@ -3520,6 +3521,7 @@ async function renderBusiness() {
   const duty = destinations.length ? destinations.map((d) => `<span class="chip">📍 ${d} · risk 92 low</span>`).join('') : '<span class="muted" style="font-size:13px">No active travellers.</span>';
 
   out.innerHTML = `
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px" onclick="nav('admin')">← Back to Admin</button>
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpis}</div>
     <div class="console-grid" style="margin-top:20px">
       <div>

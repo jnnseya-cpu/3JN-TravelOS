@@ -974,10 +974,16 @@ app.get('/api/admin/selftest', safe(async (req, res) => {
   const testPayments = process.env.ALLOW_TEST_PAYMENTS === 'true';
 
   const check = (ok, label, detail, fix = null) => ({ ok, label, detail, fix });
+  const hotelsLive = duffelStaysEnabled() || liveHotelsEnabled();
   const checks = [
     check(duffel.ok, 'Flights (Duffel) can sell real fares',
       duffel.message,
       duffel.ok ? null : 'Set a valid DUFFEL_TOKEN and make sure this host can reach api.duffel.com.'),
+    check(hotelsLive, 'Hotels can be booked',
+      duffelStaysEnabled() ? 'Duffel Stays is ON (uses your existing Duffel token) — hotels auto-book on payment, like flights.'
+        : liveHotelsEnabled() ? 'Amadeus hotels are connected.'
+        : 'No live hotel source — hotels show ESTIMATED prices and cannot be booked for real payment, so a package may show flight-only.',
+      hotelsLive ? null : 'Duffel Stays uses the DUFFEL_TOKEN you already have — just make sure DUFFEL_STAYS is not set to "false" (or add AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET).'),
     check(stripe.ok && stripe.webhookSet, 'Card payments fulfil end-to-end',
       stripe.ok ? (stripe.webhookSet ? stripe.message : 'Stripe key works, but STRIPE_WEBHOOK_SECRET is missing — payments would capture but never issue the ticket.') : stripe.message,
       stripe.ok && stripe.webhookSet ? null : (!stripe.ok ? 'Set STRIPE_SECRET_KEY and make sure this host can reach api.stripe.com.' : 'Add STRIPE_WEBHOOK_SECRET (from your Stripe webhook endpoint) and redeploy.')),
