@@ -2227,14 +2227,37 @@ window.submitReview = async (bookingId) => {
 
 // Access-denied panel for restricted views.
 function accessGate(out, area, roles) {
+  // If you're ALREADY signed in (e.g. as admin@3jntravel.com) but not yet
+  // elevated, you don't need to log in again — just prove the staff PIN right
+  // here. This is the reliable path when the sign-in PIN prompt didn't appear.
+  const signedIn = !!state.user;
   out.innerHTML = `<div class="card pad center" style="max-width:520px;margin:0 auto">
     <div style="font-size:34px">🔒</div>
     <h3 style="margin:10px 0 6px">${area} access required</h3>
     <p class="muted" style="font-size:14px">This area is restricted to <strong>${roles}</strong> accounts and isn't part of the public site.</p>
-    <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>
-    <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
+    ${signedIn
+      ? `<p class="muted" style="font-size:13px;margin-top:10px">Signed in as <strong>${esc(state.user.email || state.user.name || '')}</strong>. If this is a staff account, unlock it with your PIN:</p>
+         <button class="btn btn-gold" style="margin-top:8px" onclick="staffUnlock()">🔓 Unlock with staff PIN</button>
+         <div style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="openAuth('login')">Sign in as a different account</button></div>`
+      : `<button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>
+         <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>`}
   </div>`;
 }
+// Elevate the CURRENTLY signed-in account to admin by proving the staff PIN —
+// works even if the login-time PIN prompt never appeared (cache, etc.). Only
+// succeeds server-side when the account's email is on the ADMIN_EMAILS allowlist.
+window.staffUnlock = async () => {
+  if (!state.user) { openAuth('login'); return; }
+  const pin = window.prompt('Enter the staff access PIN:');
+  if (!pin) return;
+  state.staffPin = pin;
+  try {
+    const d = await api('/api/account/elevate', { method: 'POST', body: JSON.stringify({ staffPin: pin }) });
+    setUser(d.user);
+    toast(`✓ Admin unlocked — welcome, ${d.user.name}.`);
+    nav('admin');
+  } catch (e) { toast(e.message || 'PIN not accepted, or this email is not an admin.'); }
+};
 
 // ---- Admin Super Control Centre -------------------------------------------
 async function renderAdmin() {

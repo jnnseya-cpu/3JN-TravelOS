@@ -4715,6 +4715,31 @@ test('wave7 auth: an ADMIN_EMAILS owner is elevated to admin on login (with the 
   }
 });
 
+test('wave7 auth: /api/account/elevate flips an allowlisted owner to admin with the PIN', async () => {
+  const email = `elev${Date.now()}@x.co`;
+  const u = createUser({ name: 'Elev', email }); // plain consumer
+  const prevPin = process.env.STAFF_ACCESS_PIN;
+  const prevAdmins = process.env.ADMIN_EMAILS;
+  process.env.STAFF_ACCESS_PIN = 'pin-7788';
+  process.env.ADMIN_EMAILS = email;
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // Wrong PIN → denied.
+    const bad = await fetch(`${base}/api/account/elevate`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': u.id }, body: JSON.stringify({ staffPin: 'nope' }) });
+    assert.equal(bad.status, 403);
+    // Right PIN → elevated.
+    const ok = await fetch(`${base}/api/account/elevate`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': u.id, 'x-staff-pin': 'pin-7788' }, body: JSON.stringify({ staffPin: 'pin-7788' }) });
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).user.role, 'admin');
+  } finally {
+    server.close();
+    if (prevPin === undefined) delete process.env.STAFF_ACCESS_PIN; else process.env.STAFF_ACCESS_PIN = prevPin;
+    if (prevAdmins === undefined) delete process.env.ADMIN_EMAILS; else process.env.ADMIN_EMAILS = prevAdmins;
+  }
+});
+
 test('wave7 manifest: travellers are matched to offer passengers by TYPE, not index', () => {
   // Offer order is adult, adult, child. The manifest arrives child-FIRST.
   const offerPassengers = [{ id: 'p1', type: 'adult' }, { id: 'p2', type: 'adult' }, { id: 'p3', type: 'child' }];

@@ -1362,6 +1362,25 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
   res.json({ user, created: !existing });
 }));
 
+// Elevate the ALREADY signed-in account to admin by proving the staff PIN. This
+// is the reliable in-app path when the login-time PIN prompt didn't appear — the
+// user is signed in (x-user-id), so we just verify the PIN and that their email
+// is on the ADMIN_EMAILS allowlist, then flip the role. Same two factors as
+// login (allowlisted email + staff PIN); neither alone is enough.
+app.post('/api/account/elevate', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required', message: 'Sign in first, then unlock with your staff PIN.' });
+  if (!isOwnerEmail(user.email)) {
+    return res.status(403).json({ error: 'not-an-owner', message: 'This account is not on the admin allowlist (ADMIN_EMAILS).' });
+  }
+  if (!staffPin() || !staffPinOk(req)) {
+    return res.status(403).json({ error: 'staff-pin-required', message: 'Incorrect staff access PIN.' });
+  }
+  const out = user.role === 'admin' ? user : (updateUser(user.id, { role: 'admin' }) || user);
+  recordAudit({ actor: user.id, role: 'admin', action: 'account.elevated', entity: 'user', entityId: user.id, summary: `${user.email} unlocked admin via staff PIN` });
+  res.json({ user: out });
+}));
+
 // ---- eSIM Manager ---------------------------------------------------------
 app.get('/api/esims', safe((req, res) => {
   const user = currentUser(req);
