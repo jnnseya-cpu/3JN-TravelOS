@@ -18,6 +18,7 @@ import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
 import { destinationsCatalog } from '../src/destinations.js';
 import { snapshot, hydrate } from '../src/store.js';
+import { markEmailVerified } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
 import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment } from '../src/store.js';
@@ -595,10 +596,14 @@ test('accounts have roles and an editable profile + avatar', () => {
   const u = createUser({ name: 'Pat', role: 'business' });
   assert.equal(u.role, 'business');
   assert.ok(u.avatar, 'has a default avatar');
-  const updated = updateUser(u.id, { name: 'Patricia', avatar: '⭐', bio: 'frequent flyer', role: 'merchant' });
+  // updateUser edits profile fields only — it must NEVER change privilege, even
+  // if a role/allAccess is passed in the patch (self-elevation hole otherwise).
+  const updated = updateUser(u.id, { name: 'Patricia', avatar: '⭐', bio: 'frequent flyer', role: 'merchant', allAccess: true });
   assert.equal(updated.name, 'Patricia');
   assert.equal(updated.avatar, '⭐');
-  assert.equal(updated.role, 'merchant');
+  assert.equal(updated.bio, 'frequent flyer');
+  assert.equal(updated.role, 'business', 'role is NOT changed by a profile edit');
+  assert.equal(updated.allAccess, false, 'allAccess is NOT changed by a profile edit');
 });
 
 test('seedAllRoles provisions one account per role', () => {
@@ -1866,8 +1871,7 @@ test('search cache: fresh results cached; free tier serves from the database', (
 import { grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT } from '../src/store.js';
 
 test('comp elite: admin grants free Elite x2 (1,000 ACU/mo), capped at 5', () => {
-  const admin = createUser({ name: 'The Admin', email: 'theadmin@3jn.example' });
-  updateUser(admin.id, { role: 'admin' });
+  const admin = createUser({ name: 'The Admin', email: 'theadmin@3jn.example', role: 'admin' });
   const nobody = createUser({ name: 'Nobody', email: 'nobody@x.example' });
   // Non-admin cannot grant.
   assert.equal(grantComplimentaryElite(nobody.id, 'x@x.example').error, 'forbidden');
@@ -3198,13 +3202,9 @@ test('staff PIN locks privileged login, demo identities and admin APIs', async (
     const base = `http://127.0.0.1:${server.address().port}`;
     const post = (p, body, h = {}) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: JSON.stringify(body) });
     try {
-      // Seed the role accounts, WITHOUT the pin: privileged ids must be redacted.
-      const seed = await (await post('/api/accounts/seed-roles', {})).json();
-      const admin = seed.accounts.find((a) => a.role === 'admin');
-      assert.equal(admin.id, null, 'admin identity redacted without the PIN');
-      assert.equal(admin.pinRequired, true);
-      const consumer = seed.accounts.find((a) => a.role === 'consumer');
-      assert.ok(consumer.id, 'consumer demo stays one-tap');
+      // With a PIN CONFIGURED, seed-roles fails closed WITHOUT the PIN — the demo
+      // account list (even masked) is not served to an anonymous caller.
+      assert.equal((await post('/api/accounts/seed-roles', {})).status, 403, 'seed fails closed when a PIN is configured but not supplied');
       // WITH the pin → identities unlock.
       const seed2 = await (await post('/api/accounts/seed-roles', { staffPin: 'test-pin-9' })).json();
       const admin2 = seed2.accounts.find((a) => a.role === 'admin');
@@ -4681,8 +4681,7 @@ test('wave7 auth: /api/auth/firebase refuses an unverified token (no more login-
 });
 
 test('wave7 auth: a privileged account cannot be opened by login without a configured staff PIN', async () => {
-  const admin = createUser({ name: 'Priv Admin', email: `priv${Date.now()}@x.co` });
-  updateUser(admin.id, { role: 'admin' });
+  const admin = createUser({ name: 'Priv Admin', email: `priv${Date.now()}@x.co`, role: 'admin' });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -4726,6 +4725,7 @@ test('wave7 auth: an ADMIN_EMAILS owner is elevated to admin on login (with the 
 test('wave7 auth: an ADMIN_EMAILS owner reaches admin endpoints on every request without the PIN', async () => {
   const email = `own${Date.now()}@x.co`;
   const u = createUser({ name: 'Own', email }); // plain consumer in the store
+  markEmailVerified(u.id); // owner has signed in once via Firebase/PIN (sets the verified flag)
   const other = createUser({ name: 'Other', email: `oth${Date.now()}@x.co` });
   const prevPin = process.env.STAFF_ACCESS_PIN;
   const prevAdmins = process.env.ADMIN_EMAILS;
@@ -4753,6 +4753,7 @@ test('wave7 auth: loading an allowlisted owner account self-heals to admin (no P
   const email = `heal${Date.now()}@x.co`;
   const u = createUser({ name: 'Heal', email }); // plain consumer, created before allowlist
   assert.notEqual(u.role, 'admin');
+  markEmailVerified(u.id); // owner has verified via Firebase/PIN at least once
   const prev = process.env.ADMIN_EMAILS;
   process.env.ADMIN_EMAILS = email;
   const server = http.createServer(app);
@@ -4887,4 +4888,109 @@ test('anti-farming: free 50-ACU starter is capped per IP per day', () => {
   assert.equal(c.acuBalance, 0, 'beyond the per-IP cap, no free ACU — farming gets nothing');
   assert.equal(d.acuBalance, 0);
   assert.equal(createUser({ name: 'Other', email: `o${Date.now()}@x.co`, signupIp: '198.51.100.9' }).acuBalance, 50);
+});
+
+// ==== WAVE 8: close all loopholes / backdoors / abuse ========================
+import { earnAcu, claimStripeEvent, recordBehaviour as recordBehaviourFn } from '../src/store.js';
+
+test('wave8 auth: a self-registered owner-email account is NOT admin until verified', async () => {
+  const email = `boss${Date.now()}@x.co`;
+  const prev = process.env.ADMIN_EMAILS;
+  process.env.ADMIN_EMAILS = email;
+  try {
+    // An account merely CLAIMING the owner email (e.g. via a store insert) is a
+    // plain consumer — the overlay requires a server-set verification flag that
+    // public signup can never set.
+    const u = createUser({ name: 'Impostor', email });
+    assert.equal(getUserById(u.id).role, 'consumer', 'unverified owner email is not admin');
+    // Only after the trusted auth path marks it verified does the overlay apply.
+    markEmailVerified(u.id);
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const d = await fetch(`${base}/api/account/${u.id}`, { headers: { 'x-user-id': u.id } }).then((r) => r.json());
+      assert.equal(d.user.role, 'admin', 'verified owner email is promoted');
+    } finally { server.close(); }
+  } finally { if (prev === undefined) delete process.env.ADMIN_EMAILS; else process.env.ADMIN_EMAILS = prev; }
+});
+
+test('wave8 auth: public signup refuses to mint an owner-email account', async () => {
+  const email = `reserved${Date.now()}@x.co`;
+  const prev = process.env.ADMIN_EMAILS;
+  process.env.ADMIN_EMAILS = email;
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const ch = issueHumanChallenge();
+    const humanCheck = { website: '', elapsedMs: MIN_FORM_MS + 500, interactions: 8, a: ch.a, b: ch.b, expiresAt: ch.expiresAt, token: ch.token, answer: ch.a + ch.b };
+    const res = await fetch(`${base}/api/account`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'X', email, humanCheck }) });
+    assert.equal(res.status, 403, 'owner email cannot be registered via public signup');
+    assert.equal((await res.json()).error, 'use-admin-login');
+  } finally {
+    server.close();
+    if (prev === undefined) delete process.env.ADMIN_EMAILS; else process.env.ADMIN_EMAILS = prev;
+  }
+});
+
+test('wave8 auth: record ids are unguessable (high-entropy, not sequential)', () => {
+  const a = createUser({ name: 'Seq A', email: `sa${Date.now()}@x.co` });
+  const b = createUser({ name: 'Seq B', email: `sb${Date.now()}@x.co` });
+  // No attacker can derive B's id from A's — the random suffix has real entropy.
+  assert.notEqual(a.id, b.id);
+  const suffix = a.id.split('_')[1] || '';
+  assert.ok(suffix.length >= 20, `id has a long random suffix (${a.id})`);
+  assert.ok(/[0-9a-f]{20,}/.test(a.id), 'id carries a high-entropy hex tail');
+});
+
+test('wave8 abuse: updateUser can never elevate privilege', () => {
+  const u = createUser({ name: 'Norm', email: `nm${Date.now()}@x.co` });
+  updateUser(u.id, { role: 'admin', allAccess: true, emailVerified: true });
+  const raw = getUserRaw(u.id);
+  assert.equal(raw.role, 'consumer', 'role unchanged');
+  assert.equal(!!raw.allAccess, false, 'allAccess unchanged');
+  assert.equal(!!raw.emailVerified, false, 'emailVerified cannot be set by a profile edit');
+});
+
+test('wave8 money: repeatable reward actions are one-time (no unlimited ACU minting)', () => {
+  const u = createUser({ name: 'Farmer', email: `frm${Date.now()}@x.co` });
+  const start = getUserRaw(u.id).acuBalance;
+  const first = earnAcu(u.id, 'UPLOAD_PHOTO');
+  assert.equal(first.acu, 50, 'first upload rewards once');
+  const second = earnAcu(u.id, 'UPLOAD_PHOTO');
+  assert.equal(second.acu, 0, 'a second upload mints nothing');
+  assert.equal(second.already, true);
+  const shareA = earnAcu(u.id, 'SHARE_ITINERARY');
+  const shareB = earnAcu(u.id, 'SHARE_ITINERARY');
+  assert.equal(shareA.acu, 75);
+  assert.equal(shareB.acu, 0, 'share itinerary is also one-time');
+  assert.equal(getUserRaw(u.id).acuBalance, start + 50 + 75, 'balance grew by exactly one of each');
+});
+
+test('wave8 money: only a PAID booking counts as commitment (unpaid /api/book does not)', () => {
+  const u = createUser({ name: 'Unpaid', email: `up${Date.now()}@x.co` });
+  const opt = { tier: 'smart', components: [], pricing: { currency: 'GBP', symbol: '£', local: { total: 500 }, lines: { totalUSD: 633 } } };
+  const b = createBooking({ userId: u.id, option: opt, lead: { fullName: 'Unpaid U', email: u.email } });
+  assert.equal(usageStatsFn(u.id).priorBookings, 0, 'a confirmed-but-unpaid booking is NOT commitment');
+  recordPayment(b.id, { type: 'stripe-checkout', amount: 500, gateway: 'stripe', reference: `evt_${Date.now()}` });
+  assert.equal(usageStatsFn(u.id).priorBookings, 1, 'once money clears, it counts');
+});
+
+test('wave8 money: Stripe event fulfilment is idempotent (redelivery credits once)', () => {
+  const evt = `evt_test_${Date.now()}`;
+  assert.equal(claimStripeEvent(evt), true, 'first delivery fulfils');
+  assert.equal(claimStripeEvent(evt), false, 'redelivery is a no-op');
+  assert.equal(claimStripeEvent(`evt_other_${Date.now()}`), true, 'a different event still fulfils');
+});
+
+test('wave8 abuse: user-writable telemetry payload is size-capped', () => {
+  const before = db.behaviour.length;
+  const huge = 'x'.repeat(50000);
+  recordBehaviourFn('anon', { event: 'e'.repeat(500), destination: 'd'.repeat(500), payload: { blob: huge } });
+  const rec = db.behaviour[db.behaviour.length - 1];
+  assert.ok(db.behaviour.length === before + 1);
+  assert.ok(rec.event.length <= 80, 'event capped');
+  assert.ok(rec.destination.length <= 80, 'destination capped');
+  assert.deepEqual(rec.payload, {}, 'oversized payload dropped, not stored');
 });

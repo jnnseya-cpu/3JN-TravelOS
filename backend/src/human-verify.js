@@ -82,3 +82,24 @@ export function rateLimitAuth(ip, now = Date.now()) {
   }
   return { ok: true, remaining: MAX_ATTEMPTS_PER_MINUTE - cur.count };
 }
+
+// Per-IP throttle for the EXPENSIVE live-supplier overlay on /api/plan. Each
+// live search fans out to real Duffel/Viator/Mozio calls (paid quota, provider
+// rate limits), so an unauthenticated caller must not be able to hammer it. A
+// real user clicking through options stays well under this; a bot burning our
+// supplier spend is stopped. Separate window/map from the auth limiter.
+const liveSearches = new Map(); // ip -> { count, windowStart }
+export const MAX_LIVE_SEARCHES_PER_MINUTE = 20;
+export function rateLimitLiveSearch(ip, now = Date.now()) {
+  const key = ip || 'unknown';
+  const cur = liveSearches.get(key);
+  if (!cur || now - cur.windowStart > WINDOW_MS) {
+    liveSearches.set(key, { count: 1, windowStart: now });
+    return { ok: true, remaining: MAX_LIVE_SEARCHES_PER_MINUTE - 1 };
+  }
+  cur.count += 1;
+  if (cur.count > MAX_LIVE_SEARCHES_PER_MINUTE) {
+    return { ok: false, error: 'rate-limited', message: 'Too many live searches — please wait a minute.' };
+  }
+  return { ok: true, remaining: MAX_LIVE_SEARCHES_PER_MINUTE - cur.count };
+}

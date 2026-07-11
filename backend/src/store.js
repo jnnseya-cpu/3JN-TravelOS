@@ -2,7 +2,7 @@
 // with Postgres/Firestore; the interface here is intentionally small so it
 // could be swapped out. All state lives for the lifetime of the process.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD } from '../../shared/constants.js';
 import {
@@ -21,7 +21,11 @@ import { accountIsDormantBot } from './bot-defence.js';
 import { PLACEMENT_SECTIONS } from './partners.js';
 
 let counter = 1000;
-const id = (prefix) => `${prefix}_${++counter}`;
+// IDs must be UNGUESSABLE: x-user-id is trusted as the auth principal, so a
+// sequential/enumerable id would let anyone iterate other users' records
+// (universal IDOR). High-entropy random suffix + a monotonic counter prefix so
+// records still sort by creation order without being predictable.
+const id = (prefix) => `${prefix}_${(++counter).toString(36)}${randomBytes(12).toString('hex')}`;
 
 const db = {
   users: new Map(),
@@ -62,6 +66,7 @@ const db = {
   benchmarks: [], // Market Benchmark runs: live fares vs market-leader prices
   fulfilmentOrders: [], // Ops Fulfilment Desk: per-component orders on paid bookings
   sponsoredPlacements: [], // Suppliers paying for LABELLED placement in curated sections { id, partner, section, destination, feeGBPMonth, active, since }
+  processedStripeEvents: [], // Stripe event ids already fulfilled (idempotency — Stripe redelivers at-least-once)
 };
 
 // Ring-buffer cap for the high-frequency append-only logs. Without this they
@@ -71,6 +76,12 @@ const AUDIT_CAP = 20000;
 const NOTIF_CAP = 8000;
 const ACU_TXN_CAP = 12000;
 const PRICE_EVENT_CAP = 5000;
+// Caps for user-writable, publicly-reachable collections so an attacker can't
+// grow the in-memory store without bound (memory-exhaustion DoS). Oldest rows
+// are dropped first; these are operational queues, not the legal audit log.
+const VISA_APP_CAP = 10000;
+const QUOTE_REQ_CAP = 5000;
+const SUPPORT_TICKET_CAP = 5000;
 const capArr = (arr, cap) => { if (Array.isArray(arr) && arr.length > cap) arr.splice(0, arr.length - cap); };
 
 // ---- Communication event delivery log -------------------------------------
@@ -93,12 +104,17 @@ export function listCommsDeliveries(limit = 50) {
 const BEHAVIOUR_CAP = 2000;
 export function recordBehaviour(userId, { event, destination, payload } = {}) {
   if (!event) return null;
+  // This endpoint is unauthenticated telemetry — cap every field so a caller
+  // can't push megabytes of arbitrary JSON per event (memory-exhaustion DoS).
+  // A payload that serialises beyond the limit is dropped rather than stored.
+  let safePayload = {};
+  try { if (payload && JSON.stringify(payload).length <= 2000) safePayload = payload; } catch { /* non-serialisable → drop */ }
   const rec = {
     id: id('beh'),
     userId: userId || 'guest',
-    event,
-    destination: destination || null,
-    payload: payload || {},
+    event: String(event).slice(0, 80),
+    destination: destination ? String(destination).slice(0, 80) : null,
+    payload: safePayload,
     at: new Date().toISOString(),
   };
   db.behaviour.push(rec);
@@ -185,6 +201,7 @@ export function expenseReport(userId) {
 export function recordVisaApplication(assessment) {
   const rec = { id: id('visa'), ...assessment, at: nowISO() };
   db.visaApps.push(rec);
+  capArr(db.visaApps, VISA_APP_CAP);
   recordAudit({ actor: 'visaos', role: 'agent', action: `visa.${assessment.decision.replace(/\s+/g, '-').toLowerCase()}`, entity: 'visa_application', entityId: rec.id, summary: `${assessment.applicant.nationality}→${assessment.applicant.destination} score ${assessment.totalScore}` });
   rec.auditBlock = sealVisaBlock('assessment', { id: rec.id, decision: assessment.decision, totalScore: assessment.totalScore });
   return rec;
@@ -241,6 +258,7 @@ export function recordVisaFile({ applicant, country, visaType, documents, file, 
     embassyDecision: null,
   };
   db.visaApps.push(rec);
+  capArr(db.visaApps, VISA_APP_CAP);
   recordAudit({ actor: userId || 'applicant', role: 'consumer', action: 'visa.application.submitted', entity: 'visa_application', entityId: rec.id, summary: `${rec.applicant.nationality}→${rec.country || rec.applicant.destination} · ${rec.recommendation || rec.decision}` });
   return rec;
 }
@@ -491,7 +509,7 @@ export function accountsFromIpToday(ip) {
   for (const u of db.users.values()) if (u.signupIp === ip && Date.parse(u.createdAt || 0) > dayAgo) n += 1;
   return n;
 }
-export function createUser({ email, name, referredByCode, role, avatar, bio, allAccess, signupIp } = {}) {
+export function createUser({ email, name, referredByCode, role, avatar, bio, allAccess, signupIp, emailVerified } = {}) {
   const userId = id('usr');
   const referralCode = '3JN-' + userId.slice(-4).toUpperCase();
   const safeRole = ROLES.includes(role) ? role : 'consumer';
@@ -516,6 +534,11 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
     // ≈ 10 smart searches). Capped per IP above so it can't be farmed.
     acuBalance: starterAcu,
     signupIp: signupIp || null,
+    // Set TRUE only by the Firebase sign-in bridge (a cryptographically verified
+    // token) or a PIN-proven owner elevation. The owner-admin overlay
+    // (applyOwnerRole) requires this flag, so a self-registered account that
+    // merely CLAIMS an owner email can never become admin — it was never verified.
+    emailVerified: !!emailVerified,
     membership: null, // { tier, name, pricePerMonth, acuPerMonth, active, startedAt, renewsAt }
     referralCode,
     referredByCode: referredByCode || null,
@@ -540,6 +563,31 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
 export function getUser(userId) {
   const u = db.users.get(userId);
   return u ? publicUser(u) : null;
+}
+
+// Stripe idempotency: record an event id the first time we fulfil it and return
+// TRUE only on that first sight. Stripe delivers checkout.session.completed
+// at-least-once and redelivers on any non-2xx — without this, each redelivery of
+// an ACU/membership/deposit purchase would re-credit the wallet / re-place the
+// deposit for a single payment. Capped ring buffer (event ids are small).
+const STRIPE_EVENT_CAP = 10000;
+export function claimStripeEvent(eventId) {
+  if (!eventId) return true; // no id to dedup on — let the handler proceed
+  if (db.processedStripeEvents.includes(eventId)) return false;
+  db.processedStripeEvents.push(eventId);
+  capArr(db.processedStripeEvents, STRIPE_EVENT_CAP);
+  return true;
+}
+
+// Mark an account's email as cryptographically verified. Callable ONLY from the
+// server's trusted auth paths (Firebase token bridge / PIN-proven owner
+// elevation) — this is the flag the owner-admin overlay depends on, so it must
+// never be reachable from a client-supplied profile patch.
+export function markEmailVerified(userId) {
+  const u = db.users.get(userId);
+  if (!u) return null;
+  u.emailVerified = true;
+  return publicUser(u);
 }
 
 export function getUserRaw(userId) {
@@ -955,6 +1003,9 @@ function publicUser(u) {
     name: u.name,
     role: u.role || 'consumer',
     allAccess: !!u.allAccess,
+    // Whether the email was cryptographically verified (Firebase / PIN-proven
+    // owner). The owner-admin overlay keys on this, so it must survive publicUser.
+    emailVerified: !!u.emailVerified,
     avatar: u.avatar,
     bio: u.bio || '',
     points: u.points,
@@ -979,8 +1030,10 @@ export function updateUser(userId, patch = {}) {
   if (typeof patch.name === 'string' && patch.name.trim()) u.name = patch.name.trim().slice(0, 80);
   if (typeof patch.email === 'string' && patch.email.trim()) u.email = patch.email.trim().slice(0, 120);
   if (typeof patch.bio === 'string') u.bio = patch.bio.slice(0, 280);
-  if (typeof patch.role === 'string' && ROLES.includes(patch.role)) u.role = patch.role;
-  if (typeof patch.allAccess === 'boolean') u.allAccess = patch.allAccess;
+  // Privilege fields (role, allAccess, emailVerified) are NEVER settable through
+  // this profile-edit path — they are granted only through dedicated admin/auth
+  // functions. Silently ignore them even if a caller forgot to strip them, so a
+  // future caller can't accidentally open a self-elevation hole.
   if (typeof patch.avatar === 'string' && patch.avatar.length <= 600000) u.avatar = patch.avatar; // ~600KB cap
   if (typeof patch.coverImage === 'string' && patch.coverImage.length <= 900000) u.coverImage = patch.coverImage;
   // Master Travel Profile — filled once, retrieved automatically by every module
@@ -1062,11 +1115,10 @@ export function seedAllRoles() {
 // API and earn the 90% revenue share. Keys are shown in full once on creation;
 // thereafter only a masked prefix is returned (the secret is never re-exposed).
 function randomKey() {
-  // Deterministic-friendly pseudo-random (no Math.random in this sandbox).
-  let s = (++counter * 2654435761) % 4294967296;
-  let out = '';
-  for (let i = 0; i < 32; i++) { s = (s * 1103515245 + 12345) % 4294967296; out += 'abcdefghijklmnopqrstuvwxyz0123456789'[s % 36]; }
-  return out;
+  // API keys grant the 90% revenue share and white-label access, so they must
+  // be cryptographically unguessable — never a seeded PRNG an attacker can
+  // replay from a known counter value.
+  return randomBytes(24).toString('hex');
 }
 
 export function createApiKey(userId, { label, environment } = {}) {
@@ -1625,6 +1677,7 @@ export function createSupportTicket({ userId, intent, message, reason, transcrip
     status: 'open', transcript, createdAt: nowISO(), resolvedAt: null,
   };
   db.supportTickets.push(ticket);
+  capArr(db.supportTickets, SUPPORT_TICKET_CAP);
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'support.escalated', entity: 'ticket', entityId: ticket.id, summary: `${ticket.intent}: ${ticket.reason}` });
   if (userId) pushNotification(userId, { type: 'info', icon: '🎧', title: 'Connected to our team', body: 'Your request needs a human touch — a 3JN travel specialist will pick this up and reply shortly.' });
   return ticket;
@@ -2059,12 +2112,12 @@ export function createQuoteRequest({ userId = null, option, intent, contact = {}
   if (!option) return { ok: false, error: 'option-required' };
   const est = option?.pricing?.local?.total || 0;
   const req = {
-    id: `qr_${db.quoteRequests.length + 1}_${Date.now().toString(36)}`,
+    id: id('qr'),                       // unguessable + collision-free even after capping
     userId,
     status: 'requested',               // requested → priced → paid | cancelled
     tier: option.tier,
     destination: intent?.destination?.city || intent?.destination?.code || '',
-    components: (option.components || []).map((c) => ({ type: c.type, supplier: c.supplier, priceUSD: c.priceUSD, live: !!c.live })),
+    components: (option.components || []).slice(0, 30).map((c) => ({ type: c.type, supplier: c.supplier, priceUSD: c.priceUSD, live: !!c.live })),
     estimatedTotalLocal: est,
     currency: option?.pricing?.currency || 'GBP',
     symbol: option?.pricing?.symbol || '£',
@@ -2083,6 +2136,7 @@ export function createQuoteRequest({ userId = null, option, intent, contact = {}
     createdAt: nowISO(),
   };
   db.quoteRequests.push(req);
+  capArr(db.quoteRequests, QUOTE_REQ_CAP);
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'quote.requested', entity: 'quoteRequest', entityId: req.id, summary: `${req.tier} · ${req.destination} · est ${req.symbol}${est}` });
   if (userId) pushNotification(userId, { type: 'info', icon: '📝', title: 'Exact quote requested', body: `We're confirming the live bookable price for your ${req.tier} ${req.destination} trip. You'll get the exact amount to approve — no charge until you do.` });
   return { ok: true, request: req };
@@ -2169,7 +2223,7 @@ export function sponsoredPlacementRevenueGBP() {
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
 // ---- Bot Defence: dormant-bot sweep + quarantine -------------------------------
 // Flags accounts with machine-generated names/emails AND zero activity.
@@ -3207,7 +3261,16 @@ export function usageStats(userId) {
   const destCounts = {};
   for (const b of week) if (b.destination) destCounts[b.destination] = (destCounts[b.destination] || 0) + 1;
   const sameDestinationRepeats = Math.max(0, ...Object.values(destCounts));
-  const priorBookings = [...db.bookings.values()].filter((b) => b.userId === userId).length;
+  // COMMITMENT = money changed hands. Count only bookings with a real cleared
+  // payment — an unpaid confirmed booking (live mode defers payment to the
+  // webhook, so the record exists before any charge) must NOT flip the user to
+  // "committed". Otherwise a free /api/book with no payment would unlock the
+  // premium tiers for free starter/reward ACU and disable the abuse throttle.
+  const PAID_TYPES = new Set(['deposit', 'instalment', 'full', 'stripe-checkout', 'deposit-credit']);
+  const priorBookings = [...db.bookings.values()].filter((b) =>
+    b.userId === userId
+    && (b.payments || []).some((p) => PAID_TYPES.has(p.type) && Number(p.amount) > 0),
+  ).length;
   // Has the user COMMITTED money (bought ACU or paid a membership)? Used by the
   // margin gate: the free 50-ACU starter must not fund the expensive tiers.
   const hasPurchasedAcu = db.acuTxns.some((t) => t.userId === userId && t.type === 'PURCHASE');

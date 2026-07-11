@@ -20,8 +20,12 @@ export const REWARD_ACTIONS = {
   COMPLETE_TRIP: { key: 'COMPLETE_TRIP', label: 'Completed a holiday', amount: 250 },
   REFER_FRIEND: { key: 'REFER_FRIEND', label: 'Referred a friend (paid booking)', amount: 250 },
   VERIFIED_REVIEW: { key: 'VERIFIED_REVIEW', label: 'Left a verified review', amount: 100 },
-  UPLOAD_PHOTO: { key: 'UPLOAD_PHOTO', label: 'Uploaded a travel photo', amount: 50 },
-  SHARE_ITINERARY: { key: 'SHARE_ITINERARY', label: 'Shared itinerary publicly', amount: 75 },
+  // once: true — these are self-triggered from the client with no server-side
+  // proof that a photo/itinerary actually exists, so they are ONE-TIME lifetime
+  // awards. Without this a script could POST them in a loop to mint unlimited
+  // free ACU (wallet value that funds paid AI searches and the redeem catalogue).
+  UPLOAD_PHOTO: { key: 'UPLOAD_PHOTO', label: 'Uploaded a travel photo', amount: 50, once: true },
+  SHARE_ITINERARY: { key: 'SHARE_ITINERARY', label: 'Shared itinerary publicly', amount: 75, once: true },
   PROMO_BOOKING: { key: 'PROMO_BOOKING', label: 'Booked during a promotion (2× earn)', amount: 0 },
   PROFILE_VERIFIED: { key: 'PROFILE_VERIFIED', label: 'Completed profile verification', amount: 200, once: true },
   PARTNER_SERVICE: { key: 'PARTNER_SERVICE', label: 'Used a partner service', amount: 100 },
