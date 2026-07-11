@@ -712,8 +712,30 @@ app.post('/api/account', safe((req, res) => {
   // granted only through admin paths. Force a plain consumer.
   delete body.role; delete body.allAccess;
   const user = createUser(body);
+  sendWelcomeEmail(user);
   res.json({ user });
 }));
+
+// Welcome email on first registration (best-effort; never blocks signup). Skips
+// placeholder guest addresses and no-ops when SMTP isn't configured.
+function sendWelcomeEmail(user) {
+  try {
+    const to = user?.email;
+    if (!to || /@guest\.3jn$/i.test(to)) return;
+    const name = (user.name || 'traveller').split(' ')[0];
+    sendMail({
+      to,
+      subject: 'Welcome to 3JN Travel OS ✈️',
+      text: `Hi ${name}, welcome to 3JN Travel OS! Your account is ready — search flights, hotels and packages, earn loyalty points, and manage everything in your Console. Questions? Just reply to this email. — The 3JN team`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;background:#0a1020;color:#eef2fb;padding:26px;border-radius:12px">
+        <h2 style="color:#d8b46a;margin:0 0 6px">Welcome to 3JN Travel OS ✈️</h2>
+        <p>Hi ${htmlEsc(name)}, your account is ready.</p>
+        <p style="color:#9aa6c4">Search flights, hotels and complete packages, earn loyalty points on every trip, and manage it all from your Console.</p>
+        <p style="color:#6b7799;font-size:12px">Questions? Just reply to this email or contact info@3jntravel.com.<br/>Powered by Artificial Intelligence · Built for Better Travel.</p>
+      </div>`,
+    }).catch(() => {});
+  } catch { /* welcome email is best-effort */ }
+}
 
 // OWNERSHIP: an account holds passport/PII — only the owner (or an all-access
 // admin) may read it, and never another user's raw bookings.
@@ -1431,6 +1453,7 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
   const created = existing || createUser({ email, name: name || decoded.name || undefined });
+  if (!existing) sendWelcomeEmail(created); // first-time sign-up via Google/email
   // Overlay admin from the env allowlist (consistent across serverless instances).
   const user = applyOwnerRole(created);
   res.json({ user, created: !existing });
