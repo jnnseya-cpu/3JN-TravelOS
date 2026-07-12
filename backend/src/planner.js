@@ -291,7 +291,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // external AI spend, so the ACPE gate is never violated. Downgraded (cached)
   // searches skip it — depth is part of what funding buys.
   const priceDive = gate.allowed && journey
-    ? deepPriceDive({ intent, dest: intent.destination, origin, scan, liveFlights: priceSource.flights === 'live' })
+    ? deepPriceDive({ intent, dest: intent.destination, origin, scan, liveFlights: priceSource.flights === 'live', liveHotels: priceSource.hotel === 'live' })
     : null;
 
   // Fare Prediction Agent — book-now / wait signal before any money moves.

@@ -39,7 +39,11 @@ function shiftDates(intent, days) {
 }
 
 // Run the dive. `scan` is the already-sourced base scan (applySourcing done).
-export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false }) {
+// TRUTH RULE: a saving may only be labelled "verified" when it is computed from
+// REAL live supplier data. On the deterministic estimator (no live feed) every
+// number is an ILLUSTRATIVE ESTIMATE — we never assert it as a booked fact, and
+// we never name a real competitor as overpriced against a price we synthesised.
+export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false, liveHotels = false }) {
   const savings = [];
   let combinationsExplored = Object.values(scan).reduce((s, offers) => s + (offers?.length || 0), 0);
 
@@ -91,33 +95,44 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false 
   }
 
   // ---- 3. Supplier competition: the spread the scan already beat ----------
+  // Verified ONLY when every component compared is live inventory. On the
+  // estimator the spread is between synthesised prices, so it's an estimate and
+  // the wording must not assert it as a booked comparison.
   let supplierSpreadUSD = 0;
+  let spreadAllLive = true;
   for (const offers of Object.values(scan)) {
     if (!offers || offers.length < 2) continue;
     const ok = offers.filter((o) => o.verified && o.reliabilityScore >= 70);
     if (ok.length < 2) continue;
+    if (!ok.every((o) => o.live)) spreadAllLive = false;
     const min = Math.min(...ok.map((o) => o.priceUSD));
     const avg = ok.reduce((s, o) => s + o.priceUSD, 0) / ok.length;
     supplierSpreadUSD += avg - min;
   }
   if (supplierSpreadUSD > 1) {
+    const verified = spreadAllLive;
     savings.push({
       lever: 'Supplier competition',
       savingUSD: round(supplierSpreadUSD),
-      how: 'Every component priced across competing verified suppliers; the floor won.',
-      basis: liveFlights ? 'verified' : 'estimated',
+      how: verified
+        ? 'Every component priced across competing verified suppliers; the floor won.'
+        : 'Estimate: each component compared across competing suppliers so the lowest reliable price wins — confirmed against live inventory before you book.',
+      basis: verified ? 'verified' : 'estimated',
     });
   }
 
   // ---- 4. Negotiated net rates: agent accounts vs public prices -----------
+  // We only claim a negotiated net rate when the offer is LIVE and actually
+  // carries a real public price to beat. On the estimator there is no real
+  // agent booking, so we make NO such claim (it would be untrue).
   const negotiatedUSD = Object.values(scan).flat()
-    .filter((o) => o && o.agent && o.publicPriceUSD > o.priceUSD)
+    .filter((o) => o && o.live && o.agent && o.publicPriceUSD > o.priceUSD)
     .reduce((s, o) => s + (o.publicPriceUSD - o.priceUSD), 0);
   if (negotiatedUSD > 1) {
     savings.push({
       lever: 'Negotiated net rates',
       savingUSD: round(negotiatedUSD),
-      how: 'Booked on 3JN agent accounts below public prices.',
+      how: 'A 3JN partner net rate came in below the public price for this component.',
       basis: 'verified',
     });
   }
@@ -136,12 +151,21 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false 
     for (const [stars, list] of byStars) {
       if (list.length < 2) continue;
       const sorted = [...list].sort((a, b) => a.priceUSD - b.priceUSD);
-      const diff = sorted[sorted.length - 1].priceUSD - sorted[0].priceUSD;
+      const cheaper = sorted[0];
+      const dearer = sorted[sorted.length - 1];
+      const diff = dearer.priceUSD - cheaper.priceUSD;
       if (diff > 1 && (!bestSwap || diff > bestSwap.savingUSD)) {
+        // Only name the dearer property (often a real brand) when the prices are
+        // LIVE. On the estimator we describe it generically — asserting a named
+        // competitor is overpriced against a synthesised price would be untrue.
+        const dearerLabel = liveHotels ? dearer.supplier : `a higher-priced ${stars}★ stay`;
         bestSwap = {
           savingUSD: round(diff),
-          how: `Stay at ${sorted[0].supplier} instead of ${sorted[sorted.length - 1].supplier} — same ${stars}★ rating.`,
-          apply: { hotel: sorted[0].supplier },
+          how: liveHotels
+            ? `Stay at ${cheaper.supplier} instead of ${dearerLabel} — same ${stars}★ rating.`
+            : `Estimate: ${cheaper.supplier} comes in below ${dearerLabel} at the same ${stars}★ rating — confirmed live before you book.`,
+          apply: { hotel: cheaper.supplier },
+          basis: liveHotels ? 'verified' : 'estimated',
         };
       }
     }
@@ -149,37 +173,59 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false 
   }
 
   // ---- Unbeatable-price verdict --------------------------------------------
-  // Our reliable floor total vs what the same basket lists at publicly.
+  // Our reliable floor total vs what the same basket lists at publicly. The
+  // verdict is only stated as fact when the whole basket is LIVE; otherwise it
+  // is an estimate (the public reference is synthesised, not a real quote).
   let ourTotalUSD = 0;
   let publicTotalUSD = 0;
+  let basketAllLive = true;
+  let sawFloor = false;
   for (const offers of Object.values(scan)) {
     const f = floorOf(offers || []);
     if (f == null) continue;
+    sawFloor = true;
     ourTotalUSD += f;
     const cheapest = (offers || []).filter((o) => o.verified && o.reliabilityScore >= 70)
       .sort((a, b) => a.priceUSD - b.priceUSD)[0];
+    if (!cheapest || !cheapest.live) basketAllLive = false;
     publicTotalUSD += (cheapest && cheapest.publicPriceUSD) || f;
   }
+  if (!sawFloor) basketAllLive = false;
   const marginPct = publicTotalUSD > 0 ? Math.round(((publicTotalUSD - ourTotalUSD) / publicTotalUSD) * 1000) / 10 : 0;
 
+  const verdict = marginPct > 0
+    ? (basketAllLive
+      ? `Priced ${marginPct}% under the public floor for the same verified basket.`
+      : `Estimate: around ${marginPct}% under a typical public price for the same basket — confirmed against live inventory before you book.`)
+    : (basketAllLive
+      ? 'Matched to the verified market floor — no cheaper reliable combination found.'
+      : 'Estimate: matched to the typical market floor — no cheaper reliable combination found.');
+
   const anyIndicative = savings.some((x) => x.basis === 'indicative' || x.basis === 'estimated');
+  const anyVerified = savings.some((x) => x.basis === 'verified') || basketAllLive;
+  // Truthful top-level basis: verified only when nothing is an estimate; mixed
+  // when it's a blend; estimated when the whole dive is illustrative.
+  const topBasis = !anyIndicative && anyVerified ? 'verified' : (anyVerified ? 'mixed' : 'estimated');
+  const estimatedOnly = !anyVerified;
   return {
     leversChecked: 4,
     combinationsExplored,
     savings,
-    // How to read the numbers: with live fares on, alternative-date/airport
-    // savings are INDICATIVE (re-search to confirm the exact live fare); the
-    // supplier/negotiated levers reflect the fares actually compared.
-    basis: liveFlights ? (anyIndicative ? 'mixed' : 'verified') : 'indicative',
-    indicativeNote: anyIndicative ? 'Alternative-date and alternative-airport savings are indicative — tap Re-search to confirm the exact live fare before booking. You are only ever charged a confirmed bookable price.' : null,
+    liveBasket: basketAllLive,
+    // How to read the numbers. Estimator mode: every figure is illustrative and
+    // confirmed against live inventory before any payment. Live mode: alternative
+    // date/airport savings are indicative (re-search to confirm the exact fare).
+    basis: topBasis,
+    indicativeNote: estimatedOnly
+      ? 'These savings are illustrative estimates from our pricing model — every price is confirmed against live inventory before you pay, and you are only ever charged a real, bookable amount.'
+      : (anyIndicative ? 'Alternative-date and alternative-airport savings are indicative — tap Re-search to confirm the exact live fare before booking. You are only ever charged a confirmed bookable price.' : null),
     totalIdentifiedUSD: round(savings.reduce((s, x) => s + x.savingUSD, 0)),
     unbeatable: {
       ourFloorUSD: round(ourTotalUSD),
       publicFloorUSD: round(publicTotalUSD),
       marginPct,
-      verdict: marginPct > 0
-        ? `Priced ${marginPct}% under the public floor for the same verified basket.`
-        : 'Matched to the verified market floor — no cheaper reliable combination found.',
+      live: basketAllLive,
+      verdict,
     },
   };
 }

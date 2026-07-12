@@ -669,11 +669,11 @@ function renderOptions(data) {
   const dive = data.priceDive;
   const diveCard = dive ? `
     <div class="card pad" style="margin-bottom:20px">
-      <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers</span>
+      <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers${dive.basis === 'estimated' ? ' · estimated' : ''}</span>
       ${dive.savings.length ? dive.savings.map((sv, i) => {
-        const indicative = sv.basis === 'indicative' || sv.basis === 'estimated';
         const tag = sv.basis === 'verified' ? '<span class="chip" style="font-size:9px;border-color:rgba(121,217,155,.4);color:#79d99b">verified</span>'
-          : indicative ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
+          : sv.basis === 'estimated' ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">estimate</span>'
+          : sv.basis === 'indicative' ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
         let applyBtn = '';
         if (sv.apply && (sv.apply.shiftDays || sv.apply.airport)) {
           window.__diveApply = window.__diveApply || {};

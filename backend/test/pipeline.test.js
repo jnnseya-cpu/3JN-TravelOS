@@ -1257,6 +1257,35 @@ test('price dive: skipped for utility-only purchases (no journey)', () => {
   if (r.stage === 'options') assert.equal(r.priceDive, null);
 });
 
+test('price dive TRUTH: estimator never claims verified/booked facts or names a competitor as overpriced', () => {
+  const r = plan({
+    text: 'Dubai from London in August for 7 nights, flights and hotel, cheapest reliable',
+    context: GB, user: null, searchTier: 'deep',
+  });
+  const dive = r.priceDive;
+  assert.ok(dive);
+  // 1. On the estimator (no live keys), nothing is presented as "verified".
+  assert.equal(dive.basis, 'estimated');
+  assert.ok(dive.savings.every((s) => s.basis !== 'verified'), 'no synthesised saving is marked verified');
+  assert.equal(dive.unbeatable.live, false);
+  // 2. No claim of a completed agent-account booking (that lever is live-only).
+  assert.ok(!dive.savings.some((s) => /Booked on 3JN agent/i.test(s.how)), 'no false booked-on-agent claim');
+  assert.ok(!dive.savings.some((s) => s.lever === 'Negotiated net rates'), 'negotiated-rate lever is gated to live data');
+  // 3. The hotel swap never names a real competitor brand as the overpriced one.
+  const swap = dive.savings.find((s) => /Hotel swap/i.test(s.lever));
+  if (swap) {
+    assert.match(swap.how, /Estimate:/, 'swap is labelled an estimate');
+    assert.match(swap.how, /higher-priced/, 'the dearer option is described generically, not named');
+    for (const brand of ['Rove Hotels', 'Atlantis The Royal', 'Address Downtown', 'Premier Inn']) {
+      assert.ok(!swap.how.includes(`instead of ${brand}`), `does not name ${brand} as overpriced`);
+    }
+  }
+  // 4. The unbeatable verdict is stated as an estimate, not a fact.
+  assert.match(dive.unbeatable.verdict, /^Estimate:/);
+  // 5. A plain-English disclosure is attached.
+  assert.match(dive.indicativeNote, /illustrative estimate/i);
+});
+
 // ---- Community Host Marketplace: anyone can host, inside the OS -------------
 import { createHostListing, listHostListings, hostListingsForCity, hostEarnings, registerHost, updateHostListing, hostBookings, reviewHostListing, adminUserHostOverview } from '../src/store.js';
 
@@ -2793,8 +2822,10 @@ test('deep price dive: alternative-date/airport savings are INDICATIVE under liv
   const scan = null; // exercise via the planner-produced dive instead
   const pd = r.priceDive;
   if (pd) {
-    // Estimated engine (no live keys in test) → dive basis is 'indicative'.
-    assert.equal(pd.basis, 'indicative');
+    // Estimated engine (no live keys in test) → the WHOLE dive is an estimate,
+    // and every figure must be labelled honestly (never "verified").
+    assert.equal(pd.basis, 'estimated');
+    assert.ok(pd.savings.every((sv) => sv.basis === 'estimated' || sv.basis === 'indicative'), 'no synthesised saving is marked verified');
     for (const sv of pd.savings) assert.ok(['indicative', 'estimated', 'verified'].includes(sv.basis), `${sv.lever} has a basis`);
   }
   // Directly: with liveFlights=true, date/airport levers are marked indicative
