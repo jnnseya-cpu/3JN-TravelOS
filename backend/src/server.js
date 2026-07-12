@@ -764,7 +764,7 @@ app.post('/api/contact', safe(async (req, res) => {
 app.get('/api/auth/challenge', safe((req, res) => {
   res.json(issueHumanChallenge());
 }));
-app.post('/api/account', safe((req, res) => {
+app.post('/api/account', safe(async (req, res) => {
   const body = req.body || {};
   const ip = clientIp(req);
   const rl = rateLimitAuth(ip);
@@ -793,18 +793,22 @@ app.post('/api/account', safe((req, res) => {
     return res.status(403).json({ error: 'use-admin-login', message: 'This email is reserved. Please sign in with your password on the admin login.' });
   }
   const user = createUser({ ...body, signupIp: ip }); // ip → per-IP starter-ACU cap
-  sendWelcomeEmail(user);
+  await sendWelcomeEmail(user); // AWAIT: complete the send before the serverless freeze
   res.json({ user });
 }));
 
-// Welcome email on first registration (best-effort; never blocks signup). Skips
-// placeholder guest addresses and no-ops when SMTP isn't configured.
-function sendWelcomeEmail(user) {
+// Welcome email on first registration. MUST be AWAITED by the caller before the
+// response is sent: on a serverless host the instance freezes the moment the
+// response goes out, which would kill an un-awaited (fire-and-forget) SMTP send
+// before it completes — the classic "welcome email never arrives" bug. The
+// transporter timeouts above bound the wait, so a slow/dead SMTP can't hang
+// signup. Skips placeholder guest addresses and no-ops when SMTP isn't set.
+async function sendWelcomeEmail(user) {
   try {
     const to = user?.email;
-    if (!to || /@guest\.3jn$/i.test(to)) return;
+    if (!to || /@guest\.3jn$/i.test(to)) return { ok: false, skipped: true };
     const name = (user.name || 'traveller').split(' ')[0];
-    sendMail({
+    return await sendMail({
       to,
       subject: 'Welcome to 3JN Travel OS ✈️',
       text: `Hi ${name}, welcome to 3JN Travel OS! Your account is ready — search flights, hotels and packages, earn loyalty points, and manage everything in your Console. Questions? Just reply to this email. — The 3JN team`,
@@ -814,8 +818,8 @@ function sendWelcomeEmail(user) {
         <p style="color:#9aa6c4">Search flights, hotels and complete packages, earn loyalty points on every trip, and manage it all from your Console.</p>
         <p style="color:#6b7799;font-size:12px">Questions? Just reply to this email or contact info@3jntravel.com.<br/>Powered by Artificial Intelligence · Built for Better Travel.</p>
       </div>`,
-    }).catch(() => {});
-  } catch { /* welcome email is best-effort */ }
+    });
+  } catch { return { ok: false }; /* welcome email is best-effort */ }
 }
 
 // OWNERSHIP: an account holds passport/PII — only the owner (or an all-access
@@ -1655,7 +1659,7 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
   const created = existing || createUser({ email, name: name || decoded.name || undefined, emailVerified: true, signupIp: clientIp(req) });
-  if (!existing) sendWelcomeEmail(created); // first-time sign-up via Google/email
+  if (!existing) await sendWelcomeEmail(created); // AWAIT so it survives the serverless freeze
   // This sign-in proved the email via a verified Firebase token — record it so the
   // owner-admin overlay (which requires emailVerified) applies. An account that
   // pre-existed from another path only becomes verified here, through Firebase.

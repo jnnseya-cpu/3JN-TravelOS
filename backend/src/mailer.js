@@ -25,6 +25,11 @@ export function initMailer() {
       port,
       secure: port === 465, // SSL on 465
       auth: { user: MAIN_CONTACT, pass },
+      // Bound every phase so a slow/dead SMTP fails fast instead of hanging a
+      // request that now AWAITS the send (welcome email etc.) before responding.
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 8000,
     });
     enabled = true;
     return { enabled: true, host: env.SMTP_HOST || 'smtp.hostinger.com', port };
