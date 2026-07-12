@@ -104,6 +104,7 @@ function nav(view) {
   const el = $(`#view-${view}`);
   if (el) el.classList.add('active');
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (view === 'deals') renderDeals();
   if (view === 'console') renderConsole();
   if (view === 'admin') renderAdmin();
   if (view === 'comms') renderComms();
@@ -2358,6 +2359,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
       <button class="btn btn-ghost btn-sm" onclick="openPlacements()">💰 Sponsored placements</button>
       <button class="btn btn-ghost btn-sm" onclick="manageUser()">👤 Manage user (ACU / membership)</button>
+      <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
     </div>
     <div id="selfTestOut"></div>
     <div class="kpi-grid">${kpiCards}</div>
@@ -2915,6 +2917,206 @@ window.addBasketAddon = (label) => {
     input.focus();
   }
   toast(`＋ ${label} added to your trip — hit Search and it's priced inside the package.`);
+};
+
+// ---- Curated Deals Catalogue ----------------------------------------------
+// The real, ready-to-book products. Price shown = price paid (all-in). Buying
+// creates a real confirmed booking and either opens Stripe checkout or (until
+// card payments are live) takes a reservation our team confirms.
+let __dealsCache = {};
+function dealBanner(d) {
+  const img = d.image || '';
+  const base = 'height:150px;width:100%;border-radius:12px 12px 0 0';
+  if (img.startsWith('data:')) return `<div style="${base};background-image:url('${img}');background-size:cover;background-position:center"></div>`;
+  const emoji = img && img.length <= 4 ? img : ({ package: '🧳', hotel: '🏨', flight: '✈️', experience: '🎟️', cruise: '🛳️', transfer: '🚘', other: '🌍' }[d.category] || '🌍');
+  return `<div style="${base};display:flex;align-items:center;justify-content:center;font-size:52px;background:linear-gradient(135deg,#141b2e,#20293f)">${emoji}</div>`;
+}
+async function renderDeals() {
+  const out = $('#dealsOut');
+  if (!out) return;
+  let data;
+  try { data = await api('/api/deals'); } catch { out.innerHTML = '<div class="card pad muted">Failed to load deals.</div>'; return; }
+  const deals = data.deals || [];
+  deals.forEach((d) => { __dealsCache[d.id] = d; });
+  if (!deals.length) {
+    out.innerHTML = '<div class="card pad center muted">New deals are landing soon — check back shortly, or <span class="lnk" data-nav="planner">plan a custom trip</span>.</div>';
+    return;
+  }
+  const cards = deals.map((d) => {
+    const sym = '£';
+    const price = `${sym}${Number(d.priceGBP).toLocaleString()}`;
+    const was = d.wasPriceGBP ? `<span class="muted" style="text-decoration:line-through;font-size:13px;margin-right:6px">${sym}${Number(d.wasPriceGBP).toLocaleString()}</span>` : '';
+    const per = d.perPerson ? ' <span class="muted" style="font-size:11px">pp</span>' : '';
+    const from = d.fromPrice ? '<span class="muted" style="font-size:11px">from </span>' : '';
+    const loc = [d.destinationCity, d.destinationCountry].filter(Boolean).join(', ');
+    const window = d.travelFrom || d.travelTo ? `<div class="muted" style="font-size:11.5px;margin-top:4px">🗓 ${esc(d.travelFrom || '')}${d.travelTo ? ' → ' + esc(d.travelTo) : ''}</div>` : '';
+    const incl = (d.inclusions || []).slice(0, 5).map((x) => `<span class="chip">${esc(x)}</span>`).join('');
+    const soldOut = d.soldOut;
+    const remain = d.remaining != null && d.remaining <= 5 && !soldOut ? `<div class="muted" style="font-size:11px;color:var(--gold);margin-top:4px">Only ${d.remaining} left</div>` : '';
+    return `
+      <div class="card deal-card" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
+        ${dealBanner(d)}
+        <div class="pad" style="display:flex;flex-direction:column;flex:1">
+          ${d.featured ? '<span class="chip" style="align-self:flex-start;border-color:rgba(216,180,106,.5);color:var(--gold);margin-bottom:6px">★ Featured</span>' : ''}
+          <h3 style="margin:2px 0 2px">${esc(d.title)}</h3>
+          ${loc ? `<div class="muted" style="font-size:12.5px">📍 ${esc(loc)}${d.nights ? ' · ' + d.nights + ' nights' : ''}</div>` : ''}
+          ${d.summary ? `<p class="muted" style="font-size:12.5px;margin:8px 0">${esc(d.summary)}</p>` : ''}
+          <div class="exp-tags" style="margin:4px 0">${incl}</div>
+          ${window}
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:auto;padding-top:12px">
+            <div>${was}${from}<span style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${price}</span>${per}</div>
+          </div>
+          ${remain}
+          <button class="btn ${soldOut ? 'btn-ghost' : 'btn-gold'} btn-sm btn-block" style="margin-top:10px" ${soldOut ? 'disabled' : `onclick="openDealCheckout('${d.id}')"`}>${soldOut ? 'Sold out' : 'Book this deal →'}</button>
+        </div>
+      </div>`;
+  }).join('');
+  out.innerHTML = `<div class="dest-grid">${cards}</div>
+    <p class="muted center" style="font-size:11.5px;margin-top:16px">Every deal is a real, all-inclusive price confirmed by our travel team. ${data.stripeReady ? 'Pay securely by card.' : 'Reserve now — our team confirms your booking and takes payment.'}</p>`;
+}
+window.openDealCheckout = (dealId) => {
+  const d = __dealsCache[dealId];
+  if (!d) return;
+  const sym = '£';
+  const stripeReady = true; // resolved server-side; label adjusts after submit
+  modal(`
+    <span class="eyebrow">Book · ${esc(d.title)}</span>
+    <h3 style="margin:6px 0 2px">${sym}${Number(d.priceGBP).toLocaleString()}${d.perPerson ? ' <span class="muted" style="font-size:12px">per person</span>' : ' total'}</h3>
+    ${d.summary ? `<p class="muted" style="font-size:12.5px">${esc(d.summary)}</p>` : ''}
+    <div class="form-grid" style="margin-top:12px">
+      ${d.perPerson ? '<label>Travellers<input id="dealPax" type="number" min="1" max="30" value="2"></label>' : '<input id="dealPax" type="hidden" value="1">'}
+      <label>Full name<input id="dealName" placeholder="Your name" value="${esc(state.user?.name || '')}"></label>
+      <label>Email<input id="dealEmail" type="email" placeholder="you@email.com" value="${esc(state.user?.email || '')}"></label>
+      <label>Phone (optional)<input id="dealPhone" placeholder="+44…"></label>
+    </div>
+    ${d.termsNote ? `<p class="muted" style="font-size:11px;margin-top:8px">${esc(d.termsNote)}</p>` : ''}
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitDealCheckout('${d.id}')">Confirm &amp; pay →</button>
+  `);
+};
+window.submitDealCheckout = async (dealId) => {
+  const pax = Math.max(1, parseInt($('#dealPax')?.value || '1', 10) || 1);
+  const lead = {
+    fullName: ($('#dealName')?.value || '').trim(),
+    email: ($('#dealEmail')?.value || '').trim(),
+    phone: ($('#dealPhone')?.value || '').trim(),
+  };
+  if (!lead.email) { toast('Please enter your email.'); return; }
+  let r;
+  try { r = await api(`/api/deals/${dealId}/checkout`, { method: 'POST', body: JSON.stringify({ pax, lead }) }); }
+  catch { return; }
+  if (r.mode === 'stripe' && r.url) { window.location.href = r.url; return; }
+  closeModal();
+  modal(`<span class="eyebrow">Reservation received ✓</span>
+    <h3 style="margin:6px 0">Thank you, ${esc(lead.fullName || 'traveller')}!</h3>
+    <p class="muted" style="font-size:13px">${esc(r.message || 'Our team will contact you shortly to confirm your booking and take payment.')}</p>
+    <p class="muted" style="font-size:12px;margin-top:8px">Reference: <strong>${esc(r.booking?.id || '')}</strong></p>`);
+};
+
+// ---- Admin: Curated Deals manager -----------------------------------------
+window.openDealsManager = async () => {
+  let data;
+  try { data = await api('/api/admin/deals'); } catch { return; }
+  const deals = data.deals || [];
+  const rows = deals.length ? deals.map((d) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid rgba(223,229,238,.08)">
+      <div style="min-width:0">
+        <strong>${esc(d.title)}</strong> <span class="chip" style="font-size:10px">${esc(d.category)}</span>
+        ${d.active ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">live</span>' : '<span class="chip" style="font-size:10px">draft</span>'}
+        <div class="muted" style="font-size:11.5px">£${Number(d.priceGBP).toLocaleString()}${d.perPerson ? 'pp' : ''} · ${esc([d.destinationCity, d.destinationCountry].filter(Boolean).join(', '))}${d.slots != null ? ` · ${d.sold}/${d.slots} sold` : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-ghost btn-sm" onclick="dealForm('${d.id}')">Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleDealActive('${d.id}',${d.active ? 'false' : 'true'})">${d.active ? 'Unpublish' : 'Publish'}</button>
+        <button class="btn btn-ghost btn-sm" style="color:#ff8a8a" onclick="removeDeal('${d.id}')">✕</button>
+      </div>
+    </div>`).join('') : '<div class="muted" style="font-size:13px">No deals yet — create your first ready-to-book product.</div>';
+  modal(`
+    <span class="eyebrow">Curated Deals · ${deals.length}</span>
+    <h3 style="margin:6px 0 10px">Manage ready-to-book products</h3>
+    <button class="btn btn-gold btn-sm" onclick="dealForm()">＋ New deal</button>
+    <div style="margin-top:12px;max-height:52vh;overflow:auto">${rows}</div>`);
+};
+window.dealForm = (dealId) => {
+  const d = dealId ? (window.__adminDeals && window.__adminDeals[dealId]) : null;
+  // Fetch fresh into a cache for editing.
+  const doRender = (deal) => {
+    const v = (k, def = '') => deal && deal[k] != null ? deal[k] : def;
+    modal(`
+      <span class="eyebrow">${deal ? 'Edit' : 'New'} deal</span>
+      <div class="form-grid" style="margin-top:10px">
+        <label>Title<input id="df_title" value="${esc(v('title'))}" placeholder="Dubai 5★ Escape — 5 nights"></label>
+        <label>Category
+          <select id="df_category">${['package', 'hotel', 'flight', 'experience', 'cruise', 'transfer', 'other'].map((c) => `<option value="${c}" ${v('category', 'package') === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+        </label>
+        <label>Destination city<input id="df_city" value="${esc(v('destinationCity'))}" placeholder="Dubai"></label>
+        <label>Destination country<input id="df_country" value="${esc(v('destinationCountry'))}" placeholder="UAE"></label>
+        <label>Price £ (real, all-in)<input id="df_price" type="number" min="0" step="0.01" value="${esc(v('priceGBP'))}"></label>
+        <label>Was £ (optional RRP)<input id="df_was" type="number" min="0" step="0.01" value="${esc(v('wasPriceGBP'))}"></label>
+        <label style="display:flex;align-items:center;gap:8px"><input id="df_perperson" type="checkbox" ${v('perPerson') ? 'checked' : ''} style="width:auto"> Price is per person</label>
+        <label style="display:flex;align-items:center;gap:8px"><input id="df_from" type="checkbox" ${v('fromPrice') ? 'checked' : ''} style="width:auto"> Show as "from"</label>
+        <label>Nights<input id="df_nights" type="number" min="0" value="${esc(v('nights', 0))}"></label>
+        <label>Deposit £ (optional)<input id="df_deposit" type="number" min="0" step="0.01" value="${esc(v('depositGBP'))}"></label>
+        <label>Travel from<input id="df_from_date" type="date" value="${esc(v('travelFrom'))}"></label>
+        <label>Travel to<input id="df_to_date" type="date" value="${esc(v('travelTo'))}"></label>
+        <label>Stock / slots (blank = unlimited)<input id="df_slots" type="number" min="0" value="${deal && deal.slots != null ? deal.slots : ''}"></label>
+        <label>Image (emoji or paste data URL)<input id="df_image" value="${esc(v('image'))}" placeholder="🏝️"></label>
+      </div>
+      <label style="display:block;margin-top:8px">Summary (one line)<input id="df_summary" value="${esc(v('summary'))}" placeholder="Beachfront 5★ with flights, transfers & breakfast"></label>
+      <label style="display:block;margin-top:8px">What's included (one per line)<textarea id="df_incl" rows="4" placeholder="Return flights from London\n5 nights 5★ half-board\nPrivate airport transfers">${esc((v('inclusions', []) || []).join('\n'))}</textarea></label>
+      <label style="display:block;margin-top:8px">Description<textarea id="df_desc" rows="3">${esc(v('description'))}</textarea></label>
+      <label style="display:block;margin-top:8px">Terms note (shown to customer)<input id="df_terms" value="${esc(v('termsNote'))}"></label>
+      <label style="display:block;margin-top:8px">Internal fulfilment note (team only — how to book)<input id="df_fulfil" value="${esc(v('fulfilmentNote'))}" placeholder="Book via XYZ agent portal, net £X"></label>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input id="df_active" type="checkbox" ${deal ? (v('active') ? 'checked' : '') : 'checked'} style="width:auto"> Published (visible to customers)</label>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input id="df_featured" type="checkbox" ${v('featured') ? 'checked' : ''} style="width:auto"> Featured</label>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveDeal(${deal ? `'${deal.id}'` : 'null'})">${deal ? 'Save changes' : 'Create deal'}</button>
+    `);
+  };
+  if (dealId) {
+    api('/api/admin/deals').then((data) => {
+      window.__adminDeals = {}; (data.deals || []).forEach((x) => { window.__adminDeals[x.id] = x; });
+      doRender(window.__adminDeals[dealId] || null);
+    }).catch(() => doRender(null));
+  } else doRender(null);
+};
+window.saveDeal = async (dealId) => {
+  const num = (id) => { const x = $(id)?.value; return x === '' || x == null ? null : Number(x); };
+  const payload = {
+    title: $('#df_title')?.value || '',
+    category: $('#df_category')?.value || 'package',
+    destinationCity: $('#df_city')?.value || '',
+    destinationCountry: $('#df_country')?.value || '',
+    priceGBP: num('#df_price'),
+    wasPriceGBP: $('#df_was')?.value || '',
+    perPerson: $('#df_perperson')?.checked || false,
+    fromPrice: $('#df_from')?.checked || false,
+    nights: num('#df_nights') || 0,
+    depositGBP: $('#df_deposit')?.value || '',
+    travelFrom: $('#df_from_date')?.value || '',
+    travelTo: $('#df_to_date')?.value || '',
+    slots: $('#df_slots')?.value === '' ? '' : num('#df_slots'),
+    image: $('#df_image')?.value || '',
+    summary: $('#df_summary')?.value || '',
+    inclusions: ($('#df_incl')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean),
+    description: $('#df_desc')?.value || '',
+    termsNote: $('#df_terms')?.value || '',
+    fulfilmentNote: $('#df_fulfil')?.value || '',
+    active: $('#df_active')?.checked || false,
+    featured: $('#df_featured')?.checked || false,
+  };
+  if (!payload.title || !(payload.priceGBP > 0)) { toast('A title and a real price are required.'); return; }
+  try {
+    if (dealId) await api(`/api/admin/deals/${dealId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+    else await api('/api/admin/deals', { method: 'POST', body: JSON.stringify(payload) });
+    toast(dealId ? 'Deal updated.' : 'Deal created.');
+    openDealsManager();
+  } catch { /* toast shown by api */ }
+};
+window.toggleDealActive = async (dealId, active) => {
+  try { await api(`/api/admin/deals/${dealId}/active`, { method: 'POST', body: JSON.stringify({ active }) }); openDealsManager(); } catch {}
+};
+window.removeDeal = async (dealId) => {
+  if (!confirm('Delete this deal permanently?')) return;
+  try { await api(`/api/admin/deals/${dealId}`, { method: 'DELETE' }); openDealsManager(); } catch {}
 };
 
 // ---- 3JN VisaOS -----------------------------------------------------------

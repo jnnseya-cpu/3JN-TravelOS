@@ -46,6 +46,8 @@ import {
   userPaymentHistory, enforceInstalments,
   listFulfilmentOrders, completeFulfilmentOrder, updateFulfilmentOrder,
   sweepBotAccounts, unflagBotAccount, applyMobilityEvent,
+  createDeal, updateDeal, setDealActive, deleteDeal, getDeal, publicDeal,
+  listDeals, listDealsAdmin, dealTotalGBP, buildDealOption, createDealFulfilment,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -1387,6 +1389,109 @@ app.post('/api/quote-request/:id/pay', safe(async (req, res) => {
   res.json(session);
 }));
 
+// ============================================================================
+// Curated Deals Catalogue — the real, bookable products for commercial launch
+// ============================================================================
+// Public: browse active deals + view one.
+app.get('/api/deals', safe((req, res) => {
+  res.json({
+    deals: listDeals({ activeOnly: true, category: req.query.category || null, featured: req.query.featured === '1' ? true : null }),
+    stripeReady: stripeEnabled(),
+  });
+}));
+app.get('/api/deals/:id', safe((req, res) => {
+  const d = getDeal(req.params.id);
+  if (!d || !d.active) return res.status(404).json({ error: 'not-found' });
+  res.json({ deal: publicDeal(d), stripeReady: stripeEnabled() });
+}));
+
+// Buy a curated deal. Creates a real, 'confirmed' booking then either returns a
+// Stripe checkout URL (self-serve card payment) or — when Stripe isn't live yet
+// — records a reservation the ops team collects payment for and fulfils. Either
+// way the order is REAL and lands in the fulfilment desk once paid.
+app.post('/api/deals/:id/checkout', safe(async (req, res) => {
+  const deal = getDeal(req.params.id);
+  if (!deal || !deal.active) return res.status(404).json({ error: 'not-found', message: 'This deal is no longer available.' });
+  if (deal.slots != null && deal.sold >= deal.slots) return res.status(409).json({ error: 'sold-out', message: 'This deal has just sold out.' });
+  const body = req.body || {};
+  const pax = Math.max(1, Math.min(30, Math.round(Number(body.pax) || 1)));
+  const user = currentUser(req);
+  const lead = body.lead && typeof body.lead === 'object' ? {
+    fullName: String(body.lead.fullName || body.lead.name || user?.name || '').slice(0, 80),
+    email: String(body.lead.email || user?.email || '').slice(0, 120),
+    phone: String(body.lead.phone || '').slice(0, 40),
+  } : { fullName: user?.name || '', email: user?.email || '', phone: '' };
+  if (!lead.email) return res.status(400).json({ error: 'contact-required', message: 'A contact email is required to book.' });
+  const option = buildDealOption(deal, pax);
+  const kind = body.kind === 'deposit' && deal.depositGBP ? 'deposit' : 'full';
+  const booking = createBooking({ option, userId: user?.id || null, lead, sourceDealId: deal.id, stripeLive: stripeEnabled() });
+  const payNowGBP = kind === 'deposit' && deal.depositGBP ? deal.depositGBP : (option.pricing.local.total);
+
+  if (stripeEnabled()) {
+    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const session = await createCheckoutSession({
+      amountMinor: Math.round(payNowGBP * 100),
+      currency: 'GBP',
+      description: `3JN Travel — ${deal.title}${kind === 'deposit' ? ' (deposit)' : ''}`.slice(0, 200),
+      bookingId: booking.id,
+      userId: user?.id || '',
+      customerEmail: lead.email,
+      successUrl: `${origin}/console?paid=1&booking=${booking.id}&amt=${encodeURIComponent(payNowGBP)}`,
+      cancelUrl: `${origin}/?dealCancelled=1`,
+    });
+    if (!session.ok) return res.status(400).json(session);
+    return res.json({ ok: true, mode: 'stripe', booking, url: session.url, amountGBP: payNowGBP });
+  }
+
+  // No card gateway yet → take it as a RESERVATION and hand it to the team, who
+  // collect payment (bank transfer / agent) and confirm. Nothing is fulfilled
+  // until payment is recorded, so this never gives product away for free.
+  booking.status = 'reserved-awaiting-payment';
+  createSupportTicket({
+    userId: user?.id || null,
+    intent: 'deal-reservation',
+    message: `New reservation for "${deal.title}" (${pax} pax, £${option.pricing.local.total}). Contact ${lead.fullName || ''} <${lead.email}> ${lead.phone || ''}. Collect payment then confirm. Booking ${booking.id}.${deal.fulfilmentNote ? ' How to fulfil: ' + deal.fulfilmentNote : ''}`,
+    reason: 'deal-reservation',
+  });
+  sendMail({
+    to: MAIN_CONTACT,
+    subject: `New deal reservation — ${deal.title}`,
+    text: `${lead.fullName || ''} <${lead.email}> ${lead.phone || ''}\n${deal.title} · ${pax} pax · £${option.pricing.local.total}\nBooking ${booking.id}. Collect payment and confirm.`,
+    html: `<p><strong>${htmlEsc(lead.fullName || '')}</strong> &lt;${htmlEsc(lead.email)}&gt; ${htmlEsc(lead.phone || '')}</p><p>${htmlEsc(deal.title)} · ${pax} pax · £${option.pricing.local.total}</p><p>Booking ${booking.id}. Collect payment and confirm.</p>`,
+  }).catch(() => {});
+  res.json({ ok: true, mode: 'reservation', booking, amountGBP: payNowGBP, message: 'Reservation received — our team will contact you to confirm and take payment.' });
+}));
+
+// Admin: manage the catalogue.
+app.get('/api/admin/deals', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ deals: listDealsAdmin() });
+}));
+app.post('/api/admin/deals', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const result = createDeal(req.body || {}, currentUser(req).id);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+app.patch('/api/admin/deals/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const result = updateDeal(req.params.id, req.body || {}, currentUser(req).id);
+  if (!result.ok) return res.status(result.error === 'not-found' ? 404 : 400).json(result);
+  res.json(result);
+}));
+app.post('/api/admin/deals/:id/active', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const result = setDealActive(req.params.id, !!(req.body || {}).active, currentUser(req).id);
+  if (!result.ok) return res.status(404).json(result);
+  res.json(result);
+}));
+app.delete('/api/admin/deals/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const result = deleteDeal(req.params.id, currentUser(req).id);
+  if (!result.ok) return res.status(404).json(result);
+  res.json(result);
+}));
+
 // ---- Guaranteed Savings Engine (USP #2) -------------------------------------
 // "If we cannot beat or match your current quote, we refund your search
 // credits." Compares the competing quote to our floor and refunds the ACUs.
@@ -2030,7 +2135,9 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
   // inventory we never held is a legal and reputational red line.
   // Override for Stripe TEST-mode demos only via ALLOW_TEST_PAYMENTS=true.
   const testMode = process.env.ALLOW_TEST_PAYMENTS === 'true' && String(process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test');
-  if (booking.priceBasis !== 'live' && !testMode) {
+  // A CURATED deal is 'confirmed': a real, admin-committed price 3JN will honour
+  // and fulfil, so it is payable exactly like a live fare (no invented estimate).
+  if (booking.priceBasis !== 'live' && booking.priceBasis !== 'confirmed' && !testMode) {
     return res.status(409).json({
       error: 'payment-blocked-estimated-pricing',
       priceBasis: booking.priceBasis || 'estimated',
@@ -2185,6 +2292,12 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       if (booking && paymentIntent) booking.stripePaymentIntent = paymentIntent;
       if (booking && meta.userId) {
         pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Card payment of ${(amountMinor / 100).toFixed(2)} confirmed via Stripe — your booking is secured.` });
+      }
+      // CURATED DEAL: money captured → route to the Ops Fulfilment Desk for the
+      // team to book with the real supplier (manual now, API-ready later).
+      if (booking && booking.sourceDealId) {
+        createDealFulfilment(booking);
+        if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Booking confirmed', body: 'Your package is confirmed and paid — our team is finalising your booking with the supplier and will email your documents shortly.' });
       }
       // AUTO-TICKETING: money is captured — now issue the flight ticket by
       // creating the Duffel order. Runs async; failure flags the booking for a

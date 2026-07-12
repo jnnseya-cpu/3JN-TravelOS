@@ -91,3 +91,25 @@ FIREBASE_SERVICE_ACCOUNT=<json>
 FIREBASE_DATABASE_URL=https://<project>.firebaseio.com
 SMTP_PASS=…                 # + SMTP_FROM; SMTP_HOST/PORT default to Hostinger:465
 ```
+
+## Curated Deals — sell real products on day one (no supplier API needed)
+
+The fastest path to revenue when live supplier feeds aren't connected yet: the
+**Curated Deals** catalogue. These are real packages your team publishes at a
+real, all-in price you fulfil through your agent network.
+
+1. Sign in as an owner/admin → **Admin → Manage deals → ＋ New deal**. Enter a
+   title, a real GBP price, what's included, and an internal fulfilment note
+   (how your team books it — never shown to customers). Publish.
+2. Customers see them under **Deals** and book:
+   - With `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` set → self-serve **card
+     checkout**; on payment the order lands in the **Ops Fulfilment Desk** and
+     the customer is emailed a confirmation.
+   - Without Stripe yet → the buy button takes a **reservation**; your team is
+     emailed to collect payment and confirm. Nothing is fulfilled until paid.
+3. Fulfil each paid order from the ops queue (manual now). When you later
+   connect a live door (Duffel etc.), the same order path is ready to auto-fulfil.
+
+Curated deals are `priceBasis: 'confirmed'` — a real committed price — so they
+are payable exactly like a live fare. The AI estimator stays clearly labelled
+"estimate" and funnels searchers into these deals + the exact-quote flow.

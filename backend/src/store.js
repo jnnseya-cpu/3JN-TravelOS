@@ -67,6 +67,7 @@ const db = {
   fulfilmentOrders: [], // Ops Fulfilment Desk: per-component orders on paid bookings
   sponsoredPlacements: [], // Suppliers paying for LABELLED placement in curated sections { id, partner, section, destination, feeGBPMonth, active, since }
   processedStripeEvents: [], // Stripe event ids already fulfilled (idempotency — Stripe redelivers at-least-once)
+  deals: new Map(), // Curated real-product catalogue (admin-managed, really bookable)
 };
 
 // Ring-buffer cap for the high-frequency append-only logs. Without this they
@@ -1241,7 +1242,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false, sourceDealId = null }) {
   // Sanitise the full passenger manifest (every traveller's name/DOB/passport) —
   // Duffel needs each real name to ticket a group/family flight. Falls back to
   // just the lead when a manifest wasn't supplied.
@@ -1282,12 +1283,18 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     // and stay component came from a real supplier feed (Duffel/Amadeus…).
     // Estimated-price bookings can NEVER take real money (see /api/pay/stripe).
     priceBasis: (() => {
+      // A CURATED DEAL is a real, admin-committed product at a price 3JN will
+      // honour and fulfil — so it is payable ('confirmed'), independent of any
+      // live supplier feed.
+      if (sourceDealId) return 'confirmed';
       const priced = (option?.components || []).filter((c) => ['flight', 'hotel', 'host', 'train', 'coach', 'ferry', 'cruise'].includes(c.type));
       // Community host stays are 3JN's OWN marketplace inventory — a real,
       // fulfillable price (the host committed it), so they count as live.
       const isReal = (c) => c.live || c.details?.community;
       return priced.length && priced.every(isReal) ? 'live' : 'estimated';
     })(),
+    // Which curated catalogue product this booking was bought from (if any).
+    sourceDealId: sourceDealId || null,
     // Optional Booking Protection (£5–£50 by trip value) — six benefits.
     protection: protection || null,
     option,
@@ -1319,7 +1326,9 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   // against the webhook's 'stripe-checkout' line (2× the deposit on planPaid).
   // With Stripe off (current default), behaviour is unchanged: the optimistic
   // deposit stands in for the simulated capture.
-  const awaitExternalCapture = stripeLive && booking.priceBasis === 'live';
+  // A curated deal ('confirmed') captured via Stripe also settles through the
+  // signed webhook, so defer points/loyalty to the real payment there too.
+  const awaitExternalCapture = stripeLive && (booking.priceBasis === 'live' || booking.priceBasis === 'confirmed');
   if (instalment && !awaitExternalCapture) {
     booking.payments.push({ type: 'deposit', amount: instalment.deposit, gateway, method: paymentMethod, at: nowISO(), status: 'paid' });
   }
@@ -2222,7 +2231,7 @@ export function sponsoredPlacementRevenueGBP() {
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
 // ---- Bot Defence: dormant-bot sweep + quarantine -------------------------------
@@ -2688,6 +2697,215 @@ export function hydrate(s) {
 }
 
 export { db };
+
+// ============================================================================
+// Curated Deals Catalogue — REAL, admin-committed products, bookable today
+// ============================================================================
+// The commercial launch surface when no live supplier API is connected: the
+// team publishes real packages/hotels/experiences at a real price they can
+// fulfil through their agent network. These are payable ('confirmed' basis),
+// unlike the AI estimator. Fulfilment is manual (ops queue) now and API-ready
+// later — the same order can auto-complete once a live door opens.
+
+const DEAL_CATEGORIES = ['package', 'hotel', 'flight', 'experience', 'cruise', 'transfer', 'other'];
+const gbp2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+
+// Sanitise + normalise an admin-supplied deal payload. Only whitelisted fields
+// are stored; prices are coerced to non-negative money.
+function normaliseDeal(patch = {}, existing = null) {
+  const d = existing ? { ...existing } : {};
+  if (patch.title != null) d.title = str(patch.title, 120).trim();
+  if (patch.destinationCity != null) d.destinationCity = str(patch.destinationCity, 80).trim();
+  if (patch.destinationCountry != null) d.destinationCountry = str(patch.destinationCountry, 60).trim();
+  if (patch.category != null) d.category = DEAL_CATEGORIES.includes(patch.category) ? patch.category : 'package';
+  if (patch.summary != null) d.summary = str(patch.summary, 220).trim();
+  if (patch.description != null) d.description = str(patch.description, 2500).trim();
+  if (patch.inclusions != null) d.inclusions = (Array.isArray(patch.inclusions) ? patch.inclusions : String(patch.inclusions).split('\n')).map((x) => str(x, 120).trim()).filter(Boolean).slice(0, 15);
+  if (patch.nights != null) d.nights = Math.max(0, Math.min(365, Math.round(Number(patch.nights) || 0)));
+  if (patch.priceGBP != null) d.priceGBP = Math.max(0, gbp2(patch.priceGBP));
+  if (patch.perPerson != null) d.perPerson = !!patch.perPerson;
+  if (patch.fromPrice != null) d.fromPrice = !!patch.fromPrice;
+  if (patch.wasPriceGBP != null) d.wasPriceGBP = patch.wasPriceGBP === '' ? null : Math.max(0, gbp2(patch.wasPriceGBP));
+  if (patch.depositGBP != null) d.depositGBP = patch.depositGBP === '' ? null : Math.max(0, gbp2(patch.depositGBP));
+  if (patch.travelFrom != null) d.travelFrom = str(patch.travelFrom, 10) || null;
+  if (patch.travelTo != null) d.travelTo = str(patch.travelTo, 10) || null;
+  if (patch.image != null) d.image = str(patch.image, 400000); // emoji, gradient token, or small data URL
+  if (patch.termsNote != null) d.termsNote = str(patch.termsNote, 800).trim();
+  if (patch.fulfilmentNote != null) d.fulfilmentNote = str(patch.fulfilmentNote, 800).trim(); // INTERNAL — never public
+  if (patch.slots != null) d.slots = patch.slots === '' || patch.slots === null ? null : Math.max(0, Math.round(Number(patch.slots) || 0));
+  if (patch.active != null) d.active = !!patch.active;
+  if (patch.featured != null) d.featured = !!patch.featured;
+  return d;
+}
+
+export function createDeal(patch = {}, actorId = 'admin') {
+  const d = normaliseDeal(patch);
+  if (!d.title) return { ok: false, error: 'title-required' };
+  if (!(d.priceGBP > 0)) return { ok: false, error: 'price-required', message: 'A real price (GBP) is required — curated products are really bookable.' };
+  const dealId = id('deal');
+  const deal = {
+    id: dealId,
+    title: d.title,
+    destinationCity: d.destinationCity || '',
+    destinationCountry: d.destinationCountry || '',
+    category: d.category || 'package',
+    summary: d.summary || '',
+    description: d.description || '',
+    inclusions: d.inclusions || [],
+    nights: d.nights || 0,
+    priceGBP: d.priceGBP,
+    perPerson: !!d.perPerson,
+    fromPrice: !!d.fromPrice,
+    wasPriceGBP: d.wasPriceGBP && d.wasPriceGBP > d.priceGBP ? d.wasPriceGBP : null, // only an HONEST RRP
+    depositGBP: d.depositGBP && d.depositGBP < d.priceGBP ? d.depositGBP : null,
+    travelFrom: d.travelFrom || null,
+    travelTo: d.travelTo || null,
+    image: d.image || '',
+    termsNote: d.termsNote || '',
+    fulfilmentNote: d.fulfilmentNote || '',
+    slots: d.slots == null ? null : d.slots,
+    sold: 0,
+    active: d.active != null ? d.active : true,
+    featured: !!d.featured,
+    createdBy: actorId,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  };
+  db.deals.set(dealId, deal);
+  recordAudit({ actor: actorId, role: 'admin', action: 'deal.created', entity: 'deal', entityId: dealId, summary: `${deal.title} · £${deal.priceGBP}${deal.perPerson ? 'pp' : ''}` });
+  return { ok: true, deal };
+}
+
+export function updateDeal(dealId, patch = {}, actorId = 'admin') {
+  const existing = db.deals.get(dealId);
+  if (!existing) return { ok: false, error: 'not-found' };
+  const merged = normaliseDeal(patch, existing);
+  // Keep the honest-RRP and deposit invariants after an edit.
+  merged.wasPriceGBP = merged.wasPriceGBP && merged.wasPriceGBP > merged.priceGBP ? merged.wasPriceGBP : null;
+  merged.depositGBP = merged.depositGBP && merged.depositGBP < merged.priceGBP ? merged.depositGBP : null;
+  merged.updatedAt = nowISO();
+  db.deals.set(dealId, merged);
+  recordAudit({ actor: actorId, role: 'admin', action: 'deal.updated', entity: 'deal', entityId: dealId, summary: Object.keys(patch).join(', ') });
+  return { ok: true, deal: merged };
+}
+
+export function setDealActive(dealId, active, actorId = 'admin') {
+  const d = db.deals.get(dealId);
+  if (!d) return { ok: false, error: 'not-found' };
+  d.active = !!active;
+  d.updatedAt = nowISO();
+  recordAudit({ actor: actorId, role: 'admin', action: active ? 'deal.published' : 'deal.unpublished', entity: 'deal', entityId: dealId, summary: d.title });
+  return { ok: true, deal: d };
+}
+
+export function deleteDeal(dealId, actorId = 'admin') {
+  const d = db.deals.get(dealId);
+  if (!d) return { ok: false, error: 'not-found' };
+  db.deals.delete(dealId);
+  recordAudit({ actor: actorId, role: 'admin', action: 'deal.deleted', entity: 'deal', entityId: dealId, summary: d.title });
+  return { ok: true };
+}
+
+export function getDeal(dealId) { return db.deals.get(dealId) || null; }
+
+// The customer-facing shape — NEVER exposes the internal fulfilment note, and
+// flags sold-out products so the UI can disable buying.
+export function publicDeal(d) {
+  if (!d) return null;
+  const soldOut = d.slots != null && d.sold >= d.slots;
+  const { fulfilmentNote, ...rest } = d;
+  return { ...rest, soldOut, remaining: d.slots == null ? null : Math.max(0, d.slots - d.sold) };
+}
+
+export function listDeals({ activeOnly = true, category = null, featured = null } = {}) {
+  let all = [...db.deals.values()];
+  if (activeOnly) all = all.filter((d) => d.active);
+  if (category) all = all.filter((d) => d.category === category);
+  if (featured != null) all = all.filter((d) => !!d.featured === !!featured);
+  // Featured first, then newest.
+  all.sort((a, b) => (b.featured - a.featured) || (b.createdAt < a.createdAt ? -1 : 1));
+  return all.map(publicDeal);
+}
+
+// Admin view keeps the internal fields (fulfilment note, sold counts).
+export function listDealsAdmin() {
+  return [...db.deals.values()].sort((a, b) => (b.createdAt < a.createdAt ? -1 : 1));
+}
+
+// Total price for a party, honouring per-person pricing.
+export function dealTotalGBP(deal, pax = 1) {
+  const n = Math.max(1, Math.round(Number(pax) || 1));
+  return gbp2(deal.perPerson ? deal.priceGBP * n : deal.priceGBP);
+}
+
+// Build a booking `option` from a curated deal so it flows through the normal
+// booking + Stripe + documents rails. Priced in GBP (the real, committed price).
+export function buildDealOption(deal, pax = 1) {
+  const total = dealTotalGBP(deal, pax);
+  const totalUSD = gbp2(total / GBP_ANCHOR);
+  const perUSD = gbp2((deal.perPerson ? deal.priceGBP : deal.priceGBP / Math.max(1, pax)) / GBP_ANCHOR);
+  return {
+    tier: 'curated',
+    curatedDeal: true,
+    dealId: deal.id,
+    destination: { city: deal.destinationCity || '', country: deal.destinationCountry || '' },
+    dates: { checkIn: deal.travelFrom || null, checkOut: deal.travelTo || null },
+    nights: deal.nights || 0,
+    components: [{
+      type: 'package',
+      supplier: '3JN Travel — Curated',
+      verified: true,
+      confirmed: true, // a real, committed, fulfillable price
+      priceUSD: totalUSD,
+      details: { title: deal.title, inclusions: deal.inclusions, pax, perPersonUSD: perUSD, curated: true },
+    }],
+    priceBasis: 'confirmed',
+    totalUSD,
+    pricing: {
+      currency: 'GBP', symbol: '£',
+      local: { total },
+      lines: { totalUSD, componentsUSD: totalUSD },
+    },
+  };
+}
+
+// A curated-deal booking has PAID — route it to the Ops Fulfilment Desk so the
+// team books it with the real supplier. Manual now; if the deal is later wired
+// to a live door this is where auto-fulfilment would attach. Idempotent per
+// booking.
+export function createDealFulfilment(booking) {
+  if (!booking || !booking.sourceDealId || booking.dealFulfilmentCreated) return null;
+  const deal = db.deals.get(booking.sourceDealId);
+  const lead = booking.leadTraveller || {};
+  const order = {
+    id: id('ford'),
+    bookingId: booking.id,
+    componentType: 'package',
+    componentLabel: `Curated deal — ${deal?.title || booking.sourceDealId}`,
+    channel: 'ops:curated-deal',
+    status: 'new',
+    dealId: booking.sourceDealId,
+    destination: deal?.destinationCity || booking.option?.destination?.city || null,
+    destCountry: deal?.destinationCountry || null,
+    serviceDate: deal?.travelFrom || null,
+    sellPrice: booking.option?.pricing?.local?.total || 0,
+    symbol: booking.option?.pricing?.symbol || '£',
+    sellGbp: booking.option?.pricing?.local?.total || 0,
+    customer: { name: lead.fullName || null, email: lead.email || null, phone: lead.phone || null },
+    userId: booking.userId || null,
+    fulfilmentNote: deal?.fulfilmentNote || null, // the internal how-to-book note for the team
+    inclusions: deal?.inclusions || [],
+    supplierRef: null, note: null, createdAt: nowISO(), completedAt: null,
+  };
+  db.fulfilmentOrders.push(order);
+  booking.dealFulfilmentCreated = true;
+  // Decrement stock on PAYMENT (not on order) so abandoned checkouts never
+  // deplete a limited allocation.
+  if (deal && deal.slots != null) { deal.sold = (deal.sold || 0) + 1; deal.updatedAt = nowISO(); }
+  recordAudit({ actor: 'system', role: 'system', action: 'deal.sold', entity: 'deal', entityId: booking.sourceDealId, summary: `booking ${booking.id} · ${order.symbol}${order.sellPrice}` });
+  return order;
+}
 
 // ---- 3JN Host Marketplace ---------------------------------------------------
 // An end-to-end accommodation system: hosts REGISTER first, then run their own

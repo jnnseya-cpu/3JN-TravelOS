@@ -5025,3 +5025,80 @@ test('wave8 abuse: user-writable telemetry payload is size-capped', () => {
   assert.ok(rec.destination.length <= 80, 'destination capped');
   assert.deepEqual(rec.payload, {}, 'oversized payload dropped, not stored');
 });
+
+// ==== WAVE 9: Curated real-deals catalogue ==================================
+import { createDeal, updateDeal, getDeal, listDeals, publicDeal, listDealsAdmin, buildDealOption, createDealFulfilment, dealTotalGBP, getBooking as getBookingById } from '../src/store.js';
+
+test('wave9 deals: a deal needs a real price and never leaks the internal fulfilment note', () => {
+  assert.equal(createDeal({ title: 'No price' }).error, 'price-required');
+  assert.equal(createDeal({ priceGBP: 999 }).error, 'title-required');
+  const { ok, deal } = createDeal({ title: 'Dubai 5★ Escape', priceGBP: 1299, destinationCity: 'Dubai', destinationCountry: 'UAE', inclusions: ['Return flights', '5 nights 5★'], fulfilmentNote: 'Book via Rayna portal net £980', wasPriceGBP: 1599 });
+  assert.ok(ok);
+  assert.equal(deal.priceBasis, undefined); // deals aren't bookings
+  const pub = publicDeal(deal);
+  assert.equal(pub.fulfilmentNote, undefined, 'internal note never exposed publicly');
+  assert.equal(pub.wasPriceGBP, 1599, 'honest RRP kept (was > price)');
+  // A "was" price below the sell price is dropped (never a fake discount).
+  const cheapMarkup = createDeal({ title: 'Fake sale', priceGBP: 500, wasPriceGBP: 400 }).deal;
+  assert.equal(cheapMarkup.wasPriceGBP, null, 'a was-price below the sell price is refused');
+});
+
+test('wave9 deals: only active deals are public; drafts are admin-only', () => {
+  const draft = createDeal({ title: 'Draft deal', priceGBP: 200, active: false }).deal;
+  const live = createDeal({ title: 'Live deal', priceGBP: 300, active: true }).deal;
+  const publicIds = listDeals({ activeOnly: true }).map((d) => d.id);
+  assert.ok(publicIds.includes(live.id), 'active deal is public');
+  assert.ok(!publicIds.includes(draft.id), 'draft is hidden from the public');
+  assert.ok(listDealsAdmin().some((d) => d.id === draft.id), 'admin sees the draft');
+});
+
+test('wave9 deals: per-person pricing multiplies; buying builds a CONFIRMED (payable) booking', () => {
+  const deal = createDeal({ title: 'Beach week', priceGBP: 700, perPerson: true }).deal;
+  assert.equal(dealTotalGBP(deal, 2), 1400, 'per-person price scales with pax');
+  const option = buildDealOption(deal, 2);
+  assert.equal(option.pricing.local.total, 1400);
+  assert.equal(option.priceBasis, 'confirmed');
+  const b = createBooking({ option, sourceDealId: deal.id, lead: { fullName: 'Buyer', email: 'buyer@x.co' } });
+  assert.equal(b.priceBasis, 'confirmed', 'a curated deal booking is payable, not estimated');
+  assert.equal(b.sourceDealId, deal.id);
+});
+
+test('wave9 deals: fulfilment lands in the ops desk and decrements stock only on payment', () => {
+  const deal = createDeal({ title: 'Limited cruise', priceGBP: 900, slots: 3, fulfilmentNote: 'Book on MSC agent site' }).deal;
+  const b = createBooking({ option: buildDealOption(deal, 1), sourceDealId: deal.id, lead: { fullName: 'Sailor', email: 'sail@x.co' } });
+  assert.equal(getDeal(deal.id).sold, 0, 'stock is not touched until payment');
+  const before = db.fulfilmentOrders.length;
+  const order = createDealFulfilment(b);
+  assert.ok(order, 'an ops order is created on payment');
+  assert.equal(order.channel, 'ops:curated-deal');
+  assert.equal(order.fulfilmentNote, 'Book on MSC agent site', 'the team gets the internal how-to-book note');
+  assert.equal(db.fulfilmentOrders.length, before + 1);
+  assert.equal(getDeal(deal.id).sold, 1, 'stock decremented once paid');
+  // Idempotent — a redelivered webhook must not double-count.
+  assert.equal(createDealFulfilment(b), null, 'no duplicate ops order / stock hit');
+  assert.equal(getDeal(deal.id).sold, 1);
+});
+
+test('wave9 deals: admin CRUD is gated; public browse + reservation checkout work end to end', async () => {
+  const admin = createUser({ name: 'Deal Admin', email: `da${Date.now()}@x.co`, role: 'admin' });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // A consumer cannot create deals.
+    const nope = await fetch(`${base}/api/admin/deals`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x', priceGBP: 10 }) });
+    assert.equal(nope.status, 403);
+    // Admin creates a published deal.
+    const made = await fetch(`${base}/api/admin/deals`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': admin.id }, body: JSON.stringify({ title: 'London Theatre Break', priceGBP: 240, destinationCity: 'London', active: true, inclusions: ['2 nights hotel', 'West End ticket'] }) }).then((r) => r.json());
+    assert.ok(made.ok);
+    const dealId = made.deal.id;
+    // Public sees it.
+    const pub = await fetch(`${base}/api/deals`).then((r) => r.json());
+    assert.ok(pub.deals.some((d) => d.id === dealId), 'published deal is publicly listed');
+    // Checkout with no Stripe configured → a reservation + a real confirmed booking.
+    const co = await fetch(`${base}/api/deals/${dealId}/checkout`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pax: 1, lead: { fullName: 'Guest', email: 'g@x.co' } }) }).then((r) => r.json());
+    assert.ok(co.ok);
+    assert.equal(co.mode, 'reservation', 'without Stripe we take a reservation');
+    assert.equal(getBookingById(co.booking.id).priceBasis, 'confirmed');
+  } finally { server.close(); }
+});
