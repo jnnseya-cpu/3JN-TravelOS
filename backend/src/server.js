@@ -76,7 +76,7 @@ import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
 import { snapshot, flatSnapshot, hydrate } from './store.js';
-import { initPersistence, isEnabled, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
+import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic } from './stripe.js';
@@ -113,9 +113,24 @@ app.use((req, res, next) => {
   next();
 });
 
+// LIVE persistence round-trip test — writes then reads a value through the real
+// backend and returns the ACTUAL reason if it fails (bad service-account JSON,
+// wrong DB URL, permissions, unreachable). Public + unauthenticated on purpose
+// so it can be checked from a browser during setup; it exposes no secrets and no
+// user data. e.g. open /api/persistence-test
+app.get('/api/persistence-test', async (req, res) => {
+  try {
+    const result = await persistenceSelfTest();
+    res.json({ ...result, serverless: IS_SERVERLESS, initError: persistenceInitError() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
-  ok: true, service: '3jn-travel-os', persistence: isEnabled(), email: isMailerEnabled(),
+  ok: true, service: '3jn-travel-os', persistence: isEnabled(), persistenceBackend: persistenceBackend(),
+  serverless: IS_SERVERLESS, email: isMailerEnabled(),
   liveData: liveDataEnabled(), liveFlights: liveFlightsEnabled(), liveHotels: liveHotelsEnabled(),
   liveSchedules: oagScheduleEnabled(),
 }));
@@ -1162,9 +1177,9 @@ app.get('/api/admin/selftest', safe(async (req, res) => {
     check(stripe.ok && stripe.webhookSet, 'Card payments fulfil end-to-end',
       stripe.ok ? (stripe.webhookSet ? stripe.message : 'Stripe key works, but STRIPE_WEBHOOK_SECRET is missing — payments would capture but never issue the ticket.') : stripe.message,
       stripe.ok && stripe.webhookSet ? null : (!stripe.ok ? 'Set STRIPE_SECRET_KEY and make sure this host can reach api.stripe.com.' : 'Add STRIPE_WEBHOOK_SECRET (from your Stripe webhook endpoint) and redeploy.')),
-    check(persistence, 'Data survives a restart (Firebase)',
-      persistence ? 'Firebase persistence is on — bookings/users are saved and restored.' : 'No Firebase configured — data is in memory only and resets on every redeploy/scale.',
-      persistence ? null : 'Set FIREBASE_SERVICE_ACCOUNT and FIREBASE_DATABASE_URL.'),
+    check(persistence, 'Data is shared + survives a restart',
+      persistence ? `Durable store is ON (${persistenceBackend() === 'kv' ? 'Vercel KV / Upstash Redis' : 'Firebase RTDB'}) — accounts/quotes/bookings are shared across instances and saved.` : 'NO durable store — on a serverless host each instance is isolated, so users/quotes "vanish", admin sees no users, and checkout can\'t find the quote.',
+      persistence ? null : 'Turn on EITHER: (easiest) the Vercel KV / Upstash integration → it sets KV_REST_API_URL + KV_REST_API_TOKEN; OR set FIREBASE_SERVICE_ACCOUNT + FIREBASE_DATABASE_URL.'),
     check(email, 'Customers get confirmation emails',
       email ? 'Email is configured — ticket/refund confirmations send.' : 'No email transport — confirmations are logged only, not sent.',
       email ? null : 'Set SMTP_PASS (and SMTP_FROM); host/port default to Hostinger:465.'),
