@@ -1271,8 +1271,21 @@ window.openBooking = async (tier) => {
     <span class="eyebrow">${esc(tier)} package · ${esc(intent.destination.city)}</span>
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
     ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>`}
-    <div class="kv" style="font-weight:700"><span>Deposit today ${inst.engine === 'ai-smart' ? '<span class="muted" style="font-size:11px">(non-refundable)</span>' : ''}</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
-    ${rows}
+    <div class="field" style="margin:10px 0 4px">
+      <label>How would you like to pay?</label>
+      <select id="payChoice" class="in" onchange="togglePayChoice()">
+        <option value="deposit">Deposit now + interest-free instalments</option>
+        <option value="full">Pay in full now (${money2(option.pricing.local.total, sym)})</option>
+      </select>
+    </div>
+    <div id="depositSchedule">
+      <div class="kv" style="font-weight:700"><span>Deposit today ${inst.engine === 'ai-smart' ? '<span class="muted" style="font-size:11px">(non-refundable)</span>' : ''}</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
+      ${rows}
+    </div>
+    <div id="fullSchedule" style="display:none">
+      <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">One payment — your booking is settled in full, nothing more to pay.</div>
+    </div>
 
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller${international ? ' (exact passport spelling)' : ''}</span></div>
     <div class="composer-row" style="margin-top:6px">
@@ -1345,7 +1358,15 @@ window.openBooking = async (tier) => {
       <div class="muted" style="font-size:11px">Card numbers are entered on the secure payment page — never stored by 3JN (PCI SAQ-A).</div>
     </div>
     <div id="bkValidate"></div>
-    <button class="btn btn-gold btn-block" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
+    <button class="btn btn-gold btn-block" id="bkConfirmBtn" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
+};
+// Toggle the deposit schedule vs full-payment view + the confirm button label.
+window.togglePayChoice = () => {
+  const full = $('#payChoice')?.value === 'full';
+  const dep = $('#depositSchedule'); const fl = $('#fullSchedule'); const btn = $('#bkConfirmBtn');
+  if (dep) dep.style.display = full ? 'none' : '';
+  if (fl) fl.style.display = full ? '' : 'none';
+  if (btn) btn.innerHTML = full ? 'Validate, pay in full &amp; confirm' : 'Validate, pay deposit &amp; confirm';
 };
 
 window.confirmBooking = async () => {
@@ -1405,9 +1426,13 @@ window.confirmBooking = async () => {
     const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ name: lead.fullName || 'Guest Traveller', humanCheck: humanCheckPayload(false) }) });
     setUser(u.user);
   }
+  const payInFull = $('#payChoice')?.value === 'full';
   let data;
   try {
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, months: 3, depositPct: 0.2, paymentMethod, lead, travellers }) });
+    // Send the option INLINE as well as the quoteId — on serverless the quote may
+    // have been saved on another instance, so this lets /api/book proceed without
+    // a "quote not found" (payment integrity is still enforced at checkout).
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, option: state.lastQuote.option, intent: window.__intent, months: 3, depositPct: 0.2, paymentMethod, lead, travellers }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
@@ -1418,8 +1443,8 @@ window.confirmBooking = async () => {
     try {
       const st = await api('/api/pay/stripe/status', { silent: true });
       if (st.enabled) {
-        toast('💳 Redirecting to secure card checkout…');
-        const sess = await api('/api/pay/stripe/session', { method: 'POST', body: JSON.stringify({ bookingId: data.booking.id }) });
+        toast(payInFull ? '💳 Redirecting to pay in full…' : '💳 Redirecting to secure card checkout…');
+        const sess = await api('/api/pay/stripe/session', { method: 'POST', body: JSON.stringify({ bookingId: data.booking.id, kind: payInFull ? 'full' : 'deposit' }) });
         if (sess.url) { window.location.href = sess.url; return; }
       }
     } catch (e) {
@@ -2448,7 +2473,12 @@ async function renderAdmin() {
         </div>`).join('') || '<div class="muted" style="font-size:13px">No properties awaiting review.</div>';
       const allListings = (uh.listings || []).map((l) => `<div class="kv"><span>${esc(l.title)} <span class="muted">· ${esc(l.city)}</span></span><span style="color:${l.status === 'live' ? '#79d99b' : l.status === 'rejected' ? '#ff6b6b' : 'var(--gold)'}">${l.status}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No listings.</div>';
       const userRows = (uh.users || []).slice(0, 40).map((u) => `<div class="kv"><span>${esc(u.name)} <span class="muted">· ${esc(u.email)}</span></span><span>${u.role}${u.isHost ? ' · host' : ''} · ${u.bookings} bk · ${u.acuBalance || 0} ACU${u.suspended ? ' · 🚫' : ''}</span></div>`).join('');
-      return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Users & Host Property Management</h2></div>
+      // If the list is empty AND persistence is off on a serverless host, that's
+      // the cause — accounts live only on the instance that created them.
+      const persistWarn = (uh.serverless && uh.persistence === false)
+        ? `<div class="card pad" style="border-color:rgba(255,107,107,.4);margin-bottom:10px"><strong style="color:#ff8a8a">⚠ Data persistence is OFF</strong><div class="muted" style="font-size:12.5px;margin-top:4px">This is a serverless deployment with no database configured, so each instance only sees the accounts created on it — that's why the user list looks empty or changes between refreshes. Set <strong>FIREBASE_SERVICE_ACCOUNT</strong> and <strong>FIREBASE_DATABASE_URL</strong> so every account is shared and durable.</div></div>`
+        : '';
+      return `${persistWarn}<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Users & Host Property Management</h2></div>
         <div class="console-grid">
           <div class="card pad"><span class="eyebrow">Properties awaiting AI verification + review (${(uh.pendingReview || []).length})</span><div style="margin-top:10px">${pend}</div></div>
           <div>

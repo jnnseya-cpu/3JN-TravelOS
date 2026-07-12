@@ -1358,9 +1358,16 @@ app.get('/api/admin/profitability', safe((req, res) => {
 }));
 
 // ---- Admin: users, hosts & property moderation -----------------------------
-app.get('/api/admin/users-hosts', safe((req, res) => {
+app.get('/api/admin/users-hosts', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  res.json(adminUserHostOverview());
+  // FRESHNESS: on serverless this instance may hold only the accounts created on
+  // IT. Pull the latest store from Firebase before answering so the admin always
+  // sees EVERY user, not just this instance's. If persistence is disabled there
+  // is nothing to pull — surface that so the operator knows why the list is thin.
+  if (IS_SERVERLESS && isEnabled()) {
+    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ }
+  }
+  res.json({ ...adminUserHostOverview(), persistence: isEnabled(), serverless: IS_SERVERLESS });
 }));
 app.post('/api/admin/listings/:id/review', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
@@ -2053,9 +2060,21 @@ app.post('/api/book/:id/autopay', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe((req, res) => {
-  const { quoteId, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
-  const quote = getQuote(quoteId);
-  if (!quote) return res.status(404).json({ error: 'quote-not-found' });
+  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
+  let quote = getQuote(quoteId);
+  // SERVERLESS RESILIENCE: the quote may have been saved on a DIFFERENT instance
+  // (or persistence isn't configured), so getQuote misses and the customer hits
+  // "quote not found" and can't pay. The client still holds the full option from
+  // /api/quote — fall back to it and re-save the quote on this instance. Payment
+  // integrity is unaffected: an estimated price can never be charged, and a live
+  // price is re-validated against the real supplier fare at checkout (loss floor).
+  if (!quote) {
+    if (bodyOption && bodyOption.pricing?.local?.total > 0) {
+      quote = saveQuote({ option: bodyOption, intent: bodyIntent || {}, instalment: smartPlanForRequest(req, bodyOption, bodyIntent || {}) });
+    } else {
+      return res.status(404).json({ error: 'quote-not-found', message: 'Your quote expired — please re-run the search and try again.' });
+    }
+  }
   const user = currentUser(req);
 
   // The AI-selected plan from the quote stands — the schedule is re-derived
