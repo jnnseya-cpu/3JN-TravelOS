@@ -159,6 +159,22 @@ app.get('/api/auth/precheck', (req, res) => {
 // collections would be silently erased, and an early save would persist an empty
 // store over good data. Reads may proceed. Tests run on a fresh store (ready).
 let storeReady = process.env.NODE_ENV === 'test';
+// A promise that RESOLVES the moment the initial Firebase load settles. Mutating
+// requests await THIS (bounded) instead of being turned away with a 503 — the
+// load takes ~1-2s, so the user just waits a beat rather than seeing "the
+// service is loading, please retry". Set by initPersistence below; a resolved
+// promise by default (tests / no persistence → nothing to wait for).
+let storeReadyPromise = Promise.resolve();
+// Resolve when ready, or after `ms`, whichever comes first — so a genuinely
+// hung load can never wedge every write forever (we then fail soft below).
+function waitForStoreReady(ms = 8000) {
+  if (storeReady) return Promise.resolve(true);
+  return Promise.race([
+    storeReadyPromise.then(() => true),
+    new Promise((r) => setTimeout(() => r(storeReady), ms)),
+  ]);
+}
+// The in
 // On a serverless host the instance FREEZES the moment it sends a response, so a
 // debounced/background save (setTimeout) never runs and the write is lost — the
 // account/booking vanishes and the user is logged out on the next request. When
@@ -168,7 +184,14 @@ const IS_SERVERLESS = !!(process.env.VERCEL || process.env.K_SERVICE || process.
 app.use(async (req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-    if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
+    // Don't turn the user away while the store loads — WAIT for it (bounded).
+    // The load settles in ~1-2s; awaiting it here means the write just proceeds
+    // a beat later instead of failing with "the service is loading". Only if the
+    // load is genuinely stuck past the timeout do we fall back to the 503.
+    if (!storeReady) {
+      await waitForStoreReady();
+      if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
+    }
     if (IS_SERVERLESS && isEnabled()) {
       // READ-MODIFY-WRITE for serverless: pull the LATEST store from Firebase
       // before mutating, so this instance never overwrites another instance's
@@ -3110,7 +3133,8 @@ if (process.env.NODE_ENV !== 'test') {
   if (p.enabled) {
     // Accept writes only AFTER the load settles (resolve or reject) — hydrate()
     // replaces the collections wholesale, so any write before it is lost.
-    load().then((snap) => {
+    // Expose the load as a promise so incoming writes can AWAIT it (no 503).
+    storeReadyPromise = load().then((snap) => {
       if (snap && hydrate(snap)) console.log('[persist] restored store from Firebase RTDB');
     }).catch((e) => console.error('[persist] load failed:', e?.message || e))
       .finally(() => { storeReady = true; });

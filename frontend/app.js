@@ -43,6 +43,12 @@ async function api(path, opts = {}) {
     throw new Error(msg);
   }
   if (!res.ok) {
+    // Cold-start grace: the server is still loading its store. Don't bother the
+    // user — wait a beat and retry transparently a few times before surfacing.
+    if (res.status === 503 && data.error === 'starting-up' && (opts._startRetry || 0) < 4) {
+      await new Promise((r) => setTimeout(r, 900));
+      return api(path, { ...opts, _startRetry: (opts._startRetry || 0) + 1 });
+    }
     let m = data.message || data.error || `HTTP ${res.status}`;
     if (m === 'auth-required') m = 'Sign in first — this area is tied to your account. Use Sign in (or Full Access to explore).';
     // Callers can opt out of the toast for expected failures (e.g. a stale
