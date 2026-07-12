@@ -88,7 +88,37 @@ function canAccessView(view) {
   return !!u && (u.allAccess || roles.includes(u.role));
 }
 
+// Is the current session a STAFF member (keeps full access to the estimator
+// planner + marketplace even in commercial mode)?
+function isStaff() {
+  const u = state.user;
+  return !!(state.staffPin || (u && (u.allAccess || ['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate'].includes(u.role))));
+}
+// Commercial storefront: when LIVE_MODE is on, CUSTOMERS get the curated Deals
+// catalogue as the storefront — the AI estimator planner + destination
+// marketplace are hidden and any button that pointed at them routes to Deals,
+// so no fabricated trip is ever shown. Staff are unaffected.
+function dealsOnly() { return !!state.liveMode && !isStaff(); }
+function applyStorefrontMode() {
+  const on = dealsOnly();
+  document.body.dataset.storefront = on ? 'deals' : 'full';
+  document.querySelectorAll('[data-nav="planner"],[data-nav="marketplace"]').forEach((el) => {
+    const inNav = el.closest('.nav-links');
+    if (on) {
+      if (inNav) { el.style.display = 'none'; return; }
+      if (!el.dataset.origNav) el.dataset.origNav = el.dataset.nav;
+      el.dataset.nav = 'deals';
+      if (el.classList.contains('btn-gold')) el.textContent = 'Browse Deals';
+    } else {
+      if (inNav) el.style.display = '';
+      if (el.dataset.origNav) el.dataset.nav = el.dataset.origNav;
+    }
+  });
+}
+
 function nav(view) {
+  // Commercial mode: customers never reach the estimator — send them to Deals.
+  if (dealsOnly() && (view === 'planner' || view === 'marketplace')) view = 'deals';
   // Block privileged views for the PUBLIC (not signed in). A signed-in user whose
   // role check doesn't pass yet is NOT bounced home — the view's own guard refreshes
   // the account and either renders or shows an in-page unlock, so serverless instance
@@ -276,6 +306,8 @@ async function boot() {
   const device = detectDevice();
   try {
     state.context = await api('/api/context');
+    state.liveMode = !!state.context.liveMode;   // commercial storefront switch
+    state.stripeReady = !!state.context.stripeReady;
     const sel = $('#countrySelect');
     sel.innerHTML = state.context.currencies
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
@@ -306,6 +338,7 @@ async function boot() {
   refreshNotifications();
   await restoreSession();
   applyRoleVisibility();
+  applyStorefrontMode();
   applyDeepLink();
   refreshJourney();
   // Live AI cost-efficiency badge (guaranteed ≥66% saving).
@@ -3910,6 +3943,7 @@ function setUser(u) {
   // the account menu); the bar keeps only chip · bell · CTA.
   $('#signBtn')?.classList.add('hidden');
   applyRoleVisibility();
+  applyStorefrontMode(); // staff sign-in re-enables the planner; customers stay Deals-first
   refreshNotifications();
 }
 
@@ -3996,6 +4030,7 @@ window.signOut = () => {
   const signBtn = $('#signBtn');
   if (signBtn) { signBtn.textContent = 'Sign in'; signBtn.classList.remove('hidden'); }
   applyRoleVisibility();
+  applyStorefrontMode(); // back to the customer (Deals-first) storefront on sign-out
   if (state.lastView === 'admin' || state.lastView === 'business') nav('home');
   toast('Signed out.');
 };

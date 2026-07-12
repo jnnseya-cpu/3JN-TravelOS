@@ -550,6 +550,12 @@ app.get('/api/context', safe((req, res) => {
     searchTiers: SEARCH_TIERS,
     membershipTiers: MEMBERSHIP_TIERS,
     acu: { perGbp: ACU_PER_GBP, fundRate: MEMBERSHIP_ACU_FUND_RATE },
+    // Commercial storefront switch: when LIVE_MODE is on, the customer-facing
+    // site leads with the curated Deals catalogue and hides the AI estimator
+    // planner/marketplace (so no fabricated trip is ever shown). Staff keep
+    // full access. stripeReady tells the UI whether card checkout is available.
+    liveMode: LIVE_MODE(),
+    stripeReady: stripeEnabled(),
   });
 }));
 
