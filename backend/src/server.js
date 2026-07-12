@@ -258,19 +258,27 @@ app.use(async (req, res, next) => {
 // every (stateless / serverless) instance — even if a stored role change hasn't
 // propagated across instances. The env allowlist is the source of truth for owner
 // admin; it never DEMOTES (only promotes), so normal roles are untouched.
-function applyOwnerRole(user) {
-  // Promote to admin ONLY when the account's email is (a) on the ADMIN_EMAILS
-  // allowlist AND (b) was cryptographically verified — emailVerified is set only
-  // by the Firebase sign-in bridge or a PIN-proven owner elevation, never by
-  // public signup or a client patch. Without (b), anyone could self-register with
-  // the owner's email address and instantly become admin (the email alone is not
-  // a secret). Both factors are required, on every request, on every instance.
-  if (user && user.emailVerified && isOwnerEmail(user.email) && user.role !== 'admin') return { ...user, role: 'admin' };
+function applyOwnerRole(user, pinOk = false) {
+  // Promote an ADMIN_EMAILS owner to admin when a SECOND factor is present:
+  //  - the request carries the valid staff PIN (pinOk) — STATELESS, so it works
+  //    on every serverless instance the moment the PIN is supplied (this is the
+  //    reliable path; the frontend persists the PIN and sends it on every call), OR
+  //  - the account is emailVerified (set only by the Firebase bridge / PIN
+  //    elevation) — a durable flag for a verified owner.
+  // The email alone is never enough, and an owner-email account can't be forged:
+  // public signup and profile email-edits both refuse owner emails, and the
+  // Firebase bridge requires a verified token. When no STAFF_ACCESS_PIN is
+  // configured, staffPinOk() is true by design (dev/prototype) and the allowlist
+  // promotes on its own — matching the original robust behaviour.
+  if (user && isOwnerEmail(user.email) && user.role !== 'admin' && (pinOk || user.emailVerified)) {
+    return { ...user, role: 'admin' };
+  }
   return user;
 }
 function currentUser(req) {
   const uid = req.headers['x-user-id'];
-  return applyOwnerRole(uid ? getUser(uid) : null);
+  const u = uid ? getUser(uid) : null;
+  return applyOwnerRole(u, staffPinOk(req));
 }
 
 // A booking with NO owner (userId null) must not be readable by an anonymous
@@ -833,8 +841,9 @@ app.get('/api/account/:id', safe((req, res) => {
   const stored = getUser(req.params.id);
   if (!stored) return res.status(404).json({ error: 'not-found' });
   // Overlay admin from the env allowlist so loading the site while signed in as
-  // the owner reliably lands in admin — consistent on every serverless instance.
-  const user = applyOwnerRole(stored);
+  // the owner reliably lands in admin — consistent on every serverless instance
+  // (the staff PIN in the request is the stateless second factor).
+  const user = applyOwnerRole(stored, staffPinOk(req));
   res.json({ user, bookings: listBookings(stored.id) });
 }));
 
@@ -852,6 +861,12 @@ app.patch('/api/account/:id', safe((req, res) => {
   // Self-edits can NEVER change privilege — strip role AND allAccess (leaving
   // allAccess was a privilege-escalation hole: {allAccess:true} = instant admin).
   if (!caller.allAccess && caller.role !== 'admin') { delete body.role; delete body.allAccess; }
+  // Nobody may set their email to an ADMIN_EMAILS owner address via a profile
+  // edit — that would forge an owner-email account and (with the PIN) reach the
+  // admin overlay. Owner emails only ever enter through the Firebase bridge.
+  if (body.email && isOwnerEmail(body.email) && !isOwnerEmail(caller.email)) {
+    return res.status(403).json({ error: 'reserved-email', message: 'That email address is reserved.' });
+  }
   const user = updateUser(req.params.id, body);
   if (!user) return res.status(404).json({ error: 'not-found' });
   res.json({ user });
@@ -1569,7 +1584,7 @@ app.post('/api/login', safe((req, res) => {
   // owner-email account itself can only exist via the Firebase bridge (public
   // signup rejects owner emails), so this can't promote an attacker's account.
   if (wantsAdmin && staffPin() && staffPinOk(req)) markEmailVerified(user.id);
-  res.json({ user: applyOwnerRole(getUser(user.id) || user) });
+  res.json({ user: applyOwnerRole(getUser(user.id) || user, staffPinOk(req)) });
 }));
 
 // ---- Membership Programme: subscribe / renew / cancel --------------------
@@ -1649,8 +1664,17 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
   // privileged accounts opened via this bridge (e.g. passwordless demo identities
   // that aren't on the allowlist).
   const wantsAdmin = isOwnerEmail(email);
+  const fbVerified = decoded.email_verified === true; // Firebase confirmed they own the address
+  const pinProven = !!(staffPin() && staffPinOk(req));
+  // An OWNER email needs a real second factor beyond merely claiming the address:
+  // a Firebase-VERIFIED email (e.g. Google sign-in) OR the staff PIN. This blocks
+  // an attacker who created a Firebase account claiming the owner address without
+  // verifying it (email_verified=false) from gaining admin.
+  if (wantsAdmin && !fbVerified && !pinProven) {
+    return res.status(403).json({ error: 'owner-verify-required', message: 'Owner admin needs a Firebase-verified email (use Continue with Google) or the staff access PIN.' });
+  }
   const existingPrivNonOwner = !wantsAdmin && existing && (PRIVILEGED_ROLES.has(existing.role) || existing.allAccess);
-  if (existingPrivNonOwner && (!staffPin() || !staffPinOk(req))) {
+  if (existingPrivNonOwner && !pinProven) {
     return res.status(403).json({ error: 'staff-pin-required', message: 'Staff accounts require the staff access PIN.' });
   }
   // Verified email still passes the bot name/disposable-domain checks on signup.
@@ -1658,14 +1682,13 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
     const bot = botSignupVerdict({ name, email });
     if (bot.block) return res.status(403).json({ error: 'bot-suspected', reasons: bot.reasons, message: bot.message });
   }
-  const created = existing || createUser({ email, name: name || decoded.name || undefined, emailVerified: true, signupIp: clientIp(req) });
+  const created = existing || createUser({ email, name: name || decoded.name || undefined, emailVerified: fbVerified, signupIp: clientIp(req) });
   if (!existing) await sendWelcomeEmail(created); // AWAIT so it survives the serverless freeze
-  // This sign-in proved the email via a verified Firebase token — record it so the
-  // owner-admin overlay (which requires emailVerified) applies. An account that
-  // pre-existed from another path only becomes verified here, through Firebase.
-  markEmailVerified(created.id);
+  // Record durable verification only when Firebase actually verified the address.
+  // A PIN-only owner still becomes admin below (stateless, via the PIN in the request).
+  if (fbVerified) markEmailVerified(created.id);
   // Overlay admin from the env allowlist (consistent across serverless instances).
-  const user = applyOwnerRole(getUser(created.id) || created);
+  const user = applyOwnerRole(getUser(created.id) || created, pinProven);
   res.json({ user, created: !existing });
 }));
 
@@ -1687,7 +1710,7 @@ app.post('/api/account/elevate', safe((req, res) => {
   // overlay applies to this account from here on (across serverless instances).
   markEmailVerified(user.id);
   recordAudit({ actor: user.id, role: 'admin', action: 'account.elevated', entity: 'user', entityId: user.id, summary: `${user.email} unlocked admin via staff PIN` });
-  res.json({ user: applyOwnerRole(getUser(user.id) || user) });
+  res.json({ user: applyOwnerRole(getUser(user.id) || user, staffPinOk(req)) });
 }));
 
 // ---- eSIM Manager ---------------------------------------------------------

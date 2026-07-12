@@ -100,6 +100,12 @@ function canAccessView(view) {
   return !!u && (u.allAccess || roles.includes(u.role));
 }
 
+// Set + PERSIST the staff PIN so it's sent on every request and survives reloads
+// / serverless instance changes (the stateless second factor for owner admin).
+function setStaffPin(pin) {
+  state.staffPin = pin;
+  try { if (pin) localStorage.setItem('3jn_pin', pin); else localStorage.removeItem('3jn_pin'); } catch {}
+}
 // Is the current session a STAFF member (keeps full access to the estimator
 // planner + marketplace even in commercial mode)?
 function isStaff() {
@@ -347,6 +353,10 @@ async function boot() {
       lang.addEventListener('change', () => { applyLanguage(lang.value); toast(`Language: ${lang.options[lang.selectedIndex].text}`); });
     }
   } catch { /* toast already shown */ }
+  // Restore the staff PIN so an unlocked owner/staff stays admin across reloads
+  // and serverless instances (the PIN is the stateless second factor sent on
+  // every request). Without this, admin access "randomly" dropped after a reload.
+  try { const sp = localStorage.getItem('3jn_pin'); if (sp) state.staffPin = sp; } catch {}
   refreshNotifications();
   await restoreSession();
   applyRoleVisibility();
@@ -857,27 +867,27 @@ function verifyLinks(data) {
 // Price-check panel: our all-in vs a typical-retail estimate, plus live verify
 // links. Lets you demo "we're cheapest" with receipts the customer can click.
 function compareCard(data, sym) {
+  // We do NOT send customers to competitor sites to compare, and we never show a
+  // fabricated "typical retail / you save vs market" figure (the estimator's
+  // market reference isn't a real quote). Only when a REAL cached market feed is
+  // connected do we show an honest market range — otherwise show nothing but our
+  // own Price-Match Promise (a 3JN commitment, not a comparison).
   const opts = data.packages?.options || [];
   if (!opts.length) return '';
   const rec = opts.find((o) => o.recommended) || opts[0];
   const our = rec.pricing.local.total;
-  const market = our + (rec.pricing.local.savingsVsMarket || 0);
-  const links = verifyLinks(data);
-  const linkBtns = links.map((l) =>
-    `<a class="btn btn-ghost btn-sm" href="${l.url}" target="_blank" rel="noopener noreferrer">Check ${l.what} · ${esc(l.name)} ↗</a>`).join('');
-  const realFare = data.priceSource?.flights === 'live';
+  const marketBlock = data.marketLive
+    ? `<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+        <div><div class="t-label">3JN all-in</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
+        <div><div class="t-label">Real market range (${esc(data.marketLive.cheapestCarrier || 'live cache')})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px">${money(data.marketLive.minGbp, '£')}<span class="muted" style="font-size:13px;font-weight:400"> – ${money(data.marketLive.maxGbp, '£')} · ${data.marketLive.sampled} fares</span></div></div>
+      </div>
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Real fares travellers found on this route (${esc(data.marketLive.source)}). Cached prices aren't guaranteed bookable, so we only charge a live confirmed fare.</p>`
+    : '';
   return `<div class="card pad" style="margin-top:26px;border-color:rgba(70,211,154,0.32)">
-    <span class="eyebrow">Price check — don't take our word for it</span>
-    <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-      <div><div class="t-label">3JN all-in (${rec.pricing.feeModel === 'flight-service-fee' ? '2% flight fee · £4.99–£15' : rec.pricing.feeModel === 'flight-flat-member-free' ? 'no fee — Travel+ member' : 'incl. 10% fee'})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
-      ${data.marketLive ? `<div><div class="t-label">Real market price (${esc(data.marketLive.cheapestCarrier || 'live cache')})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px">${money(data.marketLive.minGbp, '£')}<span class="muted" style="font-size:13px;font-weight:400"> – ${money(data.marketLive.maxGbp, '£')} · ${data.marketLive.sampled} fares · ${esc(data.marketLive.cheapestStops || '')}</span></div></div>` : market > our ? `<div><div class="t-label">Typical retail (our estimate)</div><div style="font-size:22px;text-decoration:line-through;color:var(--muted-dim)">${money(market, sym)}</div></div>` : ''}
-      ${!data.marketLive && market > our ? `<div><div class="t-label">You save vs retail</div><div style="font-size:22px;color:var(--green);font-weight:700">${money(market - our, sym)}</div></div>` : ''}
-    </div>
-    ${data.marketLive ? `<p class="muted" style="font-size:11.5px;margin-top:8px">Market range from ${esc(data.marketLive.source)} — real fares travellers found on this route (includes Ryanair/Jet2). Cached market prices aren't guaranteed bookable, so we only charge you a live confirmed fare.</p>` : ''}
-    <p class="muted" style="font-size:12.5px;margin:12px 0 10px">Verify the exact trip live — same dates, same passengers — on independent sites. ${realFare ? 'Our flight price is a <strong style="color:var(--green)">real bookable fare</strong> — we book it and issue your e-ticket.' : 'This is an <strong>indicative estimate</strong> while we confirm live availability for this exact route and date. We only take real payment once the fare is confirmed bookable, so you\'re never charged for a price we can\'t ticket.'}</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">${linkBtns || '<span class="muted" style="font-size:12px">Add a departure city and dates to generate verify links.</span>'}</div>
-    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed rgba(223,229,238,.12);font-size:12.5px">
-      🛡 <strong>Price-Match Promise</strong> — find this exact trip cheaper like-for-like (same flights, same dates, one protected booking) within 24h of booking and we match it and credit the difference as ACU. That's our answer to the big names: check us, then hold us to it.
+    <span class="eyebrow">Our Price-Match Promise</span>
+    ${marketBlock}
+    <div style="margin-top:12px;font-size:12.5px">
+      🛡 <strong>Price-Match Promise</strong> — find this exact trip cheaper like-for-like (same flights, same dates, one protected booking) within 24h of booking and we match it and credit the difference as ACU.
     </div>
   </div>`;
 }
@@ -979,7 +989,8 @@ function optionCard(o, sym, intent) {
       <h3>${esc(o.tier)}</h3>
       <div class="blurb">${esc(o.blurb)}</div>
       <div class="price-big">${money(p.local.total, sym)}</div>
-      ${p.local.savingsVsMarket > 0 ? `<div class="save-tag">You save ${money(p.local.savingsVsMarket, sym)} vs market</div>` : '<div class="save-tag">&nbsp;</div>'}
+      <div class="save-tag">&nbsp;</div>
+      <!-- Fabricated "you save £X vs market" removed: the estimator's market reference is not a real quote. Real savings show only via the Deep Price Dive (verified) or a live market feed. -->
       <ul class="comp-list">${comps}</ul>
       <table class="brk">
         <tr><td>Suppliers</td><td>${money2(p.local.suppliers, sym)}</td></tr>
@@ -2349,7 +2360,7 @@ window.staffUnlock = async () => {
   if (!state.user) { openAuth('login'); return; }
   const pin = window.prompt('Enter the staff access PIN:');
   if (!pin) return;
-  state.staffPin = pin;
+  setStaffPin(pin);
   try {
     const d = await api('/api/account/elevate', { method: 'POST', body: JSON.stringify({ staffPin: pin }) });
     setUser(d.user);
@@ -4049,6 +4060,7 @@ window.signOut = () => {
   try { localStorage.removeItem('3jn_uid'); } catch {}
   if (window.firebaseAuth?.available) { try { window.firebaseAuth.signOut(); } catch {} }
   state.user = null;
+  setStaffPin(''); // clear the persisted staff PIN on sign-out
   $('#userChip').classList.add('hidden');
   $('#accountMenu')?.remove();
   const signBtn = $('#signBtn');
@@ -4077,7 +4089,7 @@ window.addEventListener('firebase-auth', async (e) => {
       if (/PIN/i.test(err?.message || '')) {
         const pin = window.prompt('This is a staff account. Enter the staff access PIN:');
         if (!pin) return;
-        state.staffPin = pin;
+        setStaffPin(pin);
         try { d = await bridge(); } catch (e2) { toast('⚠ ' + (e2?.message || 'PIN not accepted.')); return; }
       } else {
         // Surface the real reason instead of failing silently (e.g. token could
@@ -4284,7 +4296,7 @@ window.doLogin = async () => {
     if (/PIN/i.test(e?.message || '')) {
       const pin = window.prompt('This is a staff account. Enter the staff access PIN:');
       if (!pin) return;
-      state.staffPin = pin;
+      setStaffPin(pin);
       try { d = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, humanCheck: humanCheckPayload(true), staffPin: pin }) }); }
       catch { toast('PIN not accepted.'); fetchHumanChallenge(); return; }
     } else { fetchHumanChallenge(); return; }
@@ -4373,7 +4385,7 @@ window.demoSignIn = (id) => {
 window.staffPinPrompt = () => {
   const pin = window.prompt('Staff access PIN');
   if (!pin) return;
-  state.staffPin = pin;
+  setStaffPin(pin);
   openDemoAccounts();
 };
 

@@ -11,7 +11,7 @@
  *
  * Bump CACHE_VERSION to force every client to drop old caches on next load.
  */
-const CACHE_VERSION = 'v28';
+const CACHE_VERSION = 'v29';
 const STATIC_CACHE = `3jn-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `3jn-runtime-${CACHE_VERSION}`;
 
