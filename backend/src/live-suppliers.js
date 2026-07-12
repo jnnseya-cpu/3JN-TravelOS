@@ -63,7 +63,16 @@ const TEQUILA_BASE = env.TEQUILA_BASE_URL || 'https://api.tequila.kiwi.com';
 const TRAVELPAYOUTS_TOKEN = env.TRAVELPAYOUTS_TOKEN || env.AVIASALES_TOKEN || '';
 const TRAVELPAYOUTS_BASE = env.TRAVELPAYOUTS_BASE_URL || 'https://api.travelpayouts.com';
 
-export function duffelEnabled() { return !!DUFFEL_TOKEN && typeof fetch === 'function'; }
+// A Duffel TEST token (duffel_test_…) returns a FAKE "Duffel Airways" (carrier
+// ZZ) in the sandbox. That is fine for internal staging, but in LIVE_MODE it
+// must NEVER reach a real customer as a bookable "live" flight — it looks
+// fabricated (because it is). So in production a test token is treated as OFF:
+// flights fall back to the clearly-labelled estimator instead of showing a fake
+// airline. Use a real duffel_live_… token to sell real fares.
+const duffelIsTest = () => /(^|_)test/i.test(DUFFEL_TOKEN);
+const liveModeOn = () => env.LIVE_MODE === 'true';
+export function duffelUsable() { return !!DUFFEL_TOKEN && !(liveModeOn() && duffelIsTest()); }
+export function duffelEnabled() { return duffelUsable() && typeof fetch === 'function'; }
 export function lccFlightsEnabled() { return !!TEQUILA_KEY && typeof fetch === 'function'; }
 export function marketDataEnabled() { return !!TRAVELPAYOUTS_TOKEN && typeof fetch === 'function'; }
 export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled(); }

@@ -1072,7 +1072,9 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
     hotels: { provider: 'Amadeus', enabled: liveHotelsEnabled() },
     schedules: { provider: 'OAG', enabled: oagScheduleEnabled() },
     note: duffelMode() === 'test'
-      ? 'Duffel is in TEST mode — searches return test offers and no real tickets are issued. Switch to a live Duffel token to sell real fares.'
+      ? (LIVE_MODE()
+        ? 'Duffel token is a TEST key and LIVE_MODE is on — its sandbox "Duffel Airways" (ZZ) fares are HIDDEN from customers, so flights show as estimates. Set a real duffel_live_… token to sell real fares.'
+        : 'Duffel is in TEST mode — searches return sandbox "Duffel Airways" offers for internal testing and no real tickets are issued. Switch to a live Duffel token (and LIVE_MODE=true) to sell real fares.')
       : duffelMode() === 'live'
         ? (diag?.ok
           ? 'Duffel LIVE and reachable — real bookable fares are flowing. We hold the fare (instalments) or issue the e-ticket (paid in full) automatically.'
