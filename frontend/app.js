@@ -59,6 +59,12 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// British date format: 2026-09-02 → 02/09/2026 (dd/mm/yyyy). Non-ISO input is
+// returned unchanged so we never mangle an already-formatted label.
+function ukDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || '');
+}
 function money(n, sym) {
   return `${sym || state.context?.context?.currency?.symbol || '£'}${Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
@@ -686,7 +692,7 @@ function renderOptions(data) {
         <div>
           <span class="eyebrow">${data.journey === false ? 'Request understood' : 'Trip understood'}</span>
           <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${data.journey !== false && data.origin ? esc(data.origin.city) + ' → ' : ''}${esc(intent.destination.city)}${intent.destination.countryName ? ', ' + esc(intent.destination.countryName) : ''}</div>
-          <div class="muted" style="font-size:13.5px">${data.journey !== false && data.origin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} child${intent.travellers.children > 1 ? 'ren' : ''}${intent.travellers.childAges && intent.travellers.childAges.length ? ` (aged ${intent.travellers.childAges.join(', ')})` : ''}` : ''} · ${intent.nights} ${intent.nights === 1 ? 'night' : 'nights'} · ${intent.month || 'flexible'} · ${intent.dates.checkIn} → ${intent.dates.checkOut}</div>
+          <div class="muted" style="font-size:13.5px">${data.journey !== false && data.origin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} child${intent.travellers.children > 1 ? 'ren' : ''}${intent.travellers.childAges && intent.travellers.childAges.length ? ` (aged ${intent.travellers.childAges.join(', ')})` : ''}` : ''} · ${intent.nights} ${intent.nights === 1 ? 'night' : 'nights'} · ${intent.month || 'flexible'} · ${ukDate(intent.dates.checkIn)} → ${ukDate(intent.dates.checkOut)}</div>
           ${intent.hotelArea ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 Searching hotels in <strong>${esc(intent.hotelArea)}</strong> as requested.</div>` : ''}
           ${data.recommendedDestination ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 You named ${esc(data.recommendedDestination)} — we recommend <strong>${esc(intent.destination.city)}</strong> as the gateway city. Name a specific city to change it.</div>` : ''}
           ${data.journey !== false && data.origin && data.origin.inferred ? `<div class="muted" style="font-size:12px;margin-top:4px">🛫 Departure assumed <strong>${esc(data.origin.city)}</strong> — add "from &lt;your city&gt;" to your request for exact flights.</div>` : ''}
@@ -915,7 +921,19 @@ function flightItinBlock(c, o, sym, intent) {
 function optionCard(o, sym, intent) {
   const p = o.pricing;
   const comps = o.components.map((c, i) => {
-    const src = c.sourcedVia ? `<span class="src ${c.agent ? 'agent' : ''}" title="${c.agent && c.agentId ? '3JN agent account ' + c.agentId : ''}">${c.agent ? '🔑 agent · ' : '↗ '}${c.sourcedVia}${c.agent && c.agentId ? ' · ' + c.agentId : ''}</span>` : '';
+    // Source chip. Only show an EXTERNAL "↗ <source>" link when the price is a
+    // genuinely LIVE supplier fare — otherwise it falsely implies we sourced the
+    // estimate from that site (e.g. "↗ Trip.com" on a synthesised price). Agent
+    // (net-rate) sourcing keeps its badge; everything else shows "estimate".
+    const isLiveSrc = !!(c.live || c.sourcedType === 'live' || /\blive\b/i.test(c.sourcedVia || ''));
+    let src;
+    if (c.agent) {
+      src = `<span class="src agent" title="${c.agentId ? '3JN agent account ' + esc(c.agentId) : ''}">🔑 agent · ${esc(c.sourcedVia || '')}${c.agentId ? ' · ' + esc(c.agentId) : ''}</span>`;
+    } else if (isLiveSrc && c.sourcedVia) {
+      src = `<span class="src">↗ ${esc(c.sourcedVia)}</span>`;
+    } else {
+      src = '<span class="src" style="opacity:.65">estimate</span>';
+    }
     const more = ['flight', 'hotel', 'host', 'cruise', 'train', 'coach', 'ferry'].includes(c.type) ? ` <span class="more-info" onclick="event.stopPropagation();showComponentInfo('${o.tier}',${i})">ⓘ more</span>` : '';
     const flightTag = c.type === 'flight' && c.details?.outbound
       ? ((c.details.outbound.stops || 0) === 0 && (c.details.inbound?.stops || 0) === 0
@@ -4235,7 +4253,12 @@ window.doSignup = async () => {
   if (window.firebaseAuth?.available) {
     const pass = $('#auPass')?.value || '';
     if (pass.length < 6) { toast('Password must be 6+ characters.'); return; }
-    try { await window.firebaseAuth.signUp(email, pass, name); } catch (e) { toast(e.message || 'Sign-up failed.'); }
+    try {
+      const r = await window.firebaseAuth.signUp(email, pass, name);
+      if (r && r.verificationSent === false) {
+        toast(`Account created, but the verification email could not be sent (${r.verificationError || 'unknown'}). You can still use your account; tap Resend later.`);
+      }
+    } catch (e) { toast(e.message || 'Sign-up failed.'); }
     return;
   }
   if (!email) { toast('Enter your email.'); return; }

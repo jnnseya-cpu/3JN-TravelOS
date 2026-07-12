@@ -248,8 +248,12 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
     reliabilityScore: 90, // a real, ticketed Duffel offer from a known carrier
     premium: /emirates|qatar|singapore|etihad|cathay/i.test(carrier),
     live: true,
-    sourcedVia: 'Duffel (live)',
+    // A test token returns Duffel's sandbox carrier ("Duffel Airways" / ZZ). Say
+    // so honestly instead of calling it "live" — and flag it so the UI can badge
+    // it as a test fare (customer storefront hides test Duffel entirely in LIVE_MODE).
+    sourcedVia: duffelIsTest() ? 'Duffel (test sandbox)' : 'Duffel (live)',
     sourcedType: 'GDS',
+    test: duffelIsTest(),
     details: {
       outbound, inbound,
       passengers: travellers.total,

@@ -104,13 +104,17 @@ function realisticStops(airline, originAirport, originCountry, destAirport, dest
   return 1;
 }
 
+// GENERIC, destination-neutral descriptors — the estimator prepends the city
+// (e.g. "Paris · Grand Hotel & Spa"), so it never claims a real, geographically
+// wrong property like "Atlantis The Royal" in Paris. Real named inventory only
+// ever comes from a LIVE feed (Amadeus/Duffel Stays) or the curated Deals.
 const HOTEL_BRANDS = [
-  { name: 'Atlantis The Royal', stars: 5, rating: 97, verified: true },
-  { name: 'Address Downtown', stars: 5, rating: 94, verified: true },
-  { name: 'Rove Hotels', stars: 4, rating: 88, verified: true },
-  { name: 'Premier Inn', stars: 3, rating: 85, verified: true },
-  { name: 'CityStay Express', stars: 3, rating: 79, verified: true },
-  { name: 'BudgetBunk Rooms', stars: 2, rating: 58, verified: false }, // filtered out
+  { name: 'Grand Hotel & Spa', stars: 5, rating: 95, verified: true },
+  { name: 'Downtown Boutique Hotel', stars: 5, rating: 93, verified: true },
+  { name: 'City Central Hotel', stars: 4, rating: 88, verified: true },
+  { name: 'Comfort Inn', stars: 3, rating: 85, verified: true },
+  { name: 'Express Hotel', stars: 3, rating: 79, verified: true },
+  { name: 'Budget Rooms', stars: 2, rating: 58, verified: false }, // filtered out
 ];
 // BUDGET STAYS — verified hostels, guesthouses and budget chains. Joined to
 // the scan when the traveller asks for a budget/cheap/hostel stay, so people
@@ -365,9 +369,14 @@ export function scanHotels(intent, dest) {
       : dest.hotelNightBaseUSD * (h.stars / 3) * (0.85 + rnd() * 0.5);
     const area = areaFor();
     const units = h.dorm ? intent.travellers.total : rooms; // dorms sell BEDS
+    // Estimator stays are generic descriptors localised to the destination — a
+    // representative "{City} · {tier} Hotel", never a real named property in the
+    // wrong city. Real named hotels only come from a LIVE feed or curated Deals.
+    const displayName = `${dest.city} · ${h.name}`;
     return {
       type: 'hotel',
-      supplier: h.name,
+      supplier: displayName,
+      representative: true, // an indicative example of this tier, not a specific listing
       verified: h.verified,
       reliabilityScore: h.rating,
       stars: h.stars,
@@ -383,8 +392,8 @@ export function scanHotels(intent, dest) {
         guestRating: Math.round((78 + rnd() * 20)) / 10, // /10 scale e.g. 8.6
         reviews: 200 + Math.floor(rnd() * 4800),
         amenities: amenitiesFor(rnd, h.stars),
-        description: `${h.name} is a ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${area}, ${dest.city} — verified for reliability and ideal for your ${nights}-night trip.`,
-        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel', h.name),
+        description: `A representative ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${area}, ${dest.city} — an indicative example of this tier; the exact property is confirmed before you book.`,
+        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel', displayName),
       },
       // Price by the units actually sold: dorms sell one bed PER TRAVELLER,
       // private rooms sell `rooms`. `units` already resolves to the right count

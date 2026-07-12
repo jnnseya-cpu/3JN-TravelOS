@@ -36,9 +36,15 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
       async signUp(email, password, name) {
         const { user } = await createUserWithEmailAndPassword(auth, email, password);
         if (name && user) { try { await updateProfile(user, { displayName: name }); } catch {} }
-        // Send the verification email (uses your console template).
-        try { await sendEmailVerification(user); } catch {}
-        return { ...toUser(user), verificationSent: true };
+        // Send the verification email (uses your Firebase console template). Do
+        // NOT swallow a failure — otherwise the banner says "check your inbox"
+        // while nothing was ever sent. Surface the real reason so it's fixable
+        // (usually: this domain isn't in Firebase Auth → Settings → Authorized
+        // domains, or the Email/Password template is disabled).
+        let verificationSent = false, verificationError = null;
+        try { await sendEmailVerification(user); verificationSent = true; }
+        catch (e) { verificationError = e?.code || e?.message || String(e); console.warn('[firebase-auth] verification email failed:', verificationError); }
+        return { ...toUser(user), verificationSent, verificationError };
       },
       async signIn(email, password) { const { user } = await signInWithEmailAndPassword(auth, email, password); return toUser(user); },
       async resetPassword(email) { await sendPasswordResetEmail(auth, email); return true; },
