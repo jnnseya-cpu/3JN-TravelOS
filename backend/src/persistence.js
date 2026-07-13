@@ -21,6 +21,7 @@
 // production — the app surfaces that loudly).
 
 import admin from 'firebase-admin';
+import { encryptSnapshot, decryptSnapshot } from './pii.js';
 
 export const DEFAULT_DB_URL =
   'https://studio-1885689950-9b056-default-rtdb.europe-west1.firebasedatabase.app/';
@@ -160,14 +161,15 @@ export async function verifyFirebaseIdToken(idToken) {
   catch { return null; }
 }
 
-export async function load() {
+// Raw read — returns the stored bytes exactly (PII still ciphertext). Used by the
+// KV read-modify-write in saveMerge so it never re-writes decrypted data.
+async function loadRaw() {
   if (!backend) return null;
   try {
     if (backend === 'firebase') {
       const snap = await ref.get();
       return snap.exists() ? snap.val() : null;
     }
-    // kv
     const v = await kvCommand(['GET', STORE_KEY]);
     return v ? JSON.parse(v) : null;
   } catch (err) {
@@ -175,12 +177,16 @@ export async function load() {
     return null;
   }
 }
+// Public load — decrypts PII back to plaintext for the in-memory store to hydrate.
+export async function load() {
+  return decryptSnapshot(await loadRaw());
+}
 
 export async function save(data) {
   if (!backend) return false;
   try {
-    // JSON round-trip strips `undefined` (stores reject it) and Map artefacts.
-    const clean = JSON.parse(JSON.stringify(data));
+    // Encrypt PII on a clone (also JSON-round-trips, stripping `undefined`/Maps).
+    const clean = encryptSnapshot(data);
     if (backend === 'firebase') { await ref.set(clean); return true; }
     await kvCommand(['SET', STORE_KEY, JSON.stringify(clean)]);
     return true;
@@ -200,10 +206,12 @@ export async function save(data) {
 export async function saveMerge(flat) {
   if (!backend) return false;
   try {
-    const clean = JSON.parse(JSON.stringify(flat));
+    // Encrypt the PII in the leaves before merging them into the store.
+    const clean = encryptSnapshot(flat);
     if (backend === 'firebase') { await ref.update(clean); return true; }
-    // kv merge
-    const cur = (await load()) || {};
+    // kv merge — read the RAW (still-encrypted) store so untouched records stay
+    // ciphertext; only the leaves we overwrite carry the freshly-encrypted values.
+    const cur = (await loadRaw()) || {};
     for (const [k, v] of Object.entries(clean)) {
       const slash = k.indexOf('/');
       if (slash > 0) {

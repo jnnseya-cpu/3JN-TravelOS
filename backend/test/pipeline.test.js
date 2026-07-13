@@ -5266,3 +5266,16 @@ test('stabilise: /api/book rejects a malformed option without creating a booking
     assert.ok(res.status >= 400 && res.status < 500, `malformed option → clean 4xx (got ${res.status})`);
   } finally { server.close(); }
 });
+
+test('pii: encryption is a safe no-op when no key is configured (no OS conflict)', async () => {
+  // The suite runs with no DATA_ENCRYPTION_KEY, so at-rest encryption must be a
+  // pure identity — proving it never corrupts data or changes behaviour when
+  // unconfigured. (The encrypted round-trip is exercised separately with a key.)
+  const { encryptSnapshot, decryptSnapshot, decField, piiEncryptionEnabled } = await import('../src/pii.js');
+  assert.equal(piiEncryptionEnabled(), false, 'no key configured in test');
+  const snap = { 'users/u1': { email: 'a@b.co', travelProfile: { passportNumber: '144888474', dob: '1990-01-01' } } };
+  const enc = encryptSnapshot(snap);
+  assert.equal(enc['users/u1'].travelProfile.passportNumber, '144888474', 'no key → passport unchanged');
+  assert.deepEqual(decryptSnapshot(enc), snap, 'decrypt round-trips to the original');
+  assert.equal(decField('144888474'), '144888474', 'legacy plaintext passes through decrypt');
+});
