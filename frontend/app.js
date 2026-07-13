@@ -1608,10 +1608,9 @@ const TRAVEL_PROFILE_FIELDS = [
   { key: 'billingAddress', label: 'Billing address', group: 'Address' },
   { key: 'countryOfResidence', label: 'Country of residence', type: 'country', group: 'Address' },
   { key: 'postalCode', label: 'Postal code', group: 'Address' },
-  // Livelihood (feeds visa applications)
-  { key: 'occupation', label: 'Occupation', group: 'Livelihood' },
-  { key: 'employer', label: 'Employer / school', group: 'Livelihood' },
-  { key: 'monthlyIncome', label: 'Monthly income (USD)', type: 'number', group: 'Livelihood' },
+  // NOTE: Livelihood (occupation / employer / monthly income) is collected ONLY
+  // on the visa application form — it's visa-specific and not part of the general
+  // travel profile.
 ];
 
 // Loyalty programmes the profile can hold — number, tier, expiry & benefits
