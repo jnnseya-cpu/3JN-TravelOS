@@ -4150,6 +4150,13 @@ window.addEventListener('firebase-auth', async (e) => {
   } catch {} finally { firebaseBridging = false; }
 });
 window.addEventListener('firebase-signout', () => { $('#verifyBanner')?.remove(); });
+// When Firebase finishes loading (or fails), re-render an open auth modal so the
+// password field + "forgot password" + Google button appear without a manual
+// reopen, and refresh the storefront gating.
+window.addEventListener('firebase-ready', () => {
+  try { applyStorefrontMode(); } catch {}
+  if (state.authModalOpen && $('#modalBg')?.classList.contains('show')) openAuth(state.authModalOpen);
+});
 // Persistent nudge until the email is verified — with one-tap resend.
 function showVerifyBanner() {
   if ($('#verifyBanner')) return;
@@ -4233,7 +4240,14 @@ function humanBlock() {
 
 function openAuth(mode = 'signup') {
   HUMAN.formOpenedAt = Date.now();
+  state.authModalOpen = mode; // so we can re-render once Firebase finishes loading
   const fb = window.firebaseAuth?.available;
+  // If the Firebase SDK is still loading, tell the user password sign-in is on
+  // its way (the field appears automatically when it's ready); if it errored,
+  // say so plainly instead of silently hiding the password field.
+  const fbNote = !fb ? (window.__fbAuthStatus === 'loading'
+    ? '<p class="muted center" style="font-size:11.5px;margin:2px 0 8px">🔑 Loading secure password sign-in…</p>'
+    : `<p class="muted center" style="font-size:11.5px;margin:2px 0 8px;color:var(--gold)">Password sign-in is temporarily unavailable${window.__fbAuthStatus && window.__fbAuthStatus.startsWith('error') ? '' : ''} — you can still continue with your email below.</p>`) : '';
   // Google is the FRICTIONLESS primary path: one tap, no password to set, no
   // email to verify (Google addresses are pre-verified). Make it the prominent
   // button so most customers never touch the email/password fields at all.
@@ -4244,7 +4258,7 @@ function openAuth(mode = 'signup') {
       <span class="eyebrow">Log in</span>
       <h3 style="margin:6px 0 4px">Welcome back</h3>
       <p class="muted" style="font-size:13px">Sign in to your 3JN Travel OS account.</p>
-      ${googleBtn}
+      ${fbNote}${googleBtn}
       <div class="field" style="margin-top:8px"><label>Email</label><input class="in" id="liEmail" placeholder="you@email.com" autocomplete="email"></div>
       ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••" autocomplete="current-password"></div>' : ''}
       ${humanBlock()}
@@ -4257,7 +4271,7 @@ function openAuth(mode = 'signup') {
       <span class="eyebrow">Create account</span>
       <h3 style="margin:6px 0 4px">Join 3JN Travel OS</h3>
       <p class="muted" style="font-size:13px">One account for searches, bookings, ACUs, visas and your travel wallet.</p>
-      ${googleBtn}
+      ${fbNote}${googleBtn}
       <div class="field" style="margin-top:8px"><label>Name</label><input class="in" id="auName" placeholder="Your name" autocomplete="name"></div>
       <div class="field" style="margin-top:10px"><label>Email</label><input class="in" id="auEmail" placeholder="you@email.com" autocomplete="email"></div>
       ${fb ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="auPass" placeholder="••••••••" autocomplete="new-password"></div>' : ''}

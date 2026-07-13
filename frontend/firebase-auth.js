@@ -7,21 +7,38 @@
 // "Continue with Google" / email auth flow and bridges the Firebase identity to
 // a backend account (by email) so loyalty, bookings, etc. keep working.
 
-const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
+// Try several SDK versions (newest first) so a single bad/withdrawn version on
+// the CDN can't silently kill password sign-in. The first that imports wins.
+// Override with window.FIREBASE_SDK_VERSION to pin a specific one.
+const SDK_VERSIONS = [window.FIREBASE_SDK_VERSION, '11.10.0', '11.6.0', '10.14.1'].filter(Boolean);
+window.__fbAuthStatus = 'loading';
 
 (async () => {
   const cfg = window.FIREBASE_CONFIG;
-  if (!cfg || !cfg.apiKey) return; // not configured
+  if (!cfg || !cfg.apiKey) { window.__fbAuthStatus = 'no-config'; console.warn('[firebase-auth] no FIREBASE_CONFIG — password sign-in disabled'); return; }
 
   try {
-    const { initializeApp } = await import(`${SDK}/firebase-app.js`);
+    // Load the app + auth modules from the first SDK version that resolves.
+    let appMod = null, authMod = null, usedVersion = null;
+    for (const v of SDK_VERSIONS) {
+      try {
+        const base = `https://www.gstatic.com/firebasejs/${v}`;
+        appMod = await import(`${base}/firebase-app.js`);
+        authMod = await import(`${base}/firebase-auth.js`);
+        usedVersion = v;
+        break;
+      } catch (e) { console.warn(`[firebase-auth] SDK ${v} failed, trying next…`, e?.message || e); appMod = authMod = null; }
+    }
+    if (!appMod || !authMod) throw new Error('no Firebase SDK version could be loaded from the CDN');
+    window.__fbAuthVersion = usedVersion;
+    const { initializeApp } = appMod;
     const {
       getAuth, GoogleAuthProvider, signInWithPopup,
       createUserWithEmailAndPassword, signInWithEmailAndPassword,
       signOut, onAuthStateChanged, setPersistence, browserLocalPersistence,
       sendEmailVerification, updateProfile, sendPasswordResetEmail,
       verifyBeforeUpdateEmail,
-    } = await import(`${SDK}/firebase-auth.js`);
+    } = authMod;
 
     const app = initializeApp(cfg);
     const auth = getAuth(app);
@@ -76,9 +93,12 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.0.0';
       } else emit('firebase-signout', {});
     });
 
+    window.__fbAuthStatus = 'ready';
     emit('firebase-ready', {});
   } catch (err) {
     // CDN unreachable / blocked — stay on the prototype login.
+    window.__fbAuthStatus = 'error: ' + (err?.message || err);
     console.warn('[firebase-auth] unavailable, using built-in login:', err?.message || err);
+    emit('firebase-ready', {}); // let the app re-render auth UI with the fallback + a reason
   }
 })();
