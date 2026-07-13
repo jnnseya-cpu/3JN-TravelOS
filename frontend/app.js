@@ -1663,10 +1663,14 @@ function renderTravelProfile() {
   // user stops typing. Silent persists never re-render (that would steal the
   // cursor) — they update the status chip and completeness counter in place.
   el.oninput = el.onchange = () => {
+    window.__tpDirty = true;
     const st = $('#tpSaveStatus'); if (st) { st.textContent = 'saving…'; st.style.color = 'var(--gold)'; }
     clearTimeout(window.__tpAutosave);
     window.__tpAutosave = setTimeout(() => persistTravelProfile(true), 900);
   };
+  // Leaving a field commits it right away — a value is never stranded in the
+  // 900ms debounce window if the user tabs to the next field or clicks away.
+  el.addEventListener('focusout', () => { if (window.__tpDirty) flushTravelProfile(); });
 }
 window.addLoyaltyRow = () => {
   const el = $('#travelProfileCard');
@@ -1687,7 +1691,15 @@ window.addLoyaltyRow = () => {
 };
 function collectTravelProfile() {
   const tp = {};
-  TRAVEL_PROFILE_FIELDS.forEach((f) => { const el = $(`#tp_${f.key}`); if (el && el.value.trim()) tp[f.key] = f.type === 'number' ? Number(el.value) : el.value.trim(); });
+  const prev = state.user?.travelProfile || {};
+  TRAVEL_PROFILE_FIELDS.forEach((f) => {
+    const el = $(`#tp_${f.key}`); if (!el) return;
+    const v = el.value.trim();
+    if (v) tp[f.key] = f.type === 'number' ? Number(v) : v;
+    // The field was cleared → send an explicit blank so the server removes it
+    // (a plain omit would leave the old value, since the merge never deletes).
+    else if (prev[f.key] != null && prev[f.key] !== '') tp[f.key] = '';
+  });
   // Loyalty programme rows → structured accounts.
   const count = Number($('#travelProfileCard')?.dataset.loyaltyCount || 0);
   const loyaltyAccounts = [];
@@ -1709,14 +1721,25 @@ function collectTravelProfile() {
 // chip and counter IN PLACE, never re-render (a re-render steals the cursor
 // mid-typing). The saved profile is instantly live everywhere: bookings, visa
 // applications, payments, documents and the Assistant all read state.user.
-async function persistTravelProfile(silent = false) {
+async function persistTravelProfile(silent = false, keepalive = false) {
   if (!state.user) return;
   const tp = collectTravelProfile();
   const st = $('#tpSaveStatus');
+  window.__tpDirty = false; // optimistic — restored below if the write fails
   let data;
-  try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }) }); }
-  catch { if (st) { st.textContent = 'offline — retrying on next change'; st.style.color = '#ff8a8a'; } return; }
-  setUser(data.user);
+  try {
+    // keepalive lets an in-flight save complete even if the page is closing, so a
+    // value typed moments before navigating away is never lost.
+    data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }), keepalive });
+  } catch {
+    window.__tpDirty = true; // still unsaved — a flush or the next edit will retry
+    if (st) { st.textContent = 'not saved — retrying…'; st.style.color = '#ff8a8a'; }
+    // Background retry so a transient failure (cold start, blip) still lands even
+    // if the user has stopped typing. Skipped on the unload path (no time left).
+    if (!keepalive) { clearTimeout(window.__tpRetry); window.__tpRetry = setTimeout(() => persistTravelProfile(true), 2500); }
+    return;
+  }
+  if (data?.user) setUser(data.user);
   const cnt = $('#tpCount'); if (cnt) cnt.textContent = String(TRAVEL_PROFILE_FIELDS.filter((f) => tp[f.key]).length);
   if (st) { st.textContent = '✓ saved · shared across the OS'; st.style.color = 'var(--green)'; }
   if (!silent) {
@@ -1724,7 +1747,23 @@ async function persistTravelProfile(silent = false) {
     renderTravelProfile();
   }
 }
+// Save NOW, cancelling any pending debounce — used on field-blur and page-hide so
+// nothing waits on the 900ms timer when the user is done with a field or leaving.
+function flushTravelProfile(keepalive = false) {
+  clearTimeout(window.__tpAutosave);
+  if (!state.user || !$('#travelProfileCard')) return;
+  return persistTravelProfile(true, keepalive);
+}
 window.saveTravelProfile = () => persistTravelProfile(false);
+// Flush a pending profile save when the tab is hidden or the page is closing —
+// the classic "typed it, then navigated, and it never saved" data loss.
+if (typeof window !== 'undefined' && !window.__tpFlushWired) {
+  window.__tpFlushWired = true;
+  const flush = () => { if (window.__tpDirty) flushTravelProfile(true); };
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('beforeunload', flush);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
+}
 
 // When a package can't take a live card charge (estimated price — no live
 // inventory for this basket), we DON'T dead-end the customer. We file an
@@ -5220,6 +5259,10 @@ window.addEventListener('appinstalled', () => {
   const log = $('#chatLog'); const form = $('#chatForm'); const input = $('#chatInput');
   if (!fab || !panel) return;
   let greeted = false;
+  // Keep a short transcript so multi-turn requests stay coherent — the assistant
+  // reads it so a bare follow-up ("departure") continues the change in flight
+  // instead of being re-read as a brand-new, unrecognised request.
+  const transcript = [];
   const bubble = (text, cls) => {
     const d = document.createElement('div');
     d.className = `chat-msg ${cls}`;
@@ -5227,6 +5270,7 @@ window.addEventListener('appinstalled', () => {
     d.innerHTML = esc(text).replace(/&lt;strong&gt;/g, '<strong>').replace(/&lt;\/strong&gt;/g, '</strong>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     log.appendChild(d); log.scrollTop = log.scrollHeight;
+    if (cls === 'me' || cls === 'bot') { transcript.push({ role: cls === 'me' ? 'user' : 'bot', text }); if (transcript.length > 12) transcript.shift(); }
     return d;
   };
   const open = () => {
@@ -5240,9 +5284,11 @@ window.addEventListener('appinstalled', () => {
     e.preventDefault();
     const msg = input.value.trim(); if (!msg) return;
     bubble(msg, 'me'); input.value = '';
+    // Send the transcript BEFORE this message (exclude the turn we just pushed).
+    const history = transcript.slice(0, -1).slice(-8);
     const typing = bubble('…', 'bot');
     try {
-      const d = await api('/api/support/chat', { method: 'POST', body: JSON.stringify({ message: msg }) });
+      const d = await api('/api/support/chat', { method: 'POST', body: JSON.stringify({ message: msg, history }) });
       typing.remove();
       bubble(d.reply, 'bot');
       if (d.escalated) bubble(`🎧 ${d.handoff || 'A 3JN specialist will follow up shortly.'}${d.ticketId ? ` (ref ${d.ticketId})` : ''}`, 'esc');

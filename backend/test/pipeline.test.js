@@ -3103,6 +3103,26 @@ test('assistant cancels with a policy-based refund quote', () => {
   assert.equal(b.status, 'cancelled', 'booking is cancelled');
 });
 
+test('assistant carries a multi-turn change ("departure" → a date) without escalating', () => {
+  // Regression: a bare follow-up like "departure" used to re-classify as unknown
+  // and dead-end into a human handoff. With transcript context it stays in the
+  // change flow, asks for the date, then quotes the change.
+  const u = createUser({ email: 'flow@x.co', name: 'Flow Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' }, inbound: { from: 'DXB', to: 'LHR', date: '2027-10-10' } } }] }, userId: u.id });
+  const t1 = assist('i need to change my booking', u.id, []);
+  const hist = [{ role: 'user', text: 'i need to change my booking' }, { role: 'bot', text: t1.reply }];
+  // Bare slot word — must NOT escalate; must ask for the departure date.
+  const t2 = assist('departure', u.id, hist);
+  assert.equal(t2.escalate, false, '"departure" does not escalate mid-change');
+  assert.ok(/departure date/i.test(t2.reply), 'asks for the new departure date');
+  hist.push({ role: 'user', text: 'departure' }, { role: 'bot', text: t2.reply });
+  // Now a bare date lands as the new departure and gets quoted.
+  const t3 = assist('20 October 2027', u.id, hist);
+  assert.ok(/CONFIRM/i.test(t3.reply), 'a bare date in-flow is quoted with CONFIRM');
+  assist('confirm', u.id, hist);
+  assert.equal(b.option.components[0].details.outbound.date, '2027-10-20', 'departure actually moved');
+});
+
 test('assistant operates on hotels too (add nights, upgrade room/board)', () => {
   const u = createUser({ email: 'htlop@x.co', name: 'Hotel Op' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1200 } }, totalUSD: 1524, travellers: { total: 2 }, components: [
@@ -5126,4 +5146,27 @@ test('inspire: returns 3 cheapest destinations per window, cheaper further out, 
   if (far) assert.ok(far.perSeatUSD <= near.perSeatUSD, '180-day cheaper than 30-day for same city');
   // The preference keywords ("warm", "beach") are surfaced back to the user.
   assert.ok(out.matchedTags.length > 0, 'matched at least one preference tag');
+});
+
+test('master travel profile autosaves incrementally and every field persists (PATCH → GET)', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const u = createUser({ name: 'Justin Nseya', email: `prof${Date.now()}@x.co` });
+  const H = { 'content-type': 'application/json', 'x-user-id': u.id };
+  const patch = (tp) => fetch(`${base}/api/account/${u.id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ travelProfile: tp }) }).then((r) => r.json());
+  try {
+    // Autosave #1 — a couple of fields as the user types them.
+    let d = await patch({ fullLegalName: 'Justin Ngolu Nseya', dob: '1987-04-09' });
+    assert.equal(d.user.travelProfile.fullLegalName, 'Justin Ngolu Nseya', 'first autosave persists');
+    // Autosave #2 — MORE fields land; the earlier ones must NOT be lost (merge).
+    d = await patch({ nationality: 'GB', passportNumber: '144888474', passportExpiry: '2033-03-22' });
+    assert.equal(d.user.travelProfile.passportNumber, '144888474', 'second autosave persists new field');
+    assert.equal(d.user.travelProfile.fullLegalName, 'Justin Ngolu Nseya', 'earlier field survives the merge');
+    // A fresh GET (what a page reload does) returns the fully accumulated profile.
+    const got = await fetch(`${base}/api/account/${u.id}`, { headers: { 'x-user-id': u.id } }).then((r) => r.json());
+    assert.equal(got.user.travelProfile.dob, '1987-04-09', 'reload sees DOB');
+    assert.equal(got.user.travelProfile.nationality, 'GB', 'reload sees nationality');
+    assert.equal(Object.keys(got.user.travelProfile).length >= 5, true, 'all five fields present after reload');
+  } finally { server.close(); }
 });

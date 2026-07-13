@@ -2660,12 +2660,13 @@ app.post('/api/admin/vendors/sales/:saleId/flag', safe((req, res) => {
 // request, refund/dispute, complaint/safety, or low confidence). Uses the
 // signed-in user's latest booking as context when available.
 app.post('/api/support/chat', safe(async (req, res) => {
-  const { message } = req.body || {};
+  const { message, history } = req.body || {};
   const user = currentUser(req);
   // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
   // e-tickets, wallet, rewards and visa rules; escalates only when a human must
-  // authorise an action — and hands the human a full diagnostic.
-  const out = assist(message, user?.id);
+  // authorise an action — and hands the human a full diagnostic. The recent
+  // transcript keeps multi-turn requests (e.g. a booking change) coherent.
+  const out = assist(message, user?.id, Array.isArray(history) ? history.slice(-8) : []);
   // A cancellation just flagged a refund due (operatorConfirm). Actually issue
   // it via Stripe when a captured PaymentIntent is on file — idempotent (guarded
   // by refundId). The in-module ops ticket remains the fallback if this can't

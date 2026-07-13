@@ -45,6 +45,7 @@ function bookingSnapshot(b) {
   const sym = b.option?.pricing?.symbol || '£';
   const paid = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const nextDue = (b.instalment?.schedule || []).find((s) => s.status !== 'paid') || null;
+  const flight = (b.option?.components || []).find((c) => c.type === 'flight');
   return {
     id: b.id, tier: b.option?.tier, pnr: b.fulfilment?.pnr || null,
     ticketing: b.fulfilment?.ticketing || 'confirmed', ticketNumbers: b.fulfilment?.ticketNumbers || [],
@@ -52,6 +53,8 @@ function bookingSnapshot(b) {
     fullyPaid: total > 0 && paid + 0.01 >= total,
     nextInstalment: nextDue ? { due: nextDue.due, amount: nextDue.amount } : null,
     refundPolicy: b.refundPolicy || null,
+    departDate: flight?.details?.outbound?.date || null,
+    returnDate: flight?.details?.inbound?.date || null,
     components: (b.option?.components || []).map((c) => ({ type: c.type, supplier: c.supplier, live: !!c.live })),
   };
 }
@@ -77,10 +80,14 @@ export function gatherContext(message, userId) {
 }
 
 // ---- The agent: resolve with real data, escalate only when required --------
-export function assist(message, userId) {
+export function assist(message, userId, history = []) {
   const intent = classifySupport(message);
   const ctx = gatherContext(message, userId);
   const money = (n) => `${ctx.booking?.symbol || '£'}${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  // The assistant is stateless per request, so a bare follow-up ("departure")
+  // would otherwise re-classify to "unknown" and escalate. Read the recent
+  // transcript so a reply is understood as part of the conversation in flight.
+  const topic = recentTopic(history);
 
   // ---- Operator actions: the assistant DOES what an operator does ----------
   // 1) A confirmation of a previously-quoted change/cancel → execute it now.
@@ -94,9 +101,26 @@ export function assist(message, userId) {
     }
     return mkResult(intent.key, 'I couldn’t complete that just now — I’m passing it to a specialist to finish safely.', ctx, { escalate: true, reason: 'operator action failed' });
   }
-  // 2) A NEW change request → parse it, quote it, and ask to confirm.
-  if (ctx.booking && intent.key === 'change') {
-    const changes = parseChange(message);
+  // 2) A change request — a fresh "change" intent OR a follow-up to one already
+  // in flight (e.g. the customer answers "departure", then "12 August"). We keep
+  // the conversation going and only quote once we have something concrete.
+  const followingChange = topic === 'change' && (intent.key === 'change' || intent.key === 'unknown' || !!changeSlot(message) || hasTravelDate(message));
+  if (ctx.booking && (intent.key === 'change' || followingChange)) {
+    // (a) A concrete change we can parse outright → quote it.
+    let changes = parseChange(message);
+    // (b) In flow, a bare date ("12 August") is the new date for the slot the
+    // customer named earlier (departure by default; return if they said so).
+    if (!changes) {
+      const dates = safe(() => parseExplicitDates(message, new Date()));
+      if (dates?.checkIn) {
+        const slot = changeSlot(message) || slotFromHistory(history);
+        if (slot === 'return' && ctx.booking.departDate) {
+          changes = { kind: 'date', newDate: ctx.booking.departDate, newReturnDate: dates.checkIn };
+        } else {
+          changes = { kind: 'date', newDate: dates.checkIn, newReturnDate: dates.checkOut || null };
+        }
+      }
+    }
     if (changes) {
       const q = operatorQuoteChange(ctx.booking.id, changes);
       if (q.ok) {
@@ -104,6 +128,11 @@ export function assist(message, userId) {
         return mkResult('change', `I can ${q.quote.description} on booking ${ctx.booking.id}. Here's the cost:\n${items}\n**Total now: ${money(q.quote.totalExtraGbp)}${q.quote.hasDeferred ? ' + any airline fare difference' : ''}.** Reply **CONFIRM** and I'll make the change and re-issue your e-ticket.`, ctx, { resolved: true });
       }
     }
+    // (c) The customer named WHAT to change but not the value yet → ask for the
+    // specific detail and stay in the flow. This is the case that used to
+    // dead-end into an escalation ("departure" → handed to a human).
+    const slot = changeSlot(message);
+    if (slot) return mkResult('change', slotPrompt(slot, ctx), ctx, { resolved: true });
   }
   // 3) A cancellation → quote the refund and ask to confirm (operator self-serve).
   if (ctx.booking && intent.key === 'cancel') {
@@ -216,6 +245,73 @@ export function assist(message, userId) {
 // Build the standard assist() result (used by the operator-action fast paths).
 function mkResult(intentKey, text, ctx, { resolved = false, escalate = false, reason = null, diagnostic = null } = {}) {
   return { intent: intentKey, reply: text, resolved, escalate, reason, context: ctx, diagnostic };
+}
+// What topic is the conversation already on? Reads the last few turns so a bare
+// follow-up ("departure") is understood in context instead of escalating. Turns
+// are { role: 'user'|'me'|'bot'|'assistant', text }.
+function recentTopic(history) {
+  const turns = Array.isArray(history) ? history.slice(-6) : [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i] || {};
+    const role = String(turn.role || turn.from || '').toLowerCase();
+    const text = String(turn.text || turn.message || turn.content || '');
+    if (!text) continue;
+    if (role === 'user' || role === 'me' || role === 'customer') {
+      const k = classifySupport(text).key;
+      if (k === 'change' || k === 'cancel') return k;
+    } else { // assistant / bot turn
+      if (/\b(change|new departure|new return date|what to change|what.?s the new)\b/i.test(text)) return 'change';
+      if (/\bcancel|refund position|action the cancellation\b/i.test(text)) return 'cancel';
+    }
+  }
+  return null;
+}
+// Which part of a booking is the customer naming ("departure", "add a bag")?
+function changeSlot(message) {
+  const t = String(message || '');
+  if (/\b(depart(ure|ing)?|outbound|leaving|fly out|go out|onward|out ?bound)\b/i.test(t)) return 'departure';
+  if (/\b(return|inbound|coming back|come back|way back|back home)\b/i.test(t)) return 'return';
+  if (/\b(passenger|traveller|traveler|add (a )?(person|name|guest)|extra person)\b/i.test(t)) return 'passenger';
+  if (/\b(bag|bags|baggage|luggage|suitcase|checked bag)\b/i.test(t)) return 'baggage';
+  if (/\b(room|suite)\b/i.test(t)) return 'room';
+  if (/\b(board|breakfast|half board|full board|all[- ]inclusive)\b/i.test(t)) return 'board';
+  if (/\b(night|nights|extend (my )?(stay|trip)|stay longer)\b/i.test(t)) return 'nights';
+  if (/\b(date|dates|day|when|reschedul|move it|bring forward|push back|earlier|later)\b/i.test(t)) return 'date';
+  return null;
+}
+// The most recent slot the customer named earlier in the conversation, so a bare
+// date ("12 August") lands on the right leg (departure vs return).
+function slotFromHistory(history) {
+  const turns = Array.isArray(history) ? history.slice(-6) : [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i] || {};
+    const role = String(turn.role || turn.from || '').toLowerCase();
+    if (role === 'user' || role === 'me' || role === 'customer') {
+      const s = changeSlot(String(turn.text || turn.message || turn.content || ''));
+      if (s) return s;
+    }
+  }
+  return null;
+}
+// Ask for the specific value once the customer has named WHAT to change.
+function slotPrompt(slot, ctx) {
+  const ref = ctx.booking?.id;
+  switch (slot) {
+    case 'departure': return `Sure — what's the new **departure date**? Tell me the date (e.g. 12 August 2026) and I'll check availability and the fare difference on booking ${ref} before anything is confirmed.`;
+    case 'return': return `Got it — what's the new **return date**? Give me the date and I'll price the change on booking ${ref} before you confirm.`;
+    case 'date': return `Sure — what new **travel dates** would you like? Tell me the departure (and the return, if it's a round trip) and I'll check the fare difference on booking ${ref} before anything is confirmed.`;
+    case 'passenger': return `Happy to add a traveller to booking ${ref}. How many extra passengers, and their full names exactly as on their passports? I'll quote the added fare before anything is confirmed.`;
+    case 'baggage': return `I can add checked baggage to booking ${ref}. How many extra bags? I'll show the exact price before you confirm.`;
+    case 'room': return `I can look at a room upgrade on booking ${ref}. Which room type would you like? I'll quote it before anything changes.`;
+    case 'board': return `I can upgrade the board basis on booking ${ref} — half board, full board or all-inclusive. Which would you like? I'll price it first.`;
+    case 'nights': return `I can extend your stay on booking ${ref}. How many extra nights? I'll quote the added cost before confirming.`;
+    default: return `Tell me exactly what to change on booking ${ref} — a new departure or return date, a passenger, or baggage — and I'll check the fare rules and the price difference before anything is confirmed.`;
+  }
+}
+// Does the message contain a concrete travel date we can act on?
+function hasTravelDate(message) {
+  const d = safe(() => parseExplicitDates(String(message || ''), new Date()));
+  return !!d?.checkIn;
 }
 // Is the customer confirming a previously-quoted action?
 function isConfirmation(message) {
