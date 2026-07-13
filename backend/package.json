@@ -1,0 +1,17 @@
+{
+  "name": "@3jn/backend",
+  "version": "0.1.0",
+  "description": "3JN Travel OS backend — the Express API, planning/pricing engines, store and persistence.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "NODE_ENV=test node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@3jn/shared": "*"
+  },
+  "license": "UNLICENSED",
+  "//": "Runtime deps (express, firebase-admin, nodemailer, firebase-functions) are declared in the ROOT package.json, which is the deploy manifest for Vercel (api/index.js) and Firebase (functions source '.'). Keep them there so both function builds resolve unchanged."
+}

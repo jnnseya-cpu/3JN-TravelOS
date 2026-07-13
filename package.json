@@ -7,6 +7,12 @@
   "engines": {
     "node": "20"
   },
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "//deps": "Runtime dependencies are declared HERE at the root on purpose: the root package.json is the deploy manifest for BOTH Vercel (api/index.js) and Firebase (functions source '.'). The workspaces above give each unit (shared/backend/frontend) its own package.json + boundary; the shared package is symlinked so backend can import '@3jn/shared'.",
   "scripts": {
     "start": "node backend/src/server.js",
     "dev": "node --watch backend/src/server.js",

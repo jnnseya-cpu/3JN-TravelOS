@@ -1,0 +1,9 @@
+{
+  "name": "@3jn/frontend",
+  "version": "0.1.0",
+  "description": "3JN Travel OS frontend — the vanilla-JS single-page app, landing page, service worker and static assets (no build step; served statically).",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "//": "Static, no-build app. It talks to the backend only over HTTP (/api, /shared); it must never import backend source directly — that boundary is the point of the split."
+}

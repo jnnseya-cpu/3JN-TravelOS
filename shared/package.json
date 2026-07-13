@@ -1,0 +1,12 @@
+{
+  "name": "@3jn/shared",
+  "version": "0.1.0",
+  "description": "Shared constants + contracts used by both the 3JN backend and frontend — the single source of truth so the two never drift.",
+  "type": "module",
+  "main": "constants.js",
+  "exports": {
+    ".": "./constants.js",
+    "./constants.js": "./constants.js"
+  },
+  "license": "UNLICENSED"
+}
