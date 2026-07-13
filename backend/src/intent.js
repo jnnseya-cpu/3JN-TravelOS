@@ -269,7 +269,10 @@ function buildDates(monthInfo, nights, today = new Date()) {
 // Departure city — "from London", "departing Paris", "leaving from Lagos".
 const ORIGIN_STOP = /^(to|in|for|with|on|during|next|this|and|by|the|my|our|a|an|cheapest|cheap|reliable|best|affordable|nights?|days?|weeks?|months?|please|return|one|way|alone|solo|myself|together|only|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/i;
 function parseOrigin(text) {
-  const m = (text || '').match(/\b(?:from|departing(?:\s+from)?|leaving(?:\s+from)?|fly(?:ing)?\s+(?:from|out\s+of)|out\s+of)\s+(.+)/i);
+  // The separator after the keyword tolerates punctuation, not just spaces, so a
+  // glued "from.birmingham" / "from,birmingham" (a very common typo) still detects
+  // the origin instead of silently defaulting to London.
+  const m = (text || '').match(/\b(?:from|departing(?:\s+from)?|leaving(?:\s+from)?|fly(?:ing)?\s+(?:from|out\s+of)|out\s+of)[\s.,:;]+(.+)/i);
   if (!m) {
     // No explicit "from" — handle a leading "<City> to <Dest>" (e.g. the user's
     // "Birmingham to Kinshasa"), where the first token is a KNOWN city.

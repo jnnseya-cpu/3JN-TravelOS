@@ -5279,3 +5279,15 @@ test('pii: encryption is a safe no-op when no key is configured (no OS conflict)
   assert.deepEqual(decryptSnapshot(enc), snap, 'decrypt round-trips to the original');
   assert.equal(decField('144888474'), '144888474', 'legacy plaintext passes through decrypt');
 });
+
+test('stabilise: origin detection tolerates punctuation glued to "from" (from.birmingham)', async () => {
+  const { plan } = await import('../src/planner.js');
+  const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
+  // "from.birmingham" (period, no space) must NOT silently fall back to London.
+  const glued = plan({ text: 'travel to kinshasa from.birmingham on 10/09/26 for 3 weeks flights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(glued.origin.city, 'Birmingham', 'from.birmingham resolves to Birmingham, not London');
+  assert.equal(glued.packages.options[0].components.find((c) => c.type === 'flight').details.outbound.from, 'BHX', 'flight departs BHX');
+  // A normal space still works.
+  const spaced = plan({ text: 'travel to kinshasa from birmingham for 3 weeks flights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(spaced.origin.city, 'Birmingham');
+});
