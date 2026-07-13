@@ -1850,12 +1850,20 @@ function loyaltyHub(u) {
   const pct = next ? Math.min(100, Math.round(((u.points - floor) / (next[1] - floor)) * 100)) : 100;
   const toNext = next ? `${(next[1] - u.points).toLocaleString()} pts to ${next[0]}` : 'Top tier reached 🏆';
   const shareUrl = `https://3jntravel.com/?ref=${u.referralCode}`;
+  // Show the discount the customer ACTUALLY gets — the better of their points
+  // tier and their paid membership — so an Elite member is never shown "0% off"
+  // next to their points tier while the account header says "8% off". The points
+  // ladder (Explorer→Voyager…) still tracks the points journey honestly.
+  const effDiscount = (u.effectiveDiscount != null ? u.effectiveDiscount : u.tierDiscount) || 0;
+  const discLine = u.discountSource === 'member'
+    ? `${(effDiscount * 100).toFixed(0)}% off · ${esc(u.discountLabel || 'membership')}`
+    : `${(effDiscount * 100).toFixed(0)}% off`;
   return `
     <div class="card pad" style="margin-top:16px">
       <span class="eyebrow">Loyalty Hub</span>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-        <strong style="font-family:'Space Grotesk';font-size:18px;color:var(--gold)">${u.tier}</strong>
-        <span class="muted" style="font-size:12.5px">${u.points.toLocaleString()} pts · ${(u.tierDiscount * 100).toFixed(0)}% off</span>
+        <strong style="font-family:'Space Grotesk';font-size:18px;color:var(--gold)">${esc(u.tier)}</strong>
+        <span class="muted" style="font-size:12.5px">${u.points.toLocaleString()} pts · ${discLine}</span>
       </div>
       <div class="rel-bar" style="margin:10px 0 6px"><i style="width:${pct}%"></i></div>
       <div class="muted" style="font-size:12px">${toNext}</div>
@@ -1936,23 +1944,49 @@ window.editProfile = () => {
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="saveProfile()">Save profile</button>`);
   window.__avatar = u.avatar;
   window.__cover = u.coverImage || null;
+  // Accept ANY photo the phone/camera produces. Instead of rejecting large files
+  // (every modern photo is multi-MB — the old "max 500KB" check meant the picture
+  // could never be changed), we downscale + compress client-side to a small JPEG
+  // that stays well under the server's caps and keeps the payload light.
   $('#avatarFile')?.addEventListener('change', (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    if (f.size > 500000) { toast('Image too large (max ~500KB).'); return; }
-    const reader = new FileReader();
-    reader.onload = () => { window.__avatar = reader.result; $('#avatarPreview').innerHTML = `<img class="avatar" src="${reader.result}" style="width:64px;height:64px" alt="">`; };
-    reader.readAsDataURL(f);
+    const f = e.target.files[0]; if (!f) return;
+    downscaleImage(f, 320, 320, 0.82).then((durl) => {
+      window.__avatar = durl; $('#avatarPreview').innerHTML = `<img class="avatar" src="${durl}" style="width:64px;height:64px" alt="">`;
+    }).catch(() => toast('Could not read that image — try another.'));
   });
   $('#coverFile')?.addEventListener('change', (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    if (f.size > 800000) { toast('Cover too large (max ~800KB).'); return; }
-    const reader = new FileReader();
-    reader.onload = () => { window.__cover = reader.result; $('#coverPreview').style.backgroundImage = `url('${reader.result}')`; };
-    reader.readAsDataURL(f);
+    const f = e.target.files[0]; if (!f) return;
+    downscaleImage(f, 1400, 500, 0.82).then((durl) => {
+      window.__cover = durl; $('#coverPreview').style.backgroundImage = `url('${durl}')`;
+    }).catch(() => toast('Could not read that image — try another.'));
   });
 };
+// Downscale an image File to fit within maxW×maxH (preserving aspect ratio) and
+// return a compressed JPEG data URL. Runs entirely in the browser — no upload of
+// the original — so a 5MB camera photo becomes a ~30–80KB avatar/cover.
+function downscaleImage(file, maxW, maxH, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('read-failed'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('decode-failed'));
+      img.onload = () => {
+        const scale = Math.min(1, maxW / img.width, maxH / img.height);
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(canvas.toDataURL('image/jpeg', quality)); }
+        catch { reject(new Error('encode-failed')); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 window.pickEmoji = (e) => { window.__avatar = e; $('#avatarPreview').innerHTML = `<span class="avatar avatar-emoji" style="width:64px;height:64px;font-size:32px">${e}</span>`; };
 window.saveProfile = async () => {
   const newEmail = $('#pfEmail').value.trim();

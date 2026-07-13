@@ -3295,13 +3295,19 @@ if (process.env.NODE_ENV !== 'test') {
       .finally(() => { storeReady = true; });
     // Belt-and-braces periodic flush (covers long-lived Cloud Run instances).
     // GATE on storeReady: before hydrate() lands, the in-memory store is EMPTY,
-    // and snapshotting it would overwrite the real saved data in Firebase with
-    // nothing. Never flush (periodic OR on shutdown) until the load has settled.
-    const flushEvery = setInterval(() => { if (storeReady) save(snapshot()); }, 15000);
+    // and snapshotting it would overwrite the real saved data with nothing. Never
+    // flush (periodic OR on shutdown) until the load has settled.
+    // CRITICAL: use saveMerge (per-record MERGE), NEVER save() (whole-store
+    // overwrite). With multiple instances, a whole-store set from THIS instance's
+    // possibly-stale memory silently wipes accounts/bookings/profile edits another
+    // instance just wrote — the root cause of "my name/profile change didn't
+    // stick" and "my account vanished". A merge only ever writes THIS instance's
+    // records over their own keys and leaves everyone else's intact.
+    const flushEvery = setInterval(() => { if (storeReady) saveMerge(flatSnapshot()); }, 15000);
     if (flushEvery.unref) flushEvery.unref();
     const flush = () => {
       if (!storeReady) { process.exit(0); return; } // load never finished — save nothing over good data
-      save(snapshot()).finally(() => process.exit(0));
+      saveMerge(flatSnapshot()).finally(() => process.exit(0));
     };
     process.on('SIGTERM', flush);
     process.on('SIGINT', flush);
