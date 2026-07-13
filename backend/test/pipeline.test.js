@@ -524,15 +524,13 @@ test('cost-protection gate blocks unfunded deep search and downgrades', () => {
   const acuFunded = costProtectionGate({ tier: 'deep', user: { acuBalance: 5000 }, expectedBookingUSD: 0, hasPurchasedAcu: true });
   assert.equal(acuFunded.allowed, true);
 
-  // MARGIN PROTECTION: searches are now charged at the 3× floor of their AI cost
-  // (Smart ≈ 80 ACU), so a small free starter balance can NOT fund a live AI
-  // search at a loss — it downgrades to the genuinely-free cached tier. A user who
-  // has actually funded enough ACU runs it.
+  // MARGIN PROTECTION: the free 50-ACU starter (never purchased, no commitment)
+  // may run Smart but NOT Deep — Deep downgrades until the user commits.
+  const starterDeep = costProtectionGate({ tier: 'deep', user: { acuBalance: 50 }, expectedBookingUSD: 0, hasPurchasedAcu: false });
+  assert.equal(starterDeep.allowed, false);
+  assert.equal(starterDeep.downgradeTo, 'smart');
   const starterSmart = costProtectionGate({ tier: 'smart', user: { acuBalance: 50 }, expectedBookingUSD: 0, hasPurchasedAcu: false });
-  assert.equal(starterSmart.allowed, false, 'a 50-ACU starter cannot fund a margin-priced search — no loss-leader');
-  assert.equal(starterSmart.downgradeTo, 'free');
-  const fundedSmart = costProtectionGate({ tier: 'smart', user: { acuBalance: 200 }, expectedBookingUSD: 0, hasPurchasedAcu: true });
-  assert.equal(fundedSmart.allowed, true, 'a funded balance runs the margin-priced Smart search');
+  assert.equal(starterSmart.allowed, true, 'free starter still runs the cheap Smart search');
 });
 
 test('white-label payout is 90/10 split', () => {
@@ -589,10 +587,15 @@ test('Dubai land products are sourced via the Rayna Tours agent account at net r
   assert.ok(typeof flight.sourcedVia === 'string' && flight.sourcedVia.length > 0);
 });
 
-test('referral rewards both parties', () => {
+test('referral records attribution but grants NO points at signup', () => {
+  // Loyalty points are earned only on a completed booking — never a signup bonus
+  // or a referral signup. The referral is rewarded (250 ACU + revshare) on the
+  // friend's first PAID booking instead (see the paid-referral test below).
   const referrer = createUser({ name: 'Referrer' });
+  const before = referrer.referrals;
   const friend = createUser({ name: 'Friend', referredByCode: referrer.referralCode });
-  assert.equal(friend.points, 250 + 50); // signup bonus + referral
+  assert.equal(friend.points, 0, 'no signup/referral points — starts at zero');
+  assert.equal(getUserById(referrer.id).referrals, before + 1, 'referral attribution is still recorded');
 });
 
 test('accounts have roles and an editable profile + avatar', () => {

@@ -403,6 +403,32 @@ function bookingFullyPaid(booking) {
   const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   return total > 0 && paid + 0.01 >= total;
 }
+// Email the FULL branded booking document (the same printable, "Save as PDF"
+// record shown in the Console) once a booking is paid IN FULL — on top of the
+// Console copy. Idempotent (claims a flag before the await), so a redelivered
+// webhook or a repeated call sends it exactly once. Fires only on a COMPLETED
+// booking: fully paid, or a pay-in-full booking with no outstanding instalment.
+async function emailBookingConfirmation(booking) {
+  if (!booking || booking.confirmationEmailSent) return;
+  const completed = bookingFullyPaid(booking) || (!booking.instalment && booking.pointsAwarded);
+  if (!completed) return;
+  const lead = booking.leadTraveller || booking.lead || {};
+  const to = lead.email || booking.lead?.email;
+  if (!to) return;
+  booking.confirmationEmailSent = true; // claim before await → send-once
+  try {
+    const sym = booking.option?.pricing?.symbol || '£';
+    const html = bookingDocument(booking, { user: null, currencySymbol: sym });
+    const ref = booking.fulfilment?.pnr || booking.id;
+    await sendMail({
+      to,
+      subject: `Your 3JN booking confirmation — ${ref}`,
+      text: `Your ${booking.option?.tier || ''} trip is confirmed and paid in full (3JN reference ${booking.id}). Your full booking document — flights, stay, transfers and everything included — is in this email and in your Console. Open it and use your browser's Print → "Save as PDF" to keep a PDF copy.`,
+      html,
+    });
+    recordAudit({ actor: 'system', role: 'system', action: 'booking.confirmation-emailed', entity: 'booking', entityId: booking.id, summary: `full document emailed to ${to}` });
+  } catch (e) { booking.confirmationEmailSent = false; console.error('[confirm-email]', e?.message || e); }
+}
 // Ticketing failed AFTER money was captured. Actually refund the customer (not
 // just tell them we did — there was no refund code before), and ALWAYS raise an
 // ops ticket so a human reconciles if the auto-refund can't fire (e.g. multiple
@@ -2207,6 +2233,9 @@ app.post('/api/book', safe((req, res) => {
     const { subject, html, text } = bookingEmail(quote.option, booking);
     sendMail({ to: user.email, subject, html, text }).catch(() => {});
   }
+  // Paid IN FULL at booking (no instalment plan) → also email the full booking
+  // document (PDF-ready). Instalment bookings get it when the balance clears.
+  emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   res.json({ booking, user: user ? getUser(user.id) : null });
 }));
 
@@ -2246,6 +2275,9 @@ app.post('/api/book/:id/pay', safe((req, res) => {
     }
     autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
     autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+    // Balance cleared → email the full booking document (PDF-ready), on top of
+    // the Console copy.
+    emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
   res.json({ booking });
 }));
@@ -2491,6 +2523,9 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       // AUTO-BOOK the hotel too (Duffel Stays: rates → quote → book). Failure
       // hands off to the ops desk, never a paid-but-unbooked room.
       if (booking) autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+      // Paid in full via Stripe → email the full booking document (PDF-ready),
+      // on top of the Console copy. Idempotent + fires only when fully paid.
+      if (booking) emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
     }
   }
   res.json({ received: true });

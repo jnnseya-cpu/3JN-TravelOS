@@ -266,6 +266,11 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     // NB: search tier is deliberately NOT keyed — a funded search populates the
     // database and the free tier serves that same richer result (spec §16).
     user ? (user.points || 0) : 0, communityHosts.length,
+    // Membership CHANGES the price (fee-free flights, bigger discount), so it MUST
+    // be part of the key — otherwise a member could be served a non-member's
+    // cached (higher) result, or vice versa. Key on the active tier, not just a
+    // flag, so each tier's distinct discount caches separately.
+    (user && user.membership?.active) ? `m:${user.membership.tier}` : 'm:none',
   ].join('|');
   // CHECK CACHE FIRST — before spending ACUs, at EVERY tier (Cache-First
   // Intelligence Engine, spec §16). Confidence decays with age: above the 85%

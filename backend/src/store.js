@@ -530,7 +530,10 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
     allAccess: !!allAccess,
     avatar: avatar || ROLE_AVATAR[safeRole], // emoji or image data URL
     bio: bio || '',
-    points: SIGNUP_BONUS_POINTS,
+    // Loyalty points are earned ONLY on a completed booking — never a signup
+    // bonus, a search, or a referral signup. New accounts start at zero and climb
+    // the tiers by actually travelling.
+    points: 0,
     // Starter ACU so a new account can TRY the AI search before topping up (50 ACU
     // ≈ 10 smart searches). Capped per IP above so it can't be farmed.
     acuBalance: starterAcu,
@@ -548,13 +551,15 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
   };
   db.users.set(userId, user);
 
-  // Apply referral rewards (referrer +100, friend +50).
+  // Record the referral ATTRIBUTION only — no loyalty points are granted at
+  // signup. Loyalty points are earned exclusively on a COMPLETED booking; the
+  // referral itself is rewarded (250 ACU + revenue share) when the referred
+  // friend makes their first PAID booking (processReferralOnPaidBooking), never
+  // just for signing up. This also closes the "farm signups for points" abuse.
   if (referredByCode) {
     const referrer = [...db.users.values()].find((u) => u.referralCode === referredByCode);
     if (referrer) {
-      referrer.points += 100;
       referrer.referrals += 1;
-      user.points += 50;
       db.referrals.push({ code: referredByCode, referrerId: referrer.id, friendId: userId });
     }
   }
@@ -1346,11 +1351,15 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   booking.awaitExternalCapture = awaitExternalCapture;
   db.bookings.set(bookingId, booking);
 
-  // Award loyalty points — 1 point per £2 spent (POINTS_PER_USD per $1). When
-  // Stripe captures externally, points accrue on the real payment (in
-  // recordPayment) instead, so an abandoned-after-deposit trip can't bank the
-  // full-trip points.
-  if (userId && !awaitExternalCapture) addPoints(userId, option.totalUSD * POINTS_PER_USD);
+  // LOYALTY POINTS: earned ONLY on a COMPLETED booking (paid in full) — never on
+  // a search, a signup, or a part-payment/deposit. A pay-in-full sim booking is
+  // complete at creation, so it earns now; an INSTALMENT booking earns nothing
+  // until the final instalment clears (handled in recordPayment). Stripe-captured
+  // bookings always defer to the signed webhook payment.
+  if (userId && !awaitExternalCapture && !instalment) {
+    addPoints(userId, option.totalUSD * POINTS_PER_USD);
+    booking.pointsAwarded = true;
+  }
 
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'booking.created', entity: 'booking', entityId: bookingId, summary: `${option.tier} via ${gateway} ($${option.totalUSD})` });
   if (userId) pushNotification(userId, { type: 'success', icon: '✅', title: 'Booking confirmed', body: `${option.tier} package — deposit paid. Price Guard is now active.` });
@@ -1396,15 +1405,17 @@ export function recordPayment(bookingId, payment) {
       ? { type: 'success', icon: '🧾', title: `Receipt ${receiptId}`, body: `Payment of ${sym}${amt.toFixed(2)} received. Paid ${sym}${paid.toFixed(2)} of ${sym}${total.toFixed(2)} — ${remaining > 0 ? `${sym}${remaining.toFixed(2)} remaining${b.instalment?.finalDue ? `, fully settled by ${b.instalment.finalDue}` : ''}` : 'fully settled'}.` }
       : { type: 'success', icon: '🧾', title: `Refund ${receiptId}`, body: `Refund of ${sym}${Math.abs(amt).toFixed(2)} processed to your payment method.` });
   }
-  // Loyalty points for Stripe-captured bookings accrue on ACTUAL payments,
-  // proportional to the fraction of the trip paid — so points track real money
-  // in (and an abandoned-after-deposit trip banks only the deposit's share),
-  // instead of an optimistic full-trip grant at booking time. Non-Stripe
-  // bookings keep the createBooking grant (this block is inert for them).
-  if (b.userId && b.awaitExternalCapture && ['deposit', 'instalment', 'full', 'stripe-checkout'].includes(payment.type) && Number(payment.amount) > 0) {
+  // LOYALTY POINTS: granted ONCE, only when the booking is fully paid (final
+  // payment) — never on a deposit or a partial instalment. The full trip's points
+  // land the moment the balance clears, guarded by `pointsAwarded` so a
+  // redelivered webhook or a repeated call can't double them.
+  if (b.userId && !b.pointsAwarded && Number(payment.amount) > 0) {
     const totalLocal = b.option?.pricing?.local?.total || 0;
-    const totalPts = (b.option?.totalUSD || 0) * POINTS_PER_USD;
-    if (totalLocal > 0 && totalPts > 0) addPoints(b.userId, totalPts * (Number(payment.amount) / totalLocal));
+    const paid = b.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    if (totalLocal > 0 && paid + 0.01 >= totalLocal) {
+      const totalPts = Math.round((b.option?.totalUSD || 0) * POINTS_PER_USD);
+      if (totalPts > 0) { addPoints(b.userId, totalPts); b.pointsAwarded = true; }
+    }
   }
 
   // Rewards: the first payment makes this a "paid booking" — fire the referral
