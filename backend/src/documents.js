@@ -24,6 +24,12 @@ function esc(s) {
 function money(local, symbol) {
   return `${symbol || ''}${Number(local || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
+// British date format everywhere on customer documents: 2026-08-03 → 03/08/2026.
+// Anything not an ISO date is returned unchanged so pre-formatted labels survive.
+function uk(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso == null ? '' : iso));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso == null ? '' : iso);
+}
 
 // Stable per-component confirmation reference derived from the booking id —
 // the same booking always renders the same refs (hotel confirmation, transfer
@@ -46,7 +52,7 @@ function legRows(c) {
     const main = `<tr>
       <td class="dir">${dir}</td>
       <td><strong>${esc(leg.from || '')}</strong> ${esc(leg.fromCity ? '· ' + leg.fromCity : '')} → <strong>${esc(leg.to || '')}</strong> ${esc(leg.toCity ? '· ' + leg.toCity : '')}</td>
-      <td>${esc(leg.date || '')}</td>
+      <td>${esc(uk(leg.date))}</td>
       <td>${esc(leg.depart || '')} – ${esc(leg.arrive || '')}${leg.arriveNextDay ? ' <span class="muted">+1</span>' : ''}</td>
       <td>${esc(leg.stopLabel || (leg.stops ? leg.stops + ' stop' : 'Direct'))}</td>
     </tr>`;
@@ -87,8 +93,8 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   const stays = comps.filter((c) => c.type === 'hotel' || c.type === 'host');
   const others = comps.filter((c) => !['flight', 'hotel', 'host'].includes(c.type));
   const trip = flights[0]?.details || {};
-  const startDate = trip.outbound?.date || stays[0]?.details?.checkIn || '';
-  const endDate = trip.inbound?.date || stays[0]?.details?.checkOut || '';
+  const startDate = uk(trip.outbound?.date || stays[0]?.details?.checkIn || '');
+  const endDate = uk(trip.inbound?.date || stays[0]?.details?.checkOut || '');
 
   const flightBlocks = flights.map((c) => `
     <div class="seg">
@@ -112,7 +118,7 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
       <table class="legs"><tbody>
         <tr><td class="dir">Property</td><td><b>${esc(d.propertyName || c.supplier)}</b></td><td class="dir">Address</td><td>${esc(addr || '—')}${d.distanceToCentreKm ? ` · ${d.distanceToCentreKm} km to centre` : ''}</td></tr>
         <tr><td class="dir">Confirmation</td><td><b class="ticketno">${esc(conf)}</b> · quote at reception</td><td class="dir">Contact</td><td>Reception via the property · issues? 3JN support (below) sorts it with them directly</td></tr>
-        <tr><td class="dir">Check-in</td><td><b>${esc(inD)}</b> from 15:00</td><td class="dir">Check-out</td><td><b>${esc(outD)}</b> by 11:00</td></tr>
+        <tr><td class="dir">Check-in</td><td><b>${esc(uk(inD))}</b> from 15:00</td><td class="dir">Check-out</td><td><b>${esc(uk(outD))}</b> by 11:00</td></tr>
         <tr><td class="dir">Stay</td><td>${d.nights || '—'} night${d.nights > 1 ? 's' : ''} · ${d.rooms || 1} room${(d.rooms || 1) > 1 ? 's' : ''}</td>
             <td class="dir">Board</td><td>${esc(d.board || d.boardBasis || 'Room only')}</td></tr>
         ${d.groupStay ? `<tr><td class="dir">Group</td><td colspan="3">${d.groupStay.guests} guests · ${esc(d.groupStay.units.join(' • '))}</td></tr>` : ''}
@@ -266,7 +272,7 @@ export function serviceBlockData(booking, c, i, { startDate = '', endDate = '' }
     rows.push(['At the border', 'Carry your passport, a printed or digital copy of the decision letter, and this itinerary. Conditions on the visa (validity, entries) are stated on the letter.']);
   } else if (c.type === 'activities' || c.type === 'tickets') {
     rows.push(['Voucher', `<b class="ticketno">${esc(confRef(booking.id, i, 'VCH'))}</b> — show at entry (digital accepted, ID may be requested)`]);
-    rows.push(['Schedule', `${d.date ? esc(d.date) + ' · ' : ''}Exact meeting point and start time are confirmed by email and in your Console <b>24–48h before</b>. ${d.durationHours ? `Duration ~${d.durationHours}h. ` : ''}Arrive 15 minutes early.`]);
+    rows.push(['Schedule', `${d.date ? esc(uk(d.date)) + ' · ' : ''}Exact meeting point and start time are confirmed by email and in your Console <b>24–48h before</b>. ${d.durationHours ? `Duration ~${d.durationHours}h. ` : ''}Arrive 15 minutes early.`]);
     rows.push(['Changes', 'Need a different day or headcount? Ask the 3JN Assistant — free rescheduling up to 24h before where the operator allows.']);
     if (d.whatProvided?.length) rows.push(['Included', d.whatProvided.map(esc).join(' · ')]);
     if (d.whatToBring?.length) rows.push(['Bring', d.whatToBring.map(esc).join(' · ')]);
@@ -309,8 +315,8 @@ export function includedServices(booking) {
   const flights = comps.filter((x) => x.type === 'flight');
   const stays = comps.filter((x) => x.type === 'hotel' || x.type === 'host');
   const trip = flights[0]?.details || {};
-  const startDate = trip.outbound?.date || stays[0]?.details?.checkIn || '';
-  const endDate = trip.inbound?.date || stays[0]?.details?.checkOut || '';
+  const startDate = uk(trip.outbound?.date || stays[0]?.details?.checkIn || '');
+  const endDate = uk(trip.inbound?.date || stays[0]?.details?.checkOut || '');
   // Index within the filtered list — identical to the printed document's
   // indexing, so the refs (TRF-…, VCH-…) match exactly on both surfaces.
   return comps

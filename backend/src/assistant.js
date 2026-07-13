@@ -156,7 +156,7 @@ export function assist(message, userId, history = []) {
       const state = b.ticketing === 'issued' ? `ticketed ✅ (PNR ${b.pnr}${b.ticketNumbers.length ? `, e-ticket ${b.ticketNumbers.join(', ')}` : ''})`
         : b.ticketing === 'held' ? `reserved — your fare is held (PNR ${b.pnr}); the e-ticket issues automatically once your instalments complete`
         : `confirmed (ref ${b.id})`;
-      const pay = b.fullyPaid ? 'Paid in full.' : b.nextInstalment ? `Next instalment: ${money(b.nextInstalment.amount)} due ${b.nextInstalment.due}.` : `Paid ${money(b.paid)} of ${money(b.total)}.`;
+      const pay = b.fullyPaid ? 'Paid in full.' : b.nextInstalment ? `Next instalment: ${money(b.nextInstalment.amount)} due ${uk(b.nextInstalment.due)}.` : `Paid ${money(b.paid)} of ${money(b.total)}.`;
       reply = `Your ${b.tier} trip is ${state}. ${pay} Your documents are in your Console (🎫 View e-ticket). Anything else?`;
       resolved = true; break;
     }
@@ -164,7 +164,7 @@ export function assist(message, userId, history = []) {
       if (!ctx.booking) { reply = KNOWLEDGE.payments + ' Sign in and I can show your exact plan and next payment.'; resolved = ctx.signedIn ? false : true; break; }
       const b = ctx.booking;
       reply = b.fullyPaid ? `Your ${b.tier} booking is paid in full — nothing more to pay.`
-        : b.nextInstalment ? `You’re on an instalment plan: ${money(b.paid)} paid of ${money(b.total)}. Next payment ${money(b.nextInstalment.amount)} is due ${b.nextInstalment.due}. Your e-ticket issues automatically once the plan completes.`
+        : b.nextInstalment ? `You’re on an instalment plan: ${money(b.paid)} paid of ${money(b.total)}. Next payment ${money(b.nextInstalment.amount)} is due ${uk(b.nextInstalment.due)}. Your e-ticket issues automatically once the plan completes.`
         : `You’ve paid ${money(b.paid)} of ${money(b.total)} for your ${b.tier} booking.`;
       resolved = true; break;
     }
@@ -353,6 +353,11 @@ function summarisePolicy(rp, money) {
   return 'the fare/supplier rules on your booking apply';
 }
 function safe(fn) { try { return fn(); } catch { return null; } }
+// British date format for anything the assistant says: 2026-08-03 → 03/08/2026.
+function uk(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso == null ? '' : iso));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso == null ? '' : iso);
+}
 function esc(s) { return String(s == null ? '' : s); }
 
 // Compact knowledge string for the LLM grounding path.

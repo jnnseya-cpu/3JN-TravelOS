@@ -1070,7 +1070,7 @@ window.showComponentInfo = (tier, idx) => {
     const legHTML = (l, title) => l ? `
       <div class="card pad" style="margin-top:10px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
-          <strong>${title}</strong><span class="muted" style="font-size:12px">${esc(l.date)} · ${esc(l.stopLabel)} · ${esc(l.durationLabel)}</span></div>
+          <strong>${title}</strong><span class="muted" style="font-size:12px">${esc(ukDate(l.date))} · ${esc(l.stopLabel)} · ${esc(l.durationLabel)}</span></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
           <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.depart)}</div><div class="muted" style="font-size:12px">${esc(l.from)}${l.fromCity ? ' · ' + esc(l.fromCity) : ''}</div></div>
           <div class="muted" style="flex:1;text-align:center;font-size:12px">✈ ${esc(l.durationLabel)}<div class="rel-bar" style="margin:6px 12px"><i style="width:100%"></i></div>${l.stops ? esc(`${l.stops} stop${l.stops > 1 ? 's' : ''}`) : 'Direct'}</div>
@@ -1255,7 +1255,7 @@ window.openBooking = async (tier) => {
   const inst = data.quote.instalment;
   const sym = option.pricing.symbol;
 
-  const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${s.due}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
+  const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
   // AI Smart Instalment plan header: which plan, why, and the protection rules
   // the customer is agreeing to — stated before they pay, not in small print.
   const smart = inst.engine === 'ai-smart' ? `
@@ -1265,7 +1265,7 @@ window.openBooking = async (tier) => {
         <span class="muted" style="font-size:11.5px">${inst.daysToDeparture} days to departure · AI-selected</span></div>
       <div class="muted" style="font-size:12px;margin-top:6px">
         Deposit <strong>${(inst.depositPct * 100).toFixed(0)}%</strong> today (<strong style="color:var(--gold)">non-refundable</strong> — it secures your booking and locks the fare) ·
-        ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(inst.finalDue)}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
+        ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
         pay any amount early, any time, no penalty.
       </div>
       <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels and the deposit is forfeited; any balance beyond the deposit follows the supplier refund policy.</div>
@@ -2062,7 +2062,7 @@ function bookingCard(b) {
   const pgEvents = (b.priceGuard.events || []).map((e) => `
     <div class="pg-event ${e.action === 'rebook-refund' ? 'drop' : ''}">${e.message}${e.refundUSD ? ` <strong style="color:var(--green)">(+${money2(e.refundUSD * (o.pricing.local.total / o.pricing.lines.totalUSD), sym)})</strong>` : ''}</div>`).join('');
   const sched = (b.instalment?.schedule || []).map((s, i) => `
-    <div class="kv"><span>Instalment ${i + 1} · ${s.due}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${s.status === 'paid' ? '✓ paid' : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`}</span></div>`).join('');
+    <div class="kv"><span>Instalment ${i + 1} · ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${s.status === 'paid' ? '✓ paid' : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`}</span></div>`).join('');
   const comps = o.components.map((c) => labelFor(c)).join(' · ');
   // AI Payment Protection: live progress tracker — % paid, outstanding, plan.
   const paidTotal = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -2072,7 +2072,7 @@ function bookingCard(b) {
     <div style="margin:8px 0 2px">
       <div style="display:flex;justify-content:space-between;font-size:11.5px" class="muted">
         <span>${b.instalment.plan ? esc(b.instalment.plan) + ' · ' : ''}${paidPct}% paid</span>
-        <span>${paidPct >= 100 ? '✓ fully settled' : `${money2(Math.max(0, totalLocal - paidTotal), sym)} remaining${b.instalment.finalDue ? ' · settled by ' + esc(b.instalment.finalDue) : ''}`}</span></div>
+        <span>${paidPct >= 100 ? '✓ fully settled' : `${money2(Math.max(0, totalLocal - paidTotal), sym)} remaining${b.instalment.finalDue ? ' · settled by ' + esc(ukDate(b.instalment.finalDue)) : ''}`}</span></div>
       <div class="rel-bar" style="margin-top:4px"><i style="width:${paidPct}%"></i></div>
     </div>` : '';
   // AI Booking Protection™: Price Locked badge + any market-rise savings the
@@ -2267,7 +2267,7 @@ async function renderVendors() {
     const jobCards = openJobs.map((j) => `
       <div style="padding:10px 0;border-bottom:1px solid rgba(223,229,238,.08)">
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><strong>${esc(j.componentLabel)}</strong><span style="color:var(--gold)">${esc(j.symbol)}${j.sellPrice} · you earn £${(j.sellPrice * 0.9).toFixed(2)}</span></div>
-        <div class="muted" style="font-size:12px;margin-top:3px">${esc(j.destination || '')}${j.serviceDate ? ' · ' + esc(j.serviceDate) : ''}${j.pax ? ' · ' + j.pax + ' pax' : ''}${j.customer?.name ? ' · ' + esc(j.customer.name) : ''}</div>
+        <div class="muted" style="font-size:12px;margin-top:3px">${esc(j.destination || '')}${j.serviceDate ? ' · ' + esc(ukDate(j.serviceDate)) : ''}${j.pax ? ' · ' + j.pax + ' pax' : ''}${j.customer?.name ? ' · ' + esc(j.customer.name) : ''}</div>
         <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
           <input class="in" id="vjref-${esc(j.id)}" placeholder="Your confirmation ref for the customer" style="max-width:240px;font-size:12px">
           <button class="btn btn-gold btn-sm" onclick="confirmVendorJob('${esc(j.id)}')">✓ Confirm job</button>
@@ -2675,7 +2675,7 @@ async function renderFulfilment() {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
         <strong>${esc(o.componentLabel)}</strong>
         <span>${chip(o.channel)} <span class="muted" style="font-size:11px">${ageH(o.createdAt)}h old${ageH(o.createdAt) > 24 ? ' ⚠' : ''}</span></span></div>
-      <div class="muted" style="font-size:12px;margin-top:3px">${esc(o.destination || '')}${o.serviceDate ? ' · ' + esc(o.serviceDate) : ''}${o.pax ? ' · ' + o.pax + ' pax' : ''} · ${esc(o.symbol)}${o.sellPrice} · booking ${esc(o.bookingId)}${o.customer?.name ? ' · ' + esc(o.customer.name) : ''}</div>
+      <div class="muted" style="font-size:12px;margin-top:3px">${esc(o.destination || '')}${o.serviceDate ? ' · ' + esc(ukDate(o.serviceDate)) : ''}${o.pax ? ' · ' + o.pax + ' pax' : ''} · ${esc(o.symbol)}${o.sellPrice} · booking ${esc(o.bookingId)}${o.customer?.name ? ' · ' + esc(o.customer.name) : ''}</div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="copyFulfilPayload('${esc(o.id)}')">📋 Copy portal payload</button>
         ${o.channel === 'ops:rayna' ? '<a class="btn btn-ghost btn-sm" href="https://agents.raynab2b.com" target="_blank" rel="noopener">Open Rayna portal ↗</a>' : ''}
@@ -3109,7 +3109,7 @@ async function renderDeals() {
     const per = d.perPerson ? ' <span class="muted" style="font-size:11px">pp</span>' : '';
     const from = d.fromPrice ? '<span class="muted" style="font-size:11px">from </span>' : '';
     const loc = [d.destinationCity, d.destinationCountry].filter(Boolean).join(', ');
-    const window = d.travelFrom || d.travelTo ? `<div class="muted" style="font-size:11.5px;margin-top:4px">🗓 ${esc(d.travelFrom || '')}${d.travelTo ? ' → ' + esc(d.travelTo) : ''}</div>` : '';
+    const window = d.travelFrom || d.travelTo ? `<div class="muted" style="font-size:11.5px;margin-top:4px">🗓 ${esc(ukDate(d.travelFrom || ''))}${d.travelTo ? ' → ' + esc(ukDate(d.travelTo)) : ''}</div>` : '';
     const incl = (d.inclusions || []).slice(0, 5).map((x) => `<span class="chip">${esc(x)}</span>`).join('');
     const soldOut = d.soldOut;
     const remain = d.remaining != null && d.remaining <= 5 && !soldOut ? `<div class="muted" style="font-size:11px;color:var(--gold);margin-top:4px">Only ${d.remaining} left</div>` : '';

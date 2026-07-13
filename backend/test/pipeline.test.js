@@ -3046,7 +3046,7 @@ test('assistant resolves with the user\'s real system data before escalating', (
   assert.ok(status.reply.includes(b.id), 'quotes the real booking reference');
 
   const pay = assist('when is my next payment due', u.id);
-  assert.ok(pay.reply.includes('375') && pay.reply.includes('2026-09-01'), 'quotes the real next instalment');
+  assert.ok(pay.reply.includes('375') && pay.reply.includes('01/09/2026'), 'quotes the real next instalment in British date format');
 
   const visa = assist('do I need a visa for Dubai', u.id);
   assert.equal(visa.resolved, true);
