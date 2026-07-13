@@ -5215,3 +5215,54 @@ test('master travel profile autosaves incrementally and every field persists (PA
     assert.equal(Object.keys(got.user.travelProfile).length >= 5, true, 'all five fields present after reload');
   } finally { server.close(); }
 });
+
+// ---- Stabilisation pass: parsing + money-correctness regressions -------------
+test('stabilise: "back by <date>" and ISO dates parse correctly', async () => {
+  const { parseIntent, parseExplicitDates } = await import('../src/intent.js');
+  const t = new Date('2026-07-13');
+  const d1 = parseIntent('Dubai flights hotel back by 30 September for 4 nights', { country: 'GB' }, t).dates;
+  assert.equal(d1.checkIn, '2026-09-26', '"back by 30 Sept, 4 nights" → check-in 26 Sept');
+  assert.equal(d1.checkOut, '2026-09-30', '"back by" anchors check-out to the deadline');
+  assert.equal(parseExplicitDates('2026-09-15', t).checkIn, '2026-09-15', 'ISO date parses');
+  assert.equal(parseExplicitDates('2026-09-15 to 2026-09-20', t).nights, 5, 'ISO range parses');
+  // A stay never prices 0 nights.
+  const { plan } = await import('../src/planner.js');
+  const GB = { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 }, country: 'GB' };
+  const r = plan({ text: 'Dubai flights hotel for 0 nights', context: GB, user: null, searchTier: 'smart' });
+  const h = r.packages.options[0].components.find((c) => c.type === 'hotel');
+  if (h) assert.ok(h.details.nights >= 1 && h.priceUSD > 0, 'hotel is at least 1 night, never £0');
+});
+
+test('stabilise: money gates count only plan-funding payments (change-charge cannot complete a plan)', async () => {
+  const { createBooking, recordPayment, getUser } = await import('../src/store.js');
+  const u = createUser({ email: `stab${Date.now()}@x.co`, name: 'Stab' });
+  const b = createBooking({ option: { tier: 'Standard', totalUSD: 1266, pricing: { symbol: '£', local: { total: 1000 }, lines: { totalUSD: 1266 } }, components: [{ type: 'flight', supplier: 'BA', live: false, details: {} }] }, userId: u.id, instalment: { deposit: 200, schedule: [{ due: '2027-01-01', amount: 400, status: 'pending' }, { due: '2027-02-01', amount: 400, status: 'pending' }] } });
+  // A large booking change-charge must NOT push the plan to "fully paid".
+  recordPayment(b.id, { type: 'change-charge', amount: 700 });
+  assert.notEqual(b.pointsAwarded, true, 'a change-charge does not award loyalty points');
+  recordPayment(b.id, { type: 'instalment', amount: 400, index: 0 });
+  assert.notEqual(b.pointsAwarded, true, 'still not complete after one instalment');
+  recordPayment(b.id, { type: 'instalment', amount: 400, index: 1 });
+  assert.equal(b.pointsAwarded, true, 'points award only when the PLAN is fully funded');
+});
+
+test('stabilise: a curated-deal reservation banks no points until paid', async () => {
+  const { createBooking, getUser } = await import('../src/store.js');
+  const u = createUser({ email: `deal${Date.now()}@x.co`, name: 'Deal' });
+  const b = createBooking({ option: { tier: 'Deal', totalUSD: 1266, pricing: { symbol: '£', local: { total: 1000 } }, components: [] }, userId: u.id, sourceDealId: 'dl_x' });
+  assert.notEqual(b.pointsAwarded, true, 'a reservation (offline payment) does not bank points at creation');
+  assert.equal(getUser(u.id).points, 0, 'user still at 0 points');
+});
+
+test('stabilise: /api/book rejects a malformed option without creating a booking', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const u = createUser({ email: `mal${Date.now()}@x.co`, name: 'Mal' });
+  try {
+    const res = await fetch(`${base}/api/book`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': u.id }, body: JSON.stringify({ option: { pricing: { local: { total: 100 } } } }) });
+    // Rejected 4xx BEFORE createBooking runs (no 500, no orphan booking). A prior
+    // bug persisted a garbage booking then threw 500 in the confirmation email.
+    assert.ok(res.status >= 400 && res.status < 500, `malformed option → clean 4xx (got ${res.status})`);
+  } finally { server.close(); }
+});

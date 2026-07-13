@@ -66,10 +66,14 @@ function ukDate(iso) {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || '');
 }
 function money(n, sym) {
-  return `${sym || state.context?.context?.currency?.symbol || '£'}${Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const v = Number(n); const s = sym || state.context?.context?.currency?.symbol || '£';
+  if (!Number.isFinite(v)) return '—'; // never render "£NaN" / "£∞" on a missing/bad value
+  return `${s}${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 function money2(n, sym) {
-  return `${sym || '£'}${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const v = Number(n); const s = sym || '£';
+  if (!Number.isFinite(v)) return '—';
+  return `${s}${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 // ---- Toast ----------------------------------------------------------------
@@ -1520,7 +1524,7 @@ async function renderConsole() {
       ${u.membership?.active
         ? `<div class="kv"><span>Membership</span><span style="color:var(--green)">${u.membership.name}</span></div>
            <div class="kv"><span>Auto-funds</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU/mo (10%)</span></div>
-           <div class="kv"><span>Renews</span><span>${new Date(u.membership.renewsAt).toLocaleDateString()}</span></div>`
+           <div class="kv"><span>Renews</span><span>${ukDate(u.membership.renewsAt)}</span></div>`
         : `<div class="kv"><span>Membership</span><span class="muted">None — join to auto-fund ACUs</span></div>`}
       <div class="kv"><span>Referral code</span><span>${u.referralCode}</span></div>
       <div class="kv"><span>Referrals</span><span>${u.referrals}</span></div>
@@ -2189,7 +2193,7 @@ async function renderRewards() {
     ? `<span style="color:var(--green)">✓ Lifetime revenue share active · ${(d.revshareRate * 100).toFixed(2)}% · up to ${g(d.capPerCustomerGbp)}/customer</span>`
     : `${d.paidReferrals}/${d.unlockReferrals} paid referrals — refer ${Math.max(0, d.unlockReferrals - d.paidReferrals)} more to unlock lifetime revenue share`;
   const tools = (d.aiGrowthTools || []).map((t) => `<span class="chip" style="font-size:11px">${esc(t.label)}</span>`).join(' ');
-  const wd = (d.withdrawalHistory || []).slice(0, 5).map((w) => `<div class="kv"><span>${esc((w.at || '').slice(0, 10))} · ${esc(w.method)}</span><span>${g(w.amountGbp)} · <span class="muted">${esc(w.status)}</span></span></div>`).join('') || '<div class="muted" style="font-size:12px">No withdrawals yet.</div>';
+  const wd = (d.withdrawalHistory || []).slice(0, 5).map((w) => `<div class="kv"><span>${ukDate(w.at)} · ${esc(w.method)}</span><span>${g(w.amountGbp)} · <span class="muted">${esc(w.status)}</span></span></div>`).join('') || '<div class="muted" style="font-size:12px">No withdrawals yet.</div>';
 
   out.innerHTML = `
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
@@ -2290,7 +2294,7 @@ async function renderVendors() {
         <button class="btn btn-gold btn-sm" onclick="navigator.clipboard.writeText('${esc(mine.sellLink)}').then(()=>toast('✓ Sell link copied'))">Copy</button>
       </div>
       <p class="muted" style="font-size:12px;margin-top:8px">Code <strong style="color:var(--gold)">${esc(mine.vendorCode)}</strong> · Every eligible sale through your link earns ${mine.commissionRatePct}% — paid automatically every Friday. ${mine.leaderboardRank ? `Leaderboard: #${mine.leaderboardRank}.` : ''} Top seller each month earns +1% the following month.</p>
-      ${(mine.payoutHistory || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Recent payouts</span>${mine.payoutHistory.map((p) => `<div class="kv"><span>${esc((p.at || '').slice(0, 10))}</span><span>£${p.amountGbp.toLocaleString()} · <span class="muted">${esc(p.status)}</span></span></div>`).join('')}</div>` : ''}
+      ${(mine.payoutHistory || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Recent payouts</span>${mine.payoutHistory.map((p) => `<div class="kv"><span>${ukDate(p.at)}</span><span>£${p.amountGbp.toLocaleString()} · <span class="muted">${esc(p.status)}</span></span></div>`).join('')}</div>` : ''}
     </div>`
     : `
     <div class="card pad center" style="margin-top:22px">
@@ -3085,11 +3089,11 @@ async function renderMarketplace() {
   let data;
   try { data = await api(`/api/destinations?country=${state.country || 'GB'}`); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
   const cards = (data.destinations || []).map((d) => `
-    <div class="card pad dest-card" onclick="trackView('${d.code}','${d.city}');planDest('${d.city}')">
-      <div class="dest-emoji">${d.emoji}</div>
-      <h3 style="margin:6px 0 2px">${d.city}</h3>
-      <div class="muted" style="font-size:12.5px">${d.country} · ${d.tag}</div>
-      <div class="exp-tags">${d.experiences.map((e) => `<span class="chip">${e}</span>`).join('')}</div>
+    <div class="card pad dest-card" onclick="trackView('${esc(d.code)}','${esc(d.city)}');planDest('${esc(d.city)}')">
+      <div class="dest-emoji">${esc(d.emoji)}</div>
+      <h3 style="margin:6px 0 2px">${esc(d.city)}</h3>
+      <div class="muted" style="font-size:12.5px">${esc(d.country)} · ${esc(d.tag)}</div>
+      <div class="exp-tags">${d.experiences.map((e) => `<span class="chip">${esc(e)}</span>`).join('')}</div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px">
         <span class="muted" style="font-size:12px">from</span>
         <span style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${d.symbol}${d.fromLocal.toLocaleString()}</span>
@@ -3100,7 +3104,7 @@ async function renderMarketplace() {
     <div class="dest-grid">${cards}</div>
     <div class="card pad" style="margin-top:24px">
       <span class="eyebrow">Every trip is a marketplace basket</span>
-      <div class="chips" style="margin-top:10px">${(data.addOns || []).map((a) => `<span class="chip" style="cursor:pointer" title="Add to your next trip search" onclick="addBasketAddon('${esc(a)}')">＋ ${a}</span>`).join('')}</div>
+      <div class="chips" style="margin-top:10px">${(data.addOns || []).map((a) => `<span class="chip" style="cursor:pointer" title="Add to your next trip search" onclick="addBasketAddon('${esc(a)}')">＋ ${esc(a)}</span>`).join('')}</div>
       <p class="muted" style="font-size:11.5px;margin-top:6px">Tap any add-on to drop it into your trip — it's searched, priced and booked inside the same package.</p>
     </div>`;
 }
@@ -3415,7 +3419,7 @@ async function renderMyVisaApplications() {
         <strong>${esc(x.applicant?.name || 'Application')} → ${esc(x.country || x.applicant?.destination || '')}</strong>
         <span style="color:${col};font-weight:600">${decided ? esc(x.decision.decision) : '🕓 Under embassy review'}</span>
       </div>
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(x.id)} · ${esc(x.visaType || 'tourist')} · submitted ${esc((x.at || '').slice(0, 10))}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(x.id)} · ${esc(x.visaType || 'tourist')} · submitted ${ukDate(x.at)}</div>
       ${decided ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(x.decision.reason || '')}${(x.decision.conditions || []).length ? '<br>Conditions: ' + x.decision.conditions.map(esc).join(' · ') : ''}</div>
         <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="viewVisaLetter('${esc(x.id)}')">📄 Official decision letter</button>`
         : `<p class="muted" style="font-size:12px;margin-top:6px">The embassy is reviewing your file. You'll be notified the moment your decision letter is issued — decisions are made and released by an authorised officer.</p>`}
@@ -4742,7 +4746,11 @@ function trackEvent(event, destination, payload) {
 window.trackEvent = trackEvent;
 window.trackView = (code, city) => trackEvent('view_destination', code, { city });
 
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Escapes &<>"' — the single quote MATTERS: values are embedded in single-quoted
+// JS-string args inside onclick attributes, so an unescaped apostrophe ("Xi'an",
+// "Children's museum") would terminate the string early → dead click + an XSS
+// break-out vector. Matches the backend htmlEsc set exactly.
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 async function refreshJourney() {
   const rowsEl = $('#journeyRows');

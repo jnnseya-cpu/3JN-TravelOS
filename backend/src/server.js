@@ -10,7 +10,7 @@ import { destinationsCatalog, findDestination, resolveOrigin, originForCountry }
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
@@ -391,7 +391,11 @@ const safe = (fn) => async (req, res) => {
     await fn(req, res);
   } catch (err) {
     console.error('[api error]', req.path, err);
-    res.status(500).json({ error: 'internal', message: String(err.message || err) });
+    // Log the detail server-side, but never leak internal field names / code
+    // shape to the client in production — a generic message only. Dev/test keep
+    // the detail for debugging.
+    const detail = process.env.NODE_ENV === 'production' ? undefined : String(err.message || err);
+    res.status(500).json({ error: 'internal', ...(detail ? { message: detail } : {}) });
   }
 };
 
@@ -400,7 +404,10 @@ const safe = (fn) => async (req, res) => {
 // are NOT fully paid until the final instalment lands.
 function bookingFullyPaid(booking) {
   const total = booking.option?.pricing?.local?.total || 0;
-  const paid = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  // Count ONLY plan-funding payments (deposit/instalment/full) — a booking
+  // change-charge must NOT push a still-owed instalment plan to "fully paid" and
+  // release the ticket/room/deal early.
+  const paid = planPaid(booking);
   return total > 0 && paid + 0.01 >= total;
 }
 // Email the FULL branded booking document (the same printable, "Save as PDF"
@@ -665,7 +672,8 @@ app.post('/api/inspire', safe((req, res) => {
   const context = detectContext(req, { country: body.country, currencyCountry: body.country });
   const cur = context.currency || { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
   // Departure airport: from a named city if given, else the traveller's country.
-  const originResolved = body.origin ? resolveOrigin(body.origin) : null;
+  // Coerce to string so a numeric/object `origin` can't throw in resolveOrigin.
+  const originResolved = (body.origin != null && body.origin !== '') ? resolveOrigin(String(body.origin)) : null;
   const countryOrigin = originForCountry(context.country) || { airport: 'LHR', city: 'London' };
   const originCode = (originResolved?.airport) || countryOrigin.airport || 'LHR';
   const originCity = originResolved?.city || countryOrigin.city || 'your city';
@@ -1857,6 +1865,9 @@ app.get('/api/expense', safe((req, res) => {
 // ---- Plan: the core pipeline ---------------------------------------------
 app.post('/api/plan', safe(async (req, res) => {
   const { text, searchTier, overrides, country, currencyCountry, preferences } = req.body || {};
+  // A non-string `text` (a client posting a number/array/object) must be a clean
+  // 400, not a 500 from `text.trim()` deep in the parser.
+  if (text != null && typeof text !== 'string') return res.status(400).json({ error: 'text-must-be-string' });
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
   let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, usage: usageStats(user?.id) });
@@ -2086,11 +2097,13 @@ app.get('/api/booking/schema', safe((req, res) => {
 }));
 app.post('/api/booking/requirements', safe((req, res) => {
   const { components, destination, nationality, passengers, holidayType, international } = req.body || {};
-  res.json(bookingRequirements({ components, destination, nationality, passengers, holidayType, international: international !== false }));
+  if (components != null && !Array.isArray(components)) return res.status(400).json({ error: 'components-must-be-array' });
+  res.json(bookingRequirements({ components: components || [], destination, nationality, passengers, holidayType, international: international !== false }));
 }));
 app.post('/api/booking/validate', safe((req, res) => {
   const { travellers, travelDate, nationality, destination, fraudSignals, international } = req.body || {};
-  const validation = validateBooking({ travellers, travelDate, nationality, destination, international: international !== false });
+  if (travellers != null && !Array.isArray(travellers)) return res.status(400).json({ error: 'travellers-must-be-array' });
+  const validation = validateBooking({ travellers: travellers || [], travelDate, nationality, destination, international: international !== false });
   res.json({ ...validation, risk: bookingRiskScore(fraudSignals || {}) });
 }));
 
@@ -2121,9 +2134,19 @@ function smartPlanForRequest(req, option, intent) {
   // quote is never blocked; real bookings always carry a checkIn.
   return plan || instalmentPlan({ totalLocal: option.pricing.local.total, currency, months: 3, depositPct: 0.2, checkIn: departISO });
 }
+// A well-formed option must carry a pricing block with a positive local total and
+// a components array — otherwise the pricing/quote/booking engines dereference
+// undefined and 500. Guard at the edge so malformed input is a clean 400 and
+// never persists a garbage booking.
+function isValidOption(o) {
+  return !!(o && typeof o === 'object' && !Array.isArray(o)
+    && o.pricing && typeof o.pricing === 'object'
+    && o.pricing.local && Number(o.pricing.local.total) > 0
+    && Array.isArray(o.components));
+}
 app.post('/api/quote', safe((req, res) => {
   const { option, intent } = req.body || {};
-  if (!option) return res.status(400).json({ error: 'option-required' });
+  if (!isValidOption(option)) return res.status(400).json({ error: 'invalid-option', message: 'A valid priced option (pricing.local.total + components[]) is required.' });
   const instalment = smartPlanForRequest(req, option, intent);
   const quote = saveQuote({ option, intent, instalment });
   recordBehaviour(currentUser(req)?.id, {
@@ -2179,12 +2202,17 @@ app.post('/api/book', safe((req, res) => {
   // integrity is unaffected: an estimated price can never be charged, and a live
   // price is re-validated against the real supplier fare at checkout (loss floor).
   if (!quote) {
-    if (bodyOption && bodyOption.pricing?.local?.total > 0) {
+    if (isValidOption(bodyOption)) {
       quote = saveQuote({ option: bodyOption, intent: bodyIntent || {}, instalment: smartPlanForRequest(req, bodyOption, bodyIntent || {}) });
     } else {
       return res.status(404).json({ error: 'quote-not-found', message: 'Your quote expired — please re-run the search and try again.' });
     }
   }
+  // Guard the quote's option too: a malformed option (from a stale/tampered
+  // client) must be a clean 400 BEFORE we create/persist a booking — otherwise a
+  // garbage booking is stored and only the confirmation email throws (500), or an
+  // anonymous caller silently banks an orphan booking.
+  if (!isValidOption(quote.option)) return res.status(400).json({ error: 'invalid-option', message: 'This quote is incomplete — please re-run the search.' });
   const user = currentUser(req);
 
   // The AI-selected plan from the quote stands — the schedule is re-derived
@@ -2702,6 +2730,7 @@ app.post('/api/admin/vendors/sales/:saleId/flag', safe((req, res) => {
 // signed-in user's latest booking as context when available.
 app.post('/api/support/chat', safe(async (req, res) => {
   const { message, history } = req.body || {};
+  if (message != null && typeof message !== 'string') return res.status(400).json({ error: 'message-must-be-string' });
   const user = currentUser(req);
   // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
   // e-tickets, wallet, rewards and visa rules; escalates only when a human must
@@ -3255,6 +3284,7 @@ app.post('/api/v1/esim', safe((req, res) => {
 
 app.post('/api/v1/search', safe((req, res) => {
   const { text } = req.body || {};
+  if (text != null && typeof text !== 'string') return res.status(400).json({ error: 'text-must-be-string' });
   const partnerKey = req.headers['x-partner-key'];
   // Validate a real issued key if supplied; otherwise allow the public demo.
   const keyInfo = partnerKey ? useApiKey(partnerKey) : null;

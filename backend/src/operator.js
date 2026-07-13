@@ -154,7 +154,12 @@ export function quoteCancellation(booking) {
     }
   }
   pct = Math.max(0, Math.min(100, pct));
-  const refundGbp = round2(paid * (pct / 100));
+  // An instalment deposit is strictly NON-REFUNDABLE once confirmed (same rule the
+  // instalment default path enforces). Apply the refundable % only to what was
+  // paid ABOVE the deposit — never refund the deposit on a voluntary cancel.
+  const nonRefundableDeposit = booking.instalment?.depositNonRefundable ? Math.min(paid, Number(booking.instalment.deposit) || 0) : 0;
+  const refundableBase = Math.max(0, paid - nonRefundableDeposit);
+  const refundGbp = round2(refundableBase * (pct / 100));
   return { ok: true, quote: { kind: 'cancel', symbol: sym, paidGbp: round2(paid), refundablePct: pct, refundGbp, nonRefundableGbp: round2(paid - refundGbp) } };
 }
 

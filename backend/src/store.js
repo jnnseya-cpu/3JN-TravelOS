@@ -15,7 +15,7 @@ import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceC
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
-import { instalmentState, defaultOutcome, dueReminders } from './instalments.js';
+import { instalmentState, defaultOutcome, dueReminders, planPaid } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
 import { PLACEMENT_SECTIONS } from './partners.js';
@@ -1352,11 +1352,13 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   db.bookings.set(bookingId, booking);
 
   // LOYALTY POINTS: earned ONLY on a COMPLETED booking (paid in full) — never on
-  // a search, a signup, or a part-payment/deposit. A pay-in-full sim booking is
-  // complete at creation, so it earns now; an INSTALMENT booking earns nothing
-  // until the final instalment clears (handled in recordPayment). Stripe-captured
-  // bookings always defer to the signed webhook payment.
-  if (userId && !awaitExternalCapture && !instalment) {
+  // a search, a signup, a deposit, a curated-deal RESERVATION (sourceDealId —
+  // settled offline/later, so it must not bank points for £0), or an ESTIMATED
+  // price. A pay-in-full sim booking of a BOOKABLE price is complete at creation,
+  // so it earns now; an INSTALMENT booking earns nothing until the final
+  // instalment clears (recordPayment). Stripe-captured bookings defer to the webhook.
+  const deferredPayment = !!sourceDealId || (booking.priceBasis !== 'live' && booking.priceBasis !== 'confirmed');
+  if (userId && !awaitExternalCapture && !instalment && !deferredPayment) {
     addPoints(userId, option.totalUSD * POINTS_PER_USD);
     booking.pointsAwarded = true;
   }
@@ -1411,7 +1413,10 @@ export function recordPayment(bookingId, payment) {
   // redelivered webhook or a repeated call can't double them.
   if (b.userId && !b.pointsAwarded && Number(payment.amount) > 0) {
     const totalLocal = b.option?.pricing?.local?.total || 0;
-    const paid = b.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    // Count ONLY plan-funding payments (deposit/instalment/full) — never a
+    // booking change-charge, which would otherwise push `paid` over the total and
+    // award points (and release fulfilment) while the plan is still owed.
+    const paid = planPaid(b);
     if (totalLocal > 0 && paid + 0.01 >= totalLocal) {
       const totalPts = Math.round((b.option?.totalUSD || 0) * POINTS_PER_USD);
       if (totalPts > 0) { addPoints(b.userId, totalPts); b.pointsAwarded = true; }

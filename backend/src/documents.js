@@ -115,7 +115,10 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     const conf = d.confirmationNumber || d.stayReference || null;
     // FULL property identification: name + street address (or area + city) so
     // the traveller can find, verify and navigate to the place.
-    const addr = d.address || [d.area, o.destination || d.city].filter(Boolean).join(', ');
+    // o.destination is an object ({city,country,…}) on real bookings — take .city
+    // (never the object, which would stringify to "[object Object]" on the doc).
+    const destCity = (o.destination && typeof o.destination === 'object') ? o.destination.city : o.destination;
+    const addr = d.address || [d.area, destCity || d.city].filter(Boolean).join(', ');
     return `
     <div class="seg">
       <div class="seg-head"><span>🏨 <b>${esc(d.propertyName || c.supplier)}</b></span><span class="muted">${c.stars ? '★'.repeat(c.stars) : ''} ${esc(d.roomType || 'Room')}</span></div>

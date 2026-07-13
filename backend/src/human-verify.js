@@ -14,7 +14,15 @@
 
 import { createHmac } from 'node:crypto';
 
-const SECRET = (typeof process !== 'undefined' && process.env && process.env.HUMAN_CHECK_SECRET) || '3jn-human-gate-v1';
+const HUMAN_SECRET_ENV = (typeof process !== 'undefined' && process.env && process.env.HUMAN_CHECK_SECRET) || null;
+const SECRET = HUMAN_SECRET_ENV || '3jn-human-gate-v1';
+// The committed fallback is PUBLIC (in source), so its HMAC tokens are forgeable.
+// A stable secret must be shared across serverless instances, so it has to come
+// from the environment. Warn loudly in production if it's missing so the operator
+// sets HUMAN_CHECK_SECRET (the gate still functions; this is defense-in-depth).
+if (!HUMAN_SECRET_ENV && typeof process !== 'undefined' && (process.env?.NODE_ENV === 'production' || process.env?.LIVE_MODE === 'true')) {
+  console.warn('[human-verify] HUMAN_CHECK_SECRET is not set — the anti-bot gate is using a PUBLIC fallback key and its tokens are forgeable. Set HUMAN_CHECK_SECRET before taking real traffic.');
+}
 const CHALLENGE_TTL_MS = 10 * 60 * 1000; // a challenge is valid for 10 minutes
 export const MIN_FORM_MS = 1200;         // no human completes the form faster
 export const MIN_INTERACTIONS = 3;       // real keystrokes / pointer events

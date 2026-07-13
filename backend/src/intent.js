@@ -131,6 +131,25 @@ export function parseExplicitDates(text, today = new Date()) {
   const iso = (y, m, d) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
   const rollYear = (m) => (m < today.getUTCMonth() ? baseYear + 1 : baseYear);
 
+  // 0) ISO dates "YYYY-MM-DD" (and ISO ranges) — the format a date <input> and
+  // many users type. Runs FIRST so the DD/MM matcher below never mis-reads it.
+  const isoRe = /\b(\d{4})-(\d{2})-(\d{2})(?:\s*(?:to|until|till|[\-–—])\s*(\d{4})-(\d{2})-(\d{2}))?/;
+  const im = text.match(isoRe);
+  if (im) {
+    const y1 = +im[1], mo1 = +im[2], d1 = +im[3];
+    if (mo1 >= 1 && mo1 <= 12 && d1 >= 1 && d1 <= 31) {
+      if (im[4]) {
+        const y2 = +im[4], mo2 = +im[5], d2 = +im[6];
+        let ci = new Date(Date.UTC(y1, mo1 - 1, d1));
+        let co = new Date(Date.UTC(y2, mo2 - 1, d2));
+        if (co < ci) { const t = ci; ci = co; co = t; }
+        const nights = Math.max(1, Math.round((co - ci) / 86400000));
+        return { checkIn: ci.toISOString().slice(0, 10), checkOut: co.toISOString().slice(0, 10), nights, monthIndex: ci.getUTCMonth() };
+      }
+      return { checkIn: iso(y1, mo1 - 1, d1), checkOut: null, nights: null, monthIndex: mo1 - 1 };
+    }
+  }
+
   // 1) Numeric DD/MM[/YYYY] (optionally a range with to / - / – / until).
   const num = /\b(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?\s*(?:to|until|till|[\-–—])\s*(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?/i;
   let m = text.match(num);
@@ -367,12 +386,17 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   const nightsStated = /\d+\s*(?:night|nights|day|days|week|weeks)/i.test(raw);
   let nights = (explicit && explicit.nights) || parseNights(raw);
   if (miniCruise && !nightsStated && !(explicit && explicit.nights)) nights = 2;
+  // A trip is at least 1 night — never price a £0 "0-nights" hotel onto a package.
+  nights = Math.max(1, Math.round(nights) || 1);
   // "get back by / return by / be home by <date>" — the typed date is the RETURN
   // deadline, not the check-in. Anchor check-out to it and back off the nights so
   // "4 nights, back by 30 Sept" becomes 26 Sept → 30 Sept, not a trip STARTING on
   // the 30th. Only applies to a single typed date (an explicit range already has
   // both ends).
-  const returnDeadline = /\b(?:get\s+back|be\s+back|back\s+(?:in|to|home|by)|return(?:ing)?|fly\s+back|come\s+back|home)\b[^.]{0,40}\bby\b/i.test(raw);
+  // NB: the alternatives must NOT swallow the trailing "by" that the anchor needs
+  // — so "back" here matches "in/to/home" but never "by" (the plain "back … by"
+  // is covered by the `back` word plus the `\bby\b` anchor).
+  const returnDeadline = /\b(?:get\s+back|be\s+back|back(?:\s+(?:in|to|home))?|return(?:ing)?|fly\s+back|come\s+back|home)\b[^.]{0,40}\bby\b/i.test(raw);
   let dates;
   if (explicit && explicit.checkIn) {
     if (returnDeadline && !explicit.checkOut) {

@@ -216,8 +216,8 @@ export function dueReminders(booking, todayISO) {
 // deposit, instalments, and a full/stripe payment. A booking-change charge
 // (extra owed) and a negative price-guard refund must NOT reduce or inflate
 // coverage, or a good booking would default (refund) / under-collect (change).
-const PLAN_PAYMENT_TYPES = new Set(['deposit', 'instalment', 'full', 'stripe-checkout', 'deposit-credit']);
-function planPaid(booking) {
+export const PLAN_PAYMENT_TYPES = new Set(['deposit', 'instalment', 'full', 'stripe-checkout', 'deposit-credit']);
+export function planPaid(booking) {
   return (booking.payments || [])
     .filter((p) => PLAN_PAYMENT_TYPES.has(p.type) && Number(p.amount) > 0)
     .reduce((s, p) => s + Number(p.amount), 0);
