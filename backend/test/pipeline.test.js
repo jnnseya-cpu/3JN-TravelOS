@@ -3121,12 +3121,13 @@ test('assistant operates on hotels too (add nights, upgrade room/board)', () => 
   assert.equal(b.option.components[1].details.checkIn, '2027-11-15', 'hotel moved with it');
 });
 
-test('minimum AI profit margin is enforced at 100% across every action', () => {
+test('minimum AI profit margin is enforced at 200% (3x markup) across every action', () => {
   const rep = aiMarginReport();
-  assert.equal(rep.minMarginPct, 100);
-  assert.equal(rep.allMeetFloor, true, 'every AI action clears the 100% margin floor');
-  assert.ok(rep.actions.every((a) => a.marginPct >= 100));
-  // The floor never lets an action be charged below 2× its provider cost.
+  assert.equal(rep.minMarginPct, 200);
+  assert.equal(rep.allMeetFloor, true, 'every AI action clears the 200% margin floor (3x markup)');
+  assert.ok(rep.actions.every((a) => a.marginPct >= 200));
+  // Business rule: the customer is charged 3x–10x provider cost. The floor never
+  // lets an action be charged below 3x its provider cost.
   assert.ok(minAcuForMargin(0.01) >= 1);
   assert.ok(pricedAcuForAction(1) >= 1);
 });

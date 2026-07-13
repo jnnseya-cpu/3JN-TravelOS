@@ -66,22 +66,33 @@ const TIERS = {
   },
   Premium: {
     label: 'Premium — Best Balance',
-    blurb: 'Higher-rated suppliers and better comfort for a modest uplift.',
-    pickFlight: (list) => preferDirect(list, bestValue),
-    pickHotel: (list) => byStars(accommodationPool(list), 4),
-    pickPerSupplier: (list) => bestValue(list),
+    blurb: 'A step up — a higher-rated airline and a real 4★ hotel, for a modest uplift.',
+    // A genuine comfort upgrade: the highest-RATED ECONOMY direct flight (a
+    // full-service carrier over a budget LCC), NOT the business cabin — that's
+    // Luxury's. So Premium is a better airline than Standard, below Luxury.
+    pickFlight: (list) => preferDirect(list, (l) => {
+      const econ = l.filter((f) => !/business|first/i.test(f.details?.cabin || ''));
+      return topRated(econ.length ? econ : l);
+    }),
+    // A real, well-rated 4★ HOTEL (branded stay) — not the budget private host
+    // Standard already picked — so Premium is visibly a step up.
+    pickHotel: (list) => topByStars(list, 4),
+    pickPerSupplier: (list) => topRated(list), // better-rated extras, not the cheapest
     marketMultiplier: 1.22,
   },
   Luxury: {
     label: 'Luxury — Top Rated',
-    blurb: 'The highest-rated, most premium verified options available.',
+    blurb: 'The highest-rated, most premium verified options — 5★ stays and premium cabins.',
     // A REAL premium cabin (Business/First from the live search) outranks a
-    // relabelled economy fare — Luxury must actually be luxury.
+    // relabelled economy fare — Luxury must actually be luxury; then the most
+    // premium carrier, then the top-rated.
     pickFlight: (list) => preferDirect(list, (l) => {
       const prem = l.filter((f) => /business|first/i.test(f.details?.cabin || ''));
-      return topRated(prem.length ? prem : l);
+      if (prem.length) return topRated(prem);
+      const premiumCarrier = l.filter((f) => f.premium);
+      return topRated(premiumCarrier.length ? premiumCarrier : l);
     }),
-    pickHotel: (list) => byStars(accommodationPool(list), 5),
+    pickHotel: (list) => topByStars(list, 5),
     pickPerSupplier: (list) => topRated(list),
     marketMultiplier: 1.30,
   },
@@ -153,6 +164,18 @@ function byStars(list, stars) {
   const exact = list.filter((h) => h.stars === stars);
   const pool = exact.length ? exact : list.filter((h) => (h.stars || 0) >= stars - 1);
   return cheapest(pool.length ? pool : list);
+}
+// Higher tiers get a real BRANDED HOTEL (not the budget private host) at the
+// target star level, and the HIGHEST-RATED one — so Premium/Luxury are a visible
+// step up from Standard's cheapest-reliable pick, not the same property.
+function topByStars(list, stars) {
+  const pool0 = accommodationPool(list);
+  const hotels = pool0.filter((h) => h.type === 'hotel');
+  const base = hotels.length ? hotels : pool0; // prefer real hotels over hosts
+  const exact = base.filter((h) => (h.stars || 0) === stars);
+  const atLeast = base.filter((h) => (h.stars || 0) >= stars);
+  const pool = exact.length ? exact : (atLeast.length ? atLeast : base);
+  return topRated(pool);
 }
 
 // Build a single package option for a given tier.

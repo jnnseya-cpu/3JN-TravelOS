@@ -106,11 +106,14 @@ export function estimateRequestCost(routeInfo) {
   return { estimatedTokens, estimatedCostUSD: Math.round((estimatedTokens / 1e6) * rate * 10000) / 10000 };
 }
 
-// ---- Minimum AI profit margin (business rule: NEVER below 100%) ------------
-// Many AI actions are "unfunded" (customer-triggered beyond what a plan funds).
-// Every metered AI action must sell for at least (1 + MIN_AI_MARGIN)× its
-// provider cost — i.e. a 100% minimum margin. ACU sells at £1 = ACU_PER_GBP.
-export const MIN_AI_MARGIN = 1.0; // 100%
+// ---- Minimum AI profit margin (business rule: 3×–10× provider cost) ---------
+// Pricing policy: every £1 of provider cost is charged to the customer at 3×–10×.
+// So every metered AI action must sell for at least (1 + MIN_AI_MARGIN)× its
+// provider cost — a 200% minimum margin = a 3× minimum markup (the floor of the
+// 3×–10× band). Actions whose base ACU rate already exceeds this keep their
+// higher markup (up to ~10×). ACU sells at £1 = ACU_PER_GBP.
+export const MIN_AI_MARGIN = 2.0; // 200% margin = 3× markup (floor of the 3–10× band)
+export const MAX_AI_MARKUP = 10;  // ceiling of the pricing band (informational)
 const GBP_TO_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266) — consistent everywhere
 // The provider cost of an action expressed in ACU (what it costs us, in ACU).
 export function providerCostInAcu(costUSD) {

@@ -1496,7 +1496,7 @@ async function renderConsole() {
         <span class="role-badge">${esc(u.role)}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
       </div>
       ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${esc(u.bio)}</p>` : ''}
-      <div class="kv" style="margin-top:12px"><span>Tier</span><span style="color:var(--gold)">${u.tier} (${(u.tierDiscount * 100).toFixed(0)}% off)</span></div>
+      <div class="kv" style="margin-top:12px"><span>${u.discountSource === 'member' ? 'Membership' : 'Tier'}</span><span style="color:var(--gold)">${esc(u.discountLabel || u.tier)} (${((u.effectiveDiscount != null ? u.effectiveDiscount : u.tierDiscount) * 100).toFixed(0)}% off)</span></div>
       <div class="kv"><span>Loyalty points</span><span>${u.points.toLocaleString()}</span></div>
       <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
       ${u.membership?.active

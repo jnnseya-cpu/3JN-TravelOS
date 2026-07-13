@@ -998,6 +998,13 @@ export function adminSetMembership(userId, tierKey) {
 
 function publicUser(u) {
   const tier = tierForPoints(u.points);
+  // A paid membership grants a discount that can beat the points tier. Expose the
+  // EFFECTIVE discount + a label so every screen (account, chip, receipt) shows
+  // what the customer actually gets — an Elite member is never "Explorer · 0%".
+  const memberPlan = u.membership?.active ? MEMBERSHIP_TIERS.find((t) => t.key === u.membership.tier) : null;
+  const memberDiscount = memberPlan?.discount || 0;
+  const memberBeats = memberDiscount > tier.discount;
+  const effectiveDiscount = Math.max(tier.discount, memberDiscount);
   return {
     id: u.id,
     email: u.email,
@@ -1012,6 +1019,10 @@ function publicUser(u) {
     points: u.points,
     tier: tier.name,
     tierDiscount: tier.discount,
+    // Membership-aware effective discount + label for the UI.
+    effectiveDiscount,
+    discountLabel: memberBeats ? (memberPlan.name.replace('Travel+ ', '')) : tier.name,
+    discountSource: memberBeats ? 'member' : 'loyalty',
     acuBalance: u.acuBalance,
     membership: u.membership || null,
     coverImage: u.coverImage || null,

@@ -847,11 +847,17 @@ async function sendWelcomeEmail(user) {
 
 // OWNERSHIP: an account holds passport/PII — only the owner (or an all-access
 // admin) may read it, and never another user's raw bookings.
-app.get('/api/account/:id', safe((req, res) => {
+app.get('/api/account/:id', safe(async (req, res) => {
   const caller = currentUser(req);
   if (!caller) return res.status(401).json({ error: 'auth-required' });
   if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
     return res.status(403).json({ error: 'not-your-account' });
+  }
+  // FRESHNESS: a profile autosave may have landed on ANOTHER serverless instance
+  // moments ago. Pull the latest before returning so a reload never shows a stale
+  // (empty) travel profile / balance — "autosaved but nothing saved" was this.
+  if (IS_SERVERLESS && isEnabled()) {
+    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ }
   }
   const stored = getUser(req.params.id);
   if (!stored) return res.status(404).json({ error: 'not-found' });
