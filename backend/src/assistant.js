@@ -326,6 +326,9 @@ function parseChange(message) {
   // Hotel: board-basis upgrade.
   const boardM = t.match(/\b(half board|full board|all[- ]inclusive|bed (?:and|&) breakfast|breakfast included)\b/i);
   if (boardM) { const b = { 'half board': 'Half board', 'full board': 'Full board', 'all inclusive': 'All inclusive', 'all-inclusive': 'All inclusive', 'bed and breakfast': 'Bed & breakfast', 'bed & breakfast': 'Bed & breakfast', 'breakfast included': 'Bed & breakfast' }[boardM[1].toLowerCase()] || 'Half board'; return { kind: 'board', board: b }; }
+  // A bare "breakfast" / "add breakfast" / "I need breakfast" is a Bed & Breakfast
+  // board upgrade — the most common stay change and one the bot must handle, not escalate.
+  if (/\bbreakfast\b/i.test(t)) return { kind: 'board', board: 'Bed & breakfast' };
   // Hotel: room upgrade.
   if (/\b(upgrade|better|bigger|change)\b[^.]*\broom\b|\broom\b[^.]*\bupgrade\b/i.test(t)) return { kind: 'room' };
   // Add checked baggage.

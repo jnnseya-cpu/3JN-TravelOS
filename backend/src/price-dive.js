@@ -23,6 +23,12 @@ const floorOf = (offers = []) => {
   return ok.length ? Math.min(...ok.map((o) => o.priceUSD)) : null;
 };
 
+// British date for customer-facing lever text: 2028-08-23 → 23/08/2028.
+function ukd(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso == null ? '' : iso));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso == null ? '' : iso);
+}
+
 function shiftDates(intent, days) {
   const shift = (iso) => {
     const d = new Date(iso + 'T00:00:00Z');
@@ -65,7 +71,7 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false,
       savings.push({
         lever: 'Date optimisation',
         savingUSD: round(baseFlightFloor - best.priceUSD),
-        how: `Depart ${best.days > 0 ? '+' : ''}${best.days} day${Math.abs(best.days) > 1 ? 's' : ''} (${best.checkIn}) and the same flights drop.`,
+        how: `Depart ${best.days > 0 ? '+' : ''}${best.days} day${Math.abs(best.days) > 1 ? 's' : ''} (${ukd(best.checkIn)}) and the same flights drop.`,
         apply: { shiftDays: best.days, checkIn: best.checkIn },
         // Alternative dates are re-priced by the model, not the live feed —
         // acting on this re-searches for the exact live fare (never charged blind).
@@ -192,6 +198,13 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false,
   }
   if (!sawFloor) basketAllLive = false;
   const marginPct = publicTotalUSD > 0 ? Math.round(((publicTotalUSD - ourTotalUSD) / publicTotalUSD) * 1000) / 10 : 0;
+
+  // DROP TRIVIAL LEVERS: a "save £1 / save £2" line reads as noise and makes the
+  // whole dive look unserious. Only surface a lever whose saving is actually
+  // worth acting on (≳ $8 ≈ £6). If nothing meaningful remains we honestly say so.
+  for (let i = savings.length - 1; i >= 0; i--) {
+    if (!(savings[i].savingUSD >= 8)) savings.splice(i, 1);
+  }
 
   // SANITY CAP: an illustrative saving must never exceed what the trip costs —
   // "save £2,170" on a £1,786 trip is obviously broken and destroys trust. Cap

@@ -393,7 +393,7 @@ export function scanHotels(intent, dest) {
         reviews: 200 + Math.floor(rnd() * 4800),
         amenities: amenitiesFor(rnd, h.stars),
         description: `A representative ${h.stars}-star ${h.stars >= 4 ? 'premium' : 'comfortable'} stay in ${area}, ${dest.city} — an indicative example of this tier; the exact property is confirmed before you book.`,
-        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel', displayName),
+        ...hotelExtras(rnd, dest, intent, h.stars, 'hotel', displayName, area),
       },
       // Price by the units actually sold: dorms sell one bed PER TRAVELLER,
       // private rooms sell `rooms`. `units` already resolves to the right count
@@ -428,7 +428,7 @@ export function scanHotels(intent, dest) {
 
 // Extended, realistic accommodation detail so the traveller can decide with
 // confidence — times, policies, room spec, payment options and what's nearby.
-function hotelExtras(rnd, dest, intent, stars, type, name = null) {
+function hotelExtras(rnd, dest, intent, stars, type, name = null, area = null) {
   const propertyType = type === 'host' ? 'Entire apartment'
     : stars >= 5 ? 'Luxury hotel' : stars >= 4 ? 'Resort / 4★ hotel' : 'City hotel';
   const beds = intent.travellers.children
@@ -437,19 +437,17 @@ function hotelExtras(rnd, dest, intent, stars, type, name = null) {
   const checkIn = type === 'host' ? 'Self check-in from 15:00' : '15:00';
   const exp = destExperiences(dest.code);
   const landmarks = (exp.length ? exp : [`${dest.city} City Centre`, `${dest.city} Old Town`, `${dest.city} Waterfront`]).slice(0, 3);
-  // We don't show property photos we can't verify — instead every stay carries
-  // its NAME + STREET ADDRESS so the traveller can look it up on the internet
-  // themselves (deterministic street in the prototype; the real feed supplies it).
-  const streets = ['Corniche Road', 'Palm Avenue', 'Harbour Street', 'Garden Boulevard', 'Old Market Lane', 'Union Square', 'Bay View Drive'];
-  const street = streets[Math.floor(rnd() * streets.length)];
-  const address = `${3 + Math.floor(rnd() * 220)} ${street}, ${dest.city}`;
-  // FULL accommodation name — always present so the traveller can look the
-  // property up on the internet themselves. Hosts get a real, searchable
-  // residence name (never just "an apartment"); hotels carry their brand name.
-  const HOST_SUFFIXES = ['Residence', 'Suites', 'Apartments', 'House', 'Lofts'];
-  const propertyName = type === 'host'
-    ? `The ${street.replace(/ (Road|Avenue|Street|Boulevard|Lane|Square|Drive)$/, '')} ${HOST_SUFFIXES[Math.floor(rnd() * HOST_SUFFIXES.length)]}, ${dest.city}`
-    : name;
+  // A representative estimator stay is an INDICATIVE example of its tier — so we
+  // never invent a specific street address for it (that would assert a real
+  // location for a property that isn't a specific listing, e.g. "42 Old Market
+  // Lane" for a hotel that doesn't exist). We show the honest neighbourhood +
+  // city; the exact property and its full address are confirmed before booking.
+  // Real named properties + real addresses only come from a live feed or a
+  // curated Deal. NOTE: keep the two RNG draws the deterministic price sequence
+  // depends on (previously a random street + house number) so pricing is unchanged.
+  rnd(); rnd();
+  const address = `${area ? area + ', ' : ''}${dest.city} — exact property & address confirmed before booking`;
+  const propertyName = name;
   // Direct links to the open internet: a web search (pictures, reviews, more
   // information) and the address on the map.
   const verifyUrl = `https://www.google.com/search?q=${encodeURIComponent(`${propertyName || ''} ${address}`.trim())}`;

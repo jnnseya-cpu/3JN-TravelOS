@@ -3142,6 +3142,36 @@ test('assistant operates on hotels too (add nights, upgrade room/board)', () => 
   assert.equal(b.option.components[1].details.checkIn, '2027-11-15', 'hotel moved with it');
 });
 
+test('assistant adds breakfast (board upgrade) without escalating', () => {
+  const u = createUser({ email: 'bfast@x.co', name: 'Breakfast Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1200 } }, totalUSD: 1524, travellers: { total: 2 }, components: [
+    { type: 'flight', supplier: 'BA', live: false, details: { outbound: { from: 'LHR', to: 'BCN', date: '2027-08-25' } } },
+    { type: 'hotel', supplier: 'Comfort Inn', stars: 3, details: { nights: 4, rooms: 1, nightlyUSD: 100, board: 'Room only', checkIn: '2027-08-25', checkOut: '2027-08-29' } },
+  ] }, userId: u.id });
+  // "I have Board Room only but I need breakfast to be added" — a board upgrade,
+  // must be understood and quoted, never dumped to a human.
+  const r = assist('i have Board Room only but i need breakfast to be added', u.id);
+  assert.equal(r.escalate, false, 'a breakfast/board request never escalates');
+  assert.ok(/CONFIRM/i.test(r.reply), 'quotes the board upgrade and asks to confirm');
+  assist('confirm', u.id);
+  assert.match(b.option.components[1].details.board, /breakfast/i, 'board upgraded to include breakfast');
+});
+
+test('an estimated booking can never be charged (pay endpoint refuses)', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const u = createUser({ email: `est${Date.now()}@x.co`, name: 'Estimate Payer' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: false, details: {} }] }, userId: u.id, instalment: { deposit: 180, schedule: [{ due: '2027-01-01', amount: 180, status: 'pending' }] } });
+  b.priceBasis = 'estimated';
+  try {
+    const res = await fetch(`${base}/api/book/${b.id}/pay`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': u.id }, body: JSON.stringify({ index: 0 }) });
+    assert.equal(res.status, 409, 'estimate payment is refused');
+    assert.equal((await res.json()).error, 'estimate-not-payable');
+    assert.notEqual(b.instalment.schedule[0].status, 'paid', 'the instalment was not marked paid');
+  } finally { server.close(); }
+});
+
 test('minimum AI profit margin is enforced at 200% (3x markup) across every action', () => {
   const rep = aiMarginReport();
   assert.equal(rep.minMarginPct, 200);

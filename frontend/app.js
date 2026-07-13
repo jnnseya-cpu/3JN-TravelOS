@@ -932,6 +932,17 @@ function flightItinBlock(c, o, sym, intent) {
 function optionCard(o, sym, intent) {
   const p = o.pricing;
   const comps = o.components.map((c, i) => {
+    // NO ESTIMATED HOTELS TO CUSTOMERS. A stay is only ever shown to a customer
+    // when it is REAL — a live hotel fare, a 3JN-verified community host, or a
+    // curated Deal. A representative estimator hotel (fabricated name/address) is
+    // never presented to the public: instead the customer sees an honest
+    // "we confirm your hotel & exact price before you pay" line with no price and
+    // no invented property. Staff still see the representative example for quotes.
+    const isRealStay = !!(c.live || c.sourcedType === 'live' || /\blive\b/i.test(c.sourcedVia || '') || c.realPrice || c.sourcedType === 'community-host' || (c.type === 'host' && c.details?.community) || c.dealBacked);
+    if ((c.type === 'hotel' || c.type === 'host') && !isRealStay && !isStaff()) {
+      const city = esc(c.details?.area || o.destination?.city || intent?.destination?.city || 'your destination');
+      return `<li><span class="cs">🏨 Stay in ${city} <span class="muted">· we confirm your hotel &amp; exact price before you pay — never charged on an estimate</span> <span class="src" style="opacity:.7">to confirm</span></span><span class="cp">—</span></li>`;
+    }
     // Source chip. Only show an EXTERNAL "↗ <source>" link when the price is a
     // genuinely LIVE supplier fare — otherwise it falsely implies we sourced the
     // estimate from that site (e.g. "↗ Trip.com" on a synthesised price). Agent
@@ -943,8 +954,11 @@ function optionCard(o, sym, intent) {
     let src;
     if (c.agent) {
       src = `<span class="src agent" title="${c.agentId ? '3JN agent account ' + esc(c.agentId) : ''}">🔑 agent · ${esc(c.sourcedVia || '')}${c.agentId ? ' · ' + esc(c.agentId) : ''}</span>`;
-    } else if (isLiveSrc && c.sourcedVia) {
-      src = `<span class="src">↗ ${esc(c.sourcedVia)}</span>`;
+    } else if (isLiveSrc) {
+      // Confirm it's a real, bookable fare WITHOUT exposing the backend aggregator
+      // or a test-sandbox label to the customer ("Duffel (test sandbox)" must never
+      // show). We are the merchant of record; the provider is our plumbing.
+      src = '<span class="src" style="color:#79d99b;opacity:.95" title="Real, bookable fare — confirmed with the airline before you pay">✓ live fare</span>';
     } else if (isCommunityHost) {
       src = '<span class="src" style="color:#79d99b;opacity:.95" title="A 3JN-verified host at their own committed nightly price — booked through 3JN">✓ verified host price</span>';
     } else {
@@ -2061,18 +2075,22 @@ function bookingCard(b) {
   const intent = b.option;
   const pgEvents = (b.priceGuard.events || []).map((e) => `
     <div class="pg-event ${e.action === 'rebook-refund' ? 'drop' : ''}">${e.message}${e.refundUSD ? ` <strong style="color:var(--green)">(+${money2(e.refundUSD * (o.pricing.local.total / o.pricing.lines.totalUSD), sym)})</strong>` : ''}</div>`).join('');
+  // An ESTIMATED quote is never charged — so it must never show a payable
+  // instalment, a "pay now" button, or a "paid/settled" state. It shows the
+  // indicative plan only; real payment starts once the exact price is confirmed.
+  const estimated = b.priceBasis !== 'live';
   const sched = (b.instalment?.schedule || []).map((s, i) => `
-    <div class="kv"><span>Instalment ${i + 1} · ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${s.status === 'paid' ? '✓ paid' : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`}</span></div>`).join('');
+    <div class="kv"><span>Instalment ${i + 1} · ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${s.status === 'paid' ? '✓ paid' : (estimated ? `${money2(s.amount, sym)} <span class="muted" style="font-size:10.5px">indicative</span>` : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`)}</span></div>`).join('');
   const comps = o.components.map((c) => labelFor(c)).join(' · ');
   // AI Payment Protection: live progress tracker — % paid, outstanding, plan.
   const paidTotal = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const totalLocal = o.pricing.local.total;
-  const paidPct = totalLocal > 0 ? Math.min(100, Math.round((paidTotal / totalLocal) * 100)) : 0;
+  const paidPct = (estimated || totalLocal <= 0) ? 0 : Math.min(100, Math.round((paidTotal / totalLocal) * 100));
   const progress = b.instalment ? `
     <div style="margin:8px 0 2px">
       <div style="display:flex;justify-content:space-between;font-size:11.5px" class="muted">
-        <span>${b.instalment.plan ? esc(b.instalment.plan) + ' · ' : ''}${paidPct}% paid</span>
-        <span>${paidPct >= 100 ? '✓ fully settled' : `${money2(Math.max(0, totalLocal - paidTotal), sym)} remaining${b.instalment.finalDue ? ' · settled by ' + esc(ukDate(b.instalment.finalDue)) : ''}`}</span></div>
+        <span>${b.instalment.plan ? esc(b.instalment.plan) + ' · ' : ''}${estimated ? 'indicative plan' : `${paidPct}% paid`}</span>
+        <span>${estimated ? 'confirmed before any payment' : (paidPct >= 100 ? '✓ fully settled' : `${money2(Math.max(0, totalLocal - paidTotal), sym)} remaining${b.instalment.finalDue ? ' · settled by ' + esc(ukDate(b.instalment.finalDue)) : ''}`)}</span></div>
       <div class="rel-bar" style="margin-top:4px"><i style="width:${paidPct}%"></i></div>
     </div>` : '';
   // AI Booking Protection™: Price Locked badge + any market-rise savings the

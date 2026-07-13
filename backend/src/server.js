@@ -2223,6 +2223,12 @@ app.post('/api/book/:id/pay', safe((req, res) => {
   if (target.userId && target.userId !== user.id && !user.allAccess && user.role !== 'admin') {
     return res.status(403).json({ error: 'not-your-booking' });
   }
+  // LEGAL-SAFETY: an ESTIMATED quote is never a bookable price and must never be
+  // charged — the exact bookable amount is confirmed first (quote-request flow),
+  // which flips the booking to a live basis. Refuse to take money on an estimate.
+  if (target.priceBasis && target.priceBasis !== 'live' && target.priceBasis !== 'confirmed') {
+    return res.status(409).json({ error: 'estimate-not-payable', message: 'This is an indicative quote — we confirm the exact bookable price before any payment is taken.' });
+  }
   const index = Number((req.body || {}).index);
   const item = target.instalment?.schedule?.[index];
   if (!item) return res.status(400).json({ error: 'bad-instalment-index' });
