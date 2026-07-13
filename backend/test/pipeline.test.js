@@ -4061,9 +4061,9 @@ test('budget travellers get verified hostels/budget chains; ordinary searches ne
   assert.equal(r.stage, 'options');
   assert.equal(r.intent.budgetStay, true, 'budget intent detected');
   const stay = r.packages.options[0].components.find((c) => c.type === 'hotel' || c.type === 'host');
-  // The cheapest verified bed wins the slot — a budget chain/hostel, or a
-  // community HOST that undercuts them (hosts are a budget answer too).
-  assert.ok(stay.type === 'host' || ['ibis budget', 'easyHotel', 'Generator Hostel', "St Christopher's Inn"].includes(stay.supplier), `Standard picked a verified budget stay (got ${stay.supplier})`);
+  // The cheapest verified bed wins the slot — a budget chain/hostel (shown as
+  // "{City} · {brand}"), or a real community HOST that undercuts them.
+  assert.ok(stay.type === 'host' || /ibis budget|easyHotel|Generator Hostel|St Christopher's Inn/i.test(stay.supplier), `Standard picked a verified budget stay (got ${stay.supplier})`);
   assert.ok(stay.verified && stay.reliabilityScore >= 75, 'budget never means unverified');
   // Premium still climbs the star ladder even on a budget search.
   const premiumStay = r.packages.options.find((o) => o.tier === 'Premium')?.components.find((c) => c.type === 'hotel' || c.type === 'host');

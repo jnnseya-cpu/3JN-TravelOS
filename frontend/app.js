@@ -779,7 +779,7 @@ function renderOptions(data) {
   } else if (ps.flights === 'partial') {
     // Group with some parties live, some estimated — say so precisely.
     const n = pl ? `${pl.live} of ${pl.total}` : 'some';
-    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.4)">🟡 ${n} departure fares are live &amp; bookable (Duffel) · the rest are indicative until we confirm live availability for those airports</div>`;
+    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.4)">🟡 ${n} departure fares are live &amp; bookable · the rest are indicative until we confirm live availability for those airports</div>`;
   } else if (ss.flights === 'live') {
     psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Real flight schedules (OAG) · live carriers, times &amp; non-stops — fares indicative until a fare provider is connected</div>`;
   } else if (ps.flights || ps.hotel) {
@@ -937,11 +937,16 @@ function optionCard(o, sym, intent) {
     // estimate from that site (e.g. "↗ Trip.com" on a synthesised price). Agent
     // (net-rate) sourcing keeps its badge; everything else shows "estimate".
     const isLiveSrc = !!(c.live || c.sourcedType === 'live' || /\blive\b/i.test(c.sourcedVia || ''));
+    // A 3JN-verified community host lists a real, host-committed price booked
+    // through us — a genuine price, never a synthesised estimate.
+    const isCommunityHost = !!(c.realPrice || c.sourcedType === 'community-host' || (c.type === 'host' && c.details?.community));
     let src;
     if (c.agent) {
       src = `<span class="src agent" title="${c.agentId ? '3JN agent account ' + esc(c.agentId) : ''}">🔑 agent · ${esc(c.sourcedVia || '')}${c.agentId ? ' · ' + esc(c.agentId) : ''}</span>`;
     } else if (isLiveSrc && c.sourcedVia) {
       src = `<span class="src">↗ ${esc(c.sourcedVia)}</span>`;
+    } else if (isCommunityHost) {
+      src = '<span class="src" style="color:#79d99b;opacity:.95" title="A 3JN-verified host at their own committed nightly price — booked through 3JN">✓ verified host price</span>';
     } else {
       src = '<span class="src" style="opacity:.65">estimate</span>';
     }
@@ -997,7 +1002,7 @@ function optionCard(o, sym, intent) {
         <tr><td>Suppliers</td><td>${money2(p.local.suppliers, sym)}</td></tr>
         <tr class="save"><td>${p.discountSource === 'member' ? 'Member' : 'Loyalty'} discount (${esc(p.loyaltyTier)} · ${(p.loyaltyDiscountPct * 100).toFixed(0)}%)</td><td>-${money2(p.local.loyaltyDiscount, sym)}</td></tr>
         <tr><td>${esc(p.feeLabel || '3JN commission (10%)')}</td><td>${(p.local.grossCommission ?? p.local.commission) > 0 ? money2(p.local.grossCommission ?? p.local.commission, sym) : '<span style="color:var(--green)">FREE</span>'}</td></tr>
-        ${p.local.duffelFee > 0 ? `<tr><td>Airline booking fees (Duffel)</td><td>${money2(p.local.duffelFee, sym)}</td></tr>` : ''}
+        ${p.local.duffelFee > 0 ? `<tr><td>Airline booking &amp; payment fees</td><td>${money2(p.local.duffelFee, sym)}</td></tr>` : ''}
         <tr class="total"><td>Total</td><td>${money2(p.local.total, sym)}</td></tr>
       </table>
       ${o.bookableForRealPayment

@@ -415,58 +415,13 @@ export function scanHotels(intent, dest) {
     }
   }
 
-  // Private host — sized to the party. One apartment sleeps up to ~5; a bigger
-  // group needs MULTIPLE units (you cannot put 10 people in one apartment).
-  const guests = intent.travellers.total;
-  const PER_UNIT = 5;                                   // realistic max per apartment
-  const units = Math.max(1, Math.ceil(guests / PER_UNIT));
-  const perUnitSleeps = Math.min(PER_UNIT, Math.ceil(guests / units) + (units === 1 ? 1 : 0));
-  const hostNightlyUnit = dest.hotelNightBaseUSD * 0.8 * (0.8 + rnd() * 0.3);
-  const bedsFor = (n) => (n <= 1 ? '1 double bed' : n === 2 ? '1 double + 1 single' : n === 3 ? '2 double beds' : `${Math.ceil(n / 2)} double beds`);
-  hotels.push({
-    type: 'host',
-    supplier: units > 1
-      ? `Verified Private Host — ${dest.city} Apartments (×${units})`
-      : `Verified Private Host — ${dest.city} Apartment`,
-    verified: true,
-    reliabilityScore: 86,
-    stars: 4,
-    details: {
-      nights,
-      rooms: units,
-      nightlyUSD: round(hostNightlyUnit * units),       // total per night across all units
-      nightlyPerUnitUSD: round(hostNightlyUnit),
-      board: 'Self-catering, full kitchen',
-      freeCancellation: true,
-      sleeps: perUnitSleeps * units,                    // TOTAL capacity across units
-      sleepsPerUnit: perUnitSleeps,
-      roomType: units > 1
-        ? `${units} entire apartments · sleeps ${perUnitSleeps * units} total (${perUnitSleeps}/apartment)`
-        : `Entire apartment · sleeps ${perUnitSleeps}`,
-      bedConfiguration: units > 1 ? `${bedsFor(perUnitSleeps)} per apartment · ${units} apartments` : bedsFor(perUnitSleeps),
-      roomSizeSqm: units > 1 ? `${28 + Math.round(rnd() * 22)} m²/apartment` : 28 + Math.round(rnd() * 22),
-      area: areaFor(),
-      distanceToCentreKm: Math.round((0.3 + rnd() * 3) * 10) / 10,
-      guestRating: Math.round((86 + rnd() * 12)) / 10,
-      reviews: 60 + Math.floor(rnd() * 900),
-      amenities: ['Full kitchen', 'Free WiFi', 'Washing machine', 'Self check-in', 'Workspace', 'Family friendly'],
-      description: units > 1
-        ? `${units} verified self-catering apartments in ${dest.city} for your group of ${guests} — same building/area, all in one booking.`
-        : `A verified entire apartment in ${dest.city} with a full kitchen — great value and space.`,
-      ...hotelExtras(rnd, dest, intent, 4, 'host'),
-      // Group-aware overrides MUST win over hotelExtras' single-unit defaults.
-      rooms: units,
-      sleeps: perUnitSleeps * units,
-      sleepsPerUnit: perUnitSleeps,
-      maxOccupancy: perUnitSleeps * units,
-      roomType: units > 1
-        ? `${units} entire apartments · sleeps ${perUnitSleeps * units} total (${perUnitSleeps}/apartment)`
-        : `Entire apartment · sleeps ${perUnitSleeps}`,
-      bedConfiguration: units > 1 ? `${bedsFor(perUnitSleeps)} per apartment · ${units} apartments` : bedsFor(perUnitSleeps),
-      roomSizeSqm: units > 1 ? `${28 + Math.round(rnd() * 22)} m² per apartment` : 28 + Math.round(rnd() * 22),
-    },
-    priceUSD: round(hostNightlyUnit * units * nights),  // units × nights
-  });
+  // NOTE: no synthetic "private host" is invented here. A 3JN host stay is a REAL
+  // product — it appears ONLY when an actual registered, 3JN-verified marketplace
+  // listing serves the destination (joined into the scan in scanAll from
+  // communityHosts). Fabricating a "Verified Private Host" with no real host
+  // behind it would be dishonest at the point of sale, so the estimator offers
+  // hotels (group-sized with multiple rooms) and lets real hosts compete when
+  // they exist.
 
   return hotels;
 }
@@ -925,6 +880,12 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
           supplier: l.title,
           verified: !!l.verified,
           reliabilityScore: l.reliabilityScore,
+          // A real, 3JN-verified host listing at the host's own committed nightly
+          // rate — booked THROUGH us, so it is a genuine price, not an estimate.
+          // Marked so the UI never mislabels it as a synthesised guess.
+          sourcedType: 'community-host',
+          sourcedVia: '3JN Verified Host',
+          realPrice: true,
           stars: 4,
           details: {
             nights,
