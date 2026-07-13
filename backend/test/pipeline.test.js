@@ -1541,14 +1541,14 @@ test('booking: flight bookings carry PNR, e-ticket, locators and rules', () => {
   const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id, paymentMethod: 'card' });
   const f = b.fulfilment;
   assert.ok(f, 'fulfilment issued');
-  assert.match(f.pnr, /^[A-Z]{6}$/);
-  assert.match(f.eTicketNumber, /^\d{3}-\d{10}$/);
-  assert.equal(f.airlineLocator, f.pnr);
-  assert.ok(f.gdsLocator.startsWith('AMA-'));
-  assert.equal(f.ticketStatus, 'Ticketed');
-  assert.ok(f.refundability && f.changeRules && f.cancellationRules);
-  // Deterministic: same booking id → same PNR.
-  assert.equal(buildableSamePnr(b), f.pnr);
+  // HONESTY: no fabricated airline PNR / e-ticket / GDS locator / "Ticketed"
+  // status — those exist only once a real airline tickets the booking. Until
+  // then the booking is AWAITING TICKETING and carries only policy-derived rules.
+  assert.equal(f.ticketStatus, 'Awaiting ticketing');
+  assert.ok(!f.pnr, 'no fabricated PNR before real ticketing');
+  assert.ok(!f.eTicketNumber, 'no fabricated e-ticket number before real ticketing');
+  assert.ok(!f.gdsLocator, 'no fabricated GDS locator');
+  assert.ok(f.refundability && f.changeRules && f.cancellationRules, 'fare rules present');
   // No flight in the option → no flight fulfilment.
   const r2 = plan({ text: 'Dubai hotel only in August for 3 nights', context: GB, user: null, searchTier: 'smart' });
   const opt2 = r2.packages.options[0];
@@ -3362,9 +3362,19 @@ test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insur
     { type: 'activities', supplier: 'Desert Safari', details: {} },
   ] } };
   const html = bookingDocument(b, {});
-  for (const must of ['176-2400123456', 'HTL-', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', '3JN board with your name', '8944-', 'POL-', 'VCH-', 'Superior Double', 'Breakfast included', 'support@3jntravel.com']) {
+  // Real identifiers that ARE present are shown (e-ticket number provided here);
+  // 3JN's own service refs (transfer/voucher) are shown. Fabricated third-party
+  // identifiers (hotel HTL-, eSIM ICCID 8944-, insurance POL-) are NO LONGER
+  // invented — the document states honestly that they're issued on confirmation.
+  for (const must of ['176-2400123456', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', '3JN board with your name', 'VCH-', 'Superior Double', 'Breakfast included', 'support@3jntravel.com']) {
     assert.ok(html.includes(must), `document must contain ${must}`);
   }
+  // Honesty: no fabricated hotel/insurance/eSIM identifiers a customer would try to use.
+  assert.ok(!/HTL-\d/.test(html), 'no fabricated hotel confirmation number');
+  assert.ok(!/POL-\d/.test(html), 'no fabricated insurance policy number');
+  assert.ok(!/8944-\d/.test(html), 'no fabricated eSIM ICCID');
+  assert.ok(html.includes('property confirmation is added here once issued'), 'hotel confirmation stated honestly');
+  assert.ok(/Issued on confirmation/i.test(html), 'insurance policy stated honestly');
   // Held fare: the e-ticket line must explain WHEN the number arrives, never blank.
   const held = { ...b, fulfilment: { pnr: 'KXQPLM', ticketing: 'held', ticketNumbers: [] } };
   assert.ok(bookingDocument(held, {}).includes('Issued automatically on final instalment'), 'held state is explained');

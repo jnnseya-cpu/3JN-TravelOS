@@ -3290,24 +3290,22 @@ export function hostDashboard(userId) {
 function buildFulfilment(bookingId, option) {
   const flight = (option?.components || []).find((c) => c.type === 'flight');
   if (!flight) return null;
-  let h = 0;
-  for (const ch of bookingId) h = (h * 31 + ch.charCodeAt(0)) % 2147483647;
-  const alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  let pnr = '';
-  let x = h;
-  for (let i = 0; i < 6; i++) { pnr += alpha[x % alpha.length]; x = Math.floor(x / alpha.length) + 7; }
-  const airlinePrefix = { 'Emirates': '176', 'Qatar Airways': '157', 'British Airways': '125', 'Turkish Airlines': '235', 'Lufthansa': '220' }[flight.supplier] || '999';
   const free = !!flight.details?.freeCancellation;
+  // HONESTY: we do NOT invent an airline PNR, e-ticket number, GDS locator, or a
+  // "Ticketed" status here. Those exist ONLY once a real airline has actually
+  // ticketed the booking — set by the live ticketing path (autoTicketFlight →
+  // real Duffel order) or entered by the ops desk after they ticket a curated
+  // deal. Stamping "Ticketed · PNR ABJKQM" on a booking no airline has seen
+  // produces a document that fails at check-in and misstates a legal record.
+  // The booking starts AWAITING TICKETING; the real locators replace this later.
+  // Fare rules below are policy-derived (not fabricated identifiers) so they're
+  // safe to show as the applicable terms.
   return {
-    pnr,
-    eTicketNumber: `${airlinePrefix}-${String(2400000000 + (h % 99999999)).padStart(10, '0')}`,
+    ticketStatus: 'Awaiting ticketing',
     fareBasis: flight.details?.travelClass ? 'YFLEX' : 'YLOWX',
-    ticketClass: flight.details?.cabin || 'Economy (Y)',
-    airlineLocator: pnr,
-    gdsLocator: `AMA-${String(h % 999999).padStart(6, '0')}`,
-    ticketStatus: 'Ticketed',
-    boardingPass: 'Issued at online check-in (opens 24h before departure)',
-    checkInStatus: 'Not yet open',
+    ticketClass: flight.details?.cabin || 'Economy',
+    boardingPass: 'Available at online check-in once your ticket is issued (opens ~24h before departure)',
+    checkInStatus: 'Opens after ticketing',
     refundability: free ? 'Refundable (fare rules apply)' : 'Non-refundable — taxes refundable on request',
     changeRules: free ? 'Date changes permitted; fare difference may apply' : 'Changes with fee + fare difference',
     cancellationRules: free ? 'Free cancellation until 48h before departure' : 'Cancellation fee applies; 3JN Price Guard credit on rebooking',

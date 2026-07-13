@@ -78,7 +78,8 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   const status = ful.ticketing === 'issued' ? 'E-TICKET ISSUED'
     : ful.ticketing === 'held' ? 'FARE HELD — TICKET ON FINAL PAYMENT'
     : fullyPaid ? 'CONFIRMED — PAID' : 'CONFIRMED — DEPOSIT PAID';
-  const pnr = ful.pnr || ful.duffelOrderId || booking.id;
+  // A REAL airline locator only — never the 3JN booking id dressed up as a "PNR".
+  const pnr = ful.pnr || ful.duffelOrderId || null;
   // The airline e-ticket number is ALWAYS stated: real Duffel ticket numbers
   // when issued; the ticketed record from fulfilment otherwise; and if the fare
   // is HELD (instalments), the document says exactly when the number arrives —
@@ -100,7 +101,7 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     <div class="seg">
       <div class="seg-head"><span>✈ ${esc(c.supplier)}</span><span class="muted">${esc(c.details?.cabin || 'Economy')} · 🧳 ${esc(c.details?.baggage || 'per fare rules')}</span></div>
       <table class="legs"><tbody>${legRows(c)}</tbody></table>
-      <div class="muted small">PNR <b>${esc(pnr)}</b>${ticketLine ? ` · E-ticket <b class="ticketno">${esc(ticketLine)}</b>` : ''}${ful.fareBasis ? ` · fare basis ${esc(ful.fareBasis)}` : ''} · ${esc(ful.boardingPass || 'Boarding pass at online check-in (opens 24h before departure)')}</div>
+      <div class="muted small">${pnr ? `Airline ref <b>${esc(pnr)}</b>` : `3JN ref <b>${esc(booking.id)}</b> · your airline reference is issued when the ticket is confirmed`}${ticketLine ? ` · E-ticket <b class="ticketno">${esc(ticketLine)}</b>` : ''}${ful.fareBasis ? ` · fare basis ${esc(ful.fareBasis)}` : ''} · ${esc(ful.boardingPass || 'Boarding pass at online check-in (opens 24h before departure)')}</div>
     </div>`).join('');
 
   // ACCOMMODATION — complete stay record: property, room, board, dates, times,
@@ -108,7 +109,10 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   const stayBlocks = stays.map((c, i) => {
     const d = c.details || {};
     const inD = d.checkIn || startDate; const outD = d.checkOut || endDate;
-    const conf = d.confirmationNumber || confRef(booking.id, i, 'HTL');
+    // Only a REAL supplier confirmation number (entered by the ops desk or
+    // returned by a live booking API) — never a fabricated one the customer would
+    // "quote at reception" only to find it doesn't exist.
+    const conf = d.confirmationNumber || d.stayReference || null;
     // FULL property identification: name + street address (or area + city) so
     // the traveller can find, verify and navigate to the place.
     const addr = d.address || [d.area, o.destination || d.city].filter(Boolean).join(', ');
@@ -117,7 +121,7 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
       <div class="seg-head"><span>🏨 <b>${esc(d.propertyName || c.supplier)}</b></span><span class="muted">${c.stars ? '★'.repeat(c.stars) : ''} ${esc(d.roomType || 'Room')}</span></div>
       <table class="legs"><tbody>
         <tr><td class="dir">Property</td><td><b>${esc(d.propertyName || c.supplier)}</b></td><td class="dir">Address</td><td>${esc(addr || '—')}${d.distanceToCentreKm ? ` · ${d.distanceToCentreKm} km to centre` : ''}</td></tr>
-        <tr><td class="dir">Confirmation</td><td><b class="ticketno">${esc(conf)}</b> · quote at reception</td><td class="dir">Contact</td><td>Reception via the property · issues? 3JN support (below) sorts it with them directly</td></tr>
+        <tr><td class="dir">Confirmation</td><td>${conf ? `<b class="ticketno">${esc(conf)}</b> · quote at reception` : `Under 3JN ref <b>${esc(booking.id)}</b> · the property confirmation is added here once issued`}</td><td class="dir">Contact</td><td>Reception via the property · issues? 3JN support (below) sorts it with them directly</td></tr>
         <tr><td class="dir">Check-in</td><td><b>${esc(uk(inD))}</b> from 15:00</td><td class="dir">Check-out</td><td><b>${esc(uk(outD))}</b> by 11:00</td></tr>
         <tr><td class="dir">Stay</td><td>${d.nights || '—'} night${d.nights > 1 ? 's' : ''} · ${d.rooms || 1} room${(d.rooms || 1) > 1 ? 's' : ''}</td>
             <td class="dir">Board</td><td>${esc(d.board || d.boardBasis || 'Room only')}</td></tr>
@@ -256,13 +260,17 @@ export function serviceBlockData(booking, c, i, { startDate = '', endDate = '' }
       if (live.apnValue) rows.push(['APN (if needed)', `${esc(live.apnValue)}${live.isRoaming ? ' · enable data roaming' : ''}`]);
       rows.push(['How to activate', '1) Install over WiFi <b>before departure</b> (scan the QR or enter the LPA/SM-DP+ details manually). 2) On landing, enable data roaming on this line — it activates on first connection abroad and your validity starts then.']);
     } else {
-      const iccid = confRef(booking.id, i, '8944');
+      // No real eSIM has been provisioned yet — do NOT print a fabricated ICCID
+      // (a real technical identifier the customer would try to install). State
+      // honestly that it arrives on issue.
       rows.push(['Plan', esc(d.planLabel || `${d.dataGB || ''}GB`)], ['Validity', `${d.validityDays || ''} days`]);
-      rows.push(['ICCID', `<b class="ticketno">${esc(iccid)}</b>`]);
-      rows.push(['Activation', 'Your eSIM QR + activation code arrive by email once issued — or ask the 3JN Assistant "resend my eSIM". Install over WiFi before departure; enable data roaming on landing.']);
+      rows.push(['ICCID & QR', 'Your eSIM QR code, ICCID and activation code arrive by email once the eSIM is issued — or ask the 3JN Assistant "resend my eSIM". Install over WiFi before departure; enable data roaming on landing.']);
     }
   } else if (c.type === 'insurance') {
-    rows.push(['Policy number', `<b class="ticketno">${esc(confRef(booking.id, i, 'POL'))}</b>`]);
+    // Only a REAL insurer policy number — never a fabricated one that would imply
+    // cover exists under an identifier no insurer issued.
+    if (d.policyNumber) rows.push(['Policy number', `<b class="ticketno">${esc(d.policyNumber)}</b>`]);
+    else rows.push(['Policy number', `Issued on confirmation — held under 3JN ref ${esc(booking.id)}; your policy schedule is emailed once the cover is bound.`]);
     rows.push(['Cover', esc(d.cover || 'Medical + cancellation')], ['Insured', `${d.people || o.travellers?.total || 1} traveller(s) · ${d.days || ''} days · valid ${esc(startDate)} → ${esc(endDate || startDate)}`]);
     rows.push(['How to claim', '1) Medical emergency: call the 24/7 emergency line on your policy schedule (emailed with this document) BEFORE treatment where possible. 2) Keep every receipt, report and reference. 3) Start the claim from your 3JN Console → booking → Insurance, or ask the 3JN Assistant — we pre-fill the claim with your trip data.']);
     rows.push(['Carry', 'A copy of the policy schedule (digital is fine) and this booking reference.']);
