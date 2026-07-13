@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
-import { destinationsCatalog, findDestination, resolveOrigin } from './destinations.js';
+import { destinationsCatalog, findDestination, resolveOrigin, originForCountry } from './destinations.js';
+import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
 import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS } from './instalments.js';
@@ -453,14 +454,27 @@ async function autoTicketFlight(booking) {
   if (lccFlight) {
     const ful = (booking.fulfilment = booking.fulfilment || {});
     if (ful.ticketing === 'issued' || ful.ticketing === 'ops-queue') return;
-    ful.ticketing = 'ops-queue';
     ful.source = 'kiwi-tequila';
     ful.bookingToken = lccFlight.details.bookingToken;
     ful.opsDeepLink = lccFlight.details.deepLink || null;
+    // DEPOSIT / INSTALMENT: never release the ticket on a part-payment. Reserve
+    // the fare and HOLD — the ops desk issues the ticket ONLY once the balance is
+    // paid in full. (The final instalment re-fires this handler, and by then
+    // bookingFullyPaid is true, so it falls through to the ops-queue below.)
+    if (!bookingFullyPaid(booking)) {
+      if (ful.ticketing === 'ops-hold') return; // idempotent
+      ful.ticketing = 'ops-hold';
+      ful.heldAt = new Date().toISOString();
+      recordAudit({ actor: 'system', role: 'system', action: 'ticketing.deposit-hold', entity: 'booking', entityId: booking.id, summary: `${lccFlight.supplier} — held on deposit, ticket issues on full payment` });
+      if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🎟️', title: 'Seats reserved — pay the balance to ticket', body: `Your ${lccFlight.supplier} fare is reserved at the price you locked. Your e-ticket is issued the moment the balance is paid in full — that protects both your seat and your price.` });
+      return;
+    }
+    // FULLY PAID: queue the ops desk to issue the ticket.
+    ful.ticketing = 'ops-queue';
     ful.queuedAt = new Date().toISOString();
     createSupportTicket({
       userId: booking.userId, intent: 'ops-ticketing',
-      message: `Issue LCC ticket for booking ${booking.id} — ${lccFlight.supplier}, paid ${bookingFullyPaid(booking) ? 'IN FULL' : 'deposit'} · token ${String(lccFlight.details.bookingToken).slice(0, 24)}…`,
+      message: `Issue LCC ticket for booking ${booking.id} — ${lccFlight.supplier}, paid IN FULL · token ${String(lccFlight.details.bookingToken).slice(0, 24)}…`,
       reason: 'LCC fare (Kiwi Tequila) — ticket via Kiwi booking flow',
     });
     recordAudit({ actor: 'system', role: 'system', action: 'ticketing.ops-queued', entity: 'booking', entityId: booking.id, summary: `${lccFlight.supplier} via Kiwi Tequila — ops desk issues` });
@@ -553,6 +567,16 @@ async function autoBookStays(booking) {
   if (!hotel || !duffelStaysEnabled()) return;
   const ful = (booking.fulfilment = booking.fulfilment || {});
   if (ful.stayStatus === 'booked') return; // idempotent — webhooks redeliver
+  // DEPOSIT / INSTALMENT: don't commit the room on a part-payment. Reserve only;
+  // the room is actually booked once the balance is paid in full (the final
+  // instalment re-fires this handler with bookingFullyPaid === true).
+  if (!bookingFullyPaid(booking)) {
+    if (ful.stayStatus !== 'reserved') {
+      ful.stayStatus = 'reserved';
+      recordAudit({ actor: 'system', role: 'system', action: 'stays.deposit-hold', entity: 'booking', entityId: booking.id, summary: `${hotel.supplier} — reserved on deposit, books on full payment` });
+    }
+    return;
+  }
   const lead = booking.leadTraveller || booking.lead || {};
   // Build the FULL guest list — Duffel Stays rejects a room booked for fewer
   // guests than the rate was quoted for. Use every named traveller on the
@@ -603,6 +627,45 @@ app.get('/api/context', safe((req, res) => {
     liveMode: LIVE_MODE(),
     stripeReady: stripeEnabled(),
   });
+}));
+
+// ---- Inspire Me: "I don't know where to go" -------------------------------
+// The traveller describes what they want in plain English; the OS returns the 3
+// CHEAPEST matching destinations (country + city) for each of the next
+// 30/60/120/180 days. Origin-aware, distance-derived estimates — a real fare is
+// confirmed when they run the full search on the chosen destination + date.
+app.post('/api/inspire', safe((req, res) => {
+  const body = req.body || {};
+  const context = detectContext(req, { country: body.country, currencyCountry: body.country });
+  const cur = context.currency || { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  // Departure airport: from a named city if given, else the traveller's country.
+  const originResolved = body.origin ? resolveOrigin(body.origin) : null;
+  const countryOrigin = originForCountry(context.country) || { airport: 'LHR', city: 'London' };
+  const originCode = (originResolved?.airport) || countryOrigin.airport || 'LHR';
+  const originCity = originResolved?.city || countryOrigin.city || 'your city';
+  const pax = Math.max(1, Math.min(9, Math.round(Number(body.travellers) || 1)));
+  const result = inspireDestinations({ text: body.text, originCode, travellers: pax, perPerson: !!body.perPerson });
+  // Convert USD → the traveller's currency and stamp a real best-departure date
+  // (nudged to a cheaper mid-week day) per option.
+  const now = new Date();
+  const stampDate = (offsetDays) => {
+    const d = new Date(now.getTime() + offsetDays * 86400000);
+    const day = d.getUTCDay();
+    if (day === 0) d.setUTCDate(d.getUTCDate() + 2); // Sun → Tue
+    else if (day === 6) d.setUTCDate(d.getUTCDate() + 3); // Sat → Tue
+    return d.toISOString().slice(0, 10);
+  };
+  const windows = {};
+  for (const w of INSPIRE_WINDOWS) {
+    windows[w] = (result.windows[w] || []).map((o) => ({
+      code: o.code, city: o.city, country: o.country, countryName: o.countryName,
+      tags: o.tags, matchedTags: o.matchedTags, travellers: o.travellers,
+      fromLocal: Math.round(o.fromUSD * cur.rateFromUSD),
+      perSeatLocal: Math.round(o.perSeatUSD * cur.rateFromUSD),
+      bestDate: stampDate(o.offsetDays),
+    }));
+  }
+  res.json({ windows, windowsOrder: INSPIRE_WINDOWS, currency: cur, matchedTags: result.matchedTags, originCity, originCode });
 }));
 
 // ---- Communication Event Architecture (admin only) ------------------------
@@ -2166,6 +2229,18 @@ app.post('/api/book/:id/pay', safe((req, res) => {
   if (item.status === 'paid') return res.json({ booking: target, already: true });
   const booking = recordPayment(req.params.id, { type: 'instalment', amount: item.amount, index });
   if (booking.instalment?.schedule?.[index]) booking.instalment.schedule[index].status = 'paid';
+  // BALANCE CLEARED → FULFIL. Tickets/rooms/deals are held on a deposit and only
+  // released once the fare is paid IN FULL. The final instalment lands here (not
+  // via the Stripe webhook), so this is where we release fulfilment — otherwise a
+  // fully-paid instalment booking would stay held forever.
+  if (bookingFullyPaid(booking)) {
+    if (booking.sourceDealId && !booking.dealFulfilmentCreated) {
+      createDealFulfilment(booking);
+      if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Balance paid — booking confirmed', body: 'Your package is now paid in full — our team is finalising your booking with the supplier and will email your documents shortly.' });
+    }
+    autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
+    autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+  }
   res.json({ booking });
 }));
 
@@ -2391,11 +2466,17 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       if (booking && meta.userId) {
         pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Card payment of ${(amountMinor / 100).toFixed(2)} confirmed via Stripe — your booking is secured.` });
       }
-      // CURATED DEAL: money captured → route to the Ops Fulfilment Desk for the
-      // team to book with the real supplier (manual now, API-ready later).
+      // CURATED DEAL: route to the Ops Fulfilment Desk (team books the real
+      // supplier — manual now, API-ready later) ONLY when the fare is paid IN
+      // FULL. On a deposit we reserve and wait — we never book a supplier, or
+      // tell the customer their trip is confirmed, on a part-payment.
       if (booking && booking.sourceDealId) {
-        createDealFulfilment(booking);
-        if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Booking confirmed', body: 'Your package is confirmed and paid — our team is finalising your booking with the supplier and will email your documents shortly.' });
+        if (bookingFullyPaid(booking)) {
+          createDealFulfilment(booking);
+          if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Booking confirmed', body: 'Your package is confirmed and paid — our team is finalising your booking with the supplier and will email your documents shortly.' });
+        } else if (booking.userId) {
+          pushNotification(booking.userId, { type: 'info', icon: '🎟️', title: 'Deposit received — trip reserved', body: 'Your deposit is in and your package is reserved at the price you locked. We finalise your booking with the supplier as soon as the balance is paid in full.' });
+        }
       }
       // AUTO-TICKETING: money is captured — now issue the flight ticket by
       // creating the Duffel order. Runs async; failure flags the booking for a

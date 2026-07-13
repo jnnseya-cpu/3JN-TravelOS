@@ -260,6 +260,42 @@ const CITY_AIRPORTS = {
   sydney: { airport: 'SYD', city: 'Sydney', country: 'AU' },
   melbourne: { airport: 'MEL', city: 'Melbourne', country: 'AU' },
   auckland: { airport: 'AKL', city: 'Auckland', country: 'NZ' },
+  // Additional capitals (so country-typed destinations resolve to a real, priced city).
+  tirana: { airport: 'TIA', city: 'Tirana', country: 'AL' },
+  zagreb: { airport: 'ZAG', city: 'Zagreb', country: 'HR' },
+  belgrade: { airport: 'BEG', city: 'Belgrade', country: 'RS' },
+  bucharest: { airport: 'OTP', city: 'Bucharest', country: 'RO' },
+  sofia: { airport: 'SOF', city: 'Sofia', country: 'BG' },
+  budapest: { airport: 'BUD', city: 'Budapest', country: 'HU' },
+  prague: { airport: 'PRG', city: 'Prague', country: 'CZ' },
+  warsaw: { airport: 'WAW', city: 'Warsaw', country: 'PL' },
+  dublin: { airport: 'DUB', city: 'Dublin', country: 'IE' },
+  zurich: { airport: 'ZRH', city: 'Zurich', country: 'CH' },
+  stockholm: { airport: 'ARN', city: 'Stockholm', country: 'SE' },
+  oslo: { airport: 'OSL', city: 'Oslo', country: 'NO' },
+  copenhagen: { airport: 'CPH', city: 'Copenhagen', country: 'DK' },
+  helsinki: { airport: 'HEL', city: 'Helsinki', country: 'FI' },
+  reykjavik: { airport: 'KEF', city: 'Reykjavik', country: 'IS' },
+  tunis: { airport: 'TUN', city: 'Tunis', country: 'TN' },
+  amman: { airport: 'AMM', city: 'Amman', country: 'JO' },
+  beirut: { airport: 'BEY', city: 'Beirut', country: 'LB' },
+  hanoi: { airport: 'HAN', city: 'Hanoi', country: 'VN' },
+  manila: { airport: 'MNL', city: 'Manila', country: 'PH' },
+  colombo: { airport: 'CMB', city: 'Colombo', country: 'LK' },
+  islamabad: { airport: 'ISB', city: 'Islamabad', country: 'PK' },
+  dhaka: { airport: 'DAC', city: 'Dhaka', country: 'BD' },
+  'addis ababa': { airport: 'ADD', city: 'Addis Ababa', country: 'ET' },
+  'dar es salaam': { airport: 'DAR', city: 'Dar es Salaam', country: 'TZ' },
+  kampala: { airport: 'EBB', city: 'Kampala', country: 'UG' },
+  dakar: { airport: 'DSS', city: 'Dakar', country: 'SN' },
+  abidjan: { airport: 'ABJ', city: 'Abidjan', country: 'CI' },
+  douala: { airport: 'DLA', city: 'Douala', country: 'CM' },
+  luanda: { airport: 'LAD', city: 'Luanda', country: 'AO' },
+  lima: { airport: 'LIM', city: 'Lima', country: 'PE' },
+  bogota: { airport: 'BOG', city: 'Bogotá', country: 'CO' },
+  santiago: { airport: 'SCL', city: 'Santiago', country: 'CL' },
+  havana: { airport: 'HAV', city: 'Havana', country: 'CU' },
+  kingston: { airport: 'KIN', city: 'Kingston', country: 'JM' },
 };
 
 // Look up a city's real airport + country. Returns null when unknown.
@@ -491,6 +527,18 @@ const COUNTRY_TO_CITY = {
   'united states': 'New York', usa: 'New York', america: 'New York', canada: 'Toronto', brazil: 'Rio de Janeiro',
   mexico: 'Cancún', argentina: 'Buenos Aires', australia: 'Sydney', 'new zealand': 'Auckland',
   uae: 'Dubai', 'united arab emirates': 'Dubai', 'saudi arabia': 'Riyadh', qatar: 'Doha', turkey: 'Istanbul',
+  // Balkans & wider Europe
+  albania: 'Tirana', croatia: 'Zagreb', serbia: 'Belgrade', romania: 'Bucharest', bulgaria: 'Sofia',
+  hungary: 'Budapest', 'czech republic': 'Prague', czechia: 'Prague', poland: 'Warsaw', ireland: 'Dublin',
+  switzerland: 'Zurich', austria: 'Vienna', sweden: 'Stockholm', norway: 'Oslo', denmark: 'Copenhagen',
+  finland: 'Helsinki', iceland: 'Reykjavik', belgium: 'Brussels',
+  // MENA & Asia
+  tunisia: 'Tunis', jordan: 'Amman', lebanon: 'Beirut', israel: 'Tel Aviv', vietnam: 'Hanoi',
+  philippines: 'Manila', 'sri lanka': 'Colombo', pakistan: 'Islamabad', bangladesh: 'Dhaka',
+  // Africa & Americas
+  ethiopia: 'Addis Ababa', tanzania: 'Dar es Salaam', uganda: 'Kampala', senegal: 'Dakar',
+  'ivory coast': 'Abidjan', "cote d'ivoire": 'Abidjan', cameroon: 'Douala', angola: 'Luanda',
+  peru: 'Lima', colombia: 'Bogota', chile: 'Santiago', cuba: 'Havana', jamaica: 'Kingston',
 };
 // Returns the recommended city if `name` is a known country, else null.
 export function recommendedCityForCountry(name) {

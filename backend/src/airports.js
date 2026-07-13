@@ -38,6 +38,14 @@ const AIRPORT_COORDS = {
   DEL: [28.6, 77.1], BOM: [19.1, 72.9], BLR: [13.2, 77.7], SIN: [1.4, 103.9], HKG: [22.3, 113.9],
   BKK: [13.7, 100.7], KUL: [2.7, 101.7], HND: [35.6, 139.8], ICN: [37.5, 126.4], PEK: [40.1, 116.6],
   PVG: [31.1, 121.8], SYD: [-33.9, 151.2], MEL: [-37.7, 144.8], AKL: [-37.0, 174.8], DPS: [-8.7, 115.2],
+  // Extra capitals so a country typed as a destination (e.g. "Albania") prices
+  // on real distance instead of a fabricated far-flung guess.
+  TIA: [41.4, 19.7], ZAG: [45.7, 16.1], BEG: [44.8, 20.3], OTP: [44.6, 26.1], SOF: [42.7, 23.4],
+  BUD: [47.4, 19.3], PRG: [50.1, 14.3], KEF: [64.0, -22.6], TUN: [36.9, 10.2], BEY: [33.8, 35.5],
+  HAN: [21.2, 105.8], MNL: [14.5, 121.0], CMB: [7.2, 79.9], ISB: [33.6, 73.1], DAC: [23.8, 90.4],
+  DAR: [-6.9, 39.2], EBB: [0.0, 32.4], DSS: [14.7, -17.1], ABJ: [5.3, -3.9], DLA: [4.0, 9.7],
+  LAD: [-8.9, 13.2], LIM: [-12.0, -77.1], BOG: [4.7, -74.1], SCL: [-33.4, -70.8], HAV: [23.0, -82.4],
+  KIN: [18.0, -76.8], HAJ: [52.5, 9.7], RIX: [56.9, 23.9], TLL: [59.4, 24.8], VNO: [54.6, 25.3],
 };
 
 export function airportCoords(code) {

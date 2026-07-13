@@ -17,6 +17,7 @@ import {
 import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
 import { destinationsCatalog } from '../src/destinations.js';
+import { inspireDestinations, INSPIRE_WINDOWS } from '../src/inspire.js';
 import { snapshot, hydrate } from '../src/store.js';
 import { markEmailVerified } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
@@ -5102,4 +5103,27 @@ test('wave9 deals: admin CRUD is gated; public browse + reservation checkout wor
     assert.equal(co.mode, 'reservation', 'without Stripe we take a reservation');
     assert.equal(getBookingById(co.booking.id).priceBasis, 'confirmed');
   } finally { server.close(); }
+});
+
+test('inspire: returns 3 cheapest destinations per window, cheaper further out, tags matched', () => {
+  const out = inspireDestinations({ text: 'somewhere warm and cheap for a relaxing beach holiday', originCode: 'LHR', travellers: 2 });
+  // Every window (30/60/120/180) yields exactly 3 ideas.
+  for (const w of INSPIRE_WINDOWS) {
+    assert.ok(Array.isArray(out.windows[w]), `window ${w} exists`);
+    assert.equal(out.windows[w].length, 3, `window ${w} has 3 ideas`);
+    // Each idea names a real country + city and carries a per-person price.
+    for (const d of out.windows[w]) {
+      assert.ok(d.countryName && d.city, 'country + city present');
+      assert.ok(d.perSeatUSD > 0, 'priced per person');
+    }
+    // Sorted cheapest-first within the window.
+    const prices = out.windows[w].map((d) => d.perSeatUSD);
+    assert.deepEqual(prices, [...prices].sort((a, b) => a - b), `window ${w} sorted cheapest-first`);
+  }
+  // Booking the SAME destination further out is cheaper (180-day factor < 30-day).
+  const near = out.windows[30][0];
+  const far = out.windows[180].find((d) => d.code === near.code);
+  if (far) assert.ok(far.perSeatUSD <= near.perSeatUSD, '180-day cheaper than 30-day for same city');
+  // The preference keywords ("warm", "beach") are surfaced back to the user.
+  assert.ok(out.matchedTags.length > 0, 'matched at least one preference tag');
 });

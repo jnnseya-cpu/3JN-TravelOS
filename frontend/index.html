@@ -86,6 +86,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <nav class="nav-links">
           <a data-nav="home" data-i18n="nav.home">Home</a>
           <a data-nav="deals">Deals</a>
+          <a data-nav="inspire">Inspire Me</a>
           <a data-nav="planner" data-i18n="nav.plan">Plan a Trip</a>
           <a data-nav="marketplace">Marketplace</a>
           <a data-nav="membership" data-i18n="nav.membership">Membership</a>
@@ -587,6 +588,24 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <button class="btn btn-ghost btn-sm" id="genPostBtn" style="margin-top:10px">✨ Generate a new post</button>
       </div>
       <div id="blogOut"><div class="card pad center muted">Loading the journal…</div></div>
+    </section>
+
+    <!-- ===================== INSPIRE ME (no idea where to go) ===================== -->
+    <section class="view" id="view-inspire">
+      <div class="section-head center">
+        <span class="eyebrow">Inspire Me · Where can I go?</span>
+        <h2>No idea where to go? Tell us the vibe.</h2>
+        <p>Describe what you're after — "somewhere warm and cheap for a beach break", "a lively city for food and nightlife" — and we'll find the 3 cheapest matching destinations for the next 30, 60, 120 and 180 days.</p>
+      </div>
+      <div class="card pad" style="max-width:760px;margin:0 auto">
+        <textarea id="inspireText" rows="2" class="in" style="width:100%;resize:vertical" placeholder="e.g. somewhere warm and affordable for a relaxed beach holiday with the family"></textarea>
+        <div class="composer-row" style="margin-top:10px">
+          <div class="field"><label>Departing from</label><input class="in" id="inspireOrigin" placeholder="e.g. London"></div>
+          <div class="field"><label>Travellers</label><input class="in" id="inspirePax" type="number" min="1" max="9" value="2"></div>
+        </div>
+        <button class="btn btn-gold btn-block" style="margin-top:12px" onclick="runInspire()">✨ Inspire me →</button>
+      </div>
+      <div id="inspireOut" style="margin-top:20px"></div>
     </section>
 
     <!-- ===================== CURATED DEALS CATALOGUE ===================== -->

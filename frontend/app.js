@@ -153,6 +153,7 @@ function nav(view) {
   if (el) el.classList.add('active');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (view === 'deals') renderDeals();
+  if (view === 'inspire') renderInspire();
   if (view === 'console') renderConsole();
   if (view === 'admin') renderAdmin();
   if (view === 'comms') renderComms();
@@ -1450,16 +1451,14 @@ window.confirmBooking = async () => {
     } catch (e) {
       // LIVE INVENTORY GATE: estimated quotes never take real money.
       if (/estimated/i.test(String(e?.message || ''))) {
-        toast('📋 Quote saved — this is an ESTIMATED price. No payment was taken; we only charge when live bookable fares are connected.');
-        nav('console');
+        await reserveEstimatedTrip(lead);
         return;
       }
       /* other errors fall through to the recorded flow */
     }
   }
   if (data.booking?.priceBasis === 'estimated') {
-    toast('📋 Quote reserved at an estimated price — no real payment taken. Final price is confirmed with live suppliers before any charge.');
-    nav('console');
+    await reserveEstimatedTrip(lead);
     return;
   }
   const rail = paymentMethod === 'card' ? 'Stripe' : paymentMethod === 'bitripay' ? 'BitriPay Wallet' : 'BitriPay Mobile Money';
@@ -1726,6 +1725,26 @@ async function persistTravelProfile(silent = false) {
   }
 }
 window.saveTravelProfile = () => persistTravelProfile(false);
+
+// When a package can't take a live card charge (estimated price — no live
+// inventory for this basket), we DON'T dead-end the customer. We file an
+// exact-quote request so the travel team confirms the real bookable price and
+// emails a secure payment link, then land them in My Trips with a clear status.
+async function reserveEstimatedTrip(lead) {
+  try {
+    await api('/api/quote-request', { method: 'POST', body: JSON.stringify({
+      option: state.lastQuote?.option,
+      intent: window.__intent,
+      contact: { name: lead?.fullName || state.user?.name || '', email: state.user?.email || '', phone: '' },
+      note: 'Requested from the trip planner — confirm exact price and send a payment link.',
+    }) });
+  } catch { /* the booking is still saved; the request is best-effort */ }
+  closeModal();
+  modal(`<span class="eyebrow">Trip saved ✓</span>
+    <h3 style="margin:6px 0">You're all set${lead?.fullName ? ', ' + esc(lead.fullName.split(' ')[0]) : ''}!</h3>
+    <p class="muted" style="font-size:13px">This trip is saved in <strong>My Trips</strong>. Because live fares aren't connected for this exact basket yet, our travel team will confirm the exact bookable price and email you a secure payment link — usually within a few hours. Nothing was charged.</p>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();nav('console')">View My Trips →</button>`);
+}
 
 // ---- eSIM Manager ---------------------------------------------------------
 async function renderEsims() {
@@ -3214,6 +3233,45 @@ window.toggleDealActive = async (dealId, active) => {
 window.removeDeal = async (dealId) => {
   if (!confirm('Delete this deal permanently?')) return;
   try { await api(`/api/admin/deals/${dealId}`, { method: 'DELETE' }); openDealsManager(); } catch {}
+};
+
+// ---- Inspire Me: "I don't know where to go" -------------------------------
+function renderInspire() { const t = $('#inspireText'); if (t) t.focus(); }
+window.runInspire = async () => {
+  const text = ($('#inspireText')?.value || '').trim();
+  const origin = ($('#inspireOrigin')?.value || '').trim();
+  const pax = Math.max(1, Math.min(9, parseInt($('#inspirePax')?.value || '2', 10) || 2));
+  const out = $('#inspireOut');
+  if (!text) { toast('Tell us what you fancy first.'); return; }
+  if (out) out.innerHTML = '<div class="card pad center muted">✨ Finding your cheapest escapes…</div>';
+  let data;
+  try { data = await api('/api/inspire', { method: 'POST', body: JSON.stringify({ text, origin, travellers: pax, country: state.country }) }); }
+  catch { if (out) out.innerHTML = '<div class="card pad muted">Couldn\'t load suggestions — try again.</div>'; return; }
+  const sym = data.currency?.symbol || '£';
+  const WL = { 30: 'Next 30 days', 60: 'Next 60 days', 120: 'Next 120 days', 180: 'Next 180 days' };
+  const flag = (cc) => (cc && cc.length === 2) ? cc.toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0))) : '🌍';
+  const card = (o) => `
+    <div class="card pad" style="display:flex;flex-direction:column">
+      <div style="font-size:30px">${flag(o.country)}</div>
+      <h3 style="margin:4px 0 0">${esc(o.city)}</h3>
+      <div class="muted" style="font-size:12.5px">${esc(o.countryName)}${o.matchedTags?.length ? ' · ' + o.matchedTags.slice(0, 3).map(esc).join(' · ') : ''}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:10px">
+        <span class="muted" style="font-size:11px">from</span>
+        <span style="font-family:'Space Grotesk';font-weight:700;font-size:20px;color:var(--gold)">${sym}${Number(o.fromLocal).toLocaleString()}</span>
+      </div>
+      <div class="muted" style="font-size:11px">${o.travellers} traveller${o.travellers > 1 ? 's' : ''} · best around ${esc(ukDate(o.bestDate))}</div>
+      <button class="btn btn-gold btn-sm btn-block" style="margin-top:10px" onclick="inspireSearch('${esc(o.city)}','${esc(o.bestDate)}',${pax})">Plan this trip →</button>
+    </div>`;
+  const sections = (data.windowsOrder || [30, 60, 120, 180]).map((w) => `
+    <div style="margin-top:22px"><span class="eyebrow">${WL[w] || w + ' days'}</span>
+    <div class="dest-grid" style="margin-top:8px">${(data.windows[w] || []).map(card).join('')}</div></div>`).join('');
+  out.innerHTML = `<p class="muted center" style="font-size:12px">Departing ${esc(data.originCity)}${data.matchedTags?.length ? ' · matched: ' + data.matchedTags.map(esc).join(', ') : ''}. Estimated "from" fares — confirmed live when you plan the trip.</p>${sections}`;
+};
+window.inspireSearch = (city, date, pax) => {
+  const input = $('#intentInput');
+  if (input) input.value = `${pax} travellers to ${city} around ${ukDate(date)} for 7 nights, flights and hotel, cheapest reliable`;
+  nav('planner');
+  if (typeof runPlan === 'function') runPlan();
 };
 
 // ---- 3JN VisaOS -----------------------------------------------------------
