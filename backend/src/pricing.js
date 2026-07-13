@@ -61,8 +61,15 @@ export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) 
   };
 }
 
-export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, duffelOrderValueUSD = null }) {
-  const tier = tierForPoints(loyaltyPoints);
+export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, membershipDiscount = 0, membershipName = null, duffelOrderValueUSD = null }) {
+  const pointsTier = tierForPoints(loyaltyPoints);
+  // The discount a customer actually gets is the BETTER of their loyalty-points
+  // tier and their paid membership's discount — so a Concierge Elite member is
+  // never shown "Explorer · 0%" just because they haven't earned points yet.
+  const memberBeats = membershipDiscount > pointsTier.discount;
+  const effectiveDiscount = Math.max(pointsTier.discount, membershipDiscount || 0);
+  const tier = { name: memberBeats ? (membershipName || 'Member') : pointsTier.name, discount: effectiveDiscount };
+  const discountSource = memberBeats ? 'member' : 'loyalty';
 
   // TIERED TAKE-RATE: a flights-only booking pays a small % SERVICE FEE (free for
   // active Travel+ members) instead of 10%, so our flight price stands level with
@@ -123,6 +130,7 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
     symbol: currency.symbol,
     loyaltyTier: tier.name,
     loyaltyDiscountPct: tier.discount,
+    discountSource, // 'member' when the membership beat the points tier, else 'loyalty'
     feeModel,
     feeLabel,
     lines: {

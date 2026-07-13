@@ -14,6 +14,7 @@ import { deepPriceDive, farePrediction } from './price-dive.js';
 import { hostListingsForCity, hostExperiencesForCity, vendorServicesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
+import { MEMBERSHIP_TIERS } from '../../shared/constants.js';
 import { route } from './ai-gateway.js';
 import { approvalProbability } from './visaos.js';
 import { travelIntelligenceScore } from './intelligence.js';
@@ -308,7 +309,12 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   const points = user ? user.points : 0;
   // Active Travel+ members pay NO flat fee on flights-only bookings.
   const memberActive = !!(user && user.membership?.active);
-  const packages = buildPackages(scan, intent, currency, points, memberActive);
+  // A paid membership grants a fee/package discount even before points are earned,
+  // so an Elite member never shows "Explorer · 0%". Look up the tier's discount.
+  const memberPlan = memberActive ? MEMBERSHIP_TIERS.find((t) => t.key === user.membership.tier) : null;
+  const membershipDiscount = memberPlan?.discount || 0;
+  const membershipName = memberPlan ? memberPlan.name.replace('Travel+ ', '') : null;
+  const packages = buildPackages(scan, intent, currency, points, memberActive, membershipDiscount, membershipName);
 
   // Was "direct only" honoured? (false when the route has no non-stop option.)
   const recFlight = (packages.options[0]?.components || []).find((c) => c.type === 'flight');

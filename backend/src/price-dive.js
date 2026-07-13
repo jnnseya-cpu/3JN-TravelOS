@@ -193,6 +193,21 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false,
   if (!sawFloor) basketAllLive = false;
   const marginPct = publicTotalUSD > 0 ? Math.round(((publicTotalUSD - ourTotalUSD) / publicTotalUSD) * 1000) / 10 : 0;
 
+  // SANITY CAP: an illustrative saving must never exceed what the trip costs —
+  // "save £2,170" on a £1,786 trip is obviously broken and destroys trust. Bound
+  // each lever to 30% and the running total to 40% of the reliable floor total,
+  // scaling proportionally if the sum still overshoots.
+  if (ourTotalUSD > 0 && savings.length) {
+    const perLeverMax = Math.round(ourTotalUSD * 0.30);
+    for (const s of savings) if (s.savingUSD > perLeverMax) s.savingUSD = perLeverMax;
+    const totalMax = Math.round(ourTotalUSD * 0.40);
+    const sum = savings.reduce((a, s) => a + s.savingUSD, 0);
+    if (sum > totalMax && sum > 0) {
+      const scale = totalMax / sum;
+      for (const s of savings) s.savingUSD = Math.round(s.savingUSD * scale);
+    }
+  }
+
   const verdict = marginPct > 0
     ? (basketAllLive
       ? `Priced ${marginPct}% under the public floor for the same verified basket.`

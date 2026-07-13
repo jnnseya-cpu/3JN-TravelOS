@@ -166,7 +166,7 @@ function key0PickJourney(tier, pool, scan, intent) {
   return pick;
 }
 
-function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActive = false) {
+function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActive = false, membershipDiscount = 0, membershipName = null) {
   const tier = TIERS[tierName];
   const selections = [];
   let componentsUSD = 0;
@@ -254,7 +254,7 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
   // TIERED TAKE-RATE: a basket of nothing but flights pays the flat flight
   // fee (free for Travel+) instead of 10% — see pricing.js.
   const flightsOnly = selections.length > 0 && selections.every((s2) => s2.type === 'flight');
-  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive, duffelOrderValueUSD: duffelOrder ? duffelOrderValueUSD : null });
+  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive, membershipDiscount, membershipName, duffelOrderValueUSD: duffelOrder ? duffelOrderValueUSD : null });
 
   // Average reliability across selected suppliers — used for the "reliable"
   // promise and ranking.
@@ -293,9 +293,9 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
   };
 }
 
-export function buildPackages(scan, intent, currency, loyaltyPoints = 0, memberActive = false) {
+export function buildPackages(scan, intent, currency, loyaltyPoints = 0, memberActive = false, membershipDiscount = 0, membershipName = null) {
   let options = Object.keys(TIERS)
-    .map((name) => buildOption(name, scan, intent, currency, loyaltyPoints, memberActive))
+    .map((name) => buildOption(name, scan, intent, currency, loyaltyPoints, memberActive, membershipDiscount, membershipName))
     .filter((o) => o.components.length > 0);
   // DEDUPE: when the supplier pool is thin, tiers can converge on the SAME
   // basket (identical suppliers, identical total). Showing "Premium" at the

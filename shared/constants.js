@@ -69,10 +69,13 @@ export const MEMBERSHIP_ACU_FUND_RATE = 0.10;
 // Each plan auto-funds ACUs every billing period: 10% of the subscription,
 // converted at £1 = 100 ACU. e.g. £12.99 → £1.299 → ~130 ACU / month.
 export const MEMBERSHIP_TIERS = [
-  { key: 'nomad', name: 'Travel+ Smart Traveller', pricePerMonth: 4.99 },
-  { key: 'family', name: 'Travel+ Family Saver', pricePerMonth: 12.99 },
-  { key: 'executive', name: 'Travel+ Frequent Flyer', pricePerMonth: 24.99 },
-  { key: 'elite', name: 'Travel+ Concierge Elite', pricePerMonth: 49.99 },
+  // `discount` = the members' fee/package discount (the "Discounted fees" benefit),
+  // funded from 3JN's commission and capped at it, so a booking is never sold
+  // below supplier cost. It applies even before a member earns any loyalty points.
+  { key: 'nomad', name: 'Travel+ Smart Traveller', pricePerMonth: 4.99, discount: 0.03 },
+  { key: 'family', name: 'Travel+ Family Saver', pricePerMonth: 12.99, discount: 0.05 },
+  { key: 'executive', name: 'Travel+ Frequent Flyer', pricePerMonth: 24.99, discount: 0.06 },
+  { key: 'elite', name: 'Travel+ Concierge Elite', pricePerMonth: 49.99, discount: 0.08 },
 ].map((t) => ({
   ...t,
   acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP),
