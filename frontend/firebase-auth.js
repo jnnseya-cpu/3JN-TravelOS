@@ -10,7 +10,10 @@
 // Try several SDK versions (newest first) so a single bad/withdrawn version on
 // the CDN can't silently kill password sign-in. The first that imports wins.
 // Override with window.FIREBASE_SDK_VERSION to pin a specific one.
-const SDK_VERSIONS = [window.FIREBASE_SDK_VERSION, '11.10.0', '11.6.0', '10.14.1'].filter(Boolean);
+// 12.16.0 is the exact version the Firebase console recommends for this project
+// (confirmed by the setup snippet), so it's first. The rest are fallbacks in
+// case a build is ever withdrawn. Override with window.FIREBASE_SDK_VERSION.
+const SDK_VERSIONS = [window.FIREBASE_SDK_VERSION, '12.16.0', '11.10.0', '10.14.1'].filter(Boolean);
 window.__fbAuthStatus = 'loading';
 
 (async () => {

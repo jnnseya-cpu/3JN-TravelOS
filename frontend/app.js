@@ -4247,7 +4247,7 @@ function openAuth(mode = 'signup') {
   // say so plainly instead of silently hiding the password field.
   const fbNote = !fb ? (window.__fbAuthStatus === 'loading'
     ? '<p class="muted center" style="font-size:11.5px;margin:2px 0 8px">🔑 Loading secure password sign-in…</p>'
-    : `<p class="muted center" style="font-size:11.5px;margin:2px 0 8px;color:var(--gold)">Password sign-in is temporarily unavailable${window.__fbAuthStatus && window.__fbAuthStatus.startsWith('error') ? '' : ''} — you can still continue with your email below.</p>`) : '';
+    : `<p class="muted center" style="font-size:11px;margin:2px 0 8px;color:var(--gold)">Password sign-in couldn't load (${esc(String(window.__fbAuthStatus || 'unknown'))}). Continue with email below, or tell your admin.</p>`) : '';
   // Google is the FRICTIONLESS primary path: one tap, no password to set, no
   // email to verify (Google addresses are pre-verified). Make it the prominent
   // button so most customers never touch the email/password fields at all.
