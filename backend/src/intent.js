@@ -54,9 +54,11 @@ function parseTravellers(text) {
   if (adultMatch) adults = parseInt(adultMatch[1], 10);
   if (childMatch) children = parseInt(childMatch[1], 10);
 
-  // Child ages — "children 16,13 and 9 years old", "aged 16, 13, 9".
+  // Child ages — "children 16,13 and 9 years old", "aged 16, 13, 9", and the
+  // common typo "aged 16.13 and 9" (period instead of comma). The separator class
+  // includes '.' so a mistyped list still captures every age, not just the first.
   let childAges = [];
-  const ageBlock = lower.match(/(?:child|children|kid|kids|aged?|ages)[^.]*?((?:\d{1,2}\s*(?:,|and|&|\/|\s)\s*){1,}\d{1,2}|\d{1,2})\s*(?:year|yr|yo|y\.?o\.?|years?\s*old)?/);
+  const ageBlock = lower.match(/(?:child|children|kid|kids|aged?|ages)[^.\d]*?((?:\d{1,2}\s*(?:,|and|&|\/|\.|\s)\s*){1,}\d{1,2}|\d{1,2})\s*(?:year|yr|yo|y\.?o\.?|years?\s*old)?/);
   if (ageBlock) {
     childAges = (ageBlock[1].match(/\d{1,2}/g) || []).map(Number).filter((a) => a >= 0 && a <= 17);
   }
@@ -183,7 +185,9 @@ export function parseExplicitDates(text, today = new Date()) {
 
   // 2b) Single date with a MONTH NAME: "03/october/2026", "3 October 2026",
   // "October 3 2026", "3rd of October 2026" → check-in date.
-  const mnAll = MONTHS.join('|');
+  // Match by the 3-letter root + optional trailing letters so abbreviations like
+  // "sept", "oct", "3/sep/2026" parse the same as the full month name.
+  const mnAll = MONTHS.map((x) => x.slice(0, 3)).join('|');
   let mnSingle = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:of\\s+)?[\\/.\\-\\s]\\s*(${mnAll})[a-z]*[\\/.\\-\\s]\\s*(\\d{4})\\b`, 'i'));
   let dSingle, moSingle, ySingle;
   if (mnSingle) { dSingle = +mnSingle[1]; moSingle = MONTHS.findIndex((x) => x.startsWith(mnSingle[2].toLowerCase().slice(0, 3))); ySingle = +mnSingle[3]; }
@@ -363,12 +367,22 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   const nightsStated = /\d+\s*(?:night|nights|day|days|week|weeks)/i.test(raw);
   let nights = (explicit && explicit.nights) || parseNights(raw);
   if (miniCruise && !nightsStated && !(explicit && explicit.nights)) nights = 2;
-  const dates = explicit && explicit.checkIn
-    ? {
-      checkIn: explicit.checkIn,
-      checkOut: explicit.checkOut || isoPlusNights(explicit.checkIn, nights),
+  // "get back by / return by / be home by <date>" — the typed date is the RETURN
+  // deadline, not the check-in. Anchor check-out to it and back off the nights so
+  // "4 nights, back by 30 Sept" becomes 26 Sept → 30 Sept, not a trip STARTING on
+  // the 30th. Only applies to a single typed date (an explicit range already has
+  // both ends).
+  const returnDeadline = /\b(?:get\s+back|be\s+back|back\s+(?:in|to|home|by)|return(?:ing)?|fly\s+back|come\s+back|home)\b[^.]{0,40}\bby\b/i.test(raw);
+  let dates;
+  if (explicit && explicit.checkIn) {
+    if (returnDeadline && !explicit.checkOut) {
+      dates = { checkIn: isoPlusNights(explicit.checkIn, -(nights || 7)), checkOut: explicit.checkIn };
+    } else {
+      dates = { checkIn: explicit.checkIn, checkOut: explicit.checkOut || isoPlusNights(explicit.checkIn, nights) };
     }
-    : buildDates(monthInfo, nights, today);
+  } else {
+    dates = buildDates(monthInfo, nights, today);
+  }
 
   // Board basis — "all inclusive", "half board", "B&B", "room only"…
   const BOARD_PATTERNS = [

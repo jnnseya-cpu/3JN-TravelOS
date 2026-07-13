@@ -34,9 +34,16 @@ function acuSum(actions) {
   return actions.reduce((s, a) => s + (ACU_ACTIONS[a] || 0), 0);
 }
 const GBP_TO_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266) — consistent everywhere
+// MARGIN PROTECTION on the search CHARGE itself (business rule: charge 3–10× the
+// provider/AI cost, never below). The AI cost of a search is the ACU sum of the
+// agent actions it runs; the customer is charged the 3× floor of that, rounded to
+// a tidy figure — so a search is never sold at a loss. (Booking commission is an
+// ADDITIONAL margin on top, not a subsidy that lets the search run under cost.)
+const SEARCH_MARGIN_MULTIPLE = 3; // floor of the 3–10× band
 function tierFrom(name, depth, actions) {
-  const acu = acuSum(actions);
-  return { name, depth, acu, aiCostUSD: Math.round(acu * ACU_GBP * GBP_TO_USD * 100) / 100, actions };
+  const costAcu = acuSum(actions);
+  const chargeAcu = Math.max(costAcu, Math.round(costAcu * SEARCH_MARGIN_MULTIPLE / 5) * 5); // 3× floor, rounded to 5
+  return { name, depth, acu: chargeAcu, aiCostAcu: costAcu, aiCostUSD: Math.round(costAcu * ACU_GBP * GBP_TO_USD * 100) / 100, actions };
 }
 
 // Multi-tier search system (spec §7). Tier 1 is free and never touches
@@ -46,22 +53,19 @@ export const SEARCH_TIERS = {
     name: 'Cached / Free', acu: 0, aiCostUSD: 0, depth: 'cached', actions: [],
     features: ['Cached results', 'Top deals', 'Destination suggestions', 'Previous searches', 'Limited searches (5/day)', 'No expensive AI'],
   },
-  // Customer-facing ACU prices are kept small and predictable (5 / 10 / 20 ACU =
-  // ~5p / 10p / 20p per search) so pay-per-use feels cheap vs a subscription. The
-  // `acu` override sets the CHARGE; `actions` still lists the agents each depth runs.
+  // The CHARGE per tier is the margin-protected 3× floor of the tier's AI cost
+  // (set in tierFrom) — never a hand-picked figure below cost. `actions` lists the
+  // agents each depth runs (and defines that cost).
   smart: {
     ...tierFrom('Smart Search', 'standard', ['intent', 'flightSearch', 'hotelSearch']),
-    acu: 5,
     agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent'],
   },
   deep: {
     ...tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
-    acu: 10,
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent'],
   },
   concierge: {
     ...tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
-    acu: 20,
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
     // Tier 4 pairs the AI agents with a HUMAN travel expert — human time is
     // never funded speculatively, so access requires a real commitment.
