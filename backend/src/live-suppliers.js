@@ -444,7 +444,7 @@ export function duffelMode() {
 async function fetchDuffelFlights(intent, originCode, destCode, cabinClass = 'economy') {
   if (!duffelEnabled()) return null;
   const slices = [{ origin: originCode, destination: destCode, departure_date: intent.dates.checkIn }];
-  if (intent.dates.checkOut) slices.push({ origin: destCode, destination: originCode, departure_date: intent.dates.checkOut });
+  if (!intent.oneWay && intent.dates.checkOut) slices.push({ origin: destCode, destination: originCode, departure_date: intent.dates.checkOut });
 
   const body = {
     data: {
@@ -596,7 +596,7 @@ async function fetchTequilaFlights(intent, originCode, destCode) {
     sort: 'price',
     enable_vi: '0', // single-booking itineraries ONLY — no self-transfer combos
   });
-  if (intent.dates.checkOut) {
+  if (!intent.oneWay && intent.dates.checkOut) {
     q.set('return_from', tequilaDate(intent.dates.checkOut));
     q.set('return_to', tequilaDate(intent.dates.checkOut));
   }
@@ -679,10 +679,10 @@ export async function fetchMarketFares(intent, dest, origin) {
     currency: 'gbp',
     sorting: 'price',
     limit: '8',
-    one_way: intent.dates.checkOut ? 'false' : 'true',
+    one_way: (!intent.oneWay && intent.dates.checkOut) ? 'false' : 'true',
     token: TRAVELPAYOUTS_TOKEN,
   });
-  if (intent.dates.checkOut) q.set('return_at', intent.dates.checkOut);
+  if (!intent.oneWay && intent.dates.checkOut) q.set('return_at', intent.dates.checkOut);
   const res = await httpJSON(`${TRAVELPAYOUTS_BASE}/aviasales/v3/prices_for_dates?${q}`, {
     headers: { Accept: 'application/json' },
   });
@@ -1058,9 +1058,10 @@ export async function fetchOagFlights(intent, dest, origin) {
   const o = origin?.airport; const d = dest?.code;
   if (!o || !d || !intent?.dates?.checkIn) return null;
 
+  const wantReturn = !intent.oneWay && !!intent.dates.checkOut;
   const [outbound, inboundRaw] = await Promise.all([
     oagServices(o, d, intent.dates.checkIn),
-    intent.dates.checkOut ? oagServices(d, o, intent.dates.checkOut) : Promise.resolve(null),
+    wantReturn ? oagServices(d, o, intent.dates.checkOut) : Promise.resolve(null),
   ]);
   if (!outbound || !outbound.length) return null;
 
@@ -1087,7 +1088,7 @@ export async function fetchOagFlights(intent, dest, origin) {
     // date: the fare estimate is a full round trip, so selling this outbound-only
     // offer would charge a return price for a one-way itinerary. Skip it — other
     // carriers (or the synthetic fallback) fill the round-trip package correctly.
-    if (intent.dates.checkOut && !inLeg) continue;
+    if (wantReturn && !inLeg) continue;
     offers.push({
       type: 'flight',
       supplier: carrierName(iata),
@@ -1105,13 +1106,14 @@ export async function fetchOagFlights(intent, dest, origin) {
         baggage: premium ? '2 × 30kg checked + cabin' : '1 × 23kg checked + cabin',
         fareBreakdown: fares.fareCounts,
         fareUnits: fares.fareUnits,
-        adultFareUSD: fares.totalPerSeat,
-        childFareUSD: fares.childFareUSD,
-        infantFareUSD: fares.infantFareUSD,
+        oneWay: !wantReturn || undefined,
+        adultFareUSD: wantReturn ? fares.totalPerSeat : fares.outboundPerSeat,
+        childFareUSD: Math.round((wantReturn ? fares.totalPerSeat : fares.outboundPerSeat) * 0.75 * 100) / 100,
+        infantFareUSD: Math.round((wantReturn ? fares.totalPerSeat : fares.outboundPerSeat) * 0.10 * 100) / 100,
         flightNumber: outLeg.flightNumber,
         aircraft: outLeg.aircraft,
       },
-      priceUSD: fares.priceUSD,
+      priceUSD: wantReturn ? fares.priceUSD : Math.round(fares.outboundPerSeat * fares.fareUnits * 100) / 100,
     });
     if (offers.length >= 8) break;
   }

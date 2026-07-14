@@ -5291,3 +5291,106 @@ test('stabilise: origin detection tolerates punctuation glued to "from" (from.bi
   const spaced = plan({ text: 'travel to kinshasa from birmingham for 3 weeks flights', context: GB, user: null, searchTier: 'smart' });
   assert.equal(spaced.origin.city, 'Birmingham');
 });
+
+test('hard-test: a typo\'d destination resolves to the right city, never a real-IATA collision', async () => {
+  const { resolveDestination, synthesizeDestination } = await import('../src/destinations.js');
+  // "Dubay" must become Dubai/DXB — NOT synthesise "DUB" (= Dublin's real code).
+  const dubay = resolveDestination('Dubay');
+  assert.equal(dubay.city, 'Dubai', 'Dubay corrects to Dubai');
+  assert.equal(dubay.code, 'DXB', 'and carries Dubai\'s real IATA, not DUB');
+  // A genuinely unknown town gets a placeholder that does NOT equal a real code.
+  const unknown = synthesizeDestination('Zomboville');
+  assert.equal(unknown.approxCode, true);
+  assert.ok(unknown.code && unknown.code !== 'DUB', 'placeholder code is flagged and non-colliding');
+});
+
+test('hard-test: popular leisure airports resolve to their real IATA codes', async () => {
+  const { resolveOrigin } = await import('../src/destinations.js');
+  assert.equal(resolveOrigin('Malaga').airport, 'AGP');
+  assert.equal(resolveOrigin('Tenerife').airport, 'TFS');
+  assert.equal(resolveOrigin('Alicante').airport, 'ALC');
+  assert.equal(resolveOrigin('Faro').airport, 'FAO');
+});
+
+test('hard-test: a leading "<port/typo city> to <dest>" resolves the real origin', () => {
+  // Dover is a PORT (not in the strict airport table) — must still be detected.
+  assert.equal(parseIntent('Dover to Amsterdam next month').originCity, 'Dover');
+  // A typo\'d origin fuzzy-matches instead of defaulting to London.
+  assert.equal(parseIntent('birminghsm to kinshasa on 10/09/26').originCity, 'Birmingham');
+  // A non-city lead ("I want to travel to X") must NOT become a fake origin.
+  const noOrigin = parseIntent('I want to travel to Kinshasa in September');
+  assert.equal(noOrigin.originCity, null, 'no phantom origin from a verb phrase');
+});
+
+test('hard-test: a one-way request prices the outbound leg only, no fabricated return', async () => {
+  const { resolveDestination, resolveOrigin } = await import('../src/destinations.js');
+  const { scanFlights } = await import('../src/suppliers.js');
+  const ow = parseIntent('one way flight from London to Lagos on 10/09/26');
+  assert.equal(ow.oneWay, true);
+  const dest = resolveDestination('Lagos'); const origin = resolveOrigin('London');
+  const owF = scanFlights(ow, dest, origin)[0];
+  assert.equal(owF.details.inbound, null, 'one-way carries no inbound leg');
+  const rt = parseIntent('flight from London to Lagos on 10/09/26 for 2 weeks');
+  const rtF = scanFlights(rt, dest, origin)[0];
+  assert.ok(rtF.details.inbound, 'a round trip DOES carry an inbound leg');
+  assert.ok(owF.priceUSD < rtF.priceUSD, 'one-way is cheaper than the round trip');
+});
+
+test('hard-test: an infant is counted in the fare breakdown (not silently dropped)', async () => {
+  const { resolveDestination, resolveOrigin } = await import('../src/destinations.js');
+  const { scanFlights } = await import('../src/suppliers.js');
+  const i = parseIntent('2 adults and 1 infant to Barcelona for a week');
+  assert.equal(i.travellers.infants, 1);
+  assert.equal(i.travellers.adults, 2);
+  const f = scanFlights(i, resolveDestination('Barcelona'), resolveOrigin('London'))[0];
+  assert.equal(f.details.fareBreakdown.infant, 1, 'the infant appears in the priced breakdown');
+  assert.equal(f.details.fareBreakdown.adult, 2);
+});
+
+test('hard-test B3: passwordless email login is DISABLED in LIVE_MODE (no account takeover)', async () => {
+  const http = await import('node:http');
+  const { createUser } = await import('../src/store.js');
+  const victim = createUser({ email: `b3-${Date.now?.() || 'v'}@t.com`, name: 'Victim', role: 'consumer' });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const prev = process.env.LIVE_MODE;
+  try {
+    // In LIVE_MODE, /api/login must refuse — production auth is Firebase only.
+    process.env.LIVE_MODE = 'true';
+    const live = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: victim.email }) });
+    assert.equal(live.status, 403, 'passwordless login blocked in live mode');
+    const body = await live.json();
+    assert.equal(body.error, 'password-login-disabled');
+    // With LIVE_MODE off (demo), the endpoint still functions (reaches the human-check).
+    process.env.LIVE_MODE = '';
+    const demo = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: victim.email }) });
+    assert.notEqual(demo.status, 403, 'demo login is not blocked by the live-mode gate');
+  } finally {
+    if (prev === undefined) delete process.env.LIVE_MODE; else process.env.LIVE_MODE = prev;
+    server.close();
+  }
+});
+
+test('hard-test: a pay-in-full (Instant Purchase) booking earns its loyalty points at creation', async () => {
+  const { createUser, createBooking, getUser } = await import('../src/store.js');
+  const u = createUser({ email: `j2-${Date.now?.() || 'x'}@t.com`, name: 'J2', role: 'consumer' });
+  const option = {
+    tier: 'Standard', totalUSD: 2000,
+    components: [{ type: 'flight', live: true, priceUSD: 2000 }],
+    pricing: { local: { total: 1580 }, symbol: '£', code: 'GBP' },
+  };
+  // Instant Purchase plan: deposit == full total, empty schedule.
+  const instalment = { plan: 'Instant Purchase', deposit: 1580, depositPct: 1, schedule: [], engine: 'ai-smart' };
+  const b = createBooking({ option, instalment, userId: u.id });
+  assert.equal(b.priceBasis, 'live');
+  assert.equal(b.pointsAwarded, true, 'a fully-prepaid booking earns now');
+  assert.equal(getUser(u.id).points, 800, '2000 USD × 0.4 = 800 points');
+
+  // A REAL instalment (non-empty schedule) still defers points to the final payment.
+  const u2 = createUser({ email: `j1-${Date.now?.() || 'y'}@t.com`, name: 'J1', role: 'consumer' });
+  const inst2 = { plan: 'Quick Pay', deposit: 500, schedule: [{ amount: 1080, due: '2026-09-01' }], engine: 'ai-smart' };
+  const b2 = createBooking({ option: { ...option }, instalment: inst2, userId: u2.id });
+  assert.notEqual(b2.pointsAwarded, true, 'an open instalment plan earns nothing yet');
+  assert.equal(getUser(u2.id).points, 0);
+});

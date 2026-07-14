@@ -2422,7 +2422,11 @@ window.downloadDoc = (id, text) => {
 };
 
 window.payInstalment = async (id, index, amount) => {
-  try { await api(`/api/book/${id}/pay`, { method: 'POST', body: JSON.stringify({ index, amount }) }); } catch { return; }
+  let d;
+  try { d = await api(`/api/book/${id}/pay`, { method: 'POST', body: JSON.stringify({ index, amount }) }); } catch { return; }
+  // Live card gateway: the instalment is captured through Stripe Checkout and
+  // recorded only by the signed webhook — hop to secure checkout.
+  if (d && d.requiresPayment && d.checkout) { toast('💳 Opening secure checkout…'); window.location.href = d.checkout; return; }
   toast('✓ Instalment paid.');
   renderConsole();
 };

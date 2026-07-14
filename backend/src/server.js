@@ -1191,7 +1191,7 @@ app.get('/api/account/:id/deposits', safe((req, res) => {
   if (!requireOwner(req, res, req.params.id)) return;
   res.json({ deposits: listSearchDeposits(req.params.id), schedule: SEARCH_DEPOSIT_GBP });
 }));
-app.post('/api/deposits/:id/refund', safe((req, res) => {
+app.post('/api/deposits/:id/refund', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
   // A deposit belongs to a user — only its owner (or admin) may refund it.
@@ -1199,6 +1199,19 @@ app.post('/api/deposits/:id/refund', safe((req, res) => {
   if (!dep && !user.allAccess && user.role !== 'admin') return res.status(403).json({ error: 'not-yours' });
   const result = refundSearchDeposit(req.params.id);
   if (!result.ok) return res.status(400).json(result);
+  // SECURITY (pre-launch B2): the deposit was really captured through Stripe, so
+  // a "refund" must return the money — not merely mark the record refunded. When
+  // the deposit carries a Stripe PaymentIntent, issue the real refund. If Stripe
+  // rejects it, roll the flag back so the deposit isn't silently "refunded" with
+  // no money moved (the owner/support can retry).
+  if (stripeEnabled() && result.deposit?.paymentIntent) {
+    const refund = await createRefund({ paymentIntentId: result.deposit.paymentIntent, amountMinor: Math.round((result.deposit.amountGBP || 0) * 100) }).catch(() => ({ ok: false }));
+    if (!refund.ok) {
+      result.deposit.refunded = false; result.deposit.refundedAt = null;
+      return res.status(502).json({ ok: false, error: 'refund-failed', message: 'We could not process the refund with the card gateway. Please try again or contact support.' });
+    }
+    result.deposit.stripeRefundId = refund.refundId || refund.id || null;
+  }
   res.json(result);
 }));
 
@@ -1681,6 +1694,15 @@ app.post('/api/account/:id/savings-guarantee', safe((req, res) => {
 // Lightweight "login" — look up an existing account by email (prototype: no
 // password; a real build authenticates via Auth0/Firebase).
 app.post('/api/login', safe((req, res) => {
+  // SECURITY (pre-launch B3): passwordless email login is a DEMO affordance only.
+  // In LIVE_MODE it is DISABLED — production authenticates exclusively through the
+  // Firebase bridge (/api/auth/firebase), which proves the user actually OWNS the
+  // address. Without this gate, anyone who knew a customer's email could open their
+  // account with only the human-check. The frontend already prefers Firebase when
+  // it's configured; this closes the fallback in production.
+  if (LIVE_MODE()) {
+    return res.status(403).json({ error: 'password-login-disabled', message: 'Please sign in with your verified account (Continue with Google or your email + password).' });
+  }
   const ip = clientIp(req);
   const rl = rateLimitAuth(ip);
   if (!rl.ok) return res.status(429).json(rl);
@@ -2272,7 +2294,7 @@ app.post('/api/book', safe((req, res) => {
 // index must be a real unpaid scheduled instalment, and the amount is taken
 // from the SCHEDULE — never a client number (a £0.01 "payment" must not clear
 // an instalment or fire referral/vendor rewards).
-app.post('/api/book/:id/pay', safe((req, res) => {
+app.post('/api/book/:id/pay', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
   const target = getBooking(req.params.id);
@@ -2290,6 +2312,29 @@ app.post('/api/book/:id/pay', safe((req, res) => {
   const item = target.instalment?.schedule?.[index];
   if (!item) return res.status(400).json({ error: 'bad-instalment-index' });
   if (item.status === 'paid') return res.json({ booking: target, already: true });
+  // SECURITY (pre-launch B1): when a real card gateway is live, an instalment
+  // must actually be CAPTURED through Stripe Checkout — never self-recorded here.
+  // Otherwise this endpoint would mark instalments "paid" (and, on the final one,
+  // release the ticket/room) without any money changing hands. The signed webhook
+  // (meta.bookingId + meta.instalmentIndex) is the single source of truth that
+  // records the payment and marks the schedule item, exactly like the deposit.
+  if (stripeEnabled()) {
+    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const sym = target.option?.pricing?.symbol || '£';
+    const session = await createCheckoutSession({
+      amountMinor: Math.round(Number(item.amount) * 100),
+      currency: target.option?.pricing?.code || 'GBP',
+      description: `3JN Travel — instalment ${index + 1} (${target.option?.tier || 'booking'})`.slice(0, 200),
+      bookingId: target.id,
+      userId: user.id,
+      customerEmail: user.email || undefined,
+      metadata: { instalmentIndex: String(index) },
+      successUrl: `${origin}/console?paid=1&booking=${target.id}&amt=${encodeURIComponent(item.amount)}`,
+      cancelUrl: `${origin}/console?instalmentCancelled=1`,
+    });
+    if (!session.ok) return res.status(400).json(session);
+    return res.json({ requiresPayment: true, checkout: session.url, amount: item.amount, symbol: sym });
+  }
   const booking = recordPayment(req.params.id, { type: 'instalment', amount: item.amount, index });
   if (booking.instalment?.schedule?.[index]) booking.instalment.schedule[index].status = 'paid';
   // BALANCE CLEARED → FULFIL. Tickets/rooms/deals are held on a deposit and only
@@ -2517,7 +2562,7 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       }
     } else if (meta.kind === 'deposit' && meta.userId && meta.tier) {
       if (fresh) {
-        const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null });
+        const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null, paymentIntent: event.data?.object?.payment_intent || null });
         if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '🔎', title: 'Search deposit placed', body: `Your refundable ${meta.tier} search deposit is active — it comes straight off your booking when you travel.` });
       }
     } else if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
@@ -2526,7 +2571,16 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
       if (meta.userId) pushNotification(meta.userId, { type: 'success', icon: '💳', title: 'Payment received', body: `Your ${(amountMinor / 100).toFixed(2)} payment is confirmed — your trip is booked at the exact quoted price.` });
     } else if (meta.bookingId) {
       const paymentIntent = event.data?.object?.payment_intent || null;
-      const booking = recordPayment(meta.bookingId, { type: 'stripe-checkout', amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id, paymentIntent });
+      // An instalment payment (routed here by /api/book/:id/pay in live mode)
+      // carries its schedule index — record it AS an instalment and flip that
+      // schedule row to paid, so the plan progresses exactly as the simulated
+      // path does. A deposit / pay-in-full has no index and stays 'stripe-checkout'.
+      const instalmentIndex = meta.instalmentIndex != null && meta.instalmentIndex !== '' ? Number(meta.instalmentIndex) : null;
+      const paymentType = Number.isInteger(instalmentIndex) ? 'instalment' : 'stripe-checkout';
+      const booking = recordPayment(meta.bookingId, { type: paymentType, amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id, paymentIntent, ...(Number.isInteger(instalmentIndex) ? { index: instalmentIndex } : {}) });
+      if (booking && Number.isInteger(instalmentIndex) && booking.instalment?.schedule?.[instalmentIndex]) {
+        booking.instalment.schedule[instalmentIndex].status = 'paid';
+      }
       // Store the PaymentIntent so a failed ticketing can actually refund it.
       if (booking && paymentIntent) booking.stripePaymentIntent = paymentIntent;
       if (booking && meta.userId) {

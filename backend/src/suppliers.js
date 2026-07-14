@@ -194,6 +194,9 @@ export function flightFareUnits(travellers) {
   // Children whose ages weren't given default to the child band.
   const unpriced = Math.max(0, (travellers.children || 0) - ages.length);
   counts.child += unpriced;
+  // Explicit lap infants (under 2) named without a specific age — they were
+  // not in childAges, so add them here (never double-count an under-2 age).
+  counts.infant += Math.max(0, travellers.infants || 0);
   const units = counts.adult * FARE_BANDS.adult
     + counts.youth * FARE_BANDS.adult
     + counts.child * FARE_BANDS.child
@@ -252,6 +255,10 @@ export function scanFlights(intent, dest, origin) {
     const outboundPerSeat = fares.outboundPerSeat;
     const inboundPerSeat = fares.inboundPerSeat;
     const totalPerSeat = fares.totalPerSeat;
+    // A one-way (or dateless) request is priced on the OUTBOUND leg only — never
+    // the full round-trip fare for a journey with no return.
+    const oneWayFare = !!(intent.oneWay || !intent.dates.checkOut);
+    const seatPerFare = oneWayFare ? outboundPerSeat : totalPerSeat;
     // DISTANCE-HONEST schedule: when we know both airports' coordinates the
     // flying time comes from the real great-circle distance (~810 km/h door
     // to door), and a via-hub connection is the SUM of its two real legs plus
@@ -294,7 +301,9 @@ export function scanFlights(intent, dest, origin) {
       premium: a.premium,
       details: {
         outbound: leg(origin.airport, origin.city, dest.airport, dest.city, intent.dates.checkIn, outDepartMin, durationMins + (outStops ? layoverMins : 0), outStops, outboundPerSeat, via, outStops && legSplit ? { legSplit, layoverMins, carrier: a.name } : null),
-        inbound: leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + (inStops ? layoverMins : 0), inStops, inboundPerSeat, via, inStops && legSplit ? { legSplit: [legSplit[1], legSplit[0]], layoverMins, carrier: a.name } : null),
+        // One-way requests carry NO inbound leg — never fabricate a return the
+        // traveller didn't ask for (and doesn't want to pay for).
+        inbound: (intent.oneWay || !intent.dates.checkOut) ? null : leg(dest.airport, dest.city, origin.airport, origin.city, intent.dates.checkOut, inDepartMin, durationMins + (inStops ? layoverMins : 0), inStops, inboundPerSeat, via, inStops && legSplit ? { legSplit: [legSplit[1], legSplit[0]], layoverMins, carrier: a.name } : null),
         passengers: pax,
         cabin: a.premium ? 'Economy (upgradable)' : 'Economy',
         baggage: a.premium ? '2 x 30kg checked + cabin' : '1 x 23kg checked + cabin',
@@ -302,11 +311,12 @@ export function scanFlights(intent, dest, origin) {
         // children (75%), under-2 infants (10%). `fareUnits` is what we price on.
         fareBreakdown: fare.counts,
         fareUnits: fare.units,
-        adultFareUSD: totalPerSeat,
-        childFareUSD: round(totalPerSeat * FARE_BANDS.child),
-        infantFareUSD: round(totalPerSeat * FARE_BANDS.infant),
+        oneWay: seatPerFare !== totalPerSeat || undefined,
+        adultFareUSD: seatPerFare,
+        childFareUSD: round(seatPerFare * FARE_BANDS.child),
+        infantFareUSD: round(seatPerFare * FARE_BANDS.infant),
       },
-      priceUSD: round(totalPerSeat * fare.units),
+      priceUSD: round(seatPerFare * fare.units),
     };
   });
 }

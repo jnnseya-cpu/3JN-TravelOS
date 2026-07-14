@@ -11,7 +11,7 @@
 // good enough to demonstrate the full pipeline. It returns a normalised intent
 // object the rest of the OS consumes.
 
-import { findDestination, resolveDestinationFromText, airportForCity } from './destinations.js';
+import { findDestination, resolveDestinationFromText, airportForCity, resolveOrigin } from './destinations.js';
 
 const MONTHS = [
   'january', 'february', 'march', 'april', 'may', 'june',
@@ -49,10 +49,19 @@ function parseTravellers(text) {
   let adults = 1;
   let children = 0;
 
+  let infants = 0;
+
   const adultMatch = lower.match(/(\d+)\s*adult/);
   const childMatch = lower.match(/(\d+)\s*(child|children|kid)/);
   if (adultMatch) adults = parseInt(adultMatch[1], 10);
   if (childMatch) children = parseInt(childMatch[1], 10);
+
+  // Infants / lap babies (under 2) — a distinct fare band (~10% of the adult
+  // fare, on an adult's lap), so they must be counted, not dropped. "2 adults
+  // and 1 infant", "with a baby", "an infant".
+  const infantNum = lower.match(/(\d+)\s*(?:infants?|babies|baby|lap\s*infants?)\b/);
+  if (infantNum) infants = parseInt(infantNum[1], 10);
+  else if (/\b(?:a|an|one|1)\s+(?:infant|baby|lap\s*infant)\b/.test(lower) || /\bwith\s+(?:a\s+)?(?:infant|baby)\b/.test(lower)) infants = 1;
 
   // Child ages — "children 16,13 and 9 years old", "aged 16, 13, 9", and the
   // common typo "aged 16.13 and 9" (period instead of comma). The separator class
@@ -85,7 +94,7 @@ function parseTravellers(text) {
     }
   }
 
-  return { adults, children, total: adults + children, childAges };
+  return { adults, children, infants, total: adults + children, childAges };
 }
 
 function parseNights(text) {
@@ -279,10 +288,18 @@ function parseOrigin(text) {
     const lead = (text || '').match(/^\s*([A-Za-zÀ-ÿ'’\- ]{3,30}?)\s+to\s+/i);
     if (lead) {
       const cand = lead[1].trim().replace(/\s+/g, ' ');
-      if (airportForCity(cand)) return cand;
+      // Resolve through the FULL origin resolver (ports + real cities + typo
+      // tolerance), not the strict airport table — otherwise "Dover to X" (a
+      // port) and "birminghsm to X" (a typo) both silently default to London.
+      // We only accept a CONFIDENT match (not the fabricated approxCode
+      // fallback), so a non-city lead like "I want" never becomes a fake origin.
+      const strong = (n) => { const r = resolveOrigin(n); return r && !r.approxCode ? r.city : null; };
+      const c1 = strong(cand);
+      if (c1) return c1;
       // Try just the last word of the lead (e.g. "travel Birmingham to ...").
       const lastWord = cand.split(' ').pop();
-      if (lastWord && airportForCity(lastWord)) return lastWord;
+      const c2 = lastWord && strong(lastWord);
+      if (c2) return c2;
     }
     return null;
   }
@@ -430,6 +447,9 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
 
   const wantsInstalments = /instal?ment|instalments|monthly|pay later|split/i.test(raw);
   const wantsCheapestReliable = /cheapest|reliable|best price|value|affordable/i.test(raw);
+  // One-way / single journey — no return leg. "single" is qualified (ticket/
+  // fare/flight/journey) so it never trips on "single room".
+  const oneWay = /\bone[\s-]?way\b|\bsingle\s+(?:ticket|fare|flight|journey|leg)\b|\bno\s+return\b|\bnot\s+return(?:ing)?\b|\bnot\s+coming\s+back\b|\bnot\s+flying\s+back\b/i.test(raw);
 
   // Deliver exactly what the traveller asked for — the plain-English promise.
   // We NEVER invent components they didn't express. When they name none, we
@@ -475,6 +495,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     nights,
     month: monthInfo ? monthInfo.name : null,
     dates,
+    oneWay, // single journey — no return leg is priced or fabricated
     components: [...requested],
     needComponents, // true → user named a place but no need; ask what they want
     wantsInstalments,

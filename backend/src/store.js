@@ -784,11 +784,13 @@ export function aiCostReport() {
 // refundable, and when a booking happens the deposit is DEDUCTED from the
 // final payment (converted, never double-charged).
 export const SEARCH_DEPOSIT_GBP = { deep: 5, concierge: 20, luxury: 20, corporate: 50 };
-export function placeSearchDeposit({ userId, tier = 'deep', searchId = null }) {
+export function placeSearchDeposit({ userId, tier = 'deep', searchId = null, paymentIntent = null }) {
   const u = db.users.get(userId);
   const amountGBP = SEARCH_DEPOSIT_GBP[tier];
   if (!u || !amountGBP) return { ok: false, error: 'invalid' };
-  const deposit = { id: id('dep'), userId, amountGBP, tier, searchId, refunded: false, convertedToBooking: null, at: nowISO() };
+  // Keep the Stripe PaymentIntent when the deposit was actually captured — a
+  // later refund needs it to return the money (not just flip a flag).
+  const deposit = { id: id('dep'), userId, amountGBP, tier, searchId, paymentIntent: paymentIntent || null, refunded: false, convertedToBooking: null, at: nowISO() };
   db.searchDeposits.push(deposit);
   recordAudit({ actor: userId, role: u.role, action: 'deposit.placed', entity: 'deposit', entityId: deposit.id, summary: `£${amountGBP} refundable ${tier}-search deposit` });
   return { ok: true, deposit };
@@ -1358,7 +1360,19 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   // so it earns now; an INSTALMENT booking earns nothing until the final
   // instalment clears (recordPayment). Stripe-captured bookings defer to the webhook.
   const deferredPayment = !!sourceDealId || (booking.priceBasis !== 'live' && booking.priceBasis !== 'confirmed');
-  if (userId && !awaitExternalCapture && !instalment && !deferredPayment) {
+  // A booking that is fully paid AT CREATION earns its loyalty points now. This
+  // includes an "Instant Purchase" plan (a ≤7-day departure or a risk-declined
+  // instalment request): the smart planner still returns a NON-null plan, but
+  // with deposit == full total and an EMPTY schedule — so recordPayment never
+  // fires and, without this, such a booking would silently earn nothing (fall
+  // through both points paths). A real instalment plan (schedule.length > 0)
+  // still earns nothing until the final instalment clears.
+  const localTotal = booking.option?.pricing?.local?.total || 0;
+  const instalmentFullyPrepaid = !!instalment
+    && !(instalment.schedule && instalment.schedule.length)
+    && localTotal > 0 && Number(instalment.deposit) + 0.01 >= localTotal;
+  const completeAtCreation = !instalment || instalmentFullyPrepaid;
+  if (userId && !awaitExternalCapture && completeAtCreation && !deferredPayment) {
     addPoints(userId, option.totalUSD * POINTS_PER_USD);
     booking.pointsAwarded = true;
   }

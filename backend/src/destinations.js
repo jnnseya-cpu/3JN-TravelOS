@@ -296,12 +296,75 @@ const CITY_AIRPORTS = {
   santiago: { airport: 'SCL', city: 'Santiago', country: 'CL' },
   havana: { airport: 'HAV', city: 'Havana', country: 'CU' },
   kingston: { airport: 'KIN', city: 'Kingston', country: 'JM' },
+  // Popular leisure / beach destinations. Without their REAL IATA codes a
+  // typed "Malaga"/"Tenerife" would synthesise a 3-letter guess ("MAL", "TEN")
+  // that is either a wrong-city collision or an unroutable placeholder, giving
+  // random distance-based fares. These are among the most-booked holiday routes.
+  malaga: { airport: 'AGP', city: 'Malaga', country: 'ES' },
+  málaga: { airport: 'AGP', city: 'Malaga', country: 'ES' },
+  alicante: { airport: 'ALC', city: 'Alicante', country: 'ES' },
+  'palma': { airport: 'PMI', city: 'Palma', country: 'ES' },
+  'palma de mallorca': { airport: 'PMI', city: 'Palma', country: 'ES' },
+  mallorca: { airport: 'PMI', city: 'Palma', country: 'ES' },
+  majorca: { airport: 'PMI', city: 'Palma', country: 'ES' },
+  ibiza: { airport: 'IBZ', city: 'Ibiza', country: 'ES' },
+  seville: { airport: 'SVQ', city: 'Seville', country: 'ES' },
+  valencia: { airport: 'VLC', city: 'Valencia', country: 'ES' },
+  tenerife: { airport: 'TFS', city: 'Tenerife', country: 'ES' },
+  'gran canaria': { airport: 'LPA', city: 'Gran Canaria', country: 'ES' },
+  lanzarote: { airport: 'ACE', city: 'Lanzarote', country: 'ES' },
+  fuerteventura: { airport: 'FUE', city: 'Fuerteventura', country: 'ES' },
+  faro: { airport: 'FAO', city: 'Faro', country: 'PT' },
+  funchal: { airport: 'FNC', city: 'Funchal', country: 'PT' },
+  madeira: { airport: 'FNC', city: 'Funchal', country: 'PT' },
+  nice: { airport: 'NCE', city: 'Nice', country: 'FR' },
+  naples: { airport: 'NAP', city: 'Naples', country: 'IT' },
+  venice: { airport: 'VCE', city: 'Venice', country: 'IT' },
+  antalya: { airport: 'AYT', city: 'Antalya', country: 'TR' },
+  marrakech: { airport: 'RAK', city: 'Marrakech', country: 'MA' },
+  cancun: { airport: 'CUN', city: 'Cancún', country: 'MX' },
+  cancún: { airport: 'CUN', city: 'Cancún', country: 'MX' },
+  'rio de janeiro': { airport: 'GIG', city: 'Rio de Janeiro', country: 'BR' },
+  bali: { airport: 'DPS', city: 'Bali', country: 'ID' },
+  denpasar: { airport: 'DPS', city: 'Bali', country: 'ID' },
+  phuket: { airport: 'HKT', city: 'Phuket', country: 'TH' },
+  'maldives': { airport: 'MLE', city: 'Malé', country: 'MV' },
+  male: { airport: 'MLE', city: 'Malé', country: 'MV' },
 };
 
 // Look up a city's real airport + country. Returns null when unknown.
 export function airportForCity(name) {
   const key = (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
   return CITY_AIRPORTS[key] || null;
+}
+
+// The set of REAL IATA codes we know (from the city table + the destination
+// catalogue). Used to make sure a SYNTHESISED placeholder code never collides
+// with a real airport code belonging to a different city — a collision would
+// route a live search to the wrong place and blind the distance fare anchor.
+let REAL_IATA = null;
+function realIataSet() {
+  if (REAL_IATA) return REAL_IATA;
+  REAL_IATA = new Set();
+  for (const v of Object.values(CITY_AIRPORTS)) if (v && v.airport) REAL_IATA.add(v.airport);
+  try { for (const d of Object.values(DESTINATIONS)) if (d && d.airport) REAL_IATA.add(d.airport); } catch { /* catalogue optional */ }
+  return REAL_IATA;
+}
+// Derive a placeholder airport code for an unknown city that does NOT collide
+// with a real IATA code. Prefer the first three letters; if that is a real
+// code for a different place, try a couple of non-colliding variants, then a
+// clearly-synthetic "Zx" fallback so it can never be mistaken as routable.
+function placeholderCode(city) {
+  const letters = String(city || '').toUpperCase().replace(/[^A-Z]/g, '');
+  const seed = letters.slice(0, 3) || 'INT';
+  if (!realIataSet().has(seed)) return seed;
+  const alts = [
+    letters.slice(0, 2) + (letters.slice(-1) || 'X'),
+    (letters[0] || 'X') + letters.slice(2, 4),
+    'Z' + letters.slice(0, 2),
+  ];
+  for (const a of alts) if (a.length === 3 && !realIataSet().has(a)) return a;
+  return 'ZZ' + (letters[0] || 'X');
 }
 
 // Public catalogue for the Destination Marketplace — indicative "from" prices
@@ -494,9 +557,14 @@ export function synthesizeDestination(name) {
     const parts = (name || '').trim().split(/\s+/);
     if (parts.length > 1) known = airportForCity(parts.slice(0, -1).join(' ')) || airportForCity(parts[0]);
   }
+  // Typo tolerance: "Dubay"→Dubai, "Barcalona"→Barcelona. Without this a typo'd
+  // city derives a 3-letter placeholder that can COLLIDE with a real IATA code
+  // (the classic "Dubay"→"DUB"=Dublin) and silently price the wrong city.
+  if (!known) known = fuzzyCityMatch(name);
+  const corrected = !!known && String(known.city || '').toLowerCase() !== String(name || '').trim().toLowerCase();
   const city = titleCaseDest(known ? known.city : name);
   if (!city) return null;
-  const code = known ? known.airport : ((city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT');
+  const code = known ? known.airport : placeholderCode(city);
   const country = known ? known.country : '';
   const rnd = seedRng('dest-' + city);
   return {
@@ -512,6 +580,10 @@ export function synthesizeDestination(name) {
     aliases: [city.toLowerCase()],
     visa: { DEFAULT: estimatedVisaRule(rnd) },
     synthetic: true,
+    // Real IATA when the name resolved (exactly or via a typo fix); an
+    // approximate placeholder otherwise — the UI can flag "we assumed …".
+    corrected: corrected || undefined,
+    approxCode: known ? undefined : true,
   };
 }
 
@@ -632,7 +704,7 @@ export function resolveOrigin(name) {
   //    the UI can tell the traveller we assumed the nearest code.
   const city = titleCaseDest(name);
   if (!city) return null;
-  const airport = (city.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)) || 'INT';
+  const airport = placeholderCode(city);
   return { airport, city, country: null, approxCode: true };
 }
 
