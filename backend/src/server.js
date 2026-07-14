@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-name-and-copy-sweep-v84';
+const BUILD_TAG = '2026-07-14-persist-changed-records-only-v85';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -240,21 +240,35 @@ app.use(async (req, res, next) => {
       // read-only (search, telemetry, chat, checkout-session creation) — if the
       // handler changed nothing, we must NOT do a Firebase write, or every such
       // request pays a full-store save it doesn't need (cost + amplifiable DoS).
-      let beforeStr = '';
-      try { beforeStr = JSON.stringify(flatSnapshot()); } catch { beforeStr = ''; }
+      // Snapshot each record's BEFORE state (per flat key: 'users/<id>',
+      // 'bookings/<id>', 'audit', 'counter', …) so we can persist ONLY what this
+      // request actually changed.
+      const beforeByKey = {};
+      try { const b = flatSnapshot(); for (const k of Object.keys(b)) beforeByKey[k] = JSON.stringify(b[k]); } catch { /* first write */ }
       const origJson = res.json.bind(res);
       res.json = (body) => {
-        let flat = null, afterStr = '';
+        // CRITICAL: persist ONLY the records this handler changed — NOT the whole
+        // store. Writing every record from a request-start snapshot lets a request
+        // that touched one booking overwrite NEWER records another instance wrote
+        // in parallel (that is how a just-made payment "disappears"). A per-record
+        // diff means a payment write only touches that one booking + user, so it
+        // can never clobber unrelated (or newer) records.
+        let changed = null;
         if (res.statusCode < 400) {
-          try { flat = flatSnapshot(); afterStr = JSON.stringify(flat); } catch { flat = null; }
+          try {
+            const after = flatSnapshot();
+            changed = {};
+            for (const k of Object.keys(after)) {
+              const a = JSON.stringify(after[k]);
+              if (a !== beforeByKey[k]) changed[k] = after[k];
+            }
+          } catch { changed = null; }
         }
-        if (res.statusCode < 400 && flat && afterStr !== beforeStr) {
-          // Something actually changed — MERGING write (never deletes records
-          // other instances added), flushed synchronously before the response.
-          Promise.race([saveMerge(flat).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
+        if (changed && Object.keys(changed).length) {
+          // MERGING write of just the changed records, flushed before the response.
+          Promise.race([saveMerge(changed).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
             .finally(() => origJson(body));
         } else {
-          // Nothing changed (or an error response) — skip the write entirely.
           origJson(body);
         }
         return res;
