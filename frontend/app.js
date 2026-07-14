@@ -2334,7 +2334,7 @@ function bookingCard(b) {
         <strong style="font-family:'Space Grotesk'">${money2(o.pricing.local.total, sym)}</strong>
       </div>
       ${tripLine ? `<div style="font-size:13px;font-weight:600;margin:4px 0 2px">✈ ${tripLine}</div>` : ''}
-      <p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>
+      ${((o.components || []).length > 1 || !tripLine) ? `<p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>` : ''}
       ${progress}
       <div style="margin:10px 0">${sched}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
