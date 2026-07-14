@@ -235,7 +235,7 @@ const TIERS = [
   { key: 'executive', save: '£2,400/yr', name: 'Travel+ Frequent Flyer', price: '£24.99', priceNum: 24.99, feature: false,
     benefits: ['All Family Saver Features', 'Fast-Track Security', 'Coworking Intelligence', 'Expense Integration'] },
   { key: 'elite', save: '£5,000/yr+', name: 'Travel+ Concierge Elite', price: '£49.99', priceNum: 49.99, feature: false,
-    benefits: ['All Frequent Flyer Features', 'Private Aviation Access', 'Guaranteed Upgrades', '24/7 Risk Mitigation'] },
+    benefits: ['All Frequent Flyer Features', 'Private Aviation Access', 'Priority Upgrade Requests', '24/7 Risk Mitigation'] },
 ];
 // 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
 const ACU_PER_GBP = 100;
@@ -247,7 +247,7 @@ const STEPS = [
   ['03', 'SECURITY', 'Integrity Verification Shield', "Every flight and hotel option is cross-referenced against a 50-point integrity check. We only surface 'Verified' suppliers that meet our strict reliability and quality standards."],
   ['04', 'REWARDS', 'Loyalty Discount Injection', 'The OS automatically checks your 3JN membership status (Explorer to Elite) and injects an additional member-only discount on top of the already reduced wholesale rate.'],
   ['05', 'LOGISTICS', 'Universal Console Sync', 'Once secured, your journey is instantly synchronised with your Universal Console, centralising your visas, transfers, and eSIMs into one high-tech management interface.'],
-  ['06', 'CONTINUOUS', 'Neural Price Guard', 'Our agents monitor global inventory 24/7 post-booking. If the price for your specific flight or hotel drops before you travel, we automatically rebook or refund you the difference.'],
+  ['06', 'CONTINUOUS', 'Neural Price Guard', 'Our agents monitor global inventory 24/7 post-booking. If the price for your specific flight or hotel drops before you travel and the fare can be rebooked at that lower price, we pass the saving back to you.'],
 ];
 
 const LOYALTY = [
@@ -975,7 +975,7 @@ function compareCard(data, sym) {
     <span class="eyebrow">Our Price-Match Promise</span>
     ${marketBlock}
     <div style="margin-top:12px;font-size:12.5px">
-      🛡 <strong>Price-Match Promise</strong> — find this exact trip cheaper like-for-like (same flights, same dates, one protected booking) within 24h of booking and we match it and credit the difference as ACU.
+      🛡 <strong>Price-Match Promise</strong> — find this exact trip cheaper like-for-like (same flights, same dates, one protected booking) within 24h of booking, tell us, and if it qualifies we'll credit the difference as ACU.
     </div>
   </div>`;
 }
@@ -1004,7 +1004,7 @@ function flightItinBlock(c, o, sym, intent) {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-top:3px">
         <span style="font-family:'Space Grotesk';font-weight:700;font-size:16px">${esc(l.depart)} – ${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</span>
         <span class="muted" style="font-size:12px">${esc(l.from)} – ${esc(l.to)} · ${esc(l.durationLabel || '')}</span></div>
-      ${l.stops ? `<div style="font-size:11.5px;margin-top:3px;color:var(--green)">🔗 Protected transfer${via ? ' · via ' + via : ''} — one ticket, bags checked through, free rebooking if a delay breaks the connection</div>` : ''}
+      ${l.stops ? `<div style="font-size:11.5px;margin-top:3px;color:var(--green)">🔗 Protected connection${via ? ' · via ' + via : ''} — one ticket, bags checked through, and the carrier rebooks you at no extra fare if a delay breaks the connection</div>` : ''}
     </div>`;
   };
   return `<div style="margin:6px 0 2px">
@@ -4852,8 +4852,8 @@ $('#apiTryBtn').addEventListener('click', async () => {
 // ---- Footer content (punchy, persuasive marketing copy) -------------------
 const CONTENT = {
   flights: {
-    title: '✈ Flights — inbound & outbound, always the cheapest reliable fare',
-    body: `<p class="muted">We scan global carriers and wholesalers (Kiwi, Trip.com and direct airline inventory) for <strong>both legs</strong> of your journey, filter out unreliable operators, and lock the lowest verified fare. No hidden fees — 3JN's 10% is shown openly.</p>
+    title: '✈ Flights — inbound & outbound, the cheapest reliable fare we find',
+    body: `<p class="muted">We scan global carriers and wholesalers (Kiwi, Trip.com and direct airline inventory) for <strong>both legs</strong> of your journey, filter out unreliable operators, and present the lowest verified fare we find. No hidden fees — 3JN's 10% is shown openly.</p>
       <ul class="comp-list"><li><span class="cs">Return flights, every cabin</span></li><li><span class="cs">Verified airlines only (reliability ≥ 70)</span></li><li><span class="cs">Price-guarded after you book</span></li></ul>`,
     cta: 'planner',
   },
@@ -4896,7 +4896,7 @@ const CONTENT = {
   },
   terms: {
     title: '📜 Terms of Use',
-    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. Prices are guaranteed at the moment of quote and protected by our Price Guard. Deposits and instalments are interest-free; refunds and rebookings are processed where commercially and legally possible. Full terms at <strong>info@3jntravel.com</strong>.</p>
+    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. Prices are held at the moment of quote and monitored by our Price Guard. Deposits and instalments are interest-free; refunds and rebookings are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>
       <p class="muted" style="font-size:12px">Prototype notice: no real bookings or payments are taken in this demo.</p>`,
   },
   support: {
@@ -4925,7 +4925,7 @@ const CONTENT = {
   },
   refund: {
     title: '💷 Refund &amp; Cancellation Policy',
-    body: `<p class="muted">Refunds and rebookings are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Our Neural Price Guard automatically refunds the difference if a monitored price drops before you travel.</p>
+    body: `<p class="muted">Refunds and rebookings are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Where a monitored fare drops before you travel and can be rebooked at the lower price, our Neural Price Guard passes the saving back to you.</p>
       <ul class="comp-list">
         <li><span class="cs">Free-cancellation rates</span><span class="cp">full refund in window</span></li>
         <li><span class="cs">Instalment deposits</span><span class="cp">per plan terms</span></li>

@@ -119,7 +119,7 @@ export function createPost({ topic, destination, now } = {}) {
     `<p><strong>${dh}</strong> doesn't have to be expensive. With <a href="/planner">3JN Travel OS</a> you describe your trip in one sentence and the AI builds the cheapest <em>reliable</em> package — flights, hotel, activities, visa, transfers and eSIM — then keeps monitoring the price after you book.</p>`,
     `<h3>How much is a ${dh} trip?</h3><p>Open the <a href="/marketplace">Destination Marketplace</a> to see live "from" prices in your currency, or <a href="/planner">get an instant quote</a>. Most travellers pay a 20% deposit and spread the rest over interest-free instalments.</p>`,
     `<h3>Do I need a visa for ${dh}?</h3><p>Check your <a href="/visaos">visa approval probability</a> before you book — <a href="/visaos">3JN VisaOS</a> tells you the requirement, cost, processing time and document checklist for your nationality in seconds.</p>`,
-    `<h3>Why 3JN?</h3><p>Verified suppliers only, transparent 10% fee, a 24/7 price guard that rebooks or refunds if the price drops, and loyalty rewards that grow with every trip — see <a href="/membership">membership tiers</a>.</p>`,
+    `<h3>Why 3JN?</h3><p>Verified suppliers only, transparent 10% fee, a 24/7 price guard that passes the saving back to you when your fare can be rebooked lower, and loyalty rewards that grow with every trip — see <a href="/membership">membership tiers</a>.</p>`,
     `<p>Ready? <a href="/planner">Plan your ${dh} trip now →</a></p>`,
   ].join('');
   const post = {

@@ -157,7 +157,12 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   }).join('');
 
 
-  const paxName = lead.fullLegalName || lead.name || user?.name || 'Lead traveller';
+  // The lead traveller's name is stored as `fullName` on the booking (and its
+  // manifest); read that FIRST — the old order looked only for fullLegalName/name,
+  // so a booking with a real fullName always fell back to the "Lead traveller"
+  // placeholder on the ticket. Also fall back to the first traveller and account.
+  const firstPax = (Array.isArray(booking.travellers) && booking.travellers[0]) || {};
+  const paxName = lead.fullName || lead.fullLegalName || lead.name || firstPax.fullName || user?.name || 'Lead traveller';
   const paxCount = o.travellers?.total || flights[0]?.details?.passengers || 1;
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>

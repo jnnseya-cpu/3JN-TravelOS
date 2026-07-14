@@ -1356,6 +1356,24 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     booking.payments.push({ type: 'deposit', amount: instalment.deposit, gateway, method: paymentMethod, at: nowISO(), status: 'paid' });
   }
   booking.awaitExternalCapture = awaitExternalCapture;
+  // NAME/IDENTITY BACKFILL: a booking (and its ticket/document) must never show
+  // the "Lead traveller" placeholder when the account already holds the details.
+  // Fill the lead traveller's name/DOB/passport/contact from the saved Master
+  // Travel Profile at creation, so the document is correct even before ticketing.
+  if (userId) {
+    const acct = db.users.get(userId);
+    const tp = acct?.travelProfile || {};
+    const profileName = (tp.fullLegalName || [tp.firstName, tp.middleName, tp.lastName].filter(Boolean).join(' ') || acct?.name || '').trim();
+    booking.leadTraveller = booking.leadTraveller || {};
+    const lt = booking.leadTraveller;
+    if (!String(lt.fullName || '').trim() && profileName) lt.fullName = profileName;
+    if (!lt.dob && tp.dob) lt.dob = tp.dob;
+    if (!lt.email && acct?.email) lt.email = acct.email;
+    if (!lt.phone && (tp.mobile || tp.secondaryPhone)) lt.phone = tp.mobile || tp.secondaryPhone;
+    if (!lt.passportNumber && tp.passportNumber) lt.passportNumber = tp.passportNumber;
+    if (!lt.passportExpiry && tp.passportExpiry) lt.passportExpiry = tp.passportExpiry;
+    if (!lt.nationality && tp.nationality) lt.nationality = tp.nationality;
+  }
   db.bookings.set(bookingId, booking);
 
   // LOYALTY POINTS: earned ONLY on a COMPLETED booking (paid in full) — never on
@@ -3576,7 +3594,7 @@ export function grantComplimentaryElite(adminId, targetEmail) {
     renewsAt: new Date(now + 30 * 24 * 3600 * 1000).toISOString(),
   };
   creditAcu(target.id, elite.acuPerMonth * 2, 'membership:elite-comp:initial');
-  pushNotification(target.id, { type: 'success', icon: '👑', title: 'Elite — on the house', body: `You've been granted Travel+ Elite ×2 free: 1,000 ACU/month, private aviation access, guaranteed upgrades, 24/7 risk mitigation.` });
+  pushNotification(target.id, { type: 'success', icon: '👑', title: 'Elite — on the house', body: `You've been granted Travel+ Elite ×2 free: 1,000 ACU/month, private aviation access, priority upgrade requests, 24/7 risk mitigation.` });
   recordAudit({ actor: admin.id, role: 'admin', action: 'membership.comp-elite.granted', entity: 'user', entityId: target.id, summary: `${target.email} · slot ${compEliteCount()}/${COMP_ELITE_LIMIT}` });
   return { ok: true, user: publicUser(target), slotsUsed: compEliteCount(), slotsLeft: COMP_ELITE_LIMIT - compEliteCount() };
 }

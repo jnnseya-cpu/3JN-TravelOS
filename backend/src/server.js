@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-disruption-wording-v83';
+const BUILD_TAG = '2026-07-14-name-and-copy-sweep-v84';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -449,7 +449,10 @@ async function emailBookingConfirmation(booking) {
   booking.confirmationEmailSent = true; // claim before await → send-once
   try {
     const sym = booking.option?.pricing?.symbol || '£';
-    const html = bookingDocument(booking, { user: null, currencySymbol: sym });
+    // Pass the account so the document can fall back to the account name if the
+    // booking's lead traveller name is somehow missing (belt-and-braces on top of
+    // the booking-creation backfill).
+    const html = bookingDocument(booking, { user: booking.userId ? getUser(booking.userId) : null, currencySymbol: sym });
     const ref = booking.fulfilment?.pnr || booking.id;
     await sendMail({
       to,

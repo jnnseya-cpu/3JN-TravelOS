@@ -64,7 +64,7 @@ export function bookingEmail(option, booking) {
       <p style="color:#9aa6c4;margin:0 0 16px">Booking confirmed · ${booking.id}</p>
       <p><strong>${option.tier} package</strong> — total ${p.symbol}${p.local.total}, paid via ${booking.gateway}.</p>
       <ul style="color:#9aa6c4">${comps}</ul>
-      <p style="color:#46d39a">Your Neural Price Guard is now active — we'll rebook or refund if the price drops.</p>
+      <p style="color:#46d39a">Your Neural Price Guard is now active — if your fare can be rebooked at a lower price before you travel, we pass the saving back to you.</p>
       <p style="color:#6b7799;font-size:12px">Questions? Reply to this email or contact info@3jntravel.com.<br/>Powered by Artificial Intelligence · Built for Better Travel.</p>
     </div>`;
   return { subject: `Your 3JN booking is confirmed (${booking.id})`, html, text: `Booking ${booking.id} confirmed — ${option.tier}, ${p.symbol}${p.local.total}.` };

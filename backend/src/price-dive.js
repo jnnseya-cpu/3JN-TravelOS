@@ -283,7 +283,7 @@ export function farePrediction({ intent, dest, origin }) {
     advice: direction === 'rising'
       ? `Book now — fares around your dates trend ${driftPct}% higher.`
       : direction === 'falling'
-        ? `Waiting may pay: nearby departures trend ${Math.abs(driftPct)}% lower. The Price Guard protects you either way.`
-        : 'Fares are stable around your dates — book when ready; the Price Guard covers you after.',
+        ? `Waiting may pay: nearby departures trend ${Math.abs(driftPct)}% lower. The Price Guard keeps watching your fare after you book.`
+        : 'Fares are stable around your dates — book when ready; the Price Guard keeps monitoring your fare afterwards.',
   };
 }

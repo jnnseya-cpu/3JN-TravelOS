@@ -31,7 +31,7 @@ export const KNOWLEDGE = {
   eticket: 'Every booking has a 3JN-branded e-ticket/itinerary with the airline PNR and e-ticket numbers, available in the Console and via the booking document link.',
   baggage: 'Flights show the real baggage allowance (cabin + checked) from the fare.',
   visa: 'Visa need depends on nationality + destination. Many nationalities are visa-free / visa-on-arrival (e.g. UK/US passports into the UAE). 3JN VisaOS handles applications where a visa is required.',
-  priceGuard: 'After booking, the Neural Price Guard monitors the price; if it drops we rebook or refund the difference.',
+  priceGuard: 'After booking, the Neural Price Guard monitors the price; if it drops and the fare can be rebooked at the lower price, we pass the saving back to you.',
   rewards: 'Every trip earns Travel ACUs. Refer & Earn pays 250 ACUs per referred paid booking; 20 paid referrals unlock 0.25% lifetime revenue share. Influencers earn up to 1% (Ambassador tier). Cap £20,000 per referred customer.',
   acu: 'ACUs (AI Credit Units) are the platform credit — earned via travel/referrals/reviews and spent on flights, hotels, transfers, insurance, eSIM, visa, and premium AI planning.',
   membership: 'Travel+ (£4.99), Travel+ Family (£12.99), Travel+ Elite (£49.99) and Travel+ Business (£99) — bigger automatic discounts and benefits; 10% of the fee funds ACUs.',

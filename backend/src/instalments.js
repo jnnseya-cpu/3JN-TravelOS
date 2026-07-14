@@ -179,7 +179,7 @@ export function buildSmartInstalmentPlan({ totalLocal, currency, departISO, toda
     // AI Booking Protection™: paying the deposit reserves the booking with
     // the supplier and FREEZES the quoted price for the whole instalment
     // period, provided instalments are paid on time.
-    priceLock: { locked: true, badge: 'Price Locked', guarantee: 'Your price is frozen from the moment the deposit is paid — market rises, currency moves and demand spikes cannot touch it while instalments are paid on time.' },
+    priceLock: { locked: true, badge: 'Price Locked', guarantee: 'We hold your quoted price from the moment the deposit is paid, so normal market and currency moves won\'t change what you pay while your instalments are on time.' },
     // AI Payment Protection: recurring-payment consent + retry rule (off-
     // session charging activates when a saved payment method exists).
     autopay: { enabled: false, method: null, retry: { ...DEFAULT_RETRY_RULE } },

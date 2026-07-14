@@ -3823,7 +3823,7 @@ test('smart instalments v2: Quick Pay splits 50/20/30 and Price Lock rides every
   assert.equal(plan.schedule[1].due, '2026-08-06', 'final due 7 days before departure');
   // AI Booking Protection™ is part of the plan contract.
   assert.equal(plan.priceLock.locked, true);
-  assert.match(plan.priceLock.guarantee, /frozen/i);
+  assert.match(plan.priceLock.guarantee, /hold your quoted price/i);
   assert.deepEqual(plan.reminderOffsets, [14, 7, 3, 1, 0]);
   assert.equal(plan.autopay.enabled, false, 'autopay is opt-in consent, never default-on');
 });
