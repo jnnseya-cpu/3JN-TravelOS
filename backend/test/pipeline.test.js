@@ -1563,6 +1563,26 @@ test('booking: flight bookings carry PNR, e-ticket, locators and rules', () => {
 });
 function buildableSamePnr(b) { return b.fulfilment.pnr; }
 
+// REGRESSION: Firebase RTDB drops empty arrays on write, so a booking hydrated
+// back from the durable store can return with `payments` undefined. recordPayment
+// must not crash ("Cannot read properties of undefined (reading 'length')") — it
+// should normalise the missing array and record the payment cleanly.
+test('hard-test: recordPayment survives a booking whose empty arrays were stripped by Firebase', () => {
+  const guest = createUser({ name: 'Strip Test', email: 'strip@example.com' });
+  const r = plan({ text: 'weekend in Rome from London in August for 2 nights, flights', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options[0];
+  const q = saveQuote({ option: opt, intent: r.intent, userId: guest.id });
+  const b = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: guest.id, paymentMethod: 'card' });
+  // Simulate the Firebase round-trip stripping empty collections.
+  delete b.payments; delete b.travellers; delete b.specialRequests; delete b.hotelRequests;
+  if (b.priceGuard) delete b.priceGuard.events;
+  const total = b.option.pricing.local.total;
+  const updated = recordPayment(b.id, { type: 'stripe-checkout', amount: total, gateway: 'stripe', reference: 'cs_test_strip_1' });
+  assert.ok(updated, 'payment recorded without throwing');
+  assert.equal(updated.payments.length, 1, 'the normalised payments array holds the payment');
+  assert.ok(Array.isArray(updated.priceGuard.events), 'priceGuard.events restored to an array');
+});
+
 // ---- Flight document validation engine (spec part 3) ------------------------
 test('validation: blank pages, damaged passport, return proof, transit visa', () => {
   const base = { fullName: 'T Test', dob: '1990-01-01', nationality: 'GB', passportNumber: 'A1', passportExpiry: '2031-01-01' };

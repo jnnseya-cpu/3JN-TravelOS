@@ -1393,16 +1393,34 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   return booking;
 }
 
+// Firebase RTDB does NOT store empty arrays/objects — it drops them on write. So
+// a booking hydrated back from the durable store loses every collection that was
+// empty at save time (payments:[], travellers:[], priceGuard.events:[], the
+// instalment schedule…): they come back `undefined` and then crash any
+// .length / .push / .reduce (e.g. "Cannot read properties of undefined (reading
+// 'length')" the first time a payment is recorded). Restore them on every read
+// and write path so the rest of the code can assume the arrays exist.
+export function normalizeBooking(b) {
+  if (!b || typeof b !== 'object') return b;
+  if (!Array.isArray(b.payments)) b.payments = [];
+  if (!Array.isArray(b.travellers)) b.travellers = [];
+  if (!Array.isArray(b.specialRequests)) b.specialRequests = [];
+  if (!Array.isArray(b.hotelRequests)) b.hotelRequests = [];
+  if (b.priceGuard && !Array.isArray(b.priceGuard.events)) b.priceGuard.events = [];
+  if (b.instalment && 'schedule' in b.instalment && !Array.isArray(b.instalment.schedule)) b.instalment.schedule = [];
+  return b;
+}
+
 export function getBooking(bookingId) {
-  return db.bookings.get(bookingId) || null;
+  return normalizeBooking(db.bookings.get(bookingId)) || null;
 }
 
 export function listBookings(userId) {
-  return [...db.bookings.values()].filter((b) => !userId || b.userId === userId);
+  return [...db.bookings.values()].map(normalizeBooking).filter((b) => !userId || b.userId === userId);
 }
 
 export function recordPayment(bookingId, payment) {
-  const b = db.bookings.get(bookingId);
+  const b = normalizeBooking(db.bookings.get(bookingId));
   if (!b) return null;
   // IDEMPOTENCY: Stripe re-delivers checkout.session.completed. A payment with a
   // reference already on the booking is a redelivery — no-op, or it would double
