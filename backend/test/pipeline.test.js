@@ -2684,7 +2684,7 @@ test('stripe: credential-gated, and webhook signatures are properly verified', a
   assert.equal(verifyStripeSignature(body, old, secret).ok, false);
 });
 
-test('demo accounts: seed-roles returns fully loaded accounts for every role', async () => {
+test('demo accounts: seed-roles exposes ONLY the Embassy demo (commercial launch)', async () => {
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -2692,26 +2692,15 @@ test('demo accounts: seed-roles returns fully loaded accounts for every role', a
     const res = await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' });
     assert.equal(res.status, 200);
     const d = await res.json();
-    assert.equal(d.accounts.length, 8, 'one account per role + the property host');
-    assert.ok(d.accounts.some((a) => a.email === 'host@3jntravel.com'), 'host demo account listed');
-    assert.ok(Array.isArray(d.demoLoaded), 'demo-load ran');
-    // Consumer is fully loaded: membership, ACU, a real booking, a pot, a visa file.
-    const tester = d.accounts.find((a) => a.email === 'tester@3jntravel.com');
-    assert.ok(tester.membership?.active, 'consumer has an active membership');
-    assert.ok(tester.acuBalance > 0, 'consumer holds ACUs');
-    const consoleRes = await (await fetch(`${base}/api/account/${tester.id}`, { headers: { 'x-user-id': tester.id } })).json();
-    assert.ok((consoleRes.bookings || []).length >= 1, 'consumer has a real booking');
-    // SECURITY: reading an account without auth (401) or as another user (403).
-    assert.equal((await fetch(`${base}/api/account/${tester.id}`)).status, 401, 'unauthenticated account read is blocked');
-    // Host demo published a photo-complete listing.
-    const login = await fetch(`${base}/api/host/listings`).then((r) => r.json()).catch(() => null);
-    if (login && login.listings) assert.ok(login.listings.some((l) => l.city === 'Dubai'), 'demo host listing live');
-    // Visa queue populated for embassy/consulate review.
-    assert.ok(listVisaApplications().length >= 3, 'visa queue has demo cases');
-    // Idempotent: running again does not duplicate bookings.
+    // Commercial launch: no customer/staff demo identities except Embassy.
+    assert.equal(d.accounts.length, 1, 'only the embassy demo is seeded');
+    assert.equal(d.accounts[0].email, 'embassy@3jntravel.com', 'the one account is the embassy officer');
+    assert.equal(d.accounts[0].role, 'embassy');
+    assert.ok(!d.accounts.some((a) => ['tester@3jntravel.com', 'host@3jntravel.com', 'admin@3jntravel.com'].includes(a.email)), 'no customer/host/admin demo accounts');
+    // Idempotent: seeding again does not create a second embassy account.
     await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' });
-    const again = await (await fetch(`${base}/api/account/${tester.id}`, { headers: { 'x-user-id': tester.id } })).json();
-    assert.equal((again.bookings || []).length, (consoleRes.bookings || []).length, 'seed is idempotent');
+    const again = await (await fetch(`${base}/api/accounts/seed-roles`, { method: 'POST' })).json();
+    assert.equal(again.accounts.length, 1, 'still exactly one embassy demo after repeat seeds');
   } finally {
     server.close();
   }
@@ -3335,13 +3324,16 @@ test('staff PIN locks privileged login, demo identities and admin APIs', async (
       // With a PIN CONFIGURED, seed-roles fails closed WITHOUT the PIN — the demo
       // account list (even masked) is not served to an anonymous caller.
       assert.equal((await post('/api/accounts/seed-roles', {})).status, 403, 'seed fails closed when a PIN is configured but not supplied');
-      // WITH the pin → identities unlock.
+      // WITH the pin → the (privileged) Embassy demo identity unlocks.
       const seed2 = await (await post('/api/accounts/seed-roles', { staffPin: 'test-pin-9' })).json();
-      const admin2 = seed2.accounts.find((a) => a.role === 'admin');
-      assert.ok(admin2.id, 'PIN unlocks the admin identity');
-      // Full-access endpoint refuses without the pin.
-      assert.equal((await post('/api/account/test', {})).status, 403);
-      // Admin API refuses a valid admin id without the pin header, allows with it.
+      const embassy2 = seed2.accounts.find((a) => a.role === 'embassy');
+      assert.ok(embassy2 && embassy2.id, 'PIN unlocks the embassy demo identity');
+      // Commercial launch: the full-access demo endpoint is permanently disabled.
+      assert.equal((await post('/api/account/test', {})).status, 410);
+      // Admin API gate: mint an admin via the store fixture (no longer via the
+      // customer endpoint), then verify it needs the PIN.
+      const { seedAllRoles: seedFix } = await import('../src/store.js');
+      const admin2 = seedFix().find((a) => a.role === 'admin');
       const noPin = await fetch(base + '/api/admin/live-status?probe=0', { headers: { 'x-user-id': admin2.id } });
       assert.equal(noPin.status, 403, 'admin API requires the PIN even with a valid admin id');
       const withPin = await fetch(base + '/api/admin/live-status?probe=0', { headers: { 'x-user-id': admin2.id, 'x-staff-pin': 'test-pin-9' } });
@@ -3362,9 +3354,10 @@ test('LIVE_MODE: no free AI for guests; demo accounts fail closed', async () => 
       const r = await (await post('/api/plan', { text: `2 adults to Rome for 4 nights in October ${Date.now()}, flights hotel` })).json();
       assert.equal(r.stage, 'topup-required', 'guests get no free AI in live mode');
       assert.equal(r.reason, 'account-required');
-      // Demo seeding fails closed (no STAFF_ACCESS_PIN configured).
+      // Demo seeding fails closed (no STAFF_ACCESS_PIN configured); the
+      // full-access demo endpoint is permanently disabled (410) for the launch.
       assert.equal((await post('/api/accounts/seed-roles', {})).status, 403);
-      assert.equal((await post('/api/account/test', {})).status, 403);
+      assert.equal((await post('/api/account/test', {})).status, 410);
     } finally { server.close(); }
   } finally { delete process.env.LIVE_MODE; }
 });

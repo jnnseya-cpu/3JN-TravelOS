@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-persist-changed-records-only-v85';
+const BUILD_TAG = '2026-07-14-demo-embassy-only-v86';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1222,40 +1222,32 @@ app.post('/api/accounts/seed-roles', safe((req, res) => {
   if ((LIVE_MODE() || staffPin()) && (!staffPin() || !staffPinOk(req))) {
     return res.status(403).json({ error: 'demo-disabled', message: 'Demo accounts require the staff access PIN.' });
   }
-  const accounts = seedAllRoles();
-  const demoLoaded = fullyLoadDemoAccounts();
-  // Staff-PIN protection: privileged demo identities are ONLY revealed when a
-  // PIN is configured AND supplied. Critically, "no PIN configured" must NOT
-  // unlock them — otherwise any anonymous caller would receive a working admin
-  // id (the id IS the session credential in this architecture).
+  // COMMERCIAL LAUNCH: only the Embassy demo is exposed (to showcase VisaOS to
+  // embassy/consular partners). No other demo identities are seeded/returned, and
+  // the customer demo ecosystem (host listing, consumer booking, etc.) is NOT
+  // loaded — the live platform ships with no throwaway customer/staff accounts.
+  const accounts = seedAllRoles(['embassy']);
+  // Staff-PIN protection: the privileged Embassy id is ONLY revealed when a PIN is
+  // configured AND supplied. "No PIN configured" must NOT unlock it — the id IS
+  // the session credential in this architecture.
   const unlocked = !!staffPin() && staffPinOk(req);
-  // Include the fully-loaded HOST account (a consumer with hosting capability
-  // and a published, pre-approved listing) alongside the role accounts.
-  const host = findUserByEmail('host@3jntravel.com');
-  const all = host ? [...accounts, host] : accounts;
-  const rows = all.map((u) => {
+  const rows = accounts.map((u) => {
     const full = getUser(u.id) || u;
     if (!unlocked && (PRIVILEGED_ROLES.has(full.role) || full.allAccess)) {
       return { ...full, id: null, pinRequired: true };
     }
     return full;
   });
-  res.json({ roles: ROLES, accounts: rows, demoLoaded, staffPinConfigured: !!staffPin() });
+  res.json({ roles: ROLES, accounts: rows, staffPinConfigured: !!staffPin() });
 }));
 
 // One-click FULL-ACCESS account — a single account that can use every section of
 // the OS (admin, business, merchant, consumer, VisaOS government).
 app.post('/api/account/test', safe((req, res) => {
-  // A full-access account IS an admin credential, so this fails CLOSED: it needs
-  // a configured staff PIN that is also supplied. Without a PIN set, "no gate"
-  // must mean DENY (never mint an anonymous admin), regardless of LIVE_MODE.
-  if (!staffPin() || !staffPinOk(req)) {
-    return res.status(403).json({ error: 'staff-pin-required', message: 'Full-access demo accounts require the staff access PIN (set STAFF_ACCESS_PIN).' });
-  }
-  const user = createUser({ name: 'Full-Access Traveller', role: 'admin', allAccess: true });
-  addPoints(user.id, 1250 - user.points); // land in Voyager tier (~1,250 pts)
-  creditAcu(user.id, 10000, 'full-access-demo'); // funded so every paid feature works
-  res.json({ user: getUser(user.id), note: 'Full-access account provisioned — every section unlocked.' });
+  // COMMERCIAL LAUNCH: full-access demo/test accounts are permanently DISABLED —
+  // the live platform never mints a throwaway all-access account. Customers use
+  // their own account; staff reach admin via the ADMIN_EMAILS allowlist + PIN.
+  return res.status(410).json({ error: 'demo-disabled', message: 'Demo/test accounts are turned off. Please sign in with your own account.' });
 }));
 
 app.post('/api/account/:id/acu', safe(async (req, res) => {

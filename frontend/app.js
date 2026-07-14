@@ -1639,7 +1639,7 @@ async function renderConsoleInner() {
       : '';
     out.innerHTML = `${diag}<div class="card pad center"><p class="muted">${diag ? 'You are not signed in yet.' : 'No journeys yet.'}</p>
       <button class="btn btn-gold" data-nav="planner">Plan your first trip</button>
-      <button class="btn btn-ghost" onclick="provisionTest()" style="margin-left:10px">Use test account</button></div>`;
+      ${diag ? '' : '<button class="btn btn-ghost" style="margin-left:10px" onclick="openAuth(\'login\')">Sign in</button>'}</div>`;
     return;
   }
   let data, quoteReqs = [], stale = false;
@@ -2707,8 +2707,7 @@ function accessGate(out, area, roles) {
       ? `<p class="muted" style="font-size:13px;margin-top:10px">Signed in as <strong>${esc(state.user.email || state.user.name || '')}</strong>. If this is a staff account, unlock it with your PIN:</p>
          <button class="btn btn-gold" style="margin-top:8px" onclick="staffUnlock()">🔓 Unlock with staff PIN</button>
          <div style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="openAuth('login')">Sign in as a different account</button></div>`
-      : `<button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>
-         <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>`}
+      : `<button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>`}
   </div>`;
 }
 // Elevate the CURRENTLY signed-in account to admin by proving the staff PIN —
@@ -3711,7 +3710,6 @@ async function renderVisaApply() {
       <h3 style="margin:10px 0 6px">Sign in to start a visa application</h3>
       <p class="muted" style="font-size:14px">The Visa Application is part of your private dashboard. Your documents and identity data stay in your account.</p>
       <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in</button>
-      <button class="btn btn-ghost" style="margin-top:12px" onclick="provisionTest()">Use a full-access demo account</button>
     </div>`;
     return;
   }
@@ -3936,7 +3934,7 @@ async function renderVisaGov() {
       <div style="font-size:34px">🏛️</div>
       <h3 style="margin:10px 0 6px">Embassy / Government workspace</h3>
       <p class="muted" style="font-size:14px">This is a secured government account area — embassy officers review each application's full information and documents and issue decisions. Requires an <strong>embassy</strong> or admin account.</p>
-      <button class="btn btn-gold" style="margin-top:12px" onclick="provisionTest()">Open with full-access demo</button>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="openAuth('login')">Sign in as an embassy officer</button>
     </div>`;
     return;
   }
@@ -4656,7 +4654,7 @@ function openAuth(mode = 'signup') {
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Log in</button>
       ${fb ? '<p class="muted center" style="font-size:12px;margin-top:10px"><a onclick="forgotPassword()" style="color:var(--gold);cursor:pointer">Forgot password?</a></p>' : ''}
       <p class="muted center" style="font-size:12.5px;margin-top:12px">New to 3JN? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('signup')">Create an account</a></p>
-      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🛡 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openStaffLogin()">Staff / Admin sign in</a> · 🧪 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Fully-loaded demo accounts</a></p>`);
+      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🛡 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openStaffLogin()">Staff / Admin sign in</a></p>`);
   } else {
     modal(`
       <span class="eyebrow">Create account</span>
@@ -4670,8 +4668,7 @@ function openAuth(mode = 'signup') {
       <div class="field" style="margin-top:10px"><label>Referral code (optional)</label><input class="in" id="auRef" placeholder="3JN-XXXX"></div>
       ${humanBlock()}
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doSignup()">Create account · 250 pts bonus</button>
-      <p class="muted center" style="font-size:12.5px;margin-top:12px">Already have an account? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('login')">Log in</a></p>
-      <p class="muted center" style="font-size:11.5px;margin-top:8px;opacity:.75">🧪 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Just exploring? Use a fully-loaded demo account</a></p>`);
+      <p class="muted center" style="font-size:12.5px;margin-top:12px">Already have an account? <a style="color:var(--gold);cursor:pointer" onclick="openAuth('login')">Log in</a></p>`);
   }
   fetchHumanChallenge();
 }
@@ -4688,7 +4685,7 @@ window.openStaffLogin = () => {
     ${window.firebaseAuth?.available ? '<div class="field" style="margin-top:10px"><label>Password</label><input class="in" type="password" id="liPass" placeholder="••••••••" autocomplete="current-password"></div>' : ''}
     ${humanBlock()}
     <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="doLogin()">Sign in</button>
-    <p class="muted center" style="font-size:11.5px;margin-top:10px;opacity:.75">🧪 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Use a fully-loaded staff demo account</a></p>`);
+    <p class="muted center" style="font-size:11.5px;margin-top:10px;opacity:.75">🏛 <a style="color:var(--muted);cursor:pointer;text-decoration:underline" onclick="openDemoAccounts()">Open the Embassy VisaOS demo</a></p>`);
   fetchHumanChallenge();
 };
 window.doSignup = async () => {
@@ -4756,11 +4753,10 @@ window.reviewListing = async (id, decision) => {
   renderAdmin();
 };
 window.provisionTest = async () => {
-  try { const data = await api('/api/account/test', { method: 'POST', body: JSON.stringify({}) });
-    setUser(data.user);
-    toast('✓ Voyager test account active.');
-    nav('console');
-  } catch { /* */ }
+  // Demo/test accounts are disabled for the commercial launch — point people to
+  // real sign-in instead of silently doing nothing.
+  toast('Demo/test accounts are turned off — please sign in with your own account.');
+  openAuth('login');
 };
 
 // ---- Fully-loaded demo accounts (one per role) -----------------------------
@@ -4800,11 +4796,11 @@ window.openDemoAccounts = async () => {
   }).join('');
   window.__demoAccounts = data.accounts || [];
   modal(`
-    <span class="eyebrow">Fully-loaded demo accounts · one per role</span>
-    <h3 style="margin:6px 0 4px">Explore every side of the OS</h3>
-    <p class="muted" style="font-size:12.5px">Each account ships pre-loaded — memberships, ACU balances, bookings with e-tickets, host listings, payment links and visa queues — so every command centre demos end-to-end. Tap Sign in to switch.</p>
-    ${rows}
-    <p class="muted" style="font-size:11px;margin-top:10px">Demo data is synthesised. Switch accounts any time from this panel.</p>`);
+    <span class="eyebrow">Embassy VisaOS demo</span>
+    <h3 style="margin:6px 0 4px">Embassy Decision Command Centre</h3>
+    <p class="muted" style="font-size:12.5px">Sign in to the Embassy demo to explore VisaOS end-to-end — set the country's criteria, fees and letter branding, review the AI's confidential verdict on pending files, and approve, refuse or override with reasons.</p>
+    ${rows || '<p class="muted" style="font-size:12.5px">Embassy demo is initialising — please try again in a moment.</p>'}
+    <p class="muted" style="font-size:11px;margin-top:10px">Demo data is synthesised for showcasing the VisaOS decision console.</p>`);
 };
 window.demoSignIn = (id) => {
   const acct = (window.__demoAccounts || []).find((a) => a.id === id);

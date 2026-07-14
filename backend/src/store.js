@@ -1091,8 +1091,13 @@ function roleArt(role, name) {
   return { avatar, cover };
 }
 
-export function seedAllRoles() {
-  const specs = [
+// `onlyRoles` (e.g. ['embassy']) restricts which demo identities are seeded. The
+// COMMERCIAL LAUNCH exposes ONLY the Embassy demo to users (see the seed-roles
+// endpoint), so the live platform never mints admin/business/merchant/partner/
+// consumer/consulate demo accounts. The full set stays available to the test
+// suite (which calls this with no argument to build fixtures).
+export function seedAllRoles(onlyRoles = null) {
+  const allSpecs = [
     { role: 'admin', name: 'Platform Admin', email: 'admin@3jntravel.com' },
     { role: 'business', name: 'Corporate Manager', email: 'business@3jntravel.com' },
     { role: 'merchant', name: 'BitriPay Merchant', email: 'merchant@3jntravel.com' },
@@ -1101,6 +1106,7 @@ export function seedAllRoles() {
     { role: 'embassy', name: 'Embassy Officer', email: 'embassy@3jntravel.com' },
     { role: 'consulate', name: 'Consulate eVisa Officer', email: 'consulate@3jntravel.com' },
   ];
+  const specs = Array.isArray(onlyRoles) && onlyRoles.length ? allSpecs.filter((s) => onlyRoles.includes(s.role)) : allSpecs;
   return specs.map((sp, i) => {
     let u = [...db.users.values()].find((x) => x.email === sp.email);
     if (!u) { createUser(sp); u = [...db.users.values()].find((x) => x.email === sp.email); }
