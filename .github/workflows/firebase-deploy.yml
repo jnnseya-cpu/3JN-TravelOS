@@ -1,0 +1,49 @@
+# Auto-deploy to Firebase on every push to main.
+#
+# ONE-TIME SETUP (GitHub → repo → Settings → Secrets and variables → Actions):
+#   Add a secret named  FIREBASE_SERVICE_ACCOUNT  whose value is the FULL JSON of
+#   a Firebase service account key for project studio-1885689950-9b056 with the
+#   roles: "Firebase Admin", "Cloud Functions Admin", "Firebase Hosting Admin",
+#   "Service Account User" (or the broad "Editor" role). This is the SAME kind of
+#   JSON you already use for FIREBASE_SERVICE_ACCOUNT at runtime — a key from
+#   Firebase Console → Project settings → Service accounts → Generate new private key.
+#
+# After the secret is set, every `git push` to main automatically runs the tests
+# and deploys functions + hosting. No more hand-deploys, no more stale builds.
+name: Deploy to Firebase
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # also lets you deploy on-demand from the Actions tab
+
+concurrency:
+  group: firebase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests (block a broken deploy)
+        run: npm test
+        env:
+          NODE_ENV: test
+
+      - name: Write Firebase service account key
+        run: printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Deploy functions + hosting
+        run: npx firebase-tools@15 deploy --only functions,hosting --project studio-1885689950-9b056 --non-interactive --force
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
