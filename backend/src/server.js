@@ -2377,10 +2377,16 @@ app.get('/api/book/:id/documents', safe((req, res) => {
   const user = currentUser(req);
   if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
   const ful = booking.fulfilment || {};
+  // Ticketing status must reflect REALITY — never default to 'confirmed'. A
+  // booking with no fulfilment and no full payment is pending, not confirmed.
+  const paid = planPaid(booking);
+  const total = booking.option?.pricing?.local?.total || 0;
+  const isPaidInFull = total > 0 && paid + 0.01 >= total;
+  const ticketingState = ful.ticketing || (isPaidInFull ? 'confirmed' : 'pending');
   res.json({
     bookingId: booking.id,
     status: booking.status,
-    ticketing: ful.ticketing || 'confirmed',
+    ticketing: ticketingState,
     pnr: ful.pnr || null,
     ticketNumbers: (ful.ticketNumbers || []).filter(Boolean).length ? ful.ticketNumbers : (ful.eTicketNumber ? [ful.eTicketNumber] : []),
     services: includedServices(booking),

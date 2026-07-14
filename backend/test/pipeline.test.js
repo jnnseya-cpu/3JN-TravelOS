@@ -3749,7 +3749,9 @@ test('smart instalments: the AI risk engine adjusts deposits, caps plans and dec
 test('smart instalments: missed payment → grace warning, then auto-cancel with deposit forfeited', async () => {
   const { createBooking: mkBooking, saveQuote: mkQuote, enforceInstalments, getBooking } = await import('../src/store.js');
   const u = createUser({ name: 'Instalment Test', email: 'inst.test@example.com' });
-  const option = { tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', lines: { totalUSD: 1266 }, local: { total: 1000 }, revenue: { commissionUSD: 100, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 1266, details: {} }] };
+  // A LIVE (payable) fare — a deposit/forfeit only ever applies to a bookable
+  // price; an estimate takes no money at all, so it can't default or forfeit.
+  const option = { tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', lines: { totalUSD: 1266 }, local: { total: 1000 }, revenue: { commissionUSD: 100, savingsShareUSD: 0 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 1266, live: true, details: {} }] };
   const plan = buildSmartInstalmentPlan({ totalLocal: 1000, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-10-09', todayISO: '2026-07-09' });
   assert.equal(plan.plan, 'Smart Plan'); // 92 days out
   const q = mkQuote({ option, intent: { dates: { checkIn: '2026-10-09' } } });
@@ -5236,7 +5238,9 @@ test('stabilise: "back by <date>" and ISO dates parse correctly', async () => {
 test('stabilise: money gates count only plan-funding payments (change-charge cannot complete a plan)', async () => {
   const { createBooking, recordPayment, getUser } = await import('../src/store.js');
   const u = createUser({ email: `stab${Date.now()}@x.co`, name: 'Stab' });
-  const b = createBooking({ option: { tier: 'Standard', totalUSD: 1266, pricing: { symbol: '£', local: { total: 1000 }, lines: { totalUSD: 1266 } }, components: [{ type: 'flight', supplier: 'BA', live: false, details: {} }] }, userId: u.id, instalment: { deposit: 200, schedule: [{ due: '2027-01-01', amount: 400, status: 'pending' }, { due: '2027-02-01', amount: 400, status: 'pending' }] } });
+  // LIVE (payable) fare so the deposit is really recorded — an instalment plan
+  // and its plan-funding gates only exist on a bookable price, never an estimate.
+  const b = createBooking({ option: { tier: 'Standard', totalUSD: 1266, pricing: { symbol: '£', local: { total: 1000 }, lines: { totalUSD: 1266 } }, components: [{ type: 'flight', supplier: 'BA', live: true, details: {} }] }, userId: u.id, instalment: { deposit: 200, schedule: [{ due: '2027-01-01', amount: 400, status: 'pending' }, { due: '2027-02-01', amount: 400, status: 'pending' }] } });
   // A large booking change-charge must NOT push the plan to "fully paid".
   recordPayment(b.id, { type: 'change-charge', amount: 700 });
   assert.notEqual(b.pointsAwarded, true, 'a change-charge does not award loyalty points');
@@ -5345,6 +5349,31 @@ test('hard-test: an infant is counted in the fare breakdown (not silently droppe
   const f = scanFlights(i, resolveDestination('Barcelona'), resolveOrigin('London'))[0];
   assert.equal(f.details.fareBreakdown.infant, 1, 'the infant appears in the priced breakdown');
   assert.equal(f.details.fareBreakdown.adult, 2);
+});
+
+test('hard-test: an ESTIMATED booking takes NO payment and prints as an indicative quote, not a confirmation', async () => {
+  const { createUser, createBooking } = await import('../src/store.js');
+  const { bookingDocument } = await import('../src/documents.js');
+  const u = createUser({ email: `est-${Date.now?.() || 'e'}@t.com`, name: 'Est', role: 'consumer' });
+  // The normal no-live-keys case: an estimated option (no live components).
+  const option = { tier: 'Standard', totalUSD: 362, pricing: { local: { total: 286.24 }, symbol: '£', code: 'GBP', lines: { totalUSD: 362 } }, components: [{ type: 'flight', supplier: 'BA', details: {} }, { type: 'hotel', supplier: 'City Hotel', details: {} }] };
+  const instalment = { plan: 'Smart', deposit: 114.50, depositPct: 0.4, schedule: [{ amount: 85.87, due: '2026-08-01', status: 'pending' }, { amount: 85.87, due: '2026-08-15', status: 'pending' }], engine: 'ai-smart' };
+  const b = createBooking({ option, instalment, userId: u.id });
+  assert.equal(b.priceBasis, 'estimated');
+  assert.equal(b.payments.length, 0, 'an estimate records NO deposit / payment');
+  assert.notEqual(b.pointsAwarded, true, 'no points on an unpaid estimate');
+  // The branded document must read as an indicative quote — never "CONFIRMED".
+  const doc = bookingDocument(b, { user: null, currencySymbol: '£' });
+  assert.match(doc, /INDICATIVE QUOTE — NOT YET BOOKED/, 'document status is an indicative quote');
+  assert.doesNotMatch(doc, /CONFIRMED — DEPOSIT PAID/, 'never prints a deposit-paid confirmation on an estimate');
+
+  // A LIVE (payable) booking DOES record the deposit and reads as reserved.
+  const liveOpt = { ...option, components: [{ type: 'flight', supplier: 'BA', live: true, details: {} }, { type: 'hotel', supplier: 'City Hotel', live: true, details: {} }] };
+  const lb = createBooking({ option: liveOpt, instalment, userId: u.id });
+  assert.equal(lb.priceBasis, 'live');
+  assert.equal(lb.payments.length, 1, 'a live booking records the deposit');
+  const liveDoc = bookingDocument(lb, { user: null, currencySymbol: '£' });
+  assert.match(liveDoc, /RESERVED — DEPOSIT PAID/, 'a paid live deposit reads as reserved');
 });
 
 test('hard-test B3: passwordless email login is DISABLED in LIVE_MODE (no account takeover)', async () => {

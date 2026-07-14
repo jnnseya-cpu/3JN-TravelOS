@@ -1338,16 +1338,21 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
       : null,
     createdAt: nowISO(),
   };
+  // LEGAL-SAFETY: an ESTIMATED (indicative) price is NEVER payable — no deposit,
+  // no simulated capture, nothing. Only a genuinely bookable price ('live' or a
+  // curated-deal 'confirmed') may take money. Recording an optimistic deposit on
+  // an estimate is exactly the "estimate accepted a payment" bug: it made a
+  // booking look paid/confirmed and generated a document on an indicative quote.
+  const payableBasis = booking.priceBasis === 'live' || booking.priceBasis === 'confirmed';
   // First payment = deposit. But when Stripe will actually CAPTURE the money
   // (live key + a live-fare booking), the signed Stripe webhook is the single
   // source of truth — pre-recording a 'paid' deposit here would double-count it
   // against the webhook's 'stripe-checkout' line (2× the deposit on planPaid).
-  // With Stripe off (current default), behaviour is unchanged: the optimistic
-  // deposit stands in for the simulated capture.
-  // A curated deal ('confirmed') captured via Stripe also settles through the
-  // signed webhook, so defer points/loyalty to the real payment there too.
-  const awaitExternalCapture = stripeLive && (booking.priceBasis === 'live' || booking.priceBasis === 'confirmed');
-  if (instalment && !awaitExternalCapture) {
+  // With Stripe off, the optimistic deposit stands in for the simulated capture —
+  // but ONLY on a payable basis. A curated deal ('confirmed') captured via Stripe
+  // settles through the signed webhook, so defer there too.
+  const awaitExternalCapture = stripeLive && payableBasis;
+  if (instalment && !awaitExternalCapture && payableBasis) {
     booking.payments.push({ type: 'deposit', amount: instalment.deposit, gateway, method: paymentMethod, at: nowISO(), status: 'paid' });
   }
   booking.awaitExternalCapture = awaitExternalCapture;

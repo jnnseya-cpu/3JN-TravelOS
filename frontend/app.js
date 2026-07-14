@@ -1285,6 +1285,28 @@ window.openBooking = async (tier) => {
   const inst = data.quote.instalment;
   const sym = option.pricing.symbol;
 
+  // LEGAL-SAFETY: an ESTIMATED (indicative) price is never payable — so never
+  // show a deposit / instalment / pay-now UI on it. Route the customer to
+  // "request your exact price" instead: no money is taken, we confirm the exact
+  // bookable total and send a secure payment link. Only a LIVE fare or a
+  // CONFIRMED curated deal opens the real pay flow below.
+  const payable = option.priceBasis === 'live' || option.priceBasis === 'confirmed' || option.bookableForRealPayment;
+  if (!payable) {
+    modal(`
+      <span class="eyebrow">${esc(tier)} package · ${esc(intent.destination?.city || '')}</span>
+      <h3 style="margin:6px 0 4px">Request your exact price</h3>
+      <p class="muted" style="font-size:13.5px">The ${money2(option.pricing.local.total, sym)} shown is an <strong>indicative estimate</strong>, not a bookable price — so we take <strong>no payment now</strong>. Send your details and we'll confirm the exact, bookable total by email and in your Console, with a secure payment link. You're only ever charged a real, confirmed price.</p>
+      <div class="composer-row" style="margin-top:10px">
+        <div class="field"><label>Full name</label><input class="in" id="qrName" value="${esc(state.user?.name || '')}"></div>
+        <div class="field"><label>Email</label><input class="in" id="qrEmail" type="email" value="${esc(state.user?.email || '')}"></div>
+        <div class="field"><label>Phone (optional)</label><input class="in" id="qrPhone" value="${esc(state.user?.travelProfile?.phone || '')}"></div>
+      </div>
+      <div class="field" style="margin-top:8px"><label>Anything we should know? (optional)</label><input class="in" id="qrNote" placeholder="Flexible dates, seat/room preferences, budget…"></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitExactQuote('${tier}')">Request exact price — no payment now</button>
+      <p class="muted" style="font-size:11px;margin-top:8px;text-align:center">🔒 No card details, no charge. We reply with your confirmed price.</p>`);
+    return;
+  }
+
   const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
   // AI Smart Instalment plan header: which plan, why, and the protection rules
   // the customer is agreeing to — stated before they pay, not in small print.

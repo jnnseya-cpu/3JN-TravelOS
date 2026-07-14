@@ -75,9 +75,18 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   const paidTotal = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const total = o.pricing?.local?.total || 0;
   const fullyPaid = total > 0 && paidTotal + 0.01 >= total;
+  const paidAnything = paidTotal > 0.01;
+  // An ESTIMATED price is never bookable — no money is taken, so this document is
+  // an indicative QUOTE, not a confirmation. Only a live/confirmed price with a
+  // real payment is ever styled as reserved/confirmed. This is what stops a
+  // deposit-less estimate from printing "CONFIRMED — DEPOSIT PAID".
+  const payable = booking.priceBasis === 'live' || booking.priceBasis === 'confirmed';
   const status = ful.ticketing === 'issued' ? 'E-TICKET ISSUED'
     : ful.ticketing === 'held' ? 'FARE HELD — TICKET ON FINAL PAYMENT'
-    : fullyPaid ? 'CONFIRMED — PAID' : 'CONFIRMED — DEPOSIT PAID';
+    : fullyPaid ? 'CONFIRMED — PAID'
+    : paidAnything ? 'RESERVED — DEPOSIT PAID'
+    : !payable ? 'INDICATIVE QUOTE — NOT YET BOOKED'
+    : 'RESERVED — AWAITING PAYMENT';
   // A REAL airline locator only — never the 3JN booking id dressed up as a "PNR".
   const pnr = ful.pnr || ful.duffelOrderId || null;
   // The airline e-ticket number is ALWAYS stated: real Duffel ticket numbers
@@ -202,8 +211,8 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     ${booking.hotelRequests?.length ? `<h3>Property requests</h3><ul>${booking.hotelRequests.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
   </div>
   <div class="totals">
-    <span>${esc(o.tier || '')} package · ${fullyPaid ? 'Paid in full' : `Paid ${money(paidTotal, sym)} of ${money(total, sym)}${booking.instalment ? ' (instalment plan)' : ''}`}</span>
-    <span class="big">${money(total, sym)}</span>
+    <span>${esc(o.tier || '')} package · ${!payable && !paidAnything ? `Indicative estimate — exact bookable price confirmed before any payment` : fullyPaid ? 'Paid in full' : `Paid ${money(paidTotal, sym)} of ${money(total, sym)}${booking.instalment ? ' (instalment plan)' : ''}`}</span>
+    <span class="big">${money(total, sym)}${!payable && !paidAnything ? ' <span style="font-size:11px;opacity:.7">est.</span>' : ''}</span>
   </div>
   <div class="body" style="padding-top:0">
     <h3>Need help while travelling?</h3>
