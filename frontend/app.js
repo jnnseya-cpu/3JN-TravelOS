@@ -2295,6 +2295,26 @@ function bookingCard(b) {
   const lockBadge = b.priceLock?.locked
     ? `<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b" title="${esc(b.priceLock.guarantee || '')}">🔒 PRICE LOCKED${lockSavedUSD > 0 ? ` · saved ${money2(lockSavedUSD * (o.pricing.local.total / o.pricing.lines.totalUSD), sym)} vs market` : ''}</span>` : '';
 
+  // Trip headline: route + dates, best-effort from the booked components. Wrapped
+  // so a missing field only SHORTENS the line — it must never throw (an undefined
+  // `tripLine` reference here previously crashed the entire console render).
+  let tripLine = '';
+  try {
+    const comps = o.components || [];
+    const journey = comps.find((c) => ['flight', 'train', 'coach', 'ferry', 'cruise'].includes(c.type));
+    const stay = comps.find((c) => ['hotel', 'host'].includes(c.type));
+    const route = journey?.details?.route || '';
+    const ci = stay?.details?.checkIn || journey?.details?.checkIn || '';
+    const co = stay?.details?.checkOut || '';
+    const nights = stay?.details?.nights;
+    const bits = [];
+    if (route) bits.push(esc(route));
+    else if (stay?.details?.area) bits.push(esc(stay.details.area));
+    if (ci) bits.push(`${ukDate(ci)}${co ? ' → ' + ukDate(co) : ''}`);
+    else if (nights) bits.push(`${nights} night${nights > 1 ? 's' : ''}`);
+    tripLine = bits.join(' · ');
+  } catch { tripLine = ''; }
+
   return `
     <div class="card booking-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
