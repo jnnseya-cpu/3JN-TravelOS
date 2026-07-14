@@ -947,6 +947,21 @@ function flightItinBlock(c, o, sym, intent) {
 
 function optionCard(o, sym, intent) {
   const p = o.pricing;
+  // Reconcile the displayed line items to the Total EXACTLY. Each component's
+  // local price is rounded to the penny; rounding each independently makes the
+  // visible parts drift from the Total by a penny or two ("£1,279.41" of parts
+  // vs a "£1,278.15" total). We allocate the true Total across the priced
+  // components and let the LAST priced one absorb the drift, so the line items
+  // always sum to the Total shown.
+  const compRatio = p.local.total / (p.lines?.totalUSD || 1);
+  const compLocal = o.components.map((c) => Math.round((Number(c.priceUSD) || 0) * compRatio * 100) / 100);
+  const pricedIdx = o.components.map((c, i) => (Number(c.priceUSD) > 0 ? i : -1)).filter((i) => i >= 0);
+  if (pricedIdx.length) {
+    const partsSum = pricedIdx.reduce((s, i) => s + compLocal[i], 0);
+    const drift = Math.round((p.local.total - partsSum) * 100) / 100;
+    const lastPriced = pricedIdx[pricedIdx.length - 1];
+    compLocal[lastPriced] = Math.round((compLocal[lastPriced] + drift) * 100) / 100;
+  }
   const comps = o.components.map((c, i) => {
     // NO ESTIMATED HOTELS TO CUSTOMERS. A stay is only ever shown to a customer
     // when it is REAL — a live hotel fare, a 3JN-verified community host, or a
@@ -1015,7 +1030,7 @@ function optionCard(o, sym, intent) {
     // With the itinerary block the stop/baggage chips are redundant noise.
     const chips = itin ? `${legTag}${partyTag}` : `${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag}`;
     return `
-    <li ${itin ? 'style="display:block"' : ''}><span class="cs" ${itin ? 'style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px"' : ''}>${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${chips} ${src}${more}${itin ? `<span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span>` : ''}</span>${itin || `<span class="cp">${money2(c.priceUSD * (p.local.total / p.lines.totalUSD), sym)}</span>`}</li>`;
+    <li ${itin ? 'style="display:block"' : ''}><span class="cs" ${itin ? 'style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px"' : ''}>${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${chips} ${src}${more}${itin ? `<span class="cp">${money2(compLocal[i], sym)}</span>` : ''}</span>${itin || `<span class="cp">${money2(compLocal[i], sym)}</span>`}</li>`;
   }).join('');
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">

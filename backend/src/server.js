@@ -994,6 +994,32 @@ app.patch('/api/account/:id', safe((req, res) => {
 // FULLY LOADED: each demo account ships with live data — memberships, ACU,
 // bookings, pots, API keys, payment links, a published host listing and a
 // populated visa queue — so every command centre demos end-to-end.
+// A demo booking is a SHOWCASE FIXTURE, not a real customer transaction — the
+// "Test Traveller" account. It must present as a fully-paid, confirmed, ticketed
+// journey (with documents) INDEPENDENT of live supplier/payment keys, so the demo
+// shows what a completed booking really looks like instead of an empty estimate.
+// (Real customer bookings still correctly take no money on an estimate — this
+// override applies ONLY to seeded demo accounts.)
+function completeDemoBooking(booking) {
+  if (!booking) return booking;
+  const total = booking.option?.pricing?.local?.total || 0;
+  booking.priceBasis = 'confirmed';        // a demo fixture we stand behind → payable
+  booking.status = 'confirmed';
+  booking.payments = [{ type: 'full', amount: total, gateway: 'demo', method: 'card', at: booking.createdAt || new Date().toISOString(), status: 'paid' }];
+  booking.pointsAwarded = true;            // points seeded separately; don't double-count
+  booking.awaitExternalCapture = false;
+  const tail = String(booking.id).replace(/[^a-z0-9]/gi, '').slice(-6).toUpperCase() || 'DEMO01';
+  booking.fulfilment = {
+    ...(booking.fulfilment || {}),
+    source: 'demo', demo: true,
+    ticketing: 'issued',
+    pnr: '3JN' + tail.slice(0, 3),
+    ticketNumbers: ['SAMPLE-' + tail],     // clearly a sample e-ticket, not a real airline number
+    issuedAt: booking.createdAt || new Date().toISOString(),
+  };
+  return booking;
+}
+
 function fullyLoadDemoAccounts() {
   const byEmail = (e) => findUserByEmail(e);
   const loaded = [];
@@ -1004,7 +1030,9 @@ function fullyLoadDemoAccounts() {
     if (r.stage !== 'options') return null;
     const option = r.packages.options.find((o) => o.recommended) || r.packages.options[0];
     const quote = saveQuote({ option, intent: r.intent, instalment: instalmentPlan({ totalLocal: option.pricing.local.total, currency: ctx.currency, months: 3, depositPct: 0.2 }) });
-    return createBooking({ quoteId: quote.id, option, instalment: quote.instalment, userId, paymentMethod: 'card', lead: { fullName: getUser(userId)?.name, email: getUser(userId)?.email } });
+    const booking = createBooking({ quoteId: quote.id, option, instalment: quote.instalment, userId, paymentMethod: 'card', lead: { fullName: getUser(userId)?.name, email: getUser(userId)?.email } });
+    // Present the seeded demo journey as a completed, paid, ticketed booking.
+    return completeDemoBooking(booking);
   };
 
   // Consumer — the flagship demo journey.
