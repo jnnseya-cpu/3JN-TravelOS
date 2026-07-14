@@ -210,13 +210,16 @@ const IS_SERVERLESS = !!(
   process.env.NETLIFY || process.env.FLY_APP_NAME || process.env.RENDER || process.env.RAILWAY_ENVIRONMENT ||
   process.env.DENO_DEPLOYMENT_ID || process.env.CF_PAGES || process.env.NOW_REGION
 );
-// SAFE-BY-DEFAULT persistence: whenever a durable store is configured, use the
-// synchronous read-modify-write + flush-before-response path (and periodic
-// rehydrate) — REGARDLESS of host detection. A debounced save is lost the moment
-// a serverless instance freezes, which silently drops payments / ACU / profile
-// edits (exactly what was happening). Only a single, always-on instance that
-// wants the efficient debounced save opts out with PERSIST_DEBOUNCED=true.
-const safePersist = () => isEnabled() && process.env.PERSIST_DEBOUNCED !== 'true';
+// SERVERLESS persistence path (read-modify-write + rehydrate). Gated on real
+// detection: forcing it on a host whose durable store is stale/empty makes the
+// pre-handler LOAD overwrite working in-memory accounts (a lockout). The
+// synchronous SAVE below is what prevents write-loss; it does NOT require the
+// risky pre-handler load, so it is applied on its own condition.
+const serverlessPersist = () => IS_SERVERLESS && isEnabled();
+// SAFE SAVE: flush synchronously before responding whenever a durable store is
+// on (so a debounced save can't be lost on a freeze) — WITHOUT the pre-handler
+// load that can wipe memory from a stale store. Opt out with PERSIST_DEBOUNCED.
+const syncSaveOn = () => isEnabled() && process.env.PERSIST_DEBOUNCED !== 'true';
 app.use(async (req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -228,13 +231,18 @@ app.use(async (req, res, next) => {
       await waitForStoreReady();
       if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
     }
-    if (safePersist()) {
-      // READ-MODIFY-WRITE: pull the LATEST store from the durable backend
-      // before mutating, so this instance never overwrites another instance's
-      // data with its own stale whole-store snapshot (that clobbering erased
-      // accounts/bookings and logged users out). Then flush synchronously after
-      // the handler, before the response, so the write can't be lost on freeze.
-      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep memory */ }
+    // Pre-handler LOAD (read-modify-write) is ONLY safe on a truly multi-instance
+    // serverless host with an authoritative store — forcing it where the store is
+    // stale/empty overwrites working in-memory accounts (a lockout). So it runs
+    // ONLY on real serverless detection. The synchronous SAVE, which is what
+    // actually prevents write-loss, runs whenever a store is on — WITHOUT the
+    // risky load — so writes persist and memory is never wiped.
+    const doLoad = serverlessPersist();
+    const doSyncSave = serverlessPersist() || syncSaveOn();
+    if (doSyncSave) {
+      if (doLoad) {
+        try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep memory */ }
+      }
       // Snapshot the store BEFORE the handler runs. Many POSTs are effectively
       // read-only (search, telemetry, chat, checkout-session creation) — if the
       // handler changed nothing, we must NOT do a Firebase write, or every such
@@ -275,7 +283,7 @@ let rehydrating = false;
 let lastRehydrateAt = 0;
 app.use(async (req, res, next) => {
   const uid = req.headers['x-user-id'];
-  if (safePersist() && storeReady && !rehydrating) {
+  if (serverlessPersist() && storeReady && !rehydrating) {
     const missingCaller = uid && !getUser(uid);
     const stale = Date.now() - lastRehydrateAt > 5000;
     if (missingCaller || stale) {
@@ -2686,15 +2694,23 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   if (updated && isInst && updated.instalment?.schedule?.[idx]) updated.instalment.schedule[idx].status = 'paid';
   if (updated && s.paymentIntent) updated.stripePaymentIntent = s.paymentIntent;
   // Mirror the webhook's fulfilment: hold on a deposit, release on paid-in-full.
+  // Fulfilment is BEST-EFFORT and must NEVER break the response — the payment is
+  // already recorded above, and the response MUST complete so the persistence
+  // middleware flushes that payment to the durable store. Any throw here (a deal
+  // fulfilment edge case, a sync error in ticketing) is logged, not propagated.
   if (updated) {
-    if (updated.sourceDealId && bookingFullyPaid(updated) && !updated.dealFulfilmentCreated) createDealFulfilment(updated);
-    autoTicketFlight(updated).catch((e) => console.error('[ticketing]', e?.message || e));
-    autoBookStays(updated).catch((e) => console.error('[stays]', e?.message || e));
-    emailBookingConfirmation(updated).catch((e) => console.error('[confirm-email]', e?.message || e));
+    try { if (updated.sourceDealId && bookingFullyPaid(updated) && !updated.dealFulfilmentCreated) createDealFulfilment(updated); } catch (e) { console.error('[reconcile-deal]', e?.message || e); }
+    Promise.resolve().then(() => autoTicketFlight(updated)).catch((e) => console.error('[ticketing]', e?.message || e));
+    Promise.resolve().then(() => autoBookStays(updated)).catch((e) => console.error('[stays]', e?.message || e));
+    Promise.resolve().then(() => emailBookingConfirmation(updated)).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
-  const tot = (updated || booking).option?.pricing?.local?.total || 0;
-  const paidNow = planPaid(updated || booking);
-  res.json({ booking: updated || booking, reconciled: true, recordedAmount: amount, paidPct: tot > 0 ? Math.round((paidNow / tot) * 100) : 0 });
+  let paidPct = 0;
+  try {
+    const tot = (updated || booking).option?.pricing?.local?.total || 0;
+    const paidNow = planPaid(updated || booking);
+    paidPct = tot > 0 ? Math.round((paidNow / tot) * 100) : 0;
+  } catch (e) { console.error('[reconcile-pct]', e?.message || e); }
+  res.json({ booking: updated || booking, reconciled: !!updated, recordedAmount: amount, paidPct });
 }));
 // Webhook: signature-verified; a forged event can never mark a booking paid.
 app.post('/api/pay/stripe/webhook', safe((req, res) => {
