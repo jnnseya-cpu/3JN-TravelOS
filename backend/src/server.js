@@ -215,11 +215,6 @@ const IS_SERVERLESS = !!(
 // pre-handler LOAD overwrite working in-memory accounts (a lockout). The
 // synchronous SAVE below is what prevents write-loss; it does NOT require the
 // risky pre-handler load, so it is applied on its own condition.
-const serverlessPersist = () => IS_SERVERLESS && isEnabled();
-// SAFE SAVE: flush synchronously before responding whenever a durable store is
-// on (so a debounced save can't be lost on a freeze) — WITHOUT the pre-handler
-// load that can wipe memory from a stale store. Opt out with PERSIST_DEBOUNCED.
-const syncSaveOn = () => isEnabled() && process.env.PERSIST_DEBOUNCED !== 'true';
 app.use(async (req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -231,15 +226,11 @@ app.use(async (req, res, next) => {
       await waitForStoreReady();
       if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
     }
-    // Pre-handler cross-instance refresh + synchronous save whenever a durable
-    // store is on. The refresh now MERGES (hydrateMerge) — it brings in records
-    // this instance is missing without ever dropping a live in-memory account
-    // (so a stale/partial store can't cause the lockout), which makes it safe to
-    // run on every host, not just detected serverless. The synchronous save is
-    // what prevents write-loss on a freeze.
-    const doSyncSave = syncSaveOn();
-    if (doSyncSave) {
-      try { const snap = await load(); if (snap) hydrateMerge(snap); } catch { /* keep memory */ }
+    // KNOWN-GOOD serverless path: read-modify-write. Hydrate the latest store
+    // before mutating (so this instance sees other instances' changes and never
+    // clobbers them), then flush synchronously before the response.
+    if (IS_SERVERLESS && isEnabled()) {
+      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep memory */ }
       // Snapshot the store BEFORE the handler runs. Many POSTs are effectively
       // read-only (search, telemetry, chat, checkout-session creation) — if the
       // handler changed nothing, we must NOT do a Firebase write, or every such
@@ -280,13 +271,12 @@ let rehydrating = false;
 let lastRehydrateAt = 0;
 app.use(async (req, res, next) => {
   const uid = req.headers['x-user-id'];
-  if (syncSaveOn() && storeReady && !rehydrating) {
+  if (IS_SERVERLESS && isEnabled() && storeReady && !rehydrating) {
     const missingCaller = uid && !getUser(uid);
     const stale = Date.now() - lastRehydrateAt > 5000;
     if (missingCaller || stale) {
       rehydrating = true;
-      // MERGE — never drop a live in-memory account when refreshing from the store.
-      try { const snap = await load(); if (snap) hydrateMerge(snap); } catch { /* keep serving from memory */ }
+      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep serving from memory */ }
       lastRehydrateAt = Date.now();
       rehydrating = false;
     }
