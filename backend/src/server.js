@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-acu-charge-and-booking-order-v75';
+const BUILD_TAG = '2026-07-14-ticketing-reason-visible-v76';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2504,6 +2504,12 @@ app.get('/api/book/:id/documents', safe((req, res) => {
     bookingId: booking.id,
     status: booking.status,
     ticketing: ticketingState,
+    // Surface WHY ticketing isn't 'issued' (and the refund state) so a failed /
+    // held / ops-queued booking explains itself instead of just reading 'failed'.
+    reason: ful.reason || null,
+    needsRefund: !!ful.needsRefund,
+    refunded: !!ful.refundId,
+    refundId: ful.refundId || null,
     pnr: ful.pnr || null,
     ticketNumbers: (ful.ticketNumbers || []).filter(Boolean).length ? ful.ticketNumbers : (ful.eTicketNumber ? [ful.eTicketNumber] : []),
     services: includedServices(booking),

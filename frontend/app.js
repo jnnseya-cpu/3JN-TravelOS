@@ -2595,13 +2595,31 @@ window.openDocs = async (bookingId) => {
       <div style="font-weight:700;margin-bottom:6px">${s.icon} ${esc(s.label)} <span class="muted" style="font-weight:400;font-size:12px">— ${esc(s.supplier)}</span></div>
       ${s.rows.map(([k, v]) => `<div class="kv" style="align-items:flex-start"><span class="muted" style="font-size:11.5px;min-width:110px">${esc(k)}</span><span style="font-size:12.5px;text-align:right;flex:1">${v}</span></div>`).join('')}
     </div>`).join('');
+  // Human-readable explanation when ticketing did NOT issue — so 'failed' is never
+  // a bare, scary word. Live airline offers expire quickly (~20–30 min); if one
+  // lapses between search and payment we cannot issue a ticket at that price, so
+  // the payment is auto-refunded. That is the honest outcome, clearly stated.
+  const REASONS = {
+    'offer-expired-before-ticketing': 'The airline’s live fare expired before payment completed, so the ticket couldn’t be issued at that price.',
+    'offer-expired-before-hold': 'The airline’s live fare expired before your seats could be held.',
+    'manifest-incomplete': 'We still need every traveller’s full name (as on passport) before tickets can be issued.',
+  };
+  const issued = d.ticketing === 'issued';
+  const explain = !issued && d.ticketing !== 'confirmed' && d.ticketing !== 'pending'
+    ? `<div class="card pad" style="border-color:rgba(255,107,107,.4);margin-top:10px">
+         <strong style="color:#ff8f8f">Ticket not issued — ${esc(d.ticketing)}</strong>
+         <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(REASONS[String(d.reason || '').replace(/:.*/, '')] || d.reason || 'Ticketing is being completed by our team.')}</div>
+         ${d.refunded ? `<div style="color:#79d99b;font-size:12.5px;margin-top:6px">✓ Your payment has been refunded in full${d.refundId ? ` (ref ${esc(d.refundId)})` : ''}.</div>`
+            : d.needsRefund ? `<div style="color:var(--gold);font-size:12.5px;margin-top:6px">Your full refund is being processed — you’ll get a confirmation shortly.</div>` : ''}
+       </div>` : '';
   modal(`
     <span class="eyebrow">📄 Documents · ${esc(d.bookingId)}</span>
     <h3 style="margin:6px 0 2px">Your travel documents & service instructions</h3>
     <div class="kv"><span>Status</span><span>${esc(d.status)} · ${esc(d.ticketing)}</span></div>
     ${d.pnr ? `<div class="kv"><span>Airline PNR</span><span><b>${esc(d.pnr)}</b></span></div>` : ''}
     ${(d.ticketNumbers || []).length ? `<div class="kv"><span>E-ticket number(s)</span><span><b>${d.ticketNumbers.map(esc).join(', ')}</b></span></div>` : ''}
-    <button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal();viewEticket('${esc(d.bookingId)}')">🎫 Open full e-ticket / itinerary (print or save as PDF)</button>
+    ${explain}
+    ${issued || d.ticketing === 'confirmed' ? `<button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal();viewEticket('${esc(d.bookingId)}')">🎫 Open full e-ticket / itinerary (print or save as PDF)</button>` : ''}
     ${cards || '<p class="muted" style="font-size:12.5px;margin-top:10px">No additional services on this booking.</p>'}
     <p class="muted" style="font-size:11px;margin-top:10px">Anything unclear? Ask the 💬 3JN Assistant — it reads this exact booking and can resend documents, reschedule services or connect you to a specialist.</p>`);
 };
