@@ -220,7 +220,7 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
       <table class="legs"><tbody>
         <tr><td class="dir">24/7 assistant</td><td>Open the 3JN app → 💬 chat. It checks this exact booking, resends documents, changes dates, and hands you to a human specialist when needed.</td></tr>
         <tr><td class="dir">Email</td><td><b>info@3jntravel.com</b> — quote booking ref <b>${esc(booking.id)}</b> and we pick it up with your full file already open.</td></tr>
-        <tr><td class="dir">Disruption</td><td>Flight cancelled or hotel issue on arrival? Contact us FIRST — we rebook or resolve directly with the supplier and you stay covered.</td></tr>
+        <tr><td class="dir">Disruption</td><td>Flight cancelled or a hotel issue on arrival? Contact us first and we'll liaise with the airline or hotel on your behalf to find the best available option. Your rights and any refunds or re-accommodation are provided by the operating supplier under their conditions of carriage, and by your travel insurance where applicable.</td></tr>
       </tbody></table>
     </div>
   </div>
