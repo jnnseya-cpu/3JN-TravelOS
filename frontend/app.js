@@ -2253,7 +2253,9 @@ function bookingCard(b) {
       ${progress}
       <div style="margin:10px 0">${sched}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>
+        ${(b.fulfilment?.ticketing === 'issued' || (totalLocal > 0 && paidTotal + 0.01 >= totalLocal))
+          ? `<button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>`
+          : `<button class="btn btn-ghost btn-sm" disabled title="Your e-ticket is issued only once the balance is paid in full — a deposit never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket on full payment</button>`}
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">▶ Run Price Guard</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>

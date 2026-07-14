@@ -46,27 +46,27 @@ export const SEARCH_TIERS = {
     name: 'Cached / Free', acu: 0, aiCostUSD: 0, depth: 'cached', actions: [],
     features: ['Cached results', 'Top deals', 'Destination suggestions', 'Previous searches', 'Limited searches (5/day)', 'No expensive AI'],
   },
-  // Customer-facing ACU prices are kept small and predictable (5 / 10 / 20 ACU)
-  // so pay-per-use feels cheap vs a subscription. The `acu` override sets the
-  // CHARGE; `actions` still lists the agents each depth runs.
-  // NOTE: these are BELOW the raw AI cost — the search is a loss-leader funded by
-  // the eventual booking commission (the real margin). A per-search 3–10× margin
-  // is a separate business-model change that must be recalibrated together with
-  // the ACU allowances (a member gets 50 ACU/mo — an 80-ACU search would price
-  // them out), so it's intentionally NOT applied here yet.
+  // MARGIN PROTECTION (business rule): the customer is charged 3–10× the raw
+  // provider AI cost. Each tier's charge is the SUM of its metered agent actions
+  // (ACU_ACTIONS) — which is already priced at ~3.3× the real provider cost
+  // (smart's actions = 26 ACU = £0.26 vs the ~$0.10 provider cost → 3.3×), i.e.
+  // the floor of the 3–10× band. The earlier flat 5/10/20 ACU override sold every
+  // search BELOW cost (a loss); it has been removed so each search now clears the
+  // margin floor. NB: at these prices a member's monthly ACU affords fewer
+  // searches (e.g. nomad 50 ACU ≈ 2 smart searches) — top-ups cover the rest.
   smart: {
     ...tierFrom('Smart Search', 'standard', ['intent', 'flightSearch', 'hotelSearch']),
-    acu: 5,
+    aiCostUSD: 0.10, // real provider (LLM) cost; charge (26 ACU) ≈ 3.3× this
     agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent'],
   },
   deep: {
     ...tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
-    acu: 10,
+    aiCostUSD: 0.22, // real provider cost; charge (57 ACU) ≈ 3.3× this
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent'],
   },
   concierge: {
     ...tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
-    acu: 20,
+    aiCostUSD: 0.35, // real provider cost; charge (91 ACU) ≈ 3.3× this
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
     // Tier 4 pairs the AI agents with a HUMAN travel expert — human time is
     // never funded speculatively, so access requires a real commitment.
