@@ -78,12 +78,12 @@ function money2(n, sym) {
 
 // ---- Toast ----------------------------------------------------------------
 let toastT;
-function toast(msg) {
+function toast(msg, ms) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastT);
-  toastT = setTimeout(() => t.classList.remove('show'), 3200);
+  toastT = setTimeout(() => t.classList.remove('show'), ms || 3200);
 }
 
 // ---- Modal ----------------------------------------------------------------
@@ -456,14 +456,27 @@ function applyDeepLink() {
     // charge is still settling.
     const sessionId = payQ.get('session') || undefined; // {CHECKOUT_SESSION_ID} from Stripe
     (async () => {
-      for (let i = 0; i < 4; i++) {
+      toast(sessionId ? '⏳ Confirming your payment…' : '⚠ Stripe return had no session id');
+      let last = null;
+      for (let i = 0; i < 5; i++) {
         try {
-          const r = await api('/api/pay/stripe/reconcile', { method: 'POST', body: JSON.stringify({ bookingId: bkId, sessionId }), silent: true });
-          if (r && r.reconciled) { toast('✓ Payment confirmed.'); if (typeof renderConsole === 'function') renderConsole(); break; }
-          if (r && !r.pending && !sessionId) break; // nothing to reconcile and no session to retry
-        } catch { /* retry */ }
+          last = await api('/api/pay/stripe/reconcile', { method: 'POST', body: JSON.stringify({ bookingId: bkId, sessionId }), silent: true });
+          if (last && last.reconciled) {
+            toast(`✓ Payment recorded — ${money2(last.recordedAmount || 0, '£')} (${last.paidPct != null ? last.paidPct + '% paid' : 'updated'}).`);
+            if (typeof renderConsole === 'function') renderConsole();
+            return;
+          }
+        } catch (e) { last = { _err: e?.message || 'request failed', _status: e?.status }; }
         await new Promise((res) => setTimeout(res, 1500));
       }
+      // Not recorded after retries — surface WHY (this is what we're debugging).
+      const why = !sessionId ? 'no session id in the return URL'
+        : last?._status === 401 ? 'not signed in (auth) when confirming'
+        : last?.pending ? 'Stripe reports this session as NOT paid yet'
+        : last?.error ? `server: ${last.error}`
+        : last?._err ? `network: ${last._err}`
+        : 'unknown (reconcile returned no match)';
+      toast('⚠ Payment NOT recorded — ' + why, 8000);
     })();
   }
   const qv = new URLSearchParams(location.search).get('view');

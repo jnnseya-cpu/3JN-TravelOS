@@ -2672,7 +2672,9 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
     autoBookStays(updated).catch((e) => console.error('[stays]', e?.message || e));
     emailBookingConfirmation(updated).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
-  res.json({ booking: updated || booking, reconciled: true });
+  const tot = (updated || booking).option?.pricing?.local?.total || 0;
+  const paidNow = planPaid(updated || booking);
+  res.json({ booking: updated || booking, reconciled: true, recordedAmount: amount, paidPct: tot > 0 ? Math.round((paidNow / tot) * 100) : 0 });
 }));
 // Webhook: signature-verified; a forged event can never mark a booking paid.
 app.post('/api/pay/stripe/webhook', safe((req, res) => {
