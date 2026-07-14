@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-ticketing-reason-visible-v76';
+const BUILD_TAG = '2026-07-14-duffel-phone-fix-v77';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -555,7 +555,12 @@ async function autoTicketFlight(booking) {
     await failManifestToOps(booking, offerPax.length, manifest.length);
     return;
   }
-  const passengers = duffelOrderPassengers(offerPax, booking.leadTraveller || booking.lead || {}, { departureDate: flight.details.outbound?.date, travellers: booking.travellers });
+  // Booking contact for Duffel (required): the account owner's email + profile
+  // mobile, so even a booking with no traveller phone still tickets.
+  const acct = booking.userId ? getUser(booking.userId) : null;
+  const contactEmail = booking.leadTraveller?.email || booking.lead?.email || acct?.email || '';
+  const contactPhone = booking.leadTraveller?.phone || booking.lead?.phone || acct?.travelProfile?.mobile || acct?.travelProfile?.secondaryPhone || '';
+  const passengers = duffelOrderPassengers(offerPax, booking.leadTraveller || booking.lead || {}, { departureDate: flight.details.outbound?.date, travellers: booking.travellers, contactEmail, contactPhone });
   const fullyPaid = bookingFullyPaid(booking);
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------

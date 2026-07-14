@@ -4797,8 +4797,13 @@ test('flight manifest: every captured passenger name/DOB reaches the Duffel orde
   assert.deepEqual([pax[1].given_name, pax[1].family_name], ['Marie', 'Nseya'], 'second passenger is a REAL name, not a placeholder');
   assert.deepEqual([pax[2].given_name, pax[2].family_name], ['Luc', 'Nseya']);
   assert.equal(pax[2].born_on, '2018-02-20', 'child DOB is the captured one');
-  assert.equal(pax[0].email, 'jean@x.co', 'lead carries contact; others do not');
-  assert.equal(pax[1].email, undefined);
+  assert.equal(pax[0].email, 'jean@x.co', 'lead carries its own contact email');
+  assert.equal(pax[0].phone_number, '+44700900123', 'lead carries its own phone');
+  // Duffel requires a contact on EVERY passenger — a non-lead without their own
+  // details inherits the booking/lead contact so the order can never be rejected
+  // for a blank phone_number/email.
+  assert.ok(pax.every((p) => p.email && /.+@.+/.test(p.email)), 'every passenger has an email');
+  assert.ok(pax.every((p) => /^\+\d{7,15}$/.test(p.phone_number)), 'every passenger has a valid phone');
   assert.ok(pax.every((p) => p.family_name && p.family_name !== 'Traveller'), 'no placeholder surnames');
 });
 
@@ -4952,9 +4957,11 @@ test('wave7 manifest: travellers are matched to offer passengers by TYPE, not in
   const adultSlots = pax.filter((p) => p.type === 'adult');
   assert.equal(adultSlots.length, 2);
   assert.ok(adultSlots.every((p) => p.born_on < '2018-01-01'), 'adult slots get adult DOBs');
-  // Contact details stay on the lead (manifest index 0 = Luc, a child) — but the
-  // lead is the contact regardless of type, so its slot carries the email.
-  assert.ok(pax.some((p) => p.email === undefined), 'non-lead passengers carry no contact');
+  // Duffel requires a contact on every passenger, so a non-lead without its own
+  // email inherits the booking/lead contact — never blank (that blank was exactly
+  // what made the airline reject the order with "phone_number can't be blank").
+  assert.ok(pax.every((p) => p.email && /.+@.+/.test(p.email)), 'every passenger carries a contact email');
+  assert.ok(pax.every((p) => /^\+\d{7,15}$/.test(p.phone_number)), 'every passenger carries a valid phone');
 });
 
 test('wave7 manifest: infant offer passenger claims an infant traveller', () => {

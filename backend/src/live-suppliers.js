@@ -384,8 +384,25 @@ export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey
 // flight ticket-issues with EVERY real name. Duffel validates born_on against
 // each passenger TYPE's age band; a real DOB is used when captured, otherwise a
 // plausible one is derived per type/age so the order still passes.
+// Duffel REQUIRES a contact email + phone on the order (it rejects with
+// "Field 'phone_number' can't be blank" otherwise). Use the traveller's own
+// details, then the booking contact passed in opts, then the agency's booking
+// desk as a guaranteed-valid fallback so a customer who never entered a phone
+// can still be ticketed (the airline contact is the agency — standard for an OTA).
+const AGENCY_CONTACT_PHONE = process.env.AGENCY_CONTACT_PHONE || '+442080160509';
+const AGENCY_CONTACT_EMAIL = process.env.AGENCY_CONTACT_EMAIL || 'bookings@3jntravel.com';
+// Normalise to the E.164-ish shape Duffel accepts (leading +, 7–15 digits);
+// return '' when it can't be made valid so the fallback takes over.
+function normalisePhone(p) {
+  const s = String(p || '').trim().replace(/[^\d+]/g, '');
+  if (/^\+\d{7,15}$/.test(s)) return s;
+  if (/^\d{8,15}$/.test(s)) return '+' + s; // already carries a country code
+  return '';
+}
 export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}) {
   const manifest = Array.isArray(opts.travellers) && opts.travellers.length ? opts.travellers : [lead];
+  const contactEmail = opts.contactEmail || lead.email || AGENCY_CONTACT_EMAIL;
+  const contactPhone = normalisePhone(opts.contactPhone) || normalisePhone(lead.phone) || AGENCY_CONTACT_PHONE;
   const depYear = Number(String(opts.departureDate || '').slice(0, 4)) || new Date().getUTCFullYear();
   const dobFor = (p, t) => {
     if (t?.dob) return t.dob;
@@ -426,8 +443,11 @@ export function duffelOrderPassengers(offerPassengers = [], lead = {}, opts = {}
       given_name: nm.given,
       family_name: nm.family,
       born_on: dobFor(p, t),
-      email: (isLead ? (t.email || lead.email) : undefined) || undefined,
-      phone_number: (isLead ? (t.phone || lead.phone) : undefined) || undefined,
+      // Duffel requires BOTH on the order; give every passenger a valid contact
+      // (their own if present, otherwise the booking/agency contact) so a blank
+      // phone can never fail ticketing.
+      email: (isLead ? (t.email || lead.email) : t.email) || contactEmail,
+      phone_number: normalisePhone(isLead ? (t.phone || lead.phone) : t.phone) || contactPhone,
       gender: p.gender || 'm',
       title: p.title || 'mr',
     };
