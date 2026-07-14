@@ -454,12 +454,13 @@ function applyDeepLink() {
     // delayed webhook can't leave the booking stuck at "awaiting payment". Safe
     // to call repeatedly (idempotent server-side). Retries briefly in case the
     // charge is still settling.
+    const sessionId = payQ.get('session') || undefined; // {CHECKOUT_SESSION_ID} from Stripe
     (async () => {
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         try {
-          const r = await api('/api/pay/stripe/reconcile', { method: 'POST', body: JSON.stringify({ bookingId: bkId }), silent: true });
+          const r = await api('/api/pay/stripe/reconcile', { method: 'POST', body: JSON.stringify({ bookingId: bkId, sessionId }), silent: true });
           if (r && r.reconciled) { toast('✓ Payment confirmed.'); if (typeof renderConsole === 'function') renderConsole(); break; }
-          if (r && !r.pending) break; // nothing pending to reconcile
+          if (r && !r.pending && !sessionId) break; // nothing to reconcile and no session to retry
         } catch { /* retry */ }
         await new Promise((res) => setTimeout(res, 1500));
       }

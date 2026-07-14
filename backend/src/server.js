@@ -1671,7 +1671,7 @@ app.post('/api/deals/:id/checkout', safe(async (req, res) => {
       bookingId: booking.id,
       userId: user?.id || '',
       customerEmail: lead.email,
-      successUrl: `${origin}/console?paid=1&booking=${booking.id}&amt=${encodeURIComponent(payNowGBP)}`,
+      successUrl: `${origin}/console?paid=1&booking=${booking.id}&amt=${encodeURIComponent(payNowGBP)}&session={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${origin}/?dealCancelled=1`,
     });
     if (!session.ok) return res.status(400).json(session);
@@ -2407,7 +2407,7 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
       userId: user.id,
       customerEmail: user.email || undefined,
       metadata: { instalmentIndex: String(index) },
-      successUrl: `${origin}/console?paid=1&booking=${target.id}&amt=${encodeURIComponent(item.amount)}`,
+      successUrl: `${origin}/console?paid=1&booking=${target.id}&amt=${encodeURIComponent(item.amount)}&session={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${origin}/console?instalmentCancelled=1`,
     });
     if (!session.ok) return res.status(400).json(session);
@@ -2613,7 +2613,7 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
     customerEmail: user?.email,
     // `amt` feeds the Meta Pixel Purchase event on the success page — the
     // authoritative payment record is still the signed Stripe webhook.
-    successUrl: `${origin}/console?paid=1&booking=${booking.id}&amt=${encodeURIComponent(total)}`,
+    successUrl: `${origin}/console?paid=1&booking=${booking.id}&amt=${encodeURIComponent(total)}&session={CHECKOUT_SESSION_ID}`,
     cancelUrl: `${origin}/console?paid=0&booking=${booking.id}`,
   });
   if (!session.ok) return res.status(400).json(session);
@@ -2638,17 +2638,29 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   if (booking.userId && booking.userId !== user.id && !user.allAccess && user.role !== 'admin') {
     return res.status(403).json({ error: 'not-your-booking' });
   }
-  const pc = booking.pendingCheckout;
-  if (!pc?.sessionId || !stripeEnabled()) return res.json({ booking, reconciled: false });
-  const s = await retrieveCheckoutSession(pc.sessionId).catch(() => ({ ok: false }));
+  // Prefer the session id from the return URL ({CHECKOUT_SESSION_ID}) — it needs
+  // NO stored state, so it survives a serverless instance change. Fall back to
+  // the session stored on the booking if the URL didn't carry one.
+  const sessionId = (req.body || {}).sessionId || booking.pendingCheckout?.sessionId;
+  if (!sessionId || !stripeEnabled()) return res.json({ booking, reconciled: false });
+  const s = await retrieveCheckoutSession(sessionId).catch(() => ({ ok: false }));
   if (!s.ok) return res.json({ booking, reconciled: false, error: s.error });
   if (!s.paid) return res.json({ booking, reconciled: false, pending: true });
+  // SECURITY: the Stripe session must actually belong to THIS booking (its
+  // metadata carries the bookingId we set at creation) — so a caller can't point
+  // a paid session for booking A at booking B.
+  if (s.metadata?.bookingId && s.metadata.bookingId !== booking.id) {
+    return res.status(409).json({ error: 'session-booking-mismatch' });
+  }
   const amount = (s.amountTotal || 0) / 100;
-  const idx = pc.instalmentIndex;
+  const idxRaw = s.metadata?.instalmentIndex ?? booking.pendingCheckout?.instalmentIndex;
+  const idx = idxRaw != null && idxRaw !== '' ? Number(idxRaw) : null;
   const isInst = Number.isInteger(idx);
   const updated = recordPayment(booking.id, {
-    type: isInst ? 'instalment' : (pc.kind === 'full' ? 'full' : 'deposit'),
-    amount, gateway: 'stripe', reference: pc.sessionId, paymentIntent: s.paymentIntent,
+    // Match the webhook exactly (type + reference = session id) so dedup makes a
+    // later webhook or a repeat reconcile a no-op — never a double charge.
+    type: isInst ? 'instalment' : 'stripe-checkout',
+    amount, gateway: 'stripe', reference: sessionId, paymentIntent: s.paymentIntent,
     ...(isInst ? { index: idx } : {}),
   });
   if (updated && isInst && updated.instalment?.schedule?.[idx]) updated.instalment.schedule[idx].status = 'paid';
