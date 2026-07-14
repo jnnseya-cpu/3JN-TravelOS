@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-ticketing-idempotency-v79';
+const BUILD_TAG = '2026-07-14-contact-email-unified-v80';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1811,7 +1811,7 @@ app.post('/api/login', safe((req, res) => {
   // BOT DEFENCE: quarantined accounts cannot log in until an admin restores
   // them (the appeal path keeps a mistaken flag recoverable in one click).
   if (user.flaggedBot || user.suspended) {
-    return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. If you are a real person, contact support@3jntravel.com and we will restore it personally.' });
+    return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. If you are a real person, contact info@3jntravel.com and we will restore it personally.' });
   }
   // Privileged accounts (admin, business, embassy…) can NEVER be opened by email
   // alone. Fail CLOSED: the staff PIN must be CONFIGURED and supplied — an unset
@@ -1896,7 +1896,7 @@ app.post('/api/auth/firebase', safe(async (req, res) => {
   const email = String(decoded.email).trim().toLowerCase();
   const existing = findUserByEmail(email);
   if (existing && (existing.flaggedBot || existing.suspended)) {
-    return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. Contact support@3jntravel.com to restore it.' });
+    return res.status(403).json({ error: 'account-quarantined', message: 'This account is on hold by our automated-account protection. Contact info@3jntravel.com to restore it.' });
   }
   // An allowlisted owner email is (or becomes) an admin. An allowlisted owner
   // signing in with a VERIFIED Firebase token is authenticated by two strong

@@ -80,7 +80,7 @@ export function botSignupVerdict({ name, email, honeypot, elapsedMs, interaction
     block,
     reasons,
     message: block
-      ? 'This signup was blocked by our automated-account protection. If you are a real person, contact support@3jntravel.com and we will open your account personally.'
+      ? 'This signup was blocked by our automated-account protection. If you are a real person, contact info@3jntravel.com and we will open your account personally.'
       : null,
   };
 }

@@ -12,7 +12,7 @@
 const BRAND = {
   name: '3JN Travel OS',
   tagline: 'Your journey, intelligently managed',
-  support: 'support@3jntravel.com',
+  support: 'info@3jntravel.com',
   site: '3jntravel.com',
   gold: '#c9a24b',
   ink: '#0f1830',
@@ -219,7 +219,7 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     <div class="seg" style="background:#f7f9fc">
       <table class="legs"><tbody>
         <tr><td class="dir">24/7 assistant</td><td>Open the 3JN app → 💬 chat. It checks this exact booking, resends documents, changes dates, and hands you to a human specialist when needed.</td></tr>
-        <tr><td class="dir">Email</td><td><b>support@3jntravel.com</b> — quote booking ref <b>${esc(booking.id)}</b> and we pick it up with your full file already open.</td></tr>
+        <tr><td class="dir">Email</td><td><b>info@3jntravel.com</b> — quote booking ref <b>${esc(booking.id)}</b> and we pick it up with your full file already open.</td></tr>
         <tr><td class="dir">Disruption</td><td>Flight cancelled or hotel issue on arrival? Contact us FIRST — we rebook or resolve directly with the supplier and you stay covered.</td></tr>
       </tbody></table>
     </div>
@@ -255,7 +255,7 @@ export function serviceBlockData(booking, c, i, { startDate = '', endDate = '' }
     rows.push(['Vehicle', esc(d.vehicle || 'Standard')], ['Capacity', esc(d.capacity || '')]);
     rows.push(['Trips', `${d.trips || 2} — airport → stay on arrival · stay → airport on departure`]);
     rows.push(['How it works', `Arrival: after baggage claim, your driver waits at the arrivals exit holding a <b>3JN board with your name</b>${startDate ? ` on ${esc(startDate)}` : ''}. The driver's name and phone number are sent to you by SMS and email <b>24 hours before pickup</b>. Departure: pickup time is confirmed the evening before.`]);
-    rows.push(['Can\'t find your driver?', 'Message the 3JN Assistant in the app or email support@3jntravel.com quoting your booking ref — we locate the driver live. Please don\'t book alternative transport without contacting us first.']);
+    rows.push(['Can\'t find your driver?', 'Message the 3JN Assistant in the app or email info@3jntravel.com quoting your booking ref — we locate the driver live. Please don\'t book alternative transport without contacting us first.']);
   } else if (c.type === 'esim') {
     // REAL eSIM (Airalo/eSIM Access) once provisioned — genuine ICCID, LPA
     // activation string, SM-DP+ address, QR and the eSIMs Cloud share link.

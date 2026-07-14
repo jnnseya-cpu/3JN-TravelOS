@@ -3413,7 +3413,7 @@ test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insur
   // 3JN's own service refs (transfer/voucher) are shown. Fabricated third-party
   // identifiers (hotel HTL-, eSIM ICCID 8944-, insurance POL-) are NO LONGER
   // invented — the document states honestly that they're issued on confirmation.
-  for (const must of ['176-2400123456', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', '3JN board with your name', 'VCH-', 'Superior Double', 'Breakfast included', 'support@3jntravel.com']) {
+  for (const must of ['176-2400123456', 'from 15:00', 'by 11:00', 'Downtown', 'TRF-', '3JN board with your name', 'VCH-', 'Superior Double', 'Breakfast included', 'info@3jntravel.com']) {
     assert.ok(html.includes(must), `document must contain ${must}`);
   }
   // Honesty: no fabricated hotel/insurance/eSIM identifiers a customer would try to use.

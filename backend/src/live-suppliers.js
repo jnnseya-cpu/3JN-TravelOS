@@ -390,7 +390,7 @@ export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey
 // desk as a guaranteed-valid fallback so a customer who never entered a phone
 // can still be ticketed (the airline contact is the agency — standard for an OTA).
 const AGENCY_CONTACT_PHONE = process.env.AGENCY_CONTACT_PHONE || '+442080160509';
-const AGENCY_CONTACT_EMAIL = process.env.AGENCY_CONTACT_EMAIL || 'bookings@3jntravel.com';
+const AGENCY_CONTACT_EMAIL = process.env.AGENCY_CONTACT_EMAIL || 'info@3jntravel.com';
 // Normalise to the E.164-ish shape Duffel accepts (leading +, 7–15 digits);
 // return '' when it can't be made valid so the fallback takes over.
 function normalisePhone(p) {
