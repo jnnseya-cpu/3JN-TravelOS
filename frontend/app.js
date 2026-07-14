@@ -5077,7 +5077,10 @@ window.sendContact = async () => {
   if (!email || !message) { toast('Enter your email and a message.'); return; }
   let d; try { d = await api('/api/contact', { method: 'POST', body: JSON.stringify({ name: $('#ctName').value.trim(), email, message }) }); } catch { return; }
   closeModal();
-  toast(d.sent ? '✓ Message sent to info@3jntravel.com.' : '✓ Message received — we’ll be in touch.');
+  // Honest outcome: if the email didn't actually send, say so (it's still saved
+  // to the support queue) instead of a misleading "sent" — surfaces a mail issue.
+  if (d.sent) toast('✓ Message sent to info@3jntravel.com — we reply 24/7.');
+  else toast('✓ Message received & logged' + (d.error ? ` (email pending: ${d.error})` : '') + ' — our team will reply.', 8000);
 };
 
 // ---- Become a Host --------------------------------------------------------

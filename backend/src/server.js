@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-contact-email-unified-v80';
+const BUILD_TAG = '2026-07-14-contact-form-durable-v81';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -937,7 +937,13 @@ app.post('/api/contact', safe(async (req, res) => {
     text: `From: ${name || ''} <${email}>\n\n${message}`,
     html: `<p><strong>From:</strong> ${htmlEsc(name || '')} &lt;${htmlEsc(email)}&gt;</p><p>${htmlEsc(String(message))}</p>`,
   });
-  res.json({ sent: r.ok, queued: !r.ok && r.skipped ? 'email-disabled' : undefined });
+  // Always record the enquiry as a support ticket so it is NEVER lost even if
+  // SMTP is down or the self-addressed mail is filtered — the admin sees it in
+  // the support queue regardless of email delivery.
+  try { createSupportTicket({ userId: currentUser(req)?.id || null, intent: 'contact-form', message: `From ${name || ''} <${email}>\n\n${message}`, reason: `Website contact form${r.ok ? '' : ' (email NOT delivered — reply manually)'}` }); } catch { /* best-effort */ }
+  // Report the outcome honestly (and the reason on failure) so a non-delivering
+  // contact form is diagnosable instead of silently "received".
+  res.json({ sent: r.ok, to: MAIN_CONTACT, queued: !r.ok && r.skipped ? 'email-disabled' : undefined, error: r.ok ? undefined : (r.error || r.reason || 'send-failed') });
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------
