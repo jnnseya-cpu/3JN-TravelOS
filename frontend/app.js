@@ -1912,9 +1912,12 @@ async function persistTravelProfile(silent = false, keepalive = false) {
     // keepalive lets an in-flight save complete even if the page is closing, so a
     // value typed moments before navigating away is never lost.
     data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify({ travelProfile: tp }), keepalive });
-  } catch {
+  } catch (e) {
     window.__tpDirty = true; // still unsaved — a flush or the next edit will retry
     if (st) { st.textContent = 'not saved — retrying…'; st.style.color = '#ff8a8a'; }
+    // On an explicit "Save" (not the silent autosave) surface WHY, so a failing
+    // save is never invisible ("it never saves").
+    if (!silent) toast('⚠ Travel profile not saved — ' + (e?.message || 'please try again.'), 8000);
     // Background retry so a transient failure (cold start, blip) still lands even
     // if the user has stopped typing. Skipped on the unload path (no time left).
     if (!keepalive) { clearTimeout(window.__tpRetry); window.__tpRetry = setTimeout(() => persistTravelProfile(true), 2500); }
@@ -2165,7 +2168,9 @@ window.saveProfile = async () => {
     coverImage: window.__cover || '',
   };
   let data;
-  try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); } catch { return; }
+  // Show WHY a save failed instead of silently doing nothing ("it never saves").
+  try { data = await api(`/api/account/${state.user.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); }
+  catch (e) { toast('⚠ Profile not saved — ' + (e?.message || 'please try again.'), 8000); return; }
   setUser(data.user);
   closeModal();
   toast('✓ Profile updated.');
