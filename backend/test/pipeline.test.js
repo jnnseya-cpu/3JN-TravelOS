@@ -1583,6 +1583,28 @@ test('hard-test: recordPayment survives a booking whose empty arrays were stripp
   assert.ok(Array.isArray(updated.priceGuard.events), 'priceGuard.events restored to an array');
 });
 
+// The Console must show the NEWEST booking on top, older trips below, and retire
+// anything older than the 5-year retention window.
+test('hard-test: bookings list newest-first, and 5-year-old bookings are retired', async () => {
+  const { listBookings, getBooking } = await import('../src/store.js');
+  const u = createUser({ name: 'Order Test', email: 'order@example.com' });
+  const r = plan({ text: 'weekend in Rome from London in August for 2 nights, flights', context: GB, user: null, searchTier: 'smart' });
+  const opt = r.packages.options[0];
+  const q = saveQuote({ option: opt, intent: r.intent, userId: u.id });
+  const older = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: u.id, paymentMethod: 'card' });
+  const newer = createBooking({ quoteId: q.id, option: opt, instalment: null, userId: u.id, paymentMethod: 'card' });
+  getBooking(older.id).createdAt = new Date(Date.now() - 86400000).toISOString(); // yesterday
+  getBooking(newer.id).createdAt = new Date().toISOString();                        // now
+  let list = listBookings(u.id);
+  assert.equal(list[0].id, newer.id, 'newest booking is on top');
+  assert.equal(list[1].id, older.id, 'older booking falls below');
+  // Age the older one past the 5-year window → retired from the list.
+  getBooking(older.id).createdAt = new Date(Date.now() - 6 * 365.25 * 24 * 3600 * 1000).toISOString();
+  list = listBookings(u.id);
+  assert.ok(!list.some((b) => b.id === older.id), '5-year-old booking is retired');
+  assert.ok(list.some((b) => b.id === newer.id), 'recent booking stays visible');
+});
+
 // ---- Flight document validation engine (spec part 3) ------------------------
 test('validation: blank pages, damaged passport, return proof, transit visa', () => {
   const base = { fullName: 'T Test', dob: '1990-01-01', nationality: 'GB', passportNumber: 'A1', passportExpiry: '2031-01-01' };

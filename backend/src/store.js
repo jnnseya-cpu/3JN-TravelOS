@@ -1415,8 +1415,22 @@ export function getBooking(bookingId) {
   return normalizeBooking(db.bookings.get(bookingId)) || null;
 }
 
+// Data-retention window: a booking older than 5 years is auto-retired from the
+// customer's list (data minimisation — we don't keep completed trips forever).
+const BOOKING_RETENTION_MS = Math.round(5 * 365.25 * 24 * 60 * 60 * 1000);
+
 export function listBookings(userId) {
-  return [...db.bookings.values()].map(normalizeBooking).filter((b) => !userId || b.userId === userId);
+  const cutoff = Date.now() - BOOKING_RETENTION_MS;
+  const list = [...db.bookings.values()]
+    .map(normalizeBooking)
+    .filter((b) => !userId || b.userId === userId)
+    // RETENTION: drop bookings created more than 5 years ago (a missing/invalid
+    // createdAt is treated as recent so we never hide a live booking by mistake).
+    .filter((b) => { const t = Date.parse(b.createdAt || '') || 0; return !t || t >= cutoff; });
+  // NEWEST FIRST: the latest booking sits on top of the list; older trips fall
+  // below it in descending order, so a new search/booking always shows first.
+  list.sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
+  return list;
 }
 
 export function recordPayment(bookingId, payment) {

@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-await-fulfilment-v74';
+const BUILD_TAG = '2026-07-14-acu-charge-and-booking-order-v75';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2093,8 +2093,16 @@ app.post('/api/plan', safe(async (req, res) => {
   // must hold enough ACU before a paid tier runs — members fund this from the
   // 10% of their subscription, everyone else tops up. The free/cached tier is
   // always allowed. Guests keep the demo via the cost-protection gate.
-  if (result.stage === 'options' && result.cached) {
+  if (result.stage === 'options' && result.cached && req.body?.approveAcu !== true) {
     // Served from the cache — no ACU is ever charged for a cached answer.
+    // EXCEPTION: `approveAcu === true` means the user is completing an ACU
+    // approval they were prompted for — and that prompt only ever appears for a
+    // NON-cached (fresh) result. The first (approval-required) call already ran
+    // plan() and cached its output, so this second call now finds it "cached".
+    // Treating that as free lost every charge behind an approval. So a cache hit
+    // that arrives WITH an approval is the round-trip artifact — fall through and
+    // charge it. A genuine popular-cache hit never carries approveAcu (no prompt
+    // was shown), so it stays free.
     result.acuCharged = 0;
   } else if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
