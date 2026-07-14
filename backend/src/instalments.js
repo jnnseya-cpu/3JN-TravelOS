@@ -163,6 +163,8 @@ export function buildSmartInstalmentPlan({ totalLocal, currency, departISO, toda
     engine: 'ai-smart',
     plan: declined ? 'Instant Purchase (instalments unavailable)' : effectiveTier.name,
     daysToDeparture: days,
+    departISO: departISO || null, // the actual departure date — drives the 7-day cutoff
+    finalPaymentDays: FINAL_PAYMENT_DAYS,
     currency: currency.code,
     symbol: currency.symbol,
     depositPct: round2(depositPct),

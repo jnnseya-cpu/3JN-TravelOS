@@ -3821,6 +3821,33 @@ test('smart instalments v2: Quick Pay splits 50/20/30 and Price Lock rides every
   assert.equal(plan.autopay.enabled, false, 'autopay is opt-in consent, never default-on');
 });
 
+// 7-day pre-departure hard cutoff: a 3-day warning, then cancel with NO refund.
+// The traveller is ON-TRACK (deposit paid) but never clears the final balance.
+test('instalments: 3-day cancellation warning, then 7-day pre-departure cutoff cancels with no refund', async () => {
+  const { createBooking: mkB, saveQuote: mkQ, enforceInstalments, getBooking, recordPayment: rec } = await import('../src/store.js');
+  const u = createUser({ name: 'Cutoff Test', email: 'cutoff.test@example.com' });
+  const option = { tier: 'Standard', totalUSD: 1266, pricing: { currency: 'GBP', symbol: '£', lines: { totalUSD: 1266 }, local: { total: 1000 }, revenue: { commissionUSD: 100 } }, components: [{ type: 'flight', supplier: 'Wizz Air', verified: true, reliabilityScore: 74, priceUSD: 1266, details: {} }] };
+  // Short runway → 'Last Minute' plan: deposit + a single instalment due 7 days out.
+  const plan = buildSmartInstalmentPlan({ totalLocal: 1000, currency: { code: 'GBP', symbol: '£' }, departISO: '2026-08-01', todayISO: '2026-07-18' });
+  assert.equal(plan.departISO, '2026-08-01', 'plan stores the departure date for the cutoff');
+  const q = mkQ({ option, intent: { dates: { checkIn: '2026-08-01' } } });
+  const b = mkB({ quoteId: q.id, option, instalment: plan, userId: u.id, paymentMethod: 'card' });
+  rec(b.id, { type: 'deposit', amount: plan.deposit }); // deposit paid → on-track, not fully paid
+  // 10 days before departure (2026-07-22 = 3 days before the 7-day cutoff) → a
+  // one-time warning fires (the traveller is not overdue, just short of the balance).
+  const warn = enforceInstalments('2026-07-22');
+  assert.ok(warn.actions.some((a) => a.bookingId === b.id && a.action === 'cutoff-warning'), '3-day cancellation warning fires');
+  const warn2 = enforceInstalments('2026-07-22');
+  assert.ok(!warn2.actions.some((a) => a.bookingId === b.id && a.action === 'cutoff-warning'), 'warning never repeats');
+  // 7 days before departure (2026-07-25), still not fully paid → cancelled, NO refund.
+  const cut = enforceInstalments('2026-07-25');
+  assert.ok(cut.actions.some((a) => a.bookingId === b.id && a.action === 'cancelled-departure-cutoff'), 'cutoff cancels the booking');
+  const after = getBooking(b.id);
+  assert.equal(after.status, 'cancelled-unpaid-cutoff');
+  assert.equal(after.instalmentDefault.noRefund, true, 'no refund inside the 7-day window');
+  assert.equal(after.instalmentDefault.refundableBalance, 0, 'nothing is refunded');
+});
+
 test('smart instalments v2: reminders fire at 14/7/3/1/0 days, receipts issue, price lock lands on the booking', async () => {
   const { createBooking: mkB, saveQuote: mkQ, enforceInstalments, recordPayment, getBooking, listNotifications } = await import('../src/store.js');
   const u = createUser({ name: 'Reminder Test', email: 'rem.test@example.com' });

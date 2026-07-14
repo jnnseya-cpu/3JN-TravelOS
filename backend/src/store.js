@@ -15,7 +15,7 @@ import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceC
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
-import { instalmentState, defaultOutcome, dueReminders, planPaid } from './instalments.js';
+import { instalmentState, defaultOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
 import { PLACEMENT_SECTIONS } from './partners.js';
@@ -2705,6 +2705,35 @@ export function enforceInstalments(todayISO) {
         b.autopayAttempts.push({ due: r.due, at: nowISO(), status: 'initiated', method: b.instalment.autopay.method || 'saved-card' });
         results.autopayAttempts += 1;
         results.actions.push({ bookingId: b.id, action: 'autopay-charge', due: r.due });
+      }
+    }
+    // HARD DEPARTURE CUTOFF: the balance MUST be settled at least 7 days before
+    // departure. Airlines/suppliers need ticketing lead time, so a part-paid seat
+    // can't be held to departure. Not fully paid inside the cutoff → the booking
+    // is CANCELLED with NO refund (this is stricter than the grace default, which
+    // only forfeits the deposit). A warning email fires 3 days before the cutoff.
+    const totalDue = round2((b.instalment.deposit || 0) + (b.instalment.schedule || []).reduce((s, x) => s + x.amount, 0));
+    const fullyPaid = planPaid(b) + 0.01 >= totalDue;
+    const daysToDep = b.instalment.departISO ? daysUntil(b.instalment.departISO, today) : null;
+    if (!fullyPaid && daysToDep != null && daysToDep >= 0) {
+      if (daysToDep <= FINAL_PAYMENT_DAYS) {
+        const paidSoFar = planPaid(b);
+        b.status = 'cancelled-unpaid-cutoff';
+        b.instalmentDefault = { at: nowISO(), reason: 'departure-cutoff', forfeitedDeposit: paidSoFar, refundableBalance: 0, noRefund: true, departISO: b.instalment.departISO };
+        for (const r of db.revshareLedger) if (r.bookingId === b.id) r.reversed = true;
+        for (const s of db.vendorSales) if (s.bookingId === b.id && !s.paidOut) s.refunded = true;
+        results.defaulted += 1;
+        results.actions.push({ bookingId: b.id, action: 'cancelled-departure-cutoff', departISO: b.instalment.departISO, forfeited: paidSoFar });
+        recordAudit({ actor: 'system', role: 'system', action: 'instalment.departure-cutoff', entity: 'booking', entityId: b.id, summary: `unpaid ${FINAL_PAYMENT_DAYS}d before departure (${b.instalment.departISO}) — cancelled, NO refund (${b.instalment.symbol}${paidSoFar} forfeited)` });
+        if (b.userId) pushNotification(b.userId, { type: 'warning', icon: '❌', title: 'Booking cancelled — balance not paid in time', body: `The balance wasn't paid at least ${FINAL_PAYMENT_DAYS} days before departure, so the booking was cancelled per the plan terms. As this is inside the ${FINAL_PAYMENT_DAYS}-day pre-departure window, no refund is due.` });
+        continue; // cancelled — skip the grace/default path
+      }
+      if (daysToDep <= FINAL_PAYMENT_DAYS + 3 && !b.cutoffWarnSent) {
+        b.cutoffWarnSent = true;
+        results.warned += 1;
+        const owed = round2(Math.max(0, totalDue - planPaid(b)));
+        results.actions.push({ bookingId: b.id, action: 'cutoff-warning', departISO: b.instalment.departISO, owed });
+        if (b.userId) pushNotification(b.userId, { type: 'warning', icon: '⚠️', title: 'Pay in 3 days or your booking is cancelled', body: `Your balance of ${b.instalment.symbol}${owed.toFixed(2)} must clear at least ${FINAL_PAYMENT_DAYS} days before departure. If it isn't paid within 3 days your booking will be cancelled and, inside the ${FINAL_PAYMENT_DAYS}-day window, no refund is due. Pay now from your Console.` });
       }
     }
     const state = instalmentState(b, today);

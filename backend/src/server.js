@@ -10,7 +10,7 @@ import { destinationsCatalog, findDestination, resolveOrigin, originForCountry }
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-member-flat-flight-fee-v87';
+const BUILD_TAG = '2026-07-14-instalment-reminders-cutoff-v88';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2357,12 +2357,47 @@ app.get('/api/instalments/preview', safe((req, res) => {
   if (!plan) return res.status(400).json({ error: 'bad-departure-date', message: 'Pass ?depart=YYYY-MM-DD (a future date) and optional ?total=.' });
   res.json({ plan, tiers: INSTALMENT_TIERS.map((t) => ({ band: t.maxDays === Infinity ? `${t.minDays}+ days` : `${t.minDays}–${t.maxDays} days`, name: t.name, depositPct: t.depositPct, instalments: t.schedule.length })), graceHours: INSTALMENT_GRACE_HOURS });
 }));
-// Enforcement sweep: reminders (14/7/3/1/0 days), autopay charges, grace
-// warnings + auto-cancel of defaulted plans. Run by the admin (or a scheduler
-// in production).
-app.post('/api/admin/instalments/enforce', safe((req, res) => {
+// Run the dunning sweep AND email the customer-facing actions. store.js does the
+// state changes + in-OS notifications; the EMAIL fan-out lives here (store.js has
+// no mailer). Emails are AWAITED so they complete before a serverless freeze.
+async function runInstalmentEnforcement(today) {
+  const results = enforceInstalments(today);
+  for (const a of results.actions || []) {
+    try {
+      const booking = getBooking(a.bookingId);
+      if (!booking) continue;
+      const to = booking.leadTraveller?.email || booking.lead?.email || (booking.userId ? getUser(booking.userId)?.email : null);
+      if (!to || /@guest\.3jn$/.test(to)) continue;
+      const sym = booking.instalment?.symbol || booking.option?.pricing?.symbol || '£';
+      const ref = booking.id;
+      const amt = (v) => `${sym}${Number(v || 0).toFixed(2)}`;
+      if (a.action === 'reminder' && a.daysAway === 3) {
+        await sendMail({ to, subject: `Reminder — your 3JN instalment is due in 3 days`, text: `Your instalment of ${amt(a.amount)} is due on ${a.due} (3 days from now). Pay any time from your 3JN Console — early payment is always free. Booking ref ${ref}.`, html: `<p>Your instalment of <strong>${amt(a.amount)}</strong> is due on <strong>${a.due}</strong> — 3 days from now.</p><p>Pay any time from your 3JN Console; early payment is always free.</p><p style="color:#6b7799;font-size:12px">Booking ref ${ref}</p>` });
+      } else if (a.action === 'cutoff-warning') {
+        await sendMail({ to, subject: `Action needed — pay in 3 days or your booking is cancelled`, text: `Your balance of ${amt(a.owed)} must clear at least ${FINAL_PAYMENT_DAYS} days before departure (${a.departISO}). If it isn't paid within 3 days your booking will be cancelled and, inside the ${FINAL_PAYMENT_DAYS}-day pre-departure window, no refund is due. Pay now from your 3JN Console. Booking ref ${ref}.`, html: `<p><strong>Please pay within 3 days to keep your booking.</strong></p><p>Your balance of <strong>${amt(a.owed)}</strong> must clear at least ${FINAL_PAYMENT_DAYS} days before departure (${a.departISO}). If it isn't paid in time your booking will be cancelled and, inside the ${FINAL_PAYMENT_DAYS}-day pre-departure window, <strong>no refund is due</strong>.</p><p>Pay now from your 3JN Console.</p><p style="color:#6b7799;font-size:12px">Booking ref ${ref}</p>` });
+      } else if (a.action === 'cancelled-departure-cutoff') {
+        await sendMail({ to, subject: `Your 3JN booking has been cancelled`, text: `The balance wasn't paid at least ${FINAL_PAYMENT_DAYS} days before departure, so your booking (${ref}) was cancelled per the plan terms. As this is inside the ${FINAL_PAYMENT_DAYS}-day pre-departure window, no refund is due. Questions? info@3jntravel.com`, html: `<p>Your booking <strong>${ref}</strong> has been cancelled — the balance wasn't paid at least ${FINAL_PAYMENT_DAYS} days before departure.</p><p>As this is inside the ${FINAL_PAYMENT_DAYS}-day pre-departure window, no refund is due, per the plan terms you agreed at booking.</p><p>Questions? info@3jntravel.com</p>` });
+      } else if (a.action === 'auto-cancelled') {
+        await sendMail({ to, subject: `Your 3JN booking has been cancelled`, text: `An instalment was missed and the grace period passed, so your booking (${ref}) was cancelled. The deposit is non-refundable${a.refundableBalance > 0 ? `; ${amt(a.refundableBalance)} is being refunded per supplier policy` : ''}. Questions? info@3jntravel.com`, html: `<p>Your booking <strong>${ref}</strong> has been cancelled — an instalment was missed and the grace period passed.</p><p>The deposit is non-refundable${a.refundableBalance > 0 ? `; ${amt(a.refundableBalance)} is being refunded per supplier policy` : ''}.</p><p>Questions? info@3jntravel.com</p>` });
+      }
+    } catch { /* email is best-effort — never break the sweep */ }
+  }
+  return results;
+}
+// Enforcement sweep: reminders (14/7/3/1/0 days), the 3-day cancellation warning,
+// the 7-day pre-departure cutoff (cancel + no refund), autopay charges, grace
+// warnings + auto-cancel. Run by the admin, or the daily Vercel cron below.
+app.post('/api/admin/instalments/enforce', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  res.json(enforceInstalments(req.body?.today));
+  res.json(await runInstalmentEnforcement(req.body?.today));
+}));
+// Daily scheduler target (Vercel cron → GET). Protected by CRON_SECRET when set
+// (Vercel sends it as a Bearer token); open only when no secret is configured.
+app.get('/api/cron/instalments', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  const results = await runInstalmentEnforcement();
+  res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted });
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved
