@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-access-restored-v65';
+const BUILD_TAG = '2026-07-14-customer-console-resilient-v67';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -985,16 +985,20 @@ async function sendWelcomeEmail(user) {
 // OWNERSHIP: an account holds passport/PII — only the owner (or an all-access
 // admin) may read it, and never another user's raw bookings.
 app.get('/api/account/:id', safe(async (req, res) => {
+  // FRESHNESS (must run BEFORE the auth check): a brand-new sign-in — or a profile
+  // autosave — may have landed on ANOTHER serverless instance moments ago. If we
+  // resolve the caller from THIS instance's memory first, a freshly-created
+  // customer is wrongly seen as unauthenticated (401) and their console comes up
+  // empty ("I signed in but can't reach my console"). Hydrate the latest store up
+  // front, then resolve the caller, so cross-instance lag can't 401 a real user or
+  // show a stale/empty profile. One load serves both the auth check and the read.
+  if (IS_SERVERLESS && isEnabled()) {
+    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ }
+  }
   const caller = currentUser(req);
   if (!caller) return res.status(401).json({ error: 'auth-required' });
   if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
     return res.status(403).json({ error: 'not-your-account' });
-  }
-  // FRESHNESS: a profile autosave may have landed on ANOTHER serverless instance
-  // moments ago. Pull the latest before returning so a reload never shows a stale
-  // (empty) travel profile / balance — "autosaved but nothing saved" was this.
-  if (IS_SERVERLESS && isEnabled()) {
-    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ }
   }
   const stored = getUser(req.params.id);
   if (!stored) return res.status(404).json({ error: 'not-found' });

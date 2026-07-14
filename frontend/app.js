@@ -1618,16 +1618,25 @@ async function renderConsole() {
       <button class="btn btn-ghost" onclick="provisionTest()" style="margin-left:10px">Use test account</button></div>`;
     return;
   }
-  let data;
-  try { data = await api(`/api/account/${state.user.id}`, { silent: true }); }
-  catch (e) {
-    if (e.status === 404) { try { localStorage.removeItem('3jn_uid'); } catch {} state.user = null; renderConsole(); }
-    return;
+  let data, quoteReqs = [], stale = false;
+  try {
+    data = await api(`/api/account/${state.user.id}`, { silent: true });
+    try { quoteReqs = (await api('/api/quote-requests', { silent: true })).requests || []; } catch { /* optional */ }
+  } catch (e) {
+    // RESILIENT CONSOLE: on a multi-instance serverless host a just-created (or
+    // just-signed-in) account can momentarily be "not found" on the specific
+    // instance this request lands on — a propagation lag, NOT a deleted account.
+    // The old behaviour (log out on 404, blank on any other error) is exactly the
+    // "I signed in but can't reach my console" symptom. Instead render from the
+    // full account object we already hold from sign-in (state.user is a complete
+    // publicUser), mark it stale, and silently re-sync a moment later once the
+    // account has propagated. We never kick the customer out for a transient miss.
+    data = { user: state.user, bookings: [] };
+    stale = true;
+    setTimeout(() => { if (state.user) renderConsole(); }, 1800);
   }
   const u = data.user;
   const bookings = data.bookings || [];
-  let quoteReqs = [];
-  try { quoteReqs = (await api('/api/quote-requests', { silent: true })).requests || []; } catch { /* optional */ }
 
   const profile = `
     <div class="card pad">
@@ -1643,7 +1652,7 @@ async function renderConsole() {
       <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
       ${u.membership?.active
         ? `<div class="kv"><span>Membership</span><span style="color:var(--green)">${u.membership.name}</span></div>
-           <div class="kv"><span>Auto-funds</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU/mo (10%)</span></div>
+           <div class="kv"><span>Auto-funds</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU/mo</span></div>
            <div class="kv"><span>Renews</span><span>${ukDate(u.membership.renewsAt)}</span></div>`
         : `<div class="kv"><span>Membership</span><span class="muted">None — join to auto-fund ACUs</span></div>`}
       <div class="kv"><span>Referral code</span><span>${u.referralCode}</span></div>
@@ -1701,7 +1710,10 @@ async function renderConsole() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">${rb.actions.map(([label, fn]) => `<button class="btn btn-gold btn-sm" onclick="${fn}">${label}</button>`).join('')}</div>
     </div>` : '';
 
-  out.innerHTML = `${roleBanner}<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
+  const staleNote = stale
+    ? `<div class="card pad" style="border-color:rgba(216,180,106,.35);margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="muted" style="font-size:12.5px">⟳ Showing your saved profile — syncing your latest bookings &amp; balances…</span></div>`
+    : '';
+  out.innerHTML = `${staleNote}${roleBanner}<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
   renderTravelProfile();
   renderEsims();
