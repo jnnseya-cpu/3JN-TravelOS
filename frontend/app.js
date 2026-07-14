@@ -727,11 +727,23 @@ function renderOptions(data) {
 
   // Deep Price Dive — the deep-thinking pass behind every funded search:
   // quantified savings levers + the unbeatable-price verdict.
+  //
+  // LIVE PRICES ONLY (customer view): a customer is shown ONLY savings that are
+  // VERIFIED against live inventory. Estimated / indicative levers — and an
+  // all-estimate dive with no live data — are never shown to the public: no
+  // speculative "save £X" on a synthesised price, no "estimate"/"indicative"
+  // tags, no "confirmed before you pay" disclaimer. Staff still see the full
+  // estimator dive for quoting.
   const dive = data.priceDive;
-  const diveCard = dive ? `
+  const diveStaff = isStaff();
+  const diveSavings = diveStaff ? (dive?.savings || []) : (dive?.savings || []).filter((sv) => sv.basis === 'verified');
+  // A customer only sees the dive when there is at least one live-verified
+  // saving; otherwise the whole block is hidden (nothing speculative surfaces).
+  const showDive = !!dive && (diveStaff || diveSavings.length > 0);
+  const diveCard = showDive ? `
     <div class="card pad" style="margin-bottom:20px">
-      <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers${dive.basis === 'estimated' ? ' · estimated' : ''}</span>
-      ${dive.savings.length ? dive.savings.map((sv, i) => {
+      <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers${diveStaff && dive.basis === 'estimated' ? ' · estimated' : ''}</span>
+      ${diveSavings.length ? diveSavings.map((sv, i) => {
         const tag = sv.basis === 'verified' ? '<span class="chip" style="font-size:9px;border-color:rgba(121,217,155,.4);color:#79d99b">verified</span>'
           : sv.basis === 'estimated' ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">estimate</span>'
           : sv.basis === 'indicative' ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
@@ -744,8 +756,8 @@ function renderOptions(data) {
         return `<div class="ln"><span class="ok" style="color:var(--gold)">◆</span> <strong>${esc(sv.lever)}</strong> ${tag} — ${esc(sv.how)} <span style="color:var(--green);font-weight:700">save ${money(sv.savingUSD * (data.context?.currency?.rateFromUSD || 1), sym)}</span>${applyBtn}</div>`;
       }).join('')
         : '<div class="ln"><span class="ok">●</span> No cheaper reliable combination exists on your exact dates and airports.</div>'}
-      ${dive.indicativeNote ? `<p class="muted" style="font-size:11.5px;margin-top:8px">ℹ ${esc(dive.indicativeNote)}</p>` : ''}
-      <div class="pill" style="margin-top:12px;border-color:rgba(70,211,154,0.4)"><span class="dot" style="background:var(--green)"></span> ${esc(dive.unbeatable.verdict)}</div>
+      ${(diveStaff && dive.indicativeNote) ? `<p class="muted" style="font-size:11.5px;margin-top:8px">ℹ ${esc(dive.indicativeNote)}</p>` : ''}
+      ${(diveStaff || dive.unbeatable.live) ? `<div class="pill" style="margin-top:12px;border-color:rgba(70,211,154,0.4)"><span class="dot" style="background:var(--green)"></span> ${esc(dive.unbeatable.verdict)}</div>` : ''}
     </div>` : '';
 
   const opts = data.packages.options.map((o) => optionCard(o, sym, intent)).join('');
