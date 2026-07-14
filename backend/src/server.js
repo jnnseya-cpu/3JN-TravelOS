@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-profile-save-visible-v78';
+const BUILD_TAG = '2026-07-14-ticketing-idempotency-v79';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -498,6 +498,11 @@ async function failManifestToOps(booking, offerCount, manifestCount) {
   if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '📝', title: 'One more step — traveller names', body: `Your booking is secured. We just need the full name (as on passport) for every traveller before we can issue tickets. Please add them in your Console or reply to our team — your seats are held.` });
 }
 
+// Duffel single-use offers: a second attempt to book an offer we already booked
+// returns "...offers ... has already been booked...". That error is PROOF the
+// ticket exists — it must be handled as success, never as a failure/refund.
+const offerAlreadyBooked = (e) => /already\s+(been\s+)?booked/i.test(String(e || ''));
+
 // The booking → ticket lifecycle (the model: WE book, WE issue the ticket).
 //   • Pay in full  → issue the ticket now (Duffel order, instant).
 //   • Instalments  → HOLD the fare now (Duffel hold order); issue the ticket
@@ -546,7 +551,9 @@ async function autoTicketFlight(booking) {
   // only set AFTER the await → double order/charge. Claim the booking
   // SYNCHRONOUSLY (before any await) so only the first proceeds.
   const stage = booking.fulfilment?.ticketing;
-  if (stage === 'issued' || stage === 'issuing') return;
+  // STRONG IDEMPOTENCY: a completed Duffel order (issued, or a real order id) is
+  // final — never re-enter and re-book its single-use offer.
+  if (stage === 'issued' || stage === 'issuing' || booking.fulfilment?.duffelOrderId) return;
   // BUILD the passenger manifest and REFUSE to fabricate names — a group ticket
   // issued with placeholder names ("Guest2 Traveller") means denied boarding.
   const offerPax = flight.details.offerPassengers || [];
@@ -573,7 +580,13 @@ async function autoTicketFlight(booking) {
       return;
     }
     const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers, idempotencyKey: `hold:${booking.id}` });
-    if (!hold.ok) { ful().ticketing = 'hold-failed'; booking.fulfilment.reason = hold.error; return; }
+    if (!hold.ok) {
+      // "already booked" = this single-use offer was ALREADY ticketed by us on a
+      // prior (racing) reconcile — the order EXISTS. Never refund or mark failed;
+      // keep it as issued so a good ticket is never clobbered by a duplicate call.
+      if (offerAlreadyBooked(hold.error)) { ful(); if (booking.fulfilment.ticketing !== 'issued') { booking.fulfilment.ticketing = 'issued'; booking.fulfilment.ticketSyncPending = !booking.fulfilment.pnr; } return; }
+      ful().ticketing = 'hold-failed'; booking.fulfilment.reason = hold.error; return;
+    }
     ful();
     booking.fulfilment.ticketing = 'held';
     booking.fulfilment.holdOrderId = hold.order.id;
@@ -605,6 +618,9 @@ async function autoTicketFlight(booking) {
     order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: check.amount || flight.details.liveAmount, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}` });
   }
   if (!order.ok) {
+    // Same guard on the issue path: an "already booked" offer means we already
+    // ticketed it — treat as issued, never refund a correctly-ticketed customer.
+    if (offerAlreadyBooked(order.error)) { ful(); if (booking.fulfilment.ticketing !== 'issued') { booking.fulfilment.ticketing = 'issued'; booking.fulfilment.ticketSyncPending = !booking.fulfilment.pnr; } return; }
     await failTicketingWithRefund(booking, order.error || 'ticket-issue-failed');
     return;
   }
@@ -2708,7 +2724,8 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   // internal") — the money moved at Stripe, so the customer needs a clear reason,
   // and we need the actual cause without server-log access. Catch it and return
   // the detail so the frontend can show exactly what went wrong.
-  let updated;
+  let updated, newlyRecorded = false;
+  const paymentsBefore = (booking.payments || []).length;
   try {
     updated = recordPayment(booking.id, {
       // Match the webhook exactly (type + reference = session id) so dedup makes a
@@ -2717,6 +2734,11 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
       amount, gateway: 'stripe', reference: sessionId, paymentIntent: s.paymentIntent,
       ...(isInst ? { index: idx } : {}),
     });
+    // Did THIS call actually add a payment? recordPayment dedups by reference, so a
+    // repeat reconcile (the app retries up to 5×) returns the booking unchanged.
+    // Only a genuinely-new payment should drive fulfilment — otherwise every retry
+    // re-attempts to book the single-use Duffel offer and clobbers a good ticket.
+    newlyRecorded = !!updated && (updated.payments || []).length > paymentsBefore;
     if (updated && isInst && updated.instalment?.schedule?.[idx]) updated.instalment.schedule[idx].status = 'paid';
     if (updated && s.paymentIntent) updated.stripePaymentIntent = s.paymentIntent;
   } catch (e) {
@@ -2728,7 +2750,7 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   // already recorded above, and the response MUST complete so the persistence
   // middleware flushes that payment to the durable store. Any throw here (a deal
   // fulfilment edge case, a sync error in ticketing) is logged, not propagated.
-  if (updated) {
+  if (updated && newlyRecorded) {
     try { if (updated.sourceDealId && bookingFullyPaid(updated) && !updated.dealFulfilmentCreated) createDealFulfilment(updated); } catch (e) { console.error('[reconcile-deal]', e?.message || e); }
     // SERVERLESS: once res.json returns, the Vercel instance FREEZES — a
     // fire-and-forget promise never runs, so the ticket/room/PDF-email would
@@ -2793,7 +2815,11 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       // path does. A deposit / pay-in-full has no index and stays 'stripe-checkout'.
       const instalmentIndex = meta.instalmentIndex != null && meta.instalmentIndex !== '' ? Number(meta.instalmentIndex) : null;
       const paymentType = Number.isInteger(instalmentIndex) ? 'instalment' : 'stripe-checkout';
+      const wbPaymentsBefore = (getBooking(meta.bookingId)?.payments || []).length;
       const booking = recordPayment(meta.bookingId, { type: paymentType, amount: amountMinor / 100, gateway: 'stripe', reference: event.data?.object?.id, paymentIntent, ...(Number.isInteger(instalmentIndex) ? { index: instalmentIndex } : {}) });
+      // Only a genuinely-new payment drives fulfilment — a redelivered event
+      // dedups in recordPayment and must NOT re-attempt to book the offer.
+      const wbNewlyRecorded = !!booking && (booking.payments || []).length > wbPaymentsBefore;
       if (booking && Number.isInteger(instalmentIndex) && booking.instalment?.schedule?.[instalmentIndex]) {
         booking.instalment.schedule[instalmentIndex].status = 'paid';
       }
@@ -2818,13 +2844,13 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       // creating the Duffel order. Failure flags the booking for a refund rather
       // than leaving the traveller paid-but-unticketed. AWAITED: on a serverless
       // host a detached promise dies when the webhook response returns.
-      if (booking) { try { await autoTicketFlight(booking); } catch (e) { console.error('[ticketing]', e?.message || e); } }
+      if (booking && wbNewlyRecorded) { try { await autoTicketFlight(booking); } catch (e) { console.error('[ticketing]', e?.message || e); } }
       // AUTO-BOOK the hotel too (Duffel Stays: rates → quote → book). Failure
       // hands off to the ops desk, never a paid-but-unbooked room.
-      if (booking) { try { await autoBookStays(booking); } catch (e) { console.error('[stays]', e?.message || e); } }
+      if (booking && wbNewlyRecorded) { try { await autoBookStays(booking); } catch (e) { console.error('[stays]', e?.message || e); } }
       // Paid in full via Stripe → email the full booking document (PDF-ready),
       // on top of the Console copy. Idempotent + fires only when fully paid.
-      if (booking) { try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); } }
+      if (booking && wbNewlyRecorded) { try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); } }
     }
   }
   res.json({ received: true });
