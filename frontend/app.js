@@ -2295,23 +2295,35 @@ function bookingCard(b) {
   const lockBadge = b.priceLock?.locked
     ? `<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b" title="${esc(b.priceLock.guarantee || '')}">🔒 PRICE LOCKED${lockSavedUSD > 0 ? ` · saved ${money2(lockSavedUSD * (o.pricing.local.total / o.pricing.lines.totalUSD), sym)} vs market` : ''}</span>` : '';
 
-  // Trip headline: route + dates, best-effort from the booked components. Wrapped
-  // so a missing field only SHORTENS the line — it must never throw (an undefined
-  // `tripLine` reference here previously crashed the entire console render).
+  // Trip headline: DEPARTURE → ARRIVAL city + travel dates (from → to), best-effort
+  // from the booked components. A flight component carries the real cities/dates on
+  // details.outbound / details.inbound; a train/coach/ferry uses details.route; a
+  // stay carries checkIn/checkOut/nights. Wrapped so a missing field only SHORTENS
+  // the line — it must never throw (an undefined `tripLine` here previously crashed
+  // the whole console render).
   let tripLine = '';
   try {
     const comps = o.components || [];
     const journey = comps.find((c) => ['flight', 'train', 'coach', 'ferry', 'cruise'].includes(c.type));
     const stay = comps.find((c) => ['hotel', 'host'].includes(c.type));
-    const route = journey?.details?.route || '';
-    const ci = stay?.details?.checkIn || journey?.details?.checkIn || '';
-    const co = stay?.details?.checkOut || '';
+    const d = journey?.details || {};
+    const ob = d.outbound || {};
+    // Departure → arrival cities (prefer full city names, fall back to airport
+    // codes, then a pre-formatted route string, then the stay's area).
+    const fromCity = ob.fromCity || ob.from || '';
+    const toCity = ob.toCity || ob.to || '';
+    let routeStr = (fromCity && toCity) ? `${fromCity} → ${toCity}`
+      : d.route || stay?.details?.area || '';
+    // Travel dates: outbound date → return date (round trip), else the stay's
+    // check-in → check-out, else the nights count.
+    const outDate = ob.date || stay?.details?.checkIn || journey?.details?.checkIn || '';
+    const backDate = d.inbound?.date || stay?.details?.checkOut || '';
     const nights = stay?.details?.nights;
+    let dateStr = outDate ? `${ukDate(outDate)}${backDate ? ' → ' + ukDate(backDate) : ''}`
+      : (nights ? `${nights} night${nights > 1 ? 's' : ''}` : '');
     const bits = [];
-    if (route) bits.push(esc(route));
-    else if (stay?.details?.area) bits.push(esc(stay.details.area));
-    if (ci) bits.push(`${ukDate(ci)}${co ? ' → ' + ukDate(co) : ''}`);
-    else if (nights) bits.push(`${nights} night${nights > 1 ? 's' : ''}`);
+    if (routeStr) bits.push(esc(routeStr));
+    if (dateStr) bits.push(dateStr);
     tripLine = bits.join(' · ');
   } catch { tripLine = ''; }
 
