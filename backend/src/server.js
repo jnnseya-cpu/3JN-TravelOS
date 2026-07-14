@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-payment-empty-array-fix-v73';
+const BUILD_TAG = '2026-07-14-await-fulfilment-v74';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -441,7 +441,10 @@ async function emailBookingConfirmation(booking) {
   const completed = bookingFullyPaid(booking) || (!booking.instalment && booking.pointsAwarded);
   if (!completed) return;
   const lead = booking.leadTraveller || booking.lead || {};
-  const to = lead.email || booking.lead?.email;
+  // Prefer the traveller's own email; fall back to the account owner's email so a
+  // booking made without a captured traveller email STILL gets its confirmation
+  // PDF (the customer is signed in, so we always have an address to reach them).
+  const to = lead.email || booking.lead?.email || (booking.userId ? getUser(booking.userId)?.email : null);
   if (!to) return;
   booking.confirmationEmailSent = true; // claim before await → send-once
   try {
@@ -2708,9 +2711,15 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   // fulfilment edge case, a sync error in ticketing) is logged, not propagated.
   if (updated) {
     try { if (updated.sourceDealId && bookingFullyPaid(updated) && !updated.dealFulfilmentCreated) createDealFulfilment(updated); } catch (e) { console.error('[reconcile-deal]', e?.message || e); }
-    Promise.resolve().then(() => autoTicketFlight(updated)).catch((e) => console.error('[ticketing]', e?.message || e));
-    Promise.resolve().then(() => autoBookStays(updated)).catch((e) => console.error('[stays]', e?.message || e));
-    Promise.resolve().then(() => emailBookingConfirmation(updated)).catch((e) => console.error('[confirm-email]', e?.message || e));
+    // SERVERLESS: once res.json returns, the Vercel instance FREEZES — a
+    // fire-and-forget promise never runs, so the ticket/room/PDF-email would
+    // silently never happen (paid-but-nothing-released). AWAIT each step (each
+    // guarded so one failure can't block the others or the response), so the
+    // PNR/e-ticket + confirmation email actually issue AND the booking mutations
+    // (fulfilment, ticketing status) are captured by the synchronous store flush.
+    try { await autoTicketFlight(updated); } catch (e) { console.error('[ticketing]', e?.message || e); }
+    try { await autoBookStays(updated); } catch (e) { console.error('[stays]', e?.message || e); }
+    try { await emailBookingConfirmation(updated); } catch (e) { console.error('[confirm-email]', e?.message || e); }
   }
   let paidPct = 0;
   try {
@@ -2721,7 +2730,7 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   res.json({ booking: updated || booking, reconciled: !!updated, recordedAmount: amount, paidPct });
 }));
 // Webhook: signature-verified; a forged event can never mark a booking paid.
-app.post('/api/pay/stripe/webhook', safe((req, res) => {
+app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
   const sig = req.headers['stripe-signature'];
   const check = verifyStripeSignature(req.rawBody, sig);
   if (!check.ok) return res.status(400).json(check);
@@ -2787,15 +2796,16 @@ app.post('/api/pay/stripe/webhook', safe((req, res) => {
         }
       }
       // AUTO-TICKETING: money is captured — now issue the flight ticket by
-      // creating the Duffel order. Runs async; failure flags the booking for a
-      // refund rather than leaving the traveller paid-but-unticketed.
-      if (booking) autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
+      // creating the Duffel order. Failure flags the booking for a refund rather
+      // than leaving the traveller paid-but-unticketed. AWAITED: on a serverless
+      // host a detached promise dies when the webhook response returns.
+      if (booking) { try { await autoTicketFlight(booking); } catch (e) { console.error('[ticketing]', e?.message || e); } }
       // AUTO-BOOK the hotel too (Duffel Stays: rates → quote → book). Failure
       // hands off to the ops desk, never a paid-but-unbooked room.
-      if (booking) autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+      if (booking) { try { await autoBookStays(booking); } catch (e) { console.error('[stays]', e?.message || e); } }
       // Paid in full via Stripe → email the full booking document (PDF-ready),
       // on top of the Console copy. Idempotent + fires only when fully paid.
-      if (booking) emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
+      if (booking) { try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); } }
     }
   }
   res.json({ received: true });
