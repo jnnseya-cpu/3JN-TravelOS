@@ -1951,8 +1951,20 @@ app.post('/api/plan', safe(async (req, res) => {
   // quota / spend. The deterministic estimate above is unaffected — only the
   // expensive fetches are gated. One budget check per request; when exceeded we
   // skip the external overlays and serve the estimate.
+  // DIAGNOSTIC: capture WHY a search ends up estimated instead of live, so the
+  // silent fallback (below) is never a mystery to the operator. Attached to the
+  // response as `liveOverlay`.
+  const liveOverlay = { attempted: false, applied: false, reason: null, flightsFound: 0, hotelsFound: 0, duffelMode: duffelMode() };
   const liveBudget = rateLimitLiveSearch(clientIp(req));
+  if (result.stage !== 'options') {
+    liveOverlay.reason = 'not-options-stage';
+  } else if (!liveSuppliersConfigured()) {
+    liveOverlay.reason = 'no-supplier-keys';
+  } else if (!liveBudget.ok) {
+    liveOverlay.reason = 'live-search-rate-limited';
+  }
   if (result.stage === 'options' && liveSuppliersConfigured() && liveBudget.ok) {
+    liveOverlay.attempted = true;
     try {
       const intent = result.intent;
       const dest = intent.destination;
@@ -1990,12 +2002,28 @@ app.post('/api/plan', safe(async (req, res) => {
         const trs = await mozioTransfersForScan({ destAirport: dest.airport, destCity: dest.city, dateTimeISO: intent.dates?.checkIn ? `${intent.dates.checkIn}T12:00:00` : undefined, pax: intent.travellers?.total }).catch(() => null);
         if (trs && trs.length) live = { ...live, transfers: trs };
       }
+      liveOverlay.flightsFound = (live.flights?.length || 0) + (live.groupFlights?.length || 0);
+      liveOverlay.hotelsFound = live.hotels?.length || 0;
       const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length) || (live.activities && live.activities.length) || (live.transfers && live.transfers.length);
       if (hasLive) {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });
+        liveOverlay.applied = true;
+        liveOverlay.reason = 'live-applied';
+      } else {
+        // Suppliers ARE connected but returned NOTHING for this exact route/date
+        // (common in Duffel's TEST sandbox, which has limited inventory) — so the
+        // trip stays estimated and unpayable. This is the usual "everything is an
+        // estimate even though keys are set" cause.
+        liveOverlay.reason = 'suppliers-returned-no-offers';
       }
-    } catch { /* keep the estimated result */ }
+    } catch (e) {
+      // A live fetch threw (network/auth/provider error). Keep the estimate, but
+      // record the reason so it isn't invisible.
+      liveOverlay.reason = 'live-fetch-error';
+      liveOverlay.error = String(e?.message || e).slice(0, 200);
+    }
   }
+  if (result && typeof result === 'object') result.liveOverlay = liveOverlay;
 
   // REAL MARKET REFERENCE (Aviasales cache incl. Ryanair/Jet2): when our fare
   // is still estimated, show what the market actually charges on this route —

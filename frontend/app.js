@@ -824,6 +824,20 @@ function renderOptions(data) {
   } else if (ps.flights || ps.hotel) {
     psNote = `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> Indicative prices from the 3JN estimator — connect a live flight/hotel provider for real-time quotes</div>`;
   }
+  // OPERATOR DIAGNOSTIC: when suppliers ARE connected but the trip is still
+  // estimated, say WHY in plain English (visible to staff/owner only) — this is
+  // the "keys are set but everything is an estimate" answer, on the screen.
+  const lo = data.liveOverlay;
+  if (isStaff() && lo && !lo.applied) {
+    const why = ({
+      'suppliers-returned-no-offers': `Duffel is connected (${lo.duffelMode} mode) but returned NO offers for this exact route/date — Duffel's TEST sandbox has limited inventory, so try a common test route (e.g. London→New York, dates 2–8 weeks out). Found: ${lo.flightsFound} flights, ${lo.hotelsFound} hotels.`,
+      'live-fetch-error': `Live fetch ERROR: ${esc(lo.error || 'unknown')} — Duffel/Stripe reachable? key valid?`,
+      'live-search-rate-limited': 'Live-search rate limit hit for this IP — wait a moment and retry (serverless shares one egress IP, so it trips faster).',
+      'no-supplier-keys': 'No supplier keys detected at runtime — the deploy is not reading DUFFEL_TOKEN / STRIPE_SECRET_KEY.',
+      'not-options-stage': 'The search did not produce bookable options (clarify/inspire stage) — no live fetch ran.',
+    })[lo.reason] || `Estimated. reason=${esc(lo.reason || 'unknown')}, attempted=${lo.attempted}, flights=${lo.flightsFound}, hotels=${lo.hotelsFound}.`;
+    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.55);background:rgba(216,180,106,0.08)">🛠️ <strong>Operator diagnostic:</strong> ${why}</div>`;
+  }
 
   // Clearly-LABELLED sponsored strip — separate from (never mixed into) the
   // ranked options, so the cheapest-reliable pick is never reordered by ads.
