@@ -1445,6 +1445,13 @@ export function recordPayment(bookingId, payment) {
   }
   const receiptId = `rcpt_${bookingId.slice(-6)}_${b.payments.length + 1}`;
   b.payments.push({ ...payment, receiptId, at: nowISO(), status: 'paid' });
+  // BALANCE CLEARED → mark every instalment row paid, so a settled booking never
+  // still offers "pay now" on a schedule row (a pay-in-full clears the plan
+  // without carrying each row's index — that left rows looking unpaid & payable).
+  if (b.instalment?.schedule?.length) {
+    const totalL = b.option?.pricing?.local?.total || 0;
+    if (totalL > 0 && planPaid(b) + 0.01 >= totalL) b.instalment.schedule.forEach((s) => { if (s.status !== 'paid') s.status = 'paid'; });
+  }
   // AI Payment Protection: a receipt after EVERY successful payment, with the
   // live outstanding balance (refund entries carry negative amounts — the
   // receipt copy adapts).

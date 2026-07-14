@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-contact-form-durable-v81';
+const BUILD_TAG = '2026-07-14-settled-noduplicate-name-v82';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -565,9 +565,25 @@ async function autoTicketFlight(booking) {
   // Booking contact for Duffel (required): the account owner's email + profile
   // mobile, so even a booking with no traveller phone still tickets.
   const acct = booking.userId ? getUser(booking.userId) : null;
-  const contactEmail = booking.leadTraveller?.email || booking.lead?.email || acct?.email || '';
-  const contactPhone = booking.leadTraveller?.phone || booking.lead?.phone || acct?.travelProfile?.mobile || acct?.travelProfile?.secondaryPhone || '';
-  const passengers = duffelOrderPassengers(offerPax, booking.leadTraveller || booking.lead || {}, { departureDate: flight.details.outbound?.date, travellers: booking.travellers, contactEmail, contactPhone });
+  // NAME/IDENTITY BACKFILL: never ticket as the "Lead traveller" placeholder — a
+  // ticket must carry the real passport name or it's a denied-boarding. When the
+  // booking's lead has no real name, pull it (and DOB/passport) from the saved
+  // Master Travel Profile, and persist it back onto the booking so the document,
+  // e-ticket and PNR all show the correct traveller.
+  const tp = acct?.travelProfile || {};
+  const profileName = (tp.fullLegalName || [tp.firstName, tp.middleName, tp.lastName].filter(Boolean).join(' ') || acct?.name || '').trim();
+  booking.leadTraveller = booking.leadTraveller || booking.lead || {};
+  const lt = booking.leadTraveller;
+  if (!String(lt.fullName || '').trim() && profileName) lt.fullName = profileName;
+  if (!lt.dob && tp.dob) lt.dob = tp.dob;
+  if (!lt.email && acct?.email) lt.email = acct.email;
+  if (!lt.phone && (tp.mobile || tp.secondaryPhone)) lt.phone = tp.mobile || tp.secondaryPhone;
+  if (!lt.passportNumber && tp.passportNumber) lt.passportNumber = tp.passportNumber;
+  if (!lt.passportExpiry && tp.passportExpiry) lt.passportExpiry = tp.passportExpiry;
+  if (!lt.nationality && tp.nationality) lt.nationality = tp.nationality;
+  const contactEmail = lt.email || acct?.email || '';
+  const contactPhone = lt.phone || tp.mobile || tp.secondaryPhone || '';
+  const passengers = duffelOrderPassengers(offerPax, lt, { departureDate: flight.details.outbound?.date, travellers: booking.travellers, contactEmail, contactPhone });
   const fullyPaid = bookingFullyPaid(booking);
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------
@@ -2449,6 +2465,10 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
   if (target.priceBasis && target.priceBasis !== 'live' && target.priceBasis !== 'confirmed') {
     return res.status(409).json({ error: 'estimate-not-payable', message: 'This is an indicative quote — we confirm the exact bookable price before any payment is taken.' });
   }
+  // DOUBLE-CHARGE GUARD: never take another payment on a booking whose balance is
+  // already cleared (e.g. a pay-in-full that didn't flip this row's status). This
+  // is the server-side backstop for the "fully settled but still shows pay now" case.
+  if (bookingFullyPaid(target)) return res.json({ booking: target, already: true, settled: true });
   const index = Number((req.body || {}).index);
   const item = target.instalment?.schedule?.[index];
   if (!item) return res.status(400).json({ error: 'bad-instalment-index' });

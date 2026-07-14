@@ -2280,13 +2280,18 @@ function bookingCard(b) {
   // instalment, a "pay now" button, or a "paid/settled" state. It shows the
   // indicative plan only; real payment starts once the exact price is confirmed.
   const estimated = b.priceBasis !== 'live';
-  const sched = (b.instalment?.schedule || []).map((s, i) => `
-    <div class="kv"><span>Instalment ${i + 1} · ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${s.status === 'paid' ? '✓ paid' : (estimated ? `${money2(s.amount, sym)} <span class="muted" style="font-size:10.5px">indicative</span>` : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`)}</span></div>`).join('');
-  const comps = o.components.map((c) => labelFor(c)).join(' · ');
   // AI Payment Protection: live progress tracker — % paid, outstanding, plan.
   const paidTotal = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const totalLocal = o.pricing.local.total;
   const paidPct = (estimated || totalLocal <= 0) ? 0 : Math.min(100, Math.round((paidTotal / totalLocal) * 100));
+  // SETTLED = balance cleared. A settled booking must NEVER still offer "pay now"
+  // on a schedule row (paying it would double-charge) — every row reads as paid,
+  // even if the balance was cleared by a pay-in-full that didn't carry that row's
+  // index. Ticketing-issued is also conclusively settled.
+  const settled = b.fulfilment?.ticketing === 'issued' || (!estimated && totalLocal > 0 && paidTotal + 0.01 >= totalLocal);
+  const sched = (b.instalment?.schedule || []).map((s, i) => `
+    <div class="kv"><span>Instalment ${i + 1} · ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:10.5px">(final)</span>' : ''}</span><span>${(s.status === 'paid' || settled) ? '✓ paid' : (estimated ? `${money2(s.amount, sym)} <span class="muted" style="font-size:10.5px">indicative</span>` : `${money2(s.amount, sym)} <a onclick="payInstalment('${b.id}',${i},${s.amount})" style="color:var(--gold);cursor:pointer">pay now</a>`)}</span></div>`).join('');
+  const comps = o.components.map((c) => labelFor(c)).join(' · ');
   const progress = b.instalment ? `
     <div style="margin:8px 0 2px">
       <div style="display:flex;justify-content:space-between;font-size:11.5px" class="muted">
