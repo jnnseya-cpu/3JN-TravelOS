@@ -196,7 +196,27 @@ function waitForStoreReady(ms = 8000) {
 // account/booking vanishes and the user is logged out on the next request. When
 // serverless, flush to Firebase SYNCHRONOUSLY before the response is sent so the
 // write always completes. Long-lived hosts keep the efficient debounced save.
-const IS_SERVERLESS = !!(process.env.VERCEL || process.env.K_SERVICE || process.env.FUNCTION_TARGET);
+// Detect a serverless / freeze-between-requests host so we flush SYNCHRONOUSLY
+// before responding (a debounced save is lost when the instance freezes → the
+// #1 cause of "my payment/ACU/profile didn't save"). Covers the common
+// providers; FORCE_SERVERLESS_PERSIST=true is a manual override for any host not
+// auto-detected (safe to set anywhere — it only makes saves synchronous). When
+// a durable store is configured but we can't tell the host is long-lived, we
+// DEFAULT to the safe synchronous path rather than risk silent data loss.
+const IS_SERVERLESS = !!(
+  process.env.FORCE_SERVERLESS_PERSIST === 'true' ||
+  process.env.VERCEL || process.env.K_SERVICE || process.env.FUNCTION_TARGET ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.AWS_EXECUTION_ENV || process.env.LAMBDA_TASK_ROOT ||
+  process.env.NETLIFY || process.env.FLY_APP_NAME || process.env.RENDER || process.env.RAILWAY_ENVIRONMENT ||
+  process.env.DENO_DEPLOYMENT_ID || process.env.CF_PAGES || process.env.NOW_REGION
+);
+// SAFE-BY-DEFAULT persistence: whenever a durable store is configured, use the
+// synchronous read-modify-write + flush-before-response path (and periodic
+// rehydrate) — REGARDLESS of host detection. A debounced save is lost the moment
+// a serverless instance freezes, which silently drops payments / ACU / profile
+// edits (exactly what was happening). Only a single, always-on instance that
+// wants the efficient debounced save opts out with PERSIST_DEBOUNCED=true.
+const safePersist = () => isEnabled() && process.env.PERSIST_DEBOUNCED !== 'true';
 app.use(async (req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -208,8 +228,8 @@ app.use(async (req, res, next) => {
       await waitForStoreReady();
       if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
     }
-    if (IS_SERVERLESS && isEnabled()) {
-      // READ-MODIFY-WRITE for serverless: pull the LATEST store from Firebase
+    if (safePersist()) {
+      // READ-MODIFY-WRITE: pull the LATEST store from the durable backend
       // before mutating, so this instance never overwrites another instance's
       // data with its own stale whole-store snapshot (that clobbering erased
       // accounts/bookings and logged users out). Then flush synchronously after
@@ -255,7 +275,7 @@ let rehydrating = false;
 let lastRehydrateAt = 0;
 app.use(async (req, res, next) => {
   const uid = req.headers['x-user-id'];
-  if (IS_SERVERLESS && isEnabled() && storeReady && !rehydrating) {
+  if (safePersist() && storeReady && !rehydrating) {
     const missingCaller = uid && !getUser(uid);
     const stale = Date.now() - lastRehydrateAt > 5000;
     if (missingCaller || stale) {

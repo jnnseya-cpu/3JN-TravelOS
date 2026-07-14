@@ -2263,6 +2263,7 @@ function bookingCard(b) {
         <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(216,180,106,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'} ${lockBadge}</div>
         <strong style="font-family:'Space Grotesk'">${money2(o.pricing.local.total, sym)}</strong>
       </div>
+      ${tripLine ? `<div style="font-size:13px;font-weight:600;margin:4px 0 2px">✈ ${tripLine}</div>` : ''}
       <p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>
       ${progress}
       <div style="margin:10px 0">${sched}</div>
