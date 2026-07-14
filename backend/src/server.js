@@ -2070,7 +2070,10 @@ app.post('/api/plan', safe(async (req, res) => {
     result.acuCharged = 0;
   } else if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
-    const cost = reqTier.acu || 0;
+    // MEMBERS pay the AT-COST rate (their subscription is the margin); NON-MEMBERS
+    // (top-up only) pay the full 3–10× commercial rate.
+    const isMember = !!user.membership?.active;
+    const cost = (isMember && reqTier.acuMember ? reqTier.acuMember : reqTier.acu) || 0;
     // Revenue Engine (spec §9): abuse detection forfeits the active search
     // deposit — deposits are refundable, EXCEPT when the abuse throttle trips.
     if (result.gate?.reason === 'abuse-throttle') {

@@ -25,8 +25,17 @@
 // expensive model.
 
 // ACU economy constants are shared with the frontend — see shared/constants.js.
-import { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE } from '../../shared/constants.js';
+import { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE, ACU_PER_GBP } from '../../shared/constants.js';
 export { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE };
+
+// The raw provider cost of a tier expressed in ACU (£1 = ACU_PER_GBP, USD→GBP at
+// the 0.79 anchor). MEMBERS are charged this AT-COST rate (100%, no markup) —
+// their subscription is the margin. NON-MEMBERS pay the full commercial 3–10×
+// rate (the tier's `acu`). This is the "members at cost, top-up users at
+// commercial" split.
+function atCostAcu(aiCostUSD) {
+  return Math.max(1, Math.ceil((aiCostUSD || 0) * 0.79 * ACU_PER_GBP));
+}
 
 // Search tiers are now composed from real agent actions, so the ACU cost is the
 // sum of the actions that depth runs. AI cost (USD) is derived from ACU price.
@@ -56,17 +65,20 @@ export const SEARCH_TIERS = {
   // searches (e.g. nomad 50 ACU ≈ 2 smart searches) — top-ups cover the rest.
   smart: {
     ...tierFrom('Smart Search', 'standard', ['intent', 'flightSearch', 'hotelSearch']),
-    aiCostUSD: 0.10, // real provider (LLM) cost; charge (26 ACU) ≈ 3.3× this
+    aiCostUSD: 0.10, // real provider (LLM) cost
+    acuMember: atCostAcu(0.10), // members: at cost (~8 ACU)
     agents: ['Flight Agent', 'Hotel Agent', 'Transfer Agent'],
   },
   deep: {
     ...tierFrom('Deep Savings Search', 'deep', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'priceMonitor', 'riskBriefing']),
-    aiCostUSD: 0.22, // real provider cost; charge (57 ACU) ≈ 3.3× this
+    aiCostUSD: 0.22, // real provider cost
+    acuMember: atCostAcu(0.22), // members: at cost (~18 ACU)
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent'],
   },
   concierge: {
     ...tierFrom('Concierge Search', 'concierge', ['intent', 'flightSearch', 'hotelSearch', 'visaCheck', 'riskBriefing', 'chiefOfStaff', 'privateAviation']),
-    aiCostUSD: 0.35, // real provider cost; charge (91 ACU) ≈ 3.3× this
+    aiCostUSD: 0.35, // real provider cost
+    acuMember: atCostAcu(0.35), // members: at cost (~28 ACU)
     agents: ['Flight Agent', 'Hotel Agent', 'Visa Agent', 'Transfer Agent', 'Price Negotiation Agent', 'Savings Agent', 'Chief-of-Staff Agent', 'Private Aviation Agent'],
     // Tier 4 pairs the AI agents with a HUMAN travel expert — human time is
     // never funded speculatively, so access requires a real commitment.
