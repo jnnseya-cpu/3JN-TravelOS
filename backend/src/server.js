@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-customer-console-resilient-v67';
+const BUILD_TAG = '2026-07-14-reconcile-diagnostic-v68';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2681,15 +2681,26 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   const idxRaw = s.metadata?.instalmentIndex ?? booking.pendingCheckout?.instalmentIndex;
   const idx = idxRaw != null && idxRaw !== '' ? Number(idxRaw) : null;
   const isInst = Number.isInteger(idx);
-  const updated = recordPayment(booking.id, {
-    // Match the webhook exactly (type + reference = session id) so dedup makes a
-    // later webhook or a repeat reconcile a no-op — never a double charge.
-    type: isInst ? 'instalment' : 'stripe-checkout',
-    amount, gateway: 'stripe', reference: sessionId, paymentIntent: s.paymentIntent,
-    ...(isInst ? { index: idx } : {}),
-  });
-  if (updated && isInst && updated.instalment?.schedule?.[idx]) updated.instalment.schedule[idx].status = 'paid';
-  if (updated && s.paymentIntent) updated.stripePaymentIntent = s.paymentIntent;
+  // ROBUST + SELF-DIAGNOSING: recording the payment is the ONE step that must not
+  // fail silently. If it throws we must NOT return an opaque 500 ("network:
+  // internal") — the money moved at Stripe, so the customer needs a clear reason,
+  // and we need the actual cause without server-log access. Catch it and return
+  // the detail so the frontend can show exactly what went wrong.
+  let updated;
+  try {
+    updated = recordPayment(booking.id, {
+      // Match the webhook exactly (type + reference = session id) so dedup makes a
+      // later webhook or a repeat reconcile a no-op — never a double charge.
+      type: isInst ? 'instalment' : 'stripe-checkout',
+      amount, gateway: 'stripe', reference: sessionId, paymentIntent: s.paymentIntent,
+      ...(isInst ? { index: idx } : {}),
+    });
+    if (updated && isInst && updated.instalment?.schedule?.[idx]) updated.instalment.schedule[idx].status = 'paid';
+    if (updated && s.paymentIntent) updated.stripePaymentIntent = s.paymentIntent;
+  } catch (e) {
+    console.error('[reconcile-record]', e);
+    return res.status(200).json({ booking, reconciled: false, error: 'record-failed', detail: String(e?.message || e) });
+  }
   // Mirror the webhook's fulfilment: hold on a deposit, release on paid-in-full.
   // Fulfilment is BEST-EFFORT and must NEVER break the response — the payment is
   // already recorded above, and the response MUST complete so the persistence

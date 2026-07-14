@@ -473,7 +473,7 @@ function applyDeepLink() {
       const why = !sessionId ? 'no session id in the return URL'
         : last?._status === 401 ? 'not signed in (auth) when confirming'
         : last?.pending ? 'Stripe reports this session as NOT paid yet'
-        : last?.error ? `server: ${last.error}`
+        : last?.error ? `server: ${last.error}${last.detail ? ' — ' + last.detail : ''}`
         : last?._err ? `network: ${last._err}`
         : 'unknown (reconcile returned no match)';
       toast('⚠ Payment NOT recorded — ' + why, 8000);
