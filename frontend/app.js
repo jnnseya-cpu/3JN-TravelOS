@@ -828,6 +828,11 @@ function renderOptions(data) {
   // estimated, say WHY in plain English (visible to staff/owner only) — this is
   // the "keys are set but everything is an estimate" answer, on the screen.
   const lo = data.liveOverlay;
+  const wantedHotel = (data.intent?.components || []).includes('hotel');
+  const hotelGap = wantedHotel && lo && lo.applied && lo.hotelsFound === 0;
+  if (isStaff() && hotelGap) {
+    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.55);background:rgba(216,180,106,0.08)">🛠️ <strong>Operator diagnostic:</strong> Flights are LIVE, but Duffel Stays returned <strong>0 hotels</strong> for this city (${lo.duffelMode} mode) — so the hotel is estimated and the whole package stays unpayable. In Duffel's TEST sandbox this is expected (little/no hotel inventory). To test PAYMENT now, run a <strong>flights-only</strong> search. Real Duffel <strong>live</strong> keys return real hotels globally.</div>`;
+  }
   if (isStaff() && lo && !lo.applied) {
     const why = ({
       'suppliers-returned-no-offers': `Duffel is connected (${lo.duffelMode} mode) but returned NO offers for this exact route/date — Duffel's TEST sandbox has limited inventory, so try a common test route (e.g. London→New York, dates 2–8 weeks out). Found: ${lo.flightsFound} flights, ${lo.hotelsFound} hotels.`,
