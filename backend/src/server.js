@@ -659,6 +659,25 @@ app.get('/api/context', safe((req, res) => {
     // full access. stripeReady tells the UI whether card checkout is available.
     liveMode: LIVE_MODE(),
     stripeReady: stripeEnabled(),
+    // One-glance supplier status so an operator can see WHY trips are estimated
+    // without a terminal: is Duffel connected, are live flights/hotels flowing?
+    suppliers: {
+      duffelMode: duffelMode(),           // 'live' | 'test' | 'off'
+      flightsLive: liveFlightsEnabled(),
+      hotelsLive: liveHotelsEnabled(),
+      stripe: stripeEnabled() ? (String(process.env.STRIPE_SECRET_KEY || '').startsWith('sk_live') ? 'live' : 'test') : 'off',
+      stripeWebhook: !!process.env.STRIPE_WEBHOOK_SECRET,
+    },
+    // Plain-English self-diagnosis of a config that would silently block testing
+    // or sales — surfaced to the operator so a misconfig never wastes their time.
+    configWarning: (() => {
+      const dm = duffelMode(); // 'live' | 'test' | 'off'
+      if (LIVE_MODE() && dm === 'test') return { severity: 'blocker', code: 'livemode-with-test-token', message: 'LIVE_MODE is ON but your Duffel token is a TEST key — so Duffel (flights AND hotels) is switched OFF and EVERY trip shows as an unpayable estimate. To TEST end-to-end: set LIVE_MODE=false and keep the test token. To SELL for real: use a live duffel_live_… token.' };
+      if (dm === 'off') return { severity: 'warn', code: 'no-duffel', message: 'No Duffel token set — flights and hotels are estimates only (no bookable price). Set DUFFEL_TOKEN to enable live inventory.' };
+      if (!stripeEnabled()) return { severity: 'warn', code: 'no-stripe', message: 'Stripe is not configured — card checkout is unavailable. Set STRIPE_SECRET_KEY (and STRIPE_WEBHOOK_SECRET so tickets issue and the PDF sends after payment).' };
+      if (stripeEnabled() && !process.env.STRIPE_WEBHOOK_SECRET) return { severity: 'warn', code: 'no-webhook', message: 'Stripe is on but STRIPE_WEBHOOK_SECRET is not set — a payment would capture but the ticket would never issue and no confirmation PDF would send. Add the webhook secret.' };
+      return null;
+    })(),
   });
 }));
 

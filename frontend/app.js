@@ -121,6 +121,25 @@ function isStaff() {
 // marketplace are hidden and any button that pointed at them routes to Deals,
 // so no fabricated trip is ever shown. Staff are unaffected.
 function dealsOnly() { return !!state.liveMode && !isStaff(); }
+// Persistent, dismissible banner that tells the operator — in plain English —
+// why the OS is (or isn't) able to take payments. A blocker (e.g. LIVE_MODE on
+// with a test Duffel token) turns every trip into an unpayable estimate, so it
+// must be impossible to miss.
+function showConfigWarning(w) {
+  if (!w || !w.message) return;
+  try { if (sessionStorage.getItem('cfgw-dismiss') === w.code) return; } catch {}
+  document.getElementById('configWarnBar')?.remove();
+  const blocker = w.severity === 'blocker';
+  const bar = document.createElement('div');
+  bar.id = 'configWarnBar';
+  bar.setAttribute('role', 'alert');
+  bar.style.cssText = `position:fixed;top:0;left:0;right:0;z-index:9999;padding:10px 44px 10px 16px;font-size:13.5px;line-height:1.45;color:#161206;background:${blocker ? '#f4c04e' : '#8fd0a6'};box-shadow:0 2px 12px rgba(0,0,0,.25);font-family:inherit`;
+  bar.innerHTML = `<strong>${blocker ? '⛔ Config blocker' : '⚠ Heads up'}:</strong> ${esc(w.message)}
+    <button aria-label="Dismiss" style="position:absolute;top:6px;right:10px;background:none;border:none;font-size:20px;cursor:pointer;color:#161206">×</button>`;
+  bar.querySelector('button').onclick = () => { try { sessionStorage.setItem('cfgw-dismiss', w.code); } catch {} bar.remove(); };
+  document.body.appendChild(bar);
+}
+
 function applyStorefrontMode() {
   const on = dealsOnly();
   document.body.dataset.storefront = on ? 'deals' : 'full';
@@ -331,6 +350,10 @@ async function boot() {
     state.context = await api('/api/context');
     state.liveMode = !!state.context.liveMode;   // commercial storefront switch
     state.stripeReady = !!state.context.stripeReady;
+    // OPERATOR SELF-DIAGNOSIS: if the server reports a config that would block
+    // testing/sales (e.g. LIVE_MODE on with a test Duffel token → everything
+    // shows as an unpayable estimate), surface it loudly so it's never a mystery.
+    if (state.context.configWarning) showConfigWarning(state.context.configWarning);
     const sel = $('#countrySelect');
     sel.innerHTML = state.context.currencies
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
