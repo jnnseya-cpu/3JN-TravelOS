@@ -1610,10 +1610,34 @@ window.confirmBooking = async () => {
 };
 
 // ---- Console --------------------------------------------------------------
+// Guarding wrapper: the console must NEVER silently blank. Any throw while
+// building the view is shown on screen with a Retry, so a render bug can't look
+// like "I can't reach my console".
 async function renderConsole() {
+  try { await renderConsoleInner(); }
+  catch (e) {
+    console.error('[renderConsole]', e);
+    const out = $('#consoleOut');
+    if (out) out.innerHTML = `<div class="card pad" style="border-color:rgba(255,107,107,.5)">
+      <strong style="color:#ff8f8f">Your console hit an error while loading</strong>
+      <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(e?.message || String(e))}</div>
+      <button class="btn btn-gold btn-sm" style="margin-top:10px" onclick="renderConsole()">Retry</button></div>`;
+  }
+}
+async function renderConsoleInner() {
   const out = $('#consoleOut');
   if (!state.user) {
-    out.innerHTML = `<div class="card pad center"><p class="muted">No journeys yet.</p>
+    // If a sign-in was just REJECTED by the server, show exactly why on screen —
+    // the customer (and we) can read the real reason without opening DevTools.
+    const la = state.lastAuth;
+    const diag = (la && !la.ok)
+      ? `<div class="card pad" style="border-color:rgba(255,107,107,.5);margin-bottom:12px;text-align:left">
+           <strong style="color:#ff8f8f">Sign-in was rejected by the server</strong>
+           <div class="muted" style="font-size:12.5px;margin-top:6px">Reason: <strong>${esc(la.msg || 'unknown')}</strong>${la.status ? ` (HTTP ${la.status})` : ''}</div>
+           <div class="muted" style="font-size:12px;margin-top:6px">If this says your account is on hold, it was auto-flagged and needs unflagging — tell your developer this exact message.</div>
+         </div>`
+      : '';
+    out.innerHTML = `${diag}<div class="card pad center"><p class="muted">${diag ? 'You are not signed in yet.' : 'No journeys yet.'}</p>
       <button class="btn btn-gold" data-nav="planner">Plan your first trip</button>
       <button class="btn btn-ghost" onclick="provisionTest()" style="margin-left:10px">Use test account</button></div>`;
     return;
@@ -1633,6 +1657,7 @@ async function renderConsole() {
     // account has propagated. We never kick the customer out for a transient miss.
     data = { user: state.user, bookings: [] };
     stale = true;
+    state.lastAccountFetch = { status: e?.status, msg: e?.message, at: Date.now() };
     setTimeout(() => { if (state.user) renderConsole(); }, 1800);
   }
   const u = data.user;
@@ -1710,8 +1735,9 @@ async function renderConsole() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">${rb.actions.map(([label, fn]) => `<button class="btn btn-gold btn-sm" onclick="${fn}">${label}</button>`).join('')}</div>
     </div>` : '';
 
+  const laf = state.lastAccountFetch;
   const staleNote = stale
-    ? `<div class="card pad" style="border-color:rgba(216,180,106,.35);margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="muted" style="font-size:12.5px">⟳ Showing your saved profile — syncing your latest bookings &amp; balances…</span></div>`
+    ? `<div class="card pad" style="border-color:rgba(216,180,106,.35);margin-bottom:12px"><span class="muted" style="font-size:12.5px">⟳ Showing your saved profile — syncing your latest bookings &amp; balances…${laf && laf.status ? ` <span style="opacity:.7">(sync: HTTP ${laf.status} ${esc(laf.msg || '')})</span>` : ''}</span></div>`
     : '';
   out.innerHTML = `${staleNote}${roleBanner}<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
@@ -4419,12 +4445,21 @@ window.addEventListener('firebase-auth', async (e) => {
         try { d = await bridge(); } catch (e2) { toast('⚠ ' + (e2?.message || 'PIN not accepted.')); return; }
       } else {
         // Surface the real reason instead of failing silently (e.g. token could
-        // not be verified, or an anti-bot block) so it's actionable.
-        toast('⚠ ' + (err?.message || 'Sign-in could not be completed. Please try again.'));
+        // not be verified, or an anti-bot block) so it's actionable. Also record
+        // it so the console can SHOW it on screen (no DevTools needed) — this is
+        // how we diagnose "I signed in but land on an empty console".
+        state.lastAuth = { ok: false, status: err?.status, msg: err?.message || 'sign-in failed', at: Date.now() };
+        toast('⚠ ' + (err?.message || 'Sign-in could not be completed. Please try again.'), 9000);
+        if ($('#view-console')?.classList.contains('active')) renderConsole();
         return;
       }
     }
-    if (!d || !d.user) { toast('⚠ Sign-in did not return an account. Please try again.'); return; }
+    if (!d || !d.user) {
+      state.lastAuth = { ok: false, status: 200, msg: 'sign-in returned no account', at: Date.now() };
+      toast('⚠ Sign-in did not return an account. Please try again.', 9000);
+      return;
+    }
+    state.lastAuth = { ok: true, userId: d.user.id, email: d.user.email, role: d.user.role, at: Date.now() };
     setUser(d.user); closeModal();
     toast(`✓ Signed in as ${d.user.name}`);
     // Staff/admin accounts authenticate with the staff PIN, and their login email
