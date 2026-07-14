@@ -80,7 +80,7 @@ import { snapshot, flatSnapshot, hydrate } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
-import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -2408,6 +2408,9 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
       cancelUrl: `${origin}/console?instalmentCancelled=1`,
     });
     if (!session.ok) return res.status(400).json(session);
+    // Remember the session so the return-from-Stripe reconcile can confirm this
+    // exact instalment payment without depending on the webhook.
+    target.pendingCheckout = { sessionId: session.sessionId, kind: 'instalment', instalmentIndex: index, at: new Date().toISOString() };
     return res.json({ requiresPayment: true, checkout: session.url, amount: item.amount, symbol: sym });
   }
   const booking = recordPayment(req.params.id, { type: 'instalment', amount: item.amount, index });
@@ -2611,7 +2614,50 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
     cancelUrl: `${origin}/console?paid=0&booking=${booking.id}`,
   });
   if (!session.ok) return res.status(400).json(session);
+  // Remember the session so the return-from-Stripe reconcile can confirm payment
+  // without depending on the webhook (deposit or full).
+  booking.pendingCheckout = { sessionId: session.sessionId, kind: kind === 'full' ? 'full' : 'deposit', at: new Date().toISOString() };
   res.json(session);
+}));
+
+// ---- Reconcile a Checkout return WITHOUT the webhook ----------------------
+// On return from Stripe (/console?paid=1&booking=…), the app calls this to
+// verify the session DIRECTLY with Stripe and record the payment if it's paid.
+// This makes payment recording robust to a missing/delayed/misconfigured
+// webhook — the #1 reason a paid booking gets stuck at "awaiting payment".
+// Idempotent: the session id is the payment reference, the same one the webhook
+// uses, so a later webhook (or a repeat reconcile) can never double-charge/-point.
+app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const booking = getBooking((req.body || {}).bookingId);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  if (booking.userId && booking.userId !== user.id && !user.allAccess && user.role !== 'admin') {
+    return res.status(403).json({ error: 'not-your-booking' });
+  }
+  const pc = booking.pendingCheckout;
+  if (!pc?.sessionId || !stripeEnabled()) return res.json({ booking, reconciled: false });
+  const s = await retrieveCheckoutSession(pc.sessionId).catch(() => ({ ok: false }));
+  if (!s.ok) return res.json({ booking, reconciled: false, error: s.error });
+  if (!s.paid) return res.json({ booking, reconciled: false, pending: true });
+  const amount = (s.amountTotal || 0) / 100;
+  const idx = pc.instalmentIndex;
+  const isInst = Number.isInteger(idx);
+  const updated = recordPayment(booking.id, {
+    type: isInst ? 'instalment' : (pc.kind === 'full' ? 'full' : 'deposit'),
+    amount, gateway: 'stripe', reference: pc.sessionId, paymentIntent: s.paymentIntent,
+    ...(isInst ? { index: idx } : {}),
+  });
+  if (updated && isInst && updated.instalment?.schedule?.[idx]) updated.instalment.schedule[idx].status = 'paid';
+  if (updated && s.paymentIntent) updated.stripePaymentIntent = s.paymentIntent;
+  // Mirror the webhook's fulfilment: hold on a deposit, release on paid-in-full.
+  if (updated) {
+    if (updated.sourceDealId && bookingFullyPaid(updated) && !updated.dealFulfilmentCreated) createDealFulfilment(updated);
+    autoTicketFlight(updated).catch((e) => console.error('[ticketing]', e?.message || e));
+    autoBookStays(updated).catch((e) => console.error('[stays]', e?.message || e));
+    emailBookingConfirmation(updated).catch((e) => console.error('[confirm-email]', e?.message || e));
+  }
+  res.json({ booking: updated || booking, reconciled: true });
 }));
 // Webhook: signature-verified; a forged event can never mark a booking paid.
 app.post('/api/pay/stripe/webhook', safe((req, res) => {

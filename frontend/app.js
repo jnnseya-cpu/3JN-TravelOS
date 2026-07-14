@@ -444,11 +444,26 @@ function applyDeepLink() {
   // double-count a conversion.
   const payQ = new URLSearchParams(location.search);
   if (payQ.get('paid') === '1' && payQ.get('booking')) {
-    const pk = 'fbq_purchase_' + payQ.get('booking');
+    const bkId = payQ.get('booking');
+    const pk = 'fbq_purchase_' + bkId;
     if (!localStorage.getItem(pk)) {
       localStorage.setItem(pk, '1');
-      metaTrack('Purchase', { value: Number(payQ.get('amt')) || 0, currency: 'GBP', content_ids: [payQ.get('booking')], content_type: 'product' });
+      metaTrack('Purchase', { value: Number(payQ.get('amt')) || 0, currency: 'GBP', content_ids: [bkId], content_type: 'product' });
     }
+    // RECONCILE the payment directly with Stripe on return — so a missing or
+    // delayed webhook can't leave the booking stuck at "awaiting payment". Safe
+    // to call repeatedly (idempotent server-side). Retries briefly in case the
+    // charge is still settling.
+    (async () => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          const r = await api('/api/pay/stripe/reconcile', { method: 'POST', body: JSON.stringify({ bookingId: bkId }), silent: true });
+          if (r && r.reconciled) { toast('✓ Payment confirmed.'); if (typeof renderConsole === 'function') renderConsole(); break; }
+          if (r && !r.pending) break; // nothing pending to reconcile
+        } catch { /* retry */ }
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+    })();
   }
   const qv = new URLSearchParams(location.search).get('view');
   if (qv && views.has(qv)) target = qv;

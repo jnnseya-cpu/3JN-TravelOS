@@ -73,6 +73,28 @@ export async function createCheckoutSession({ amountMinor, currency = 'gbp', des
   return { ok: true, sessionId: session.id, url: session.url };
 }
 
+async function stripeGet(path) {
+  const res = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json?.error?.message || `stripe ${res.status}`);
+  return json;
+}
+
+// Retrieve a Checkout Session to confirm payment WITHOUT relying on the webhook.
+// On return from Checkout the app calls this to reconcile the booking — so a
+// missing/delayed/misconfigured webhook can never leave a paid booking stuck at
+// "awaiting payment". Returns paid status + the authoritative amount/intent.
+export async function retrieveCheckoutSession(sessionId) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
+  if (!sessionId) return { ok: false, error: 'no-session' };
+  try {
+    const s = await stripeGet(`/checkout/sessions/${encodeURIComponent(sessionId)}`);
+    return { ok: true, paid: s.payment_status === 'paid', amountTotal: s.amount_total, currency: s.currency, paymentIntent: typeof s.payment_intent === 'string' ? s.payment_intent : (s.payment_intent?.id || null), metadata: s.metadata || {} };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'retrieve-failed' };
+  }
+}
+
 // Refund a captured payment by its PaymentIntent id (full, or a partial amount).
 // Used when fulfilment fails AFTER money was taken (a flight ticket couldn't be
 // issued) so the customer is actually made whole — not just told they are.
