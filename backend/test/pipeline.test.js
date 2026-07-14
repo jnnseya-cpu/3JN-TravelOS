@@ -3872,7 +3872,7 @@ test('Aviasales market fares normalise with carrier names, stops and honest sour
 import { FLIGHT_ONLY_FEE_GBP as FEE_GBP, FLIGHT_ONLY_PARTNER_SHARE as PARTNER_SHARE } from '../../shared/constants.js';
 import { flightOnlySplit } from '../src/vendors.js';
 
-test('tiered take-rate: flights-only pays the flat fee, members fly fee-free, packages keep 10%', () => {
+test('tiered take-rate: flights-only pays the flat fee, members pay a small flat fee, packages keep 10%', () => {
   // Flights-only, guest: flat £4.99 (~$6.32), never 10%.
   const r1 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
   assert.equal(r1.stage, 'options');
@@ -3891,13 +3891,16 @@ test('tiered take-rate: flights-only pays the flat fee, members fly fee-free, pa
   const opt2 = r2.packages.options[0];
   assert.equal(opt2.pricing.feeModel, 'commission-10');
   assert.ok(opt2.pricing.lines.commissionUSD > feeUSD * 3, 'package commission is the real margin');
-  // Active Travel+ member: the flight fee disappears entirely.
+  // Active Travel+ member: a small FLAT booking fee (£2.99) — never £0, and well
+  // below the non-member 2%/£4.99-floor, so every booking still earns.
   const member = createUser({ name: 'Member Flyer', email: 'member.flyer@example.com' });
   subscribeMembership(member.id, 'nomad');
   const r3 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: findUserByEmail('member.flyer@example.com'), searchTier: 'smart' });
   const opt3 = r3.packages.options[0];
-  assert.equal(opt3.pricing.feeModel, 'flight-flat-member-free');
-  assert.equal(opt3.pricing.lines.commissionUSD, 0, 'Travel+ members pay no flight fee');
+  assert.equal(opt3.pricing.feeModel, 'flight-flat-member');
+  assert.ok(Math.abs(opt3.pricing.lines.commissionUSD - 2.99 / 0.79) < 0.02, 'members pay the flat £2.99 flight fee (never £0)');
+  assert.ok(opt3.pricing.lines.commissionUSD > 0, 'no booking ever earns 3JN £0');
+  assert.ok(opt3.pricing.lines.commissionUSD < feeUSD, 'member flat fee is below the non-member fee');
 });
 
 test('tiered take-rate: partners earn a share of the flight take + lifetime attribution', async () => {
@@ -4585,9 +4588,10 @@ test('flights-only fee: 2% of fare, floored at £4.99, capped at £15', () => {
   assert.ok(Math.abs(feeGbp(450) - 9) < 0.05, 'mid-haul → 2% (£9 on £450)');
   assert.equal(feeGbp(750), 15, 'exactly at the cap');
   assert.equal(feeGbp(1500), 15, 'long-haul stays capped at £15 (1%, competitive)');
-  // Members fly fee-free regardless of fare.
+  // Members pay a small FLAT £2.99 booking fee regardless of fare — never £0.
   const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
-  assert.equal(memberFee, 0, 'Travel+ members pay no flight service fee');
+  assert.ok(Math.abs(memberFee - 2.99) < 0.02, 'Travel+ members pay the flat £2.99 flight fee');
+  assert.ok(memberFee > 0, 'no member booking is ever £0');
 });
 
 // ---- WAVE 6: deep-clean critical-fix regressions ----------------------------

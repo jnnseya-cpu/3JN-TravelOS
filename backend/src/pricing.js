@@ -7,7 +7,7 @@
 // share one source of truth. Re-exported here for existing call sites.
 import {
   COMMISSION_RATE, SAVINGS_SHARE_RATE, SAVINGS_SHARE_MIN_USD, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
-  FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP, FLIGHT_ONLY_MEMBER_FREE,
+  FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP, FLIGHT_ONLY_MEMBER_FREE, FLIGHT_ONLY_MEMBER_FEE_GBP,
 } from '../../shared/constants.js';
 
 export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP };
@@ -79,7 +79,12 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // extras keep the 10% — that is where the margin lives, invisible inside a
   // bundle that beats DIY totals. Convert with the 0.79 GBP anchor so the floor/
   // cap display as exactly £4.99/£15 after the USD round-trip.
-  const flightFeeUSD = memberActive && FLIGHT_ONLY_MEMBER_FREE ? 0
+  // COMMERCIAL MODEL: no booking ever earns 3JN £0. A member's flight carries a
+  // small FLAT booking & servicing fee (no % markup) instead of the old £0 — still
+  // far below the non-member 2% (£4.99 floor / £15 cap), so membership stays a real
+  // saving, but every booking contributes.
+  const flightFeeUSD = memberActive
+    ? FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79
     : Math.min(FLIGHT_ONLY_FEE_CAP_GBP / 0.79, Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE));
   const grossCommissionUSD = flightsOnly ? flightFeeUSD : componentsUSD * COMMISSION_RATE;
 
@@ -88,19 +93,19 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // always collected, so a package reaches break-even at the top tier but is
   // NEVER sold below what we pay the airline/hotel. (The old model discounted the
   // supplier base too, so an Elite 10% package actually sold at a ~1% LOSS while
-  // still reporting a positive "commission".) The monthly membership fee funds
-  // the giveaway. Flights-only takes no fare discount — active members already
-  // fly fee-free, and there is no 10% margin to give back on a flat fee.
+  // still reporting a positive "commission".) The membership fee funds the
+  // giveaway. Flights-only takes no fare discount — a member pays a small FLAT
+  // booking fee (never £0), and there is no 10% margin to give back on a flat fee.
   const loyaltyDiscountUSD = flightsOnly ? 0 : Math.min(componentsUSD * tier.discount, grossCommissionUSD);
   const commissionUSD = grossCommissionUSD - loyaltyDiscountUSD; // what 3JN actually keeps
   const netComponentsUSD = componentsUSD; // supplier cost is always collected in full
 
-  const feeModel = flightsOnly ? (grossCommissionUSD === 0 ? 'flight-flat-member-free' : 'flight-service-fee') : 'commission-10';
+  const feeModel = flightsOnly ? (memberActive ? 'flight-flat-member' : 'flight-service-fee') : 'commission-10';
   // Show the rate + the floor/cap band so the fee reads as small and predictable.
-  const atFloor = flightsOnly && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_GBP / 0.79) < 0.02;
-  const atCap = flightsOnly && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_CAP_GBP / 0.79) < 0.02;
+  const atFloor = flightsOnly && !memberActive && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_GBP / 0.79) < 0.02;
+  const atCap = flightsOnly && !memberActive && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_CAP_GBP / 0.79) < 0.02;
   const feeLabel = flightsOnly
-    ? (grossCommissionUSD === 0 ? '3JN flight fee — FREE (Travel+ member)'
+    ? (memberActive ? `3JN member flight fee (£${FLIGHT_ONLY_MEMBER_FEE_GBP.toFixed(2)} flat · no % markup)`
       : `3JN flight service fee (${(FLIGHT_ONLY_FEE_RATE * 100).toFixed(0)}%${atFloor ? ` · £${FLIGHT_ONLY_FEE_GBP.toFixed(2)} min` : atCap ? ` · £${FLIGHT_ONLY_FEE_CAP_GBP} cap` : ''})`)
     : '3JN commission (10%)';
   // Duffel pass-through — added ON TOP on a live Duffel order so our supplier

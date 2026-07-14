@@ -229,7 +229,7 @@ const AGENTS = [
 
 const TIERS = [
   { key: 'nomad', save: '£420/yr', name: 'Travel+ Smart Traveller', price: '£4.99', priceNum: 4.99, feature: false,
-    benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', '0% instalment processing fees', 'Digital Visa Assistance'] },
+    benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', 'Flat flight fee — no % markup', 'Digital Visa Assistance'] },
   { key: 'family', save: '£1,100/yr', name: 'Travel+ Family Saver', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
     benefits: ['All Smart Traveller Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
   { key: 'executive', save: '£2,400/yr', name: 'Travel+ Frequent Flyer', price: '£24.99', priceNum: 24.99, feature: false,
@@ -271,7 +271,7 @@ function payAsYouGoHTML() {
       <button class="btn btn-gold" onclick="buyAcuFlow()">⚡ Top up ACU</button>
     </div>
   </div>
-  <div style="grid-column:1/-1;text-align:center;margin:4px 0 12px"><span class="muted" style="font-size:12.5px">Travel often? A one-off yearly membership unlocks fee-free flights, priority &amp; savings — and returns 10% as ACU:</span></div>`;
+  <div style="grid-column:1/-1;text-align:center;margin:4px 0 12px"><span class="muted" style="font-size:12.5px">Travel often? A one-off yearly membership unlocks no-markup flights (just a small flat booking fee), priority &amp; savings — and returns 10% as ACU:</span></div>`;
 }
 function tierCardsHTML() {
   return payAsYouGoHTML() + TIERS.map((t) => {
@@ -1677,7 +1677,7 @@ async function renderConsoleInner() {
       <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
       ${u.membership?.active
         ? `<div class="kv"><span>Membership</span><span style="color:var(--green)">${u.membership.name}</span></div>
-           <div class="kv"><span>Auto-funds</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU/mo</span></div>
+           <div class="kv"><span>ACU credited on join/renewal</span><span>${u.membership.acuPerMonth.toLocaleString()} ACU</span></div>
            <div class="kv"><span>Renews</span><span>${ukDate(u.membership.renewsAt)}</span></div>`
         : `<div class="kv"><span>Membership</span><span class="muted">None — join to auto-fund ACUs</span></div>`}
       <div class="kv"><span>Referral code</span><span>${u.referralCode}</span></div>

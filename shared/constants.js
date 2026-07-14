@@ -15,10 +15,14 @@ export const COMMISSION_RATE = 0.10;      // 10% final-payment fee
 // big-ticket long-haul competitive — the traveller never pays a runaway fee).
 // Hotels/packages/extras keep the 10% where the real margin lives. Free for
 // active Travel+ members. The Duffel pass-through is separate and at cost.
-export const FLIGHT_ONLY_FEE_RATE = 0.02;   // 2% of the flight value
+export const FLIGHT_ONLY_FEE_RATE = 0.02;   // 2% of the flight value (non-members)
 export const FLIGHT_ONLY_FEE_GBP = 4.99;    // floor — never below supplier/booking cost
 export const FLIGHT_ONLY_FEE_CAP_GBP = 15;  // cap — stays competitive on long-haul
-export const FLIGHT_ONLY_MEMBER_FREE = true;
+// COMMERCIAL MODEL: members never fly at £0 — every booking must earn. A member's
+// flight carries a small FLAT booking & servicing fee (no % markup), well below
+// the non-member 2%/£4.99-floor, so membership is still a real saving.
+export const FLIGHT_ONLY_MEMBER_FEE_GBP = 2.99;
+export const FLIGHT_ONLY_MEMBER_FREE = false; // retired — members pay the flat fee above
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never
 // of booking value) — plus lifetime attribution on the customer they brought.
