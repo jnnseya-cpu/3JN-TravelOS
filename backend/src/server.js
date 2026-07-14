@@ -76,7 +76,7 @@ import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacemen
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
-import { snapshot, flatSnapshot, hydrate } from './store.js';
+import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
@@ -231,18 +231,15 @@ app.use(async (req, res, next) => {
       await waitForStoreReady();
       if (!storeReady) return res.status(503).json({ error: 'starting-up', message: 'The service is loading — please retry in a moment.' });
     }
-    // Pre-handler LOAD (read-modify-write) is ONLY safe on a truly multi-instance
-    // serverless host with an authoritative store — forcing it where the store is
-    // stale/empty overwrites working in-memory accounts (a lockout). So it runs
-    // ONLY on real serverless detection. The synchronous SAVE, which is what
-    // actually prevents write-loss, runs whenever a store is on — WITHOUT the
-    // risky load — so writes persist and memory is never wiped.
-    const doLoad = serverlessPersist();
-    const doSyncSave = serverlessPersist() || syncSaveOn();
+    // Pre-handler cross-instance refresh + synchronous save whenever a durable
+    // store is on. The refresh now MERGES (hydrateMerge) — it brings in records
+    // this instance is missing without ever dropping a live in-memory account
+    // (so a stale/partial store can't cause the lockout), which makes it safe to
+    // run on every host, not just detected serverless. The synchronous save is
+    // what prevents write-loss on a freeze.
+    const doSyncSave = syncSaveOn();
     if (doSyncSave) {
-      if (doLoad) {
-        try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep memory */ }
-      }
+      try { const snap = await load(); if (snap) hydrateMerge(snap); } catch { /* keep memory */ }
       // Snapshot the store BEFORE the handler runs. Many POSTs are effectively
       // read-only (search, telemetry, chat, checkout-session creation) — if the
       // handler changed nothing, we must NOT do a Firebase write, or every such
@@ -283,12 +280,13 @@ let rehydrating = false;
 let lastRehydrateAt = 0;
 app.use(async (req, res, next) => {
   const uid = req.headers['x-user-id'];
-  if (serverlessPersist() && storeReady && !rehydrating) {
+  if (syncSaveOn() && storeReady && !rehydrating) {
     const missingCaller = uid && !getUser(uid);
     const stale = Date.now() - lastRehydrateAt > 5000;
     if (missingCaller || stale) {
       rehydrating = true;
-      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep serving from memory */ }
+      // MERGE — never drop a live in-memory account when refreshing from the store.
+      try { const snap = await load(); if (snap) hydrateMerge(snap); } catch { /* keep serving from memory */ }
       lastRehydrateAt = Date.now();
       rehydrating = false;
     }

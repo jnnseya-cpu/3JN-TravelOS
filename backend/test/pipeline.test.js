@@ -5351,6 +5351,17 @@ test('hard-test: an infant is counted in the fare breakdown (not silently droppe
   assert.equal(f.details.fareBreakdown.adult, 2);
 });
 
+test('hard-test: hydrateMerge refreshes from the store WITHOUT dropping a live in-memory account (no lockout)', async () => {
+  const { createUser, hydrateMerge, getUser, snapshot } = await import('../src/store.js');
+  const mem = createUser({ email: `merge-mem-${Date.now?.() || 'a'}@t.com`, name: 'InMemOnly' });
+  const store = createUser({ email: `merge-store-${Date.now?.() || 'b'}@t.com`, name: 'InStore' });
+  const snap = snapshot();
+  delete snap.users[mem.id]; // simulate a stale/partial store that never saved 'mem'
+  hydrateMerge(snap);
+  assert.ok(getUser(mem.id), 'an in-memory-only account survives a merge refresh (this is what stops the lockout)');
+  assert.ok(getUser(store.id), 'the store account is present too');
+});
+
 test('hard-test: an ESTIMATED booking takes NO payment and prints as an indicative quote, not a confirmation', async () => {
   const { createUser, createBooking } = await import('../src/store.js');
   const { bookingDocument } = await import('../src/documents.js');

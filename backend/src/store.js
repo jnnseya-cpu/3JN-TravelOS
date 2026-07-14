@@ -2742,6 +2742,38 @@ export function hydrate(s) {
   return true;
 }
 
+// MERGING hydrate — brings in what the store has WITHOUT dropping records this
+// instance already holds. Used for the per-request cross-instance refresh so a
+// stale/partial store snapshot can NEVER wipe a live in-memory account/booking
+// (the lockout bug). For maps: the store's version of a record wins for the same
+// id (it's authoritative for other instances' changes, and this instance saved
+// its own changes before the previous response), but ids only in memory survive.
+// For arrays: union by id (or by identity) so neither side's entries are lost.
+export function hydrateMerge(s) {
+  if (!s || typeof s !== 'object') return false;
+  if (typeof s.counter === 'number') counter = Math.max(counter, s.counter);
+  for (const k of MAP_KEYS) {
+    if (!s[k] || typeof s[k] !== 'object') continue;
+    if (!(db[k] instanceof Map)) db[k] = new Map();
+    for (const [id, v] of Object.entries(s[k])) db[k].set(id, v);
+  }
+  for (const k of ARRAY_KEYS) {
+    if (!Array.isArray(s[k])) continue;
+    const cur = Array.isArray(db[k]) ? db[k] : [];
+    if (!cur.length) { db[k] = s[k]; continue; }
+    const seen = new Set();
+    const keyOf = (x) => (x && (x.id || x.reference)) ? String(x.id || x.reference) : JSON.stringify(x);
+    const out = [];
+    for (const item of [...cur, ...s[k]]) {
+      const kk = keyOf(item);
+      if (seen.has(kk)) continue;
+      seen.add(kk); out.push(item);
+    }
+    db[k] = out;
+  }
+  return true;
+}
+
 export { db };
 
 // ============================================================================
