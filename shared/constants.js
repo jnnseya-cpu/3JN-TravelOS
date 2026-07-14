@@ -62,12 +62,13 @@ export const ACU_GBP = 0.003;
 // Customer-facing sale/allocation rate: £1 buys 100 ACUs (members + top-ups).
 export const ACU_PER_GBP = 100;
 // Share of every membership subscription that is auto-converted to ACUs each
-// billing period (the "10% of your plan funds your AI" rule).
-export const MEMBERSHIP_ACU_FUND_RATE = 0.10;
+// billing period (the "20% of your plan funds your AI" rule) — members spend
+// this on searches at the margin price and top up when it runs out.
+export const MEMBERSHIP_ACU_FUND_RATE = 0.20;
 
 // ---- Membership plans (blueprint §3.1) ------------------------------------
-// Each plan auto-funds ACUs every billing period: 10% of the subscription,
-// converted at £1 = 100 ACU. e.g. £12.99 → £1.299 → ~130 ACU / month.
+// Each plan auto-funds ACUs every billing period: 20% of the subscription,
+// converted at £1 = 100 ACU. e.g. £12.99 → £2.598 → ~260 ACU / month.
 export const MEMBERSHIP_TIERS = [
   // `discount` = the members' fee/package discount (the "Discounted fees" benefit),
   // funded from 3JN's commission and capped at it, so a booking is never sold
@@ -84,7 +85,7 @@ export const MEMBERSHIP_TIERS = [
   // (fee-free flights, priority, savings, lounge, visa support) beats a recurring
   // monthly charge — the real usage revenue comes from ACU top-ups per search.
   pricePerYear: Math.round(t.pricePerMonth * 2 * 100) / 100,
-  // 10% of the annual fee is credited back as ACU (£1 = 100 ACU).
+  // 20% of the annual fee is credited back as ACU (£1 = 100 ACU).
   acuPerYear: Math.round(t.pricePerMonth * 2 * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP),
 }));
 

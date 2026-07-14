@@ -917,25 +917,25 @@ test('AI cost optimisation guarantees the 66% minimum saving floor', () => {
   assert.ok(c.optimizedUSD <= c.baselineUSD * (1 - MIN_AI_COST_SAVING) + 1e-9);
 });
 
-test('membership: 10% of the subscription auto-funds ACUs at £1 = 100 ACU', () => {
-  // Allocation rule holds for every tier.
+test('membership: 20% of the subscription auto-funds ACUs at £1 = 100 ACU', () => {
+  // Allocation rule holds for every tier (20% of the plan funds AI).
   for (const t of MEMBERSHIP_TIERS) {
-    assert.equal(t.acuPerMonth, Math.round(t.pricePerMonth * 0.10 * ACU_PER_GBP));
+    assert.equal(t.acuPerMonth, Math.round(t.pricePerMonth * 0.20 * ACU_PER_GBP));
   }
   const u = createUser({ name: 'MemTest' });
   assert.equal(u.acuBalance, 50, 'new users get a 50 ACU starter to try searches');
   assert.equal(u.membership, null);
 
-  const sub = subscribeMembership(u.id, 'family'); // monthly £12.99 -> 130 ACU
+  const sub = subscribeMembership(u.id, 'family'); // monthly £12.99 -> 260 ACU (20%)
   assert.equal(sub.ok, true);
-  assert.equal(sub.acuCredited, 130);
-  assert.equal(sub.user.acuBalance, 180, '50 starter + 130 funded');
+  assert.equal(sub.acuCredited, 260);
+  assert.equal(sub.user.acuBalance, 310, '50 starter + 260 funded');
   assert.equal(sub.user.membership.active, true);
 
   // Each billing period re-funds the allocation.
   const ren = renewMembership(u.id);
-  assert.equal(ren.acuCredited, 130);
-  assert.equal(ren.user.acuBalance, 310);
+  assert.equal(ren.acuCredited, 260);
+  assert.equal(ren.user.acuBalance, 570);
 });
 
 test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU', () => {
@@ -1905,7 +1905,7 @@ test('search cache: fresh results cached; free tier serves from the database', (
 // ---- Admin complimentary Elite ×2 (max 5 accounts) ---------------------------
 import { grantComplimentaryElite, compEliteCount, COMP_ELITE_LIMIT } from '../src/store.js';
 
-test('comp elite: admin grants free Elite x2 (1,000 ACU/mo), capped at 5', () => {
+test('comp elite: admin grants free Elite x2 (2,000 ACU/mo), capped at 5', () => {
   const admin = createUser({ name: 'The Admin', email: 'theadmin@3jn.example', role: 'admin' });
   const nobody = createUser({ name: 'Nobody', email: 'nobody@x.example' });
   // Non-admin cannot grant.
@@ -1916,9 +1916,9 @@ test('comp elite: admin grants free Elite x2 (1,000 ACU/mo), capped at 5', () =>
     const r = grantComplimentaryElite(admin.id, friend.email);
     assert.equal(r.ok, true, `slot ${i}`);
     assert.equal(r.user.membership.pricePerMonth, 0, 'free');
-    assert.equal(r.user.membership.acuPerMonth, 1000, '2x Elite ACU');
+    assert.equal(r.user.membership.acuPerMonth, 2000, '2x Elite ACU (Elite now 1,000/mo at 20%)');
     assert.equal(r.user.membership.complimentary, true);
-    assert.ok(r.user.acuBalance >= 1000, 'first month credited');
+    assert.ok(r.user.acuBalance >= 2000, 'first month credited');
   }
   assert.equal(compEliteCount(), 5);
   // The sixth grant is refused — hard cap.
