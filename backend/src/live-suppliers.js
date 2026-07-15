@@ -17,7 +17,7 @@
 
 import { fxRate, geocode } from './live-data.js';
 import { estimateFlightFares } from './suppliers.js';
-import { routeFareBaseUSD } from './airports.js';
+import { routeFareBaseUSD, nearbyAirports } from './airports.js';
 
 const env = process.env;
 const TIMEOUT_MS = Number(env.LIVE_SUPPLIERS_TIMEOUT_MS) || 6000;
@@ -488,8 +488,9 @@ async function fetchDuffelFlights(intent, originCode, destCode, cabinClass = 'ec
   const offers = res?.data?.offers;
   if (!Array.isArray(offers) || !offers.length) return null;
 
-  // Take the cheapest handful (the packager re-ranks anyway).
-  const sorted = [...offers].sort((a, b) => Number(a.total_amount) - Number(b.total_amount)).slice(0, 8);
+  // Take the cheapest handful (the packager re-ranks anyway). A slightly wider
+  // net (12) than before so the deep sweep genuinely compares more real fares.
+  const sorted = [...offers].sort((a, b) => Number(a.total_amount) - Number(b.total_amount)).slice(0, 12);
   const out = [];
   for (const offer of sorted) {
     const usd = await toUSD(offer.total_amount, offer.total_currency);
@@ -712,22 +713,60 @@ export async function fetchMarketFares(intent, dest, origin) {
   return fares.length ? fares : null;
 }
 
+// Tag a batch of fares with deep-sweep provenance so the UI can badge them
+// ("departs Manchester instead", "1 day earlier") — never silently swap the
+// route the customer asked for.
+function tagFares(fares, meta) {
+  if (!Array.isArray(fares)) return [];
+  for (const f of fares) { if (f && f.details) Object.assign(f.details, meta); }
+  return fares;
+}
+// A shallow clone of the intent with the trip shifted by N days (for +/- date
+// flex). Returns null if there are no dates to shift.
+function shiftIntentDays(intent, days) {
+  if (!intent?.dates?.checkIn) return null;
+  const shift = (iso) => { if (!iso) return iso; const d = new Date(iso + 'T00:00:00Z'); if (Number.isNaN(d.getTime())) return iso; d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
+  const checkIn = shift(intent.dates.checkIn);
+  if (!checkIn || checkIn < new Date().toISOString().slice(0, 10)) return null; // never flex into the past
+  return { ...intent, dates: { ...intent.dates, checkIn, checkOut: intent.dates.checkOut ? shift(intent.dates.checkOut) : intent.dates.checkOut } };
+}
+
 export async function fetchLiveFlights(intent, dest, origin) {
   if (!liveFlightsEnabled()) return null;
   const originCode = origin?.airport;
   const destCode = dest?.code;
   if (!originCode || !destCode || !intent?.dates?.checkIn) return null;
-  // Query ALL doors concurrently: Duffel economy (the price fight), Duffel
-  // BUSINESS (so the Luxury tier is genuinely premium, not the same economy
-  // fare relabelled), and Tequila (LCCs — Ryanair/Jet2/Wizz for regional
-  // airports). Merged and sorted by price; the packager re-ranks per tier.
-  const [duffel, duffelBiz, tequila] = await Promise.all([
+  // DEEP SWEEP (bounded, all concurrent so latency ≈ one call). We dig for the
+  // cheapest genuine fare across:
+  //   • the requested route in EVERY cabin (economy / premium economy / business)
+  //   • LCCs via Tequila (Ryanair/Jet2/Wizz — the regional-airport price fight)
+  //   • up to 2 NEARBY airports each end (the classic "hidden" cheaper fare —
+  //     flying from/into a nearby city), tagged so the UI shows the real airport
+  //   • ±1 day DATE FLEX on the requested route, tagged with the shifted date
+  // NO hidden-city/throwaway ticketing — it violates airline terms and penalises
+  // the traveller + 3JN. The call count is capped so one search can't fan out.
+  const NEARBY_KM = 130;   // reasonable ground-transfer radius
+  const MAX_ALT_EACH = 2;  // at most 2 alternate airports per end
+  const altOrigins = nearbyAirports(originCode, NEARBY_KM).slice(0, MAX_ALT_EACH).map((a) => a.code).filter((c) => c !== destCode);
+  const altDests = nearbyAirports(destCode, NEARBY_KM).slice(0, MAX_ALT_EACH).map((a) => a.code).filter((c) => c !== originCode);
+
+  const tasks = [
     fetchDuffelFlights(intent, originCode, destCode, 'economy').catch(() => null),
+    fetchDuffelFlights(intent, originCode, destCode, 'premium_economy').catch(() => null),
     fetchDuffelFlights(intent, originCode, destCode, 'business').catch(() => null),
     fetchTequilaFlights(intent, originCode, destCode).catch(() => null),
-  ]);
-  const merged = [...(duffel || []), ...(duffelBiz || []), ...(tequila || [])]
-    .sort((a, b) => a.priceUSD - b.priceUSD).slice(0, 14);
+  ];
+  // Nearby-airport economy fetches (the cheap signal), tagged with the alternate.
+  for (const o of altOrigins) tasks.push(fetchDuffelFlights(intent, o, destCode, 'economy').then((r) => tagFares(r, { altAirport: true, altOriginCode: o, requestedOriginCode: originCode })).catch(() => null));
+  for (const d of altDests) tasks.push(fetchDuffelFlights(intent, originCode, d, 'economy').then((r) => tagFares(r, { altAirport: true, altDestCode: d, requestedDestCode: destCode })).catch(() => null));
+  // ±1 day flex on the requested route (economy), tagged with the shifted date.
+  for (const days of [-1, 1]) {
+    const flexed = shiftIntentDays(intent, days);
+    if (flexed) tasks.push(fetchDuffelFlights(flexed, originCode, destCode, 'economy').then((r) => tagFares(r, { dateFlex: days, flexDate: flexed.dates.checkIn })).catch(() => null));
+  }
+
+  const results = await Promise.all(tasks);
+  const merged = results.flat().filter(Boolean).sort((a, b) => a.priceUSD - b.priceUSD).slice(0, 24);
   return merged.length ? merged : null;
 }
 

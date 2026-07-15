@@ -1007,8 +1007,14 @@ function flightItinBlock(c, o, sym, intent) {
       ${l.stops ? `<div style="font-size:11.5px;margin-top:3px;color:var(--green)">🔗 Protected connection${via ? ' · via ' + via : ''} — one ticket, bags checked through, and the carrier rebooks you at no extra fare if a delay breaks the connection</div>` : ''}
     </div>`;
   };
+  // DEEP SEARCH: this fare was surfaced from a nearby airport or a flexed date —
+  // badge it clearly so the alternative airport/date shown in the legs is never a
+  // surprise (we never silently swap what you searched for).
+  const deepBadge = (d.altAirport || d.dateFlex)
+    ? `<div style="font-size:11px;margin:0 0 5px"><span class="chip" style="border-color:rgba(70,211,154,.4);color:#79d99b">💡 Cheaper option — ${d.altAirport ? 'a nearby airport (see the cities below)' : (d.dateFlex < 0 ? `${Math.abs(d.dateFlex)} day earlier` : `${d.dateFlex} day later`) + ' (see the date below)'}</span></div>`
+    : '';
   return `<div style="margin:6px 0 2px">
-    ${legRow(d.outbound, 'Outbound')}${legRow(d.inbound, 'Return')}
+    ${deepBadge}${legRow(d.outbound, 'Outbound')}${legRow(d.inbound, 'Return')}
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;padding:7px 0 2px;border-top:1px dashed rgba(223,229,238,.12);font-size:11.5px">
       <span class="muted">🧳 ${esc(d.baggage || 'Baggage per fare rules')} <span style="opacity:.75">· per person</span></span>
       <span><strong style="color:var(--gold)">${perPax}</strong> <span class="muted">per person${pax > 1 ? ` · ${pax} travellers` : ''}</span></span>
