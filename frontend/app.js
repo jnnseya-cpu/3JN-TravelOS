@@ -1438,6 +1438,7 @@ window.openBooking = async (tier) => {
       <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
       <div class="muted" style="font-size:11.5px;margin-top:4px">One payment — your booking is settled in full, nothing more to pay.</div>
     </div>
+    <div id="bagPanel"></div>
 
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller${international ? ' (exact passport spelling)' : ''}</span></div>
     <div class="composer-row" style="margin-top:6px">
@@ -1511,6 +1512,22 @@ window.openBooking = async (tier) => {
     </div>
     <div id="bkValidate"></div>
     <button class="btn btn-gold btn-block" id="bkConfirmBtn" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
+  // Real add-on baggage prices for this live fare (Duffel available_services).
+  // Shown so the customer sees the true bag cost up front; adding a checked bag is
+  // ticketed by our team via the 💬 Assistant after booking (never charged without
+  // being added to your airline ticket).
+  const flightC = option.components.find((c) => c.type === 'flight' && c.details?.offerId);
+  if (flightC) {
+    api(`/api/flight/baggage?offerId=${encodeURIComponent(flightC.details.offerId)}`, { silent: true })
+      .then((d) => {
+        const el = document.getElementById('bagPanel');
+        if (!el || !Array.isArray(d.bags) || !d.bags.length) return;
+        el.innerHTML = `<div style="margin-top:14px"><span class="eyebrow">🧳 Add checked baggage</span>
+          <p class="muted" style="font-size:11.5px;margin:2px 0 6px">Your fare includes: <strong>${esc(flightC.details.baggage || 'cabin bag')}</strong>. Real airline add-on prices for extra checked bags on this fare:</p>
+          ${d.bags.slice(0, 4).map((b) => `<div class="kv"><span>${b.kind === 'carry_on' ? 'Cabin' : 'Checked'} bag${b.kg ? ` · up to ${b.kg}kg` : ''}</span><span style="color:var(--gold)">${esc(b.symbol || '£')}${(b.priceLocal || 0).toFixed(2)}</span></div>`).join('')}
+          <div class="muted" style="font-size:11px;margin-top:5px">To add a bag, book first, then ask the 💬 3JN Assistant ("add a checked bag") — we add it to your airline ticket and only charge once it's confirmed on your booking.</div></div>`;
+      }).catch(() => {});
+  }
 };
 // Toggle the deposit schedule vs full-payment view + the confirm button label.
 window.togglePayChoice = () => {

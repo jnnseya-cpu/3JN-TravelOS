@@ -300,19 +300,53 @@ export async function validateDuffelOffer(offerId) {
   return { ok: true, live: !expired, expired, priceUSD: usd, amount: offer.total_amount, currency: offer.total_currency, expiresAt: offer.expires_at };
 }
 
+// Read the ADD-ON checked-bag services a live offer sells (Duffel returns them
+// only when the offer is fetched with return_available_services=true). Read-only
+// and best-effort — returns [] on any failure so the booking flow never breaks.
+// Each entry: { id, type, quantity(max), amount, currency, priceUSD, segmentIds }.
+export async function getDuffelOfferBaggage(offerId) {
+  if (!duffelEnabled() || !offerId) return [];
+  const res = await httpJSON(`${DUFFEL_BASE}/air/offers/${encodeURIComponent(offerId)}?return_available_services=true`, {
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, Accept: 'application/json' },
+  });
+  const svcs = res?.data?.available_services;
+  if (!Array.isArray(svcs)) return [];
+  const out = [];
+  for (const s of svcs) {
+    if (s.type !== 'baggage') continue; // bags only (seats are a later add)
+    const priceUSD = await toUSD(s.total_amount, s.total_currency);
+    out.push({
+      id: s.id,
+      kind: s.metadata?.type || 'checked',           // 'checked' | 'carry_on'
+      maxQuantity: Number(s.maximum_quantity) || 1,
+      kg: s.metadata?.maximum_weight_kg || null,
+      amount: s.total_amount, currency: s.total_currency,
+      priceUSD: priceUSD == null ? null : Math.round(priceUSD * 100) / 100,
+      segmentIds: s.segment_ids || [], passengerIds: s.passenger_ids || [],
+    });
+  }
+  // Cheapest checked bag first.
+  return out.filter((b) => b.priceUSD != null).sort((a, b) => a.priceUSD - b.priceUSD);
+}
+
 // A tiny connectivity self-test for admin: confirms the Duffel token works and
 // whether it is a TEST or LIVE key (test tokens start with 'duffel_test').
 // Create a Duffel ORDER against a live offer — this ISSUES THE TICKET.
 // Called on payment success (money already captured). Duffel is paid from the
 // balance (mode 'balance') by default. Returns { ok, order:{...} } or
 // { ok:false, error } — the caller triggers a refund on failure.
-export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance', idempotencyKey = null } = {}) {
+export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance', idempotencyKey = null, services = [] } = {}) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const body = {
     data: {
       type: 'instant',
       selected_offers: [offerId],
       passengers,
+      // ANCILLARIES: selected checked bags/seats are ticketed IN the order (never
+      // charged without fulfilment). Only added when the customer picked some; the
+      // payment amount passed in already includes their price, so Duffel collects
+      // and issues them together with the fare. Absent → byte-identical to before.
+      ...(Array.isArray(services) && services.length ? { services: services.map((s) => ({ id: s.id, quantity: Math.max(1, Number(s.quantity) || 1) })) } : {}),
       payments: [{ type: paymentType, amount: String(paymentAmount), currency: paymentCurrency }],
     },
   };

@@ -67,7 +67,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-cabin-class-v91';
+const BUILD_TAG = '2026-07-15-baggage-ancillaries-v92';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2578,6 +2578,24 @@ app.get('/api/book/:id', safe((req, res) => {
 // Console → booking → 📄 Documents: the structured document vault — the SAME
 // per-service confirmation cards as the printed document (single source of
 // truth), so "full instructions in your Console" is literally true.
+// Available ADD-ON checked bags for a live flight offer, with real prices. Used
+// at booking so the customer can see (and add) real Duffel baggage before paying.
+// Read-only + rate-limited (it hits Duffel); empty list when unavailable.
+app.get('/api/flight/baggage', safe(async (req, res) => {
+  const offerId = String(req.query.offerId || '').trim();
+  if (!offerId) return res.status(400).json({ error: 'offerId-required' });
+  const budget = rateLimitLiveSearch(clientIp(req));
+  if (!budget.ok) return res.json({ offerId, bags: [], throttled: true });
+  const cur = detectContext(req, {}).currency || { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  const bags = await getDuffelOfferBaggage(offerId).catch(() => []);
+  // Present prices in the customer's currency alongside the raw offer amount.
+  const priced = bags.map((b) => ({
+    id: b.id, kind: b.kind, kg: b.kg, maxQuantity: b.maxQuantity,
+    priceLocal: b.priceUSD == null ? null : Math.round(b.priceUSD * (cur.rateFromUSD || 0.79) * 100) / 100,
+    symbol: cur.symbol || '£', amount: b.amount, currency: b.currency,
+  }));
+  res.json({ offerId, symbol: cur.symbol || '£', bags: priced });
+}));
 app.get('/api/book/:id/documents', safe((req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
