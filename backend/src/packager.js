@@ -148,6 +148,18 @@ function applyFlightPrefs(pool, prefs) {
     const direct = list.filter(isDirect);
     if (direct.length) list = direct; // honour the toggle when possible
   }
+  // Cabin preference — soft filter to the chosen cabin when the sweep found it
+  // (the deep search already fetches economy / premium economy / business).
+  // Economy explicitly EXCLUDES premium economy so the two never blur together.
+  const cab = prefs?.cabin;
+  if (cab) {
+    const cabinOf = (f) => String(f.details?.cabin || '').toLowerCase();
+    let inCab;
+    if (cab === 'economy') inCab = list.filter((f) => /economy/.test(cabinOf(f)) && !/premium/.test(cabinOf(f)));
+    else if (cab === 'premium_economy') inCab = list.filter((f) => /premium/.test(cabinOf(f)));
+    else inCab = list.filter((f) => cabinOf(f).includes(cab)); // business / first
+    if (inCab.length) list = inCab;
+  }
   const win = prefs?.departureWindow && DEPART_WINDOWS[prefs.departureWindow];
   if (win) {
     const inWin = list.filter((f) => { const h = departHour(f); return h >= win[0] && h < win[1]; });

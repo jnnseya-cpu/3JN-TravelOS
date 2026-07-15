@@ -39,9 +39,15 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
 
   // Flight preferences: explicit toggles win, else inferred from the request text.
   const win = ['morning', 'afternoon', 'evening', 'night'].find((w) => new RegExp(`\\b${w}\\b`, 'i').test(text || ''));
+  // Cabin preference: explicit selector wins, else inferred from the request text
+  // ("business class", "premium economy"). Empty → cheapest across any cabin.
+  const CABINS = { business: /\bbusiness\s*class\b|\bbiz\s*class\b/i, premium_economy: /\bpremium\s*economy\b|\bprem\s*econ\b/i, first: /\bfirst\s*class\b/i, economy: /\beconomy\b/i };
+  const cabinPref = ['business', 'premium_economy', 'first', 'economy'].includes(preferences.cabin) ? preferences.cabin
+    : (Object.keys(CABINS).find((c) => CABINS[c].test(text || '')) || null);
   intent.flightPrefs = {
     directOnly: preferences.directOnly != null ? !!preferences.directOnly : /\b(direct|non.?stop)\b/i.test(text || ''),
     departureWindow: preferences.departureWindow || win || null,
+    cabin: cabinPref,
   };
 
   // Apply any answers the user gave to clarifying questions.
@@ -260,6 +266,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     (intent.components || []).slice().sort().join(','),       // flights-only ≠ full package
     `${t.adults || 0}a${t.children || 0}c`,                   // party composition
     intent.flightPrefs.directOnly ? 'D1' : 'D0', intent.flightPrefs.departureWindow || '-',
+    intent.flightPrefs.cabin || 'any',                        // cabin changes the fares served
+
     intent.boardBasis || '-', intent.budgetStay ? 'B1' : 'B0',
     context.currency?.code || 'USD',                          // pricing currency
     context.country || '-', intent.nationality || '-',        // visa + regional pricing

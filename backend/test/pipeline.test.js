@@ -121,6 +121,18 @@ test('flight preferences: departure-window preference is captured', () => {
   assert.equal(result.flightPrefs.departureWindow, 'morning');
 });
 
+test('flight preferences: cabin class from the selector and from free text', () => {
+  // Explicit selector wins.
+  const biz = plan({ text: 'London to Dubai in September, flights', context: GB, user: null, searchTier: 'smart', preferences: { cabin: 'business' } });
+  assert.equal(biz.flightPrefs.cabin, 'business', 'selector sets the cabin');
+  // Inferred from the request text when no selector is used.
+  const prem = plan({ text: 'London to Dubai in September in premium economy, flights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(prem.flightPrefs.cabin, 'premium_economy', 'cabin inferred from text');
+  // Default: no cabin locked → cheapest across any cabin.
+  const any = plan({ text: 'London to Dubai in September, flights', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(any.flightPrefs.cabin, null, 'no cabin → cheapest any cabin');
+});
+
 test('accuracy: real airport codes, UK date range, child ages and hotel area are captured', () => {
   const text = 'I want to travel to Dubai from birmingham on 17/08 to 24/08 with my family ( 2 adults , and 3 children 16,13 and 9 years old) on a direct flight . I want direct flights and hotel in sheikh zayed road dubai , instalments and the cheapest reliable price.';
   const r = plan({ text, context: GB, user: null, searchTier: 'deep', preferences: { directOnly: true } });

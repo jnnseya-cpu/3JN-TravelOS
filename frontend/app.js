@@ -594,6 +594,7 @@ async function runPlan(overrides = {}) {
         preferences: {
           directOnly: !!$('#directOnly')?.checked,
           departureWindow: $('#departWindow')?.value || null,
+          cabin: $('#cabinSelect')?.value || null,
         },
       }),
     });
@@ -824,6 +825,7 @@ function renderOptions(data) {
       : '⭐ Direct flights only — honoured');
   }
   if (fp.departureWindow) fpBits.push(`🕑 Preferred departure: ${esc(fp.departureWindow)}`);
+  if (fp.cabin) fpBits.push(`💺 ${esc({ economy: 'Economy', premium_economy: 'Premium Economy', business: 'Business', first: 'First' }[fp.cabin] || fp.cabin)} class`);
   // Mode competition: the OS compared every realistic way to travel.
   const mc = data.modeCompetition;
   const modeNote = mc
