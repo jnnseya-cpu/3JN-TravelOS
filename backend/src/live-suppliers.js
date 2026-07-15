@@ -383,12 +383,14 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
 // HOLD order — reserve the fare WITHOUT paying yet (for pay-monthly / instalments).
 // The airline holds the price until payment_required_by; we pay to ticket once
 // the customer has finished paying us. Only works on offers that allow holds.
-export async function createDuffelHoldOrder({ offerId, passengers = [], idempotencyKey = null }) {
+export async function createDuffelHoldOrder({ offerId, passengers = [], idempotencyKey = null, services = [] }) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/orders`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
-    body: JSON.stringify({ data: { type: 'hold', selected_offers: [offerId], passengers } }),
+    // Selected checked bags are HELD with the fare so they issue when the balance
+    // is paid; the held order's total_amount then already includes them.
+    body: JSON.stringify({ data: { type: 'hold', selected_offers: [offerId], passengers, ...(Array.isArray(services) && services.length ? { services: services.map((s) => ({ id: s.id, quantity: Math.max(1, Number(s.quantity) || 1) })) } : {}) } }),
   });
   if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'hold-failed', status: res?.__status };
   const o = res.data;

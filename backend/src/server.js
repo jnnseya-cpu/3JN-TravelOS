@@ -69,6 +69,7 @@ import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emi
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
+import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS } from './revenue.js';
@@ -131,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-baggage-ancillaries-v92';
+const BUILD_TAG = '2026-07-15-baggage-checkout-recalc-v93';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -602,6 +603,12 @@ async function autoTicketFlight(booking) {
   const contactPhone = lt.phone || tp.mobile || tp.secondaryPhone || '';
   const passengers = duffelOrderPassengers(offerPax, lt, { departureDate: flight.details.outbound?.date, travellers: booking.travellers, contactEmail, contactPhone });
   const fullyPaid = bookingFullyPaid(booking);
+  // TICKETED BAGGAGE: bags the customer paid for at checkout are added to the
+  // Duffel order (so they issue) and the airline is paid for them in the offer
+  // currency alongside the fare. If the order/pay rejects with them, the whole
+  // booking refunds via the paths below — never charged-without-fulfilment.
+  const bagServices = Array.isArray(booking.baggageServices) ? booking.baggageServices : [];
+  const bagOfferAmt = bagServices.length ? (Number(booking.baggageOfferAmount) || 0) : 0;
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------
   if (!fullyPaid) {
@@ -612,7 +619,7 @@ async function autoTicketFlight(booking) {
       await failTicketingWithRefund(booking, 'offer-expired-before-hold');
       return;
     }
-    const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers, idempotencyKey: `hold:${booking.id}` });
+    const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers, idempotencyKey: `hold:${booking.id}`, services: bagServices });
     if (!hold.ok) {
       // "already booked" = this single-use offer was ALREADY ticketed by us on a
       // prior (racing) reconcile — the order EXISTS. Never refund or mark failed;
@@ -625,6 +632,10 @@ async function autoTicketFlight(booking) {
     booking.fulfilment.holdOrderId = hold.order.id;
     booking.fulfilment.pnr = hold.order.bookingReference;
     booking.fulfilment.paymentRequiredBy = hold.order.paymentRequiredBy;
+    // The held order's total already includes any held bags — pay exactly this at
+    // ticketing (never the bare fare, which would underpay a bagged order).
+    booking.fulfilment.holdTotalAmount = hold.order.totalAmount || null;
+    booking.fulfilment.holdTotalCurrency = hold.order.totalCurrency || null;
     booking.fulfilment.heldAt = new Date().toISOString();
     recordAudit({ actor: 'system', role: 'system', action: 'ticketing.held', entity: 'booking', entityId: booking.id, summary: `held ${hold.order.bookingReference} · pay by ${hold.order.paymentRequiredBy || 'n/a'}` });
     if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Seats held — pay monthly', body: `Your fare is reserved (ref ${hold.order.bookingReference}). Your e-ticket is issued automatically once your instalments are paid.` });
@@ -639,8 +650,12 @@ async function autoTicketFlight(booking) {
   if (booking.fulfilment?.ticketing === 'issued') return;
   let order;
   if (booking.fulfilment?.holdOrderId) {
-    // Pay off the held order → issues the ticket.
-    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: flight.details.liveAmount, currency: flight.details.liveCurrency || 'GBP', idempotencyKey: `pay:${booking.id}` });
+    // Pay off the held order → issues the ticket. Pay the HELD ORDER'S total
+    // (which already includes any held bags); fall back to fare + bags if unknown.
+    const holdAmount = booking.fulfilment.holdTotalAmount != null
+      ? booking.fulfilment.holdTotalAmount
+      : Math.round(((Number(flight.details.liveAmount) || 0) + bagOfferAmt) * 100) / 100;
+    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: holdAmount, currency: booking.fulfilment.holdTotalCurrency || flight.details.liveCurrency || 'GBP', idempotencyKey: `pay:${booking.id}` });
     order = pay.ok ? { ok: true, order: { id: booking.fulfilment.holdOrderId, bookingReference: pay.order.bookingReference || booking.fulfilment.pnr, ticketNumbers: pay.order.ticketNumbers } } : pay;
   } else {
     const check = await validateDuffelOffer(flight.details.offerId);
@@ -648,7 +663,9 @@ async function autoTicketFlight(booking) {
       await failTicketingWithRefund(booking, 'offer-expired-before-ticketing');
       return;
     }
-    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: check.amount || flight.details.liveAmount, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}` });
+    // Pay the fare + the ticketed bags (offer currency).
+    const baseAmt = Number(check.amount != null ? check.amount : flight.details.liveAmount) || 0;
+    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: Math.round((baseAmt + bagOfferAmt) * 100) / 100, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}`, services: bagServices });
   }
   if (!order.ok) {
     // Same guard on the issue path: an "already booked" offer means we already
@@ -2332,9 +2349,24 @@ function isValidOption(o) {
     && o.pricing.local && Number(o.pricing.local.total) > 0
     && Array.isArray(o.components));
 }
-app.post('/api/quote', safe((req, res) => {
-  const { option, intent } = req.body || {};
+// Re-fetch the live offer's real bag prices from Duffel (never trust the client)
+// and compute the authoritative surcharge for the customer's selected bags. The
+// math lives in ./baggage.js so it is unit-testable without Duffel.
+async function baggageSurcharge(offerId, services, currency) {
+  if (!offerId || !Array.isArray(services) || !services.length) return null;
+  const bags = await getDuffelOfferBaggage(offerId).catch(() => []);
+  return computeBaggageSurcharge(bags, services, currency?.rateFromUSD || 0.79);
+}
+app.post('/api/quote', safe(async (req, res) => {
+  const { option, intent, baggage } = req.body || {};
   if (!isValidOption(option)) return res.status(400).json({ error: 'invalid-option', message: 'A valid priced option (pricing.local.total + components[]) is required.' });
+  // In-checkout baggage: recompute the total live so the deposit/instalments/full
+  // amounts already reflect the chosen bags.
+  if (baggage?.offerId && Array.isArray(baggage.services) && baggage.services.length) {
+    const ctx = detectContext(req, {});
+    const bag = await baggageSurcharge(baggage.offerId, baggage.services, ctx.currency);
+    if (bag) { applyBaggageToOption(option, bag); }
+  }
   const instalment = smartPlanForRequest(req, option, intent);
   const quote = saveQuote({ option, intent, instalment });
   recordBehaviour(currentUser(req)?.id, {
@@ -2415,8 +2447,8 @@ app.post('/api/book/:id/autopay', safe((req, res) => {
 }));
 
 // ---- Book: confirm + take deposit ----------------------------------------
-app.post('/api/book', safe((req, res) => {
-  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode } = req.body || {};
+app.post('/api/book', safe(async (req, res) => {
+  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode, baggage } = req.body || {};
   let quote = getQuote(quoteId);
   // SERVERLESS RESILIENCE: the quote may have been saved on a DIFFERENT instance
   // (or persistence isn't configured), so getQuote misses and the customer hits
@@ -2438,6 +2470,17 @@ app.post('/api/book', safe((req, res) => {
   if (!isValidOption(quote.option)) return res.status(400).json({ error: 'invalid-option', message: 'This quote is incomplete — please re-run the search.' });
   const user = currentUser(req);
 
+  // IN-CHECKOUT BAGGAGE (authoritative): re-price the selected bags from Duffel
+  // (never trust client prices) and fold the surcharge into the option BEFORE the
+  // plan/total are derived — so the deposit, instalments, full-payment amount and
+  // document all include the bag, and the bag is ticketed in the order.
+  let bagApplied = null;
+  if (baggage?.offerId && Array.isArray(baggage.services) && baggage.services.length) {
+    const ctx = detectContext(req, {});
+    bagApplied = await baggageSurcharge(baggage.offerId, baggage.services, ctx.currency);
+    if (bagApplied) applyBaggageToOption(quote.option, bagApplied);
+  }
+
   // The AI-selected plan from the quote stands — the schedule is re-derived
   // fresh at booking time so a quote left open for days still books on the
   // CURRENT date band (a 95-days-out quote booked at 89 days is an Easy Plan,
@@ -2446,6 +2489,16 @@ app.post('/api/book', safe((req, res) => {
   const instalment = smartPlanForRequest(req, quote.option, quote.intent);
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
+  // Store the ticketed-baggage selection so autoTicketFlight adds the services to
+  // the Duffel order and pays the airline for them (offer currency).
+  if (bagApplied) {
+    booking.baggageServices = bagApplied.lines.map((l) => ({ id: l.id, quantity: l.quantity }));
+    booking.baggageOfferAmount = bagApplied.offerAmount;
+    booking.baggageOfferCurrency = bagApplied.offerCurrency;
+    booking.baggageLocalTotal = bagApplied.localTotal;
+    const flight = (booking.option?.components || []).find((c) => c.type === 'flight');
+    if (flight?.details) flight.details.baggage = `${flight.details.baggage || 'Cabin bag'} + ${bagApplied.lines.reduce((s, l) => s + l.quantity, 0)} added checked bag(s)`;
+  }
   // Refundable search deposit (spec §6): a booking converts the user's active
   // deposit — its value comes OFF the final payment, never double-charged.
   if (user) {

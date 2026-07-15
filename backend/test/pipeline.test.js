@@ -47,6 +47,7 @@ import { architecture as commsArchitecture, emit as commsEmit, renderEmail as co
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import { flightFareUnits, fareBandForAge } from '../src/suppliers.js';
 import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured, oagInstanceToLeg, oagScheduleEnabled } from '../src/live-suppliers.js';
+import { computeBaggageSurcharge, applyBaggageToOption } from '../src/baggage.js';
 import { estimateFlightFares } from '../src/suppliers.js';
 import { haversineKm, distanceFareUSD, routeFareBaseUSD, airportCoords } from '../src/airports.js';
 import http from 'node:http';
@@ -5532,4 +5533,50 @@ test('hard-test: a pay-in-full (Instant Purchase) booking earns its loyalty poin
   const b2 = createBooking({ option: { ...option }, instalment: inst2, userId: u2.id });
   assert.notEqual(b2.pointsAwarded, true, 'an open instalment plan earns nothing yet');
   assert.equal(getUser(u2.id).points, 0);
+});
+
+// ---- In-checkout baggage (Duffel ancillaries) ----------------------------
+const BAGS_FIX = [
+  { id: 'bag_23', amount: '40.00', currency: 'GBP', priceUSD: 50, maxQuantity: 2, kg: 23 },
+  { id: 'bag_32', amount: '65.00', currency: 'GBP', priceUSD: 82.28, maxQuantity: 1, kg: 32 },
+];
+
+test('baggage surcharge: sums selected bags × quantity in offer + display currency', () => {
+  const bag = computeBaggageSurcharge(BAGS_FIX, [{ id: 'bag_23', quantity: 2 }], 0.79);
+  assert.ok(bag, 'a valid selection returns a surcharge');
+  assert.equal(bag.offerAmount, 80, '2 × £40 offer amount');
+  assert.equal(bag.offerCurrency, 'GBP');
+  assert.equal(bag.usd, 100, '2 × $50');
+  assert.equal(bag.localTotal, 79, '$100 × 0.79 rate');
+  assert.equal(bag.lines.length, 1);
+  assert.equal(bag.lines[0].quantity, 2);
+});
+
+test('baggage surcharge: quantity is clamped to the bag maximum', () => {
+  // bag_32 has maxQuantity 1 — asking for 5 still charges exactly one.
+  const bag = computeBaggageSurcharge(BAGS_FIX, [{ id: 'bag_32', quantity: 5 }], 0.79);
+  assert.equal(bag.lines[0].quantity, 1, 'clamped to maxQuantity');
+  assert.equal(bag.offerAmount, 65);
+});
+
+test('baggage surcharge: unknown / no selection returns null (byte-identical no-bag path)', () => {
+  assert.equal(computeBaggageSurcharge(BAGS_FIX, [], 0.79), null, 'empty selection → null');
+  assert.equal(computeBaggageSurcharge(BAGS_FIX, [{ id: 'nope', quantity: 1 }], 0.79), null, 'unknown id → null');
+  assert.equal(computeBaggageSurcharge([], [{ id: 'bag_23', quantity: 1 }], 0.79), null, 'no offer bags → null');
+});
+
+test('applyBaggageToOption: folds the surcharge into total, baggage line and USD', () => {
+  const option = { totalUSD: 1000, pricing: { local: { total: 800 }, symbol: '£' } };
+  const bag = computeBaggageSurcharge(BAGS_FIX, [{ id: 'bag_23', quantity: 1 }], 0.79); // usd 50, local 39.5
+  applyBaggageToOption(option, bag);
+  assert.equal(option.pricing.local.total, 839.5, 'bag added to the payable total');
+  assert.equal(option.pricing.local.baggage, 39.5, 'a baggage line records the add-on');
+  assert.equal(option.totalUSD, 1050, 'USD total tracks the bag too');
+});
+
+test('applyBaggageToOption: a null bag leaves the option untouched (no-bag path)', () => {
+  const option = { totalUSD: 1000, pricing: { local: { total: 800 } } };
+  const before = JSON.stringify(option);
+  applyBaggageToOption(option, null);
+  assert.equal(JSON.stringify(option), before, 'no bag → option unchanged');
 });

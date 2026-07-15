@@ -1360,6 +1360,48 @@ function additionalPassengerList(t) {
   return out;
 }
 
+// Renders the price/plan/pay-choice zone from a quote. Extracted so an
+// in-checkout bag change can live-recompute the total, deposit, instalments and
+// full-payment amount by re-rendering ONLY this zone (the traveller form and bag
+// selector below it stay untouched). With no bags selected the markup is
+// byte-identical to the original inline block.
+function priceZoneHTML(quote) {
+  const option = quote.option;
+  const inst = quote.instalment;
+  const sym = option.pricing.symbol;
+  const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
+  const smart = inst.engine === 'ai-smart' ? `
+    <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.35)">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+        <strong>🤖 ${esc(inst.plan)}</strong>
+        <span class="muted" style="font-size:11.5px">${inst.daysToDeparture} days to departure · AI-selected</span></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">
+        Deposit <strong>${(inst.depositPct * 100).toFixed(0)}%</strong> today (<strong style="color:var(--gold)">non-refundable</strong> — it secures your booking and locks the fare) ·
+        ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
+        pay any amount early, any time, no penalty.
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels and the deposit is forfeited; any balance beyond the deposit follows the supplier refund policy.</div>
+      ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}
+    </div>` : '';
+  return `
+    <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
+    ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>`}
+    <div class="field" style="margin:10px 0 4px">
+      <label>How would you like to pay?</label>
+      <select id="payChoice" class="in" onchange="togglePayChoice()">
+        <option value="deposit">Deposit now + interest-free instalments</option>
+        <option value="full">Pay in full now (${money2(option.pricing.local.total, sym)})</option>
+      </select>
+    </div>
+    <div id="depositSchedule">
+      <div class="kv" style="font-weight:700"><span>Deposit today ${inst.engine === 'ai-smart' ? '<span class="muted" style="font-size:11px">(non-refundable)</span>' : ''}</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
+      ${rows}
+    </div>
+    <div id="fullSchedule" style="display:none">
+      <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">One payment — your booking is settled in full, nothing more to pay.</div>
+    </div>`;
+}
 window.openBooking = async (tier) => {
   const option = window.__options[tier];
   const intent = window.__intent;
@@ -1401,43 +1443,15 @@ window.openBooking = async (tier) => {
     return;
   }
 
-  const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
-  // AI Smart Instalment plan header: which plan, why, and the protection rules
-  // the customer is agreeing to — stated before they pay, not in small print.
-  const smart = inst.engine === 'ai-smart' ? `
-    <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.35)">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
-        <strong>🤖 ${esc(inst.plan)}</strong>
-        <span class="muted" style="font-size:11.5px">${inst.daysToDeparture} days to departure · AI-selected</span></div>
-      <div class="muted" style="font-size:12px;margin-top:6px">
-        Deposit <strong>${(inst.depositPct * 100).toFixed(0)}%</strong> today (<strong style="color:var(--gold)">non-refundable</strong> — it secures your booking and locks the fare) ·
-        ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
-        pay any amount early, any time, no penalty.
-      </div>
-      <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels and the deposit is forfeited; any balance beyond the deposit follows the supplier refund policy.</div>
-      ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}
-    </div>` : '';
   const docList = reqs.documents.map((d) => `<li><span class="cs">${esc(d)}</span></li>`).join('');
   const entry = reqs.entryRules.map((r) => `<div class="kv"><span><span class="vstatus ${r.required ? 'watch' : 'pass'}"></span>${esc(r.type)}</span><span class="muted" style="font-size:12px;max-width:55%;text-align:right">${esc(r.note)}</span></div>`).join('');
+  // Pristine, no-bag option for live bag recalcs — the server re-prices bags from
+  // Duffel and folds them in each time, so this must never itself carry a bag.
+  window.__bagBaseOption = data.quote.option;
+  window.__bagSel = { offerId: null, symbol: sym, items: {} };
   modal(`
     <span class="eyebrow">${esc(tier)} package · ${esc(intent.destination.city)}</span>
-    <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
-    ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>`}
-    <div class="field" style="margin:10px 0 4px">
-      <label>How would you like to pay?</label>
-      <select id="payChoice" class="in" onchange="togglePayChoice()">
-        <option value="deposit">Deposit now + interest-free instalments</option>
-        <option value="full">Pay in full now (${money2(option.pricing.local.total, sym)})</option>
-      </select>
-    </div>
-    <div id="depositSchedule">
-      <div class="kv" style="font-weight:700"><span>Deposit today ${inst.engine === 'ai-smart' ? '<span class="muted" style="font-size:11px">(non-refundable)</span>' : ''}</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
-      ${rows}
-    </div>
-    <div id="fullSchedule" style="display:none">
-      <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
-      <div class="muted" style="font-size:11.5px;margin-top:4px">One payment — your booking is settled in full, nothing more to pay.</div>
-    </div>
+    <div id="bkPriceZone">${priceZoneHTML(data.quote)}</div>
     <div id="bagPanel"></div>
 
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller${international ? ' (exact passport spelling)' : ''}</span></div>
@@ -1512,22 +1526,72 @@ window.openBooking = async (tier) => {
     </div>
     <div id="bkValidate"></div>
     <button class="btn btn-gold btn-block" id="bkConfirmBtn" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
-  // Real add-on baggage prices for this live fare (Duffel available_services).
-  // Shown so the customer sees the true bag cost up front; adding a checked bag is
-  // ticketed by our team via the 💬 Assistant after booking (never charged without
-  // being added to your airline ticket).
+  // IN-CHECKOUT BAGGAGE: real Duffel add-on bag prices for this live fare, with a
+  // quantity stepper per bag. Changing a quantity re-quotes live (server re-prices
+  // from Duffel — client prices are never trusted) so the total, deposit,
+  // instalments and pay-in-full amount update before the customer pays, and the
+  // chosen bags are ticketed IN the airline order (never charged without fulfilment).
   const flightC = option.components.find((c) => c.type === 'flight' && c.details?.offerId);
   if (flightC) {
+    window.__bagSel.offerId = flightC.details.offerId;
     api(`/api/flight/baggage?offerId=${encodeURIComponent(flightC.details.offerId)}`, { silent: true })
       .then((d) => {
         const el = document.getElementById('bagPanel');
         if (!el || !Array.isArray(d.bags) || !d.bags.length) return;
+        const sym = d.symbol || '£';
+        window.__bagSel.symbol = sym;
+        // Keep only priced, checked-style bags; cap the list so the panel stays tidy.
+        const bags = d.bags.filter((b) => b.id && b.priceLocal != null).slice(0, 6);
+        if (!bags.length) return;
+        bags.forEach((b) => { window.__bagSel.items[b.id] = { qty: 0, priceLocal: b.priceLocal, kind: b.kind, kg: b.kg, maxQuantity: Math.max(1, Number(b.maxQuantity) || 1) }; });
         el.innerHTML = `<div style="margin-top:14px"><span class="eyebrow">🧳 Add checked baggage</span>
-          <p class="muted" style="font-size:11.5px;margin:2px 0 6px">Your fare includes: <strong>${esc(flightC.details.baggage || 'cabin bag')}</strong>. Real airline add-on prices for extra checked bags on this fare:</p>
-          ${d.bags.slice(0, 4).map((b) => `<div class="kv"><span>${b.kind === 'carry_on' ? 'Cabin' : 'Checked'} bag${b.kg ? ` · up to ${b.kg}kg` : ''}</span><span style="color:var(--gold)">${esc(b.symbol || '£')}${(b.priceLocal || 0).toFixed(2)}</span></div>`).join('')}
-          <div class="muted" style="font-size:11px;margin-top:5px">To add a bag, book first, then ask the 💬 3JN Assistant ("add a checked bag") — we add it to your airline ticket and only charge once it's confirmed on your booking.</div></div>`;
+          <p class="muted" style="font-size:11.5px;margin:2px 0 6px">Your fare includes: <strong>${esc(flightC.details.baggage || 'cabin bag')}</strong>. Add extra checked bags at the real airline price — they're added to your total below and ticketed on your airline booking.</p>
+          ${bags.map((b) => `<div class="kv" style="align-items:center">
+            <span>${b.kind === 'carry_on' ? 'Cabin' : 'Checked'} bag${b.kg ? ` · up to ${b.kg}kg` : ''} <span class="muted" style="font-size:11.5px">· ${esc(sym)}${(b.priceLocal || 0).toFixed(2)} each</span></span>
+            <span style="display:inline-flex;align-items:center;gap:10px">
+              <button type="button" class="btn btn-ghost" style="padding:2px 11px;line-height:1" onclick="bagStep('${esc(b.id)}',-1)">−</button>
+              <span id="bagQty_${esc(b.id)}" style="min-width:14px;text-align:center;font-weight:700">0</span>
+              <button type="button" class="btn btn-ghost" style="padding:2px 11px;line-height:1" onclick="bagStep('${esc(b.id)}',1)">+</button>
+            </span></div>`).join('')}
+          <div class="muted" id="bagNote" style="font-size:11px;margin-top:5px">Bags are added to your airline ticket automatically — never charged unless they're confirmed on your booking.</div></div>`;
       }).catch(() => {});
   }
+};
+// Change a checked-bag quantity (clamped 0..max) and live-recompute the total.
+window.bagStep = (id, delta) => {
+  const sel = window.__bagSel; const it = sel?.items?.[id];
+  if (!it) return;
+  it.qty = Math.max(0, Math.min(it.maxQuantity, (it.qty || 0) + delta));
+  const q = document.getElementById(`bagQty_${id}`);
+  if (q) q.textContent = String(it.qty);
+  refreshBagTotal();
+};
+// Re-quote (debounced) with the current bag selection so the price zone reflects
+// the bags. Uses the PRISTINE no-bag option so the server folds bags in exactly
+// once; state.lastQuote (the base) is left untouched for the authoritative /api/book.
+let __bagTimer = null;
+window.refreshBagTotal = () => {
+  clearTimeout(__bagTimer);
+  const note = document.getElementById('bagNote');
+  if (note) note.textContent = 'Updating your total…';
+  __bagTimer = setTimeout(async () => {
+    const sel = window.__bagSel || { items: {} };
+    const services = Object.entries(sel.items || {}).filter(([, it]) => it.qty > 0).map(([id, it]) => ({ id, quantity: it.qty }));
+    const prevChoice = document.getElementById('payChoice')?.value || 'deposit';
+    let data;
+    try {
+      data = await api('/api/quote', { method: 'POST', silent: true, body: JSON.stringify({
+        option: window.__bagBaseOption, intent: window.__intent, months: 3, depositPct: 0.2,
+        ...(services.length ? { baggage: { offerId: sel.offerId, services } } : {}),
+      }) });
+    } catch { if (note) note.textContent = 'Could not update — please try again.'; return; }
+    const zone = document.getElementById('bkPriceZone');
+    if (zone && data?.quote) zone.innerHTML = priceZoneHTML(data.quote);
+    const pc = document.getElementById('payChoice'); if (pc) pc.value = prevChoice;
+    togglePayChoice();
+    const n = document.getElementById('bagNote');
+    if (n) { const total = services.reduce((s, x) => s + x.quantity, 0); n.textContent = total ? `${total} extra bag(s) added to your total above.` : 'Bags are added to your airline ticket automatically — never charged unless they’re confirmed on your booking.'; }
+  }, 350);
 };
 // Toggle the deposit schedule vs full-payment view + the confirm button label.
 window.togglePayChoice = () => {
@@ -1596,12 +1660,18 @@ window.confirmBooking = async () => {
     setUser(u.user);
   }
   const payInFull = $('#payChoice')?.value === 'full';
+  // In-checkout bag selection → the server re-prices it from Duffel and folds it
+  // into the authoritative total, and tickets it on the airline order. state.lastQuote
+  // is the PRISTINE no-bag quote, so the server applies bags exactly once.
+  const bagSel = window.__bagSel || { items: {} };
+  const bagServices = Object.entries(bagSel.items || {}).filter(([, it]) => it.qty > 0).map(([id, it]) => ({ id, quantity: it.qty }));
+  const baggage = bagServices.length ? { offerId: bagSel.offerId, services: bagServices } : undefined;
   let data;
   try {
     // Send the option INLINE as well as the quoteId — on serverless the quote may
     // have been saved on another instance, so this lets /api/book proceed without
     // a "quote not found" (payment integrity is still enforced at checkout).
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, option: state.lastQuote.option, intent: window.__intent, months: 3, depositPct: 0.2, paymentMethod, lead, travellers }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, option: state.lastQuote.option, intent: window.__intent, months: 3, depositPct: 0.2, paymentMethod, lead, travellers, baggage }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
