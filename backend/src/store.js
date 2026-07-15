@@ -1867,19 +1867,38 @@ export function operatorConfirm(bookingId) {
   if (pa.kind === 'change') {
     const summary = applyChange(b, pa.quote);
     const extra = pa.quote.totalExtraGbp || 0;
-    if (extra > 0) {
-      b.payments.push({ type: 'change-charge', amount: extra, gateway: b.gateway, at: nowISO(), status: 'paid', note: summary.description });
-    }
-    // Re-issue: the ticket must be regenerated to reflect the change.
     b.fulfilment = b.fulfilment || {};
-    b.fulfilment.ticketing = 'reissued';
-    b.fulfilment.reissuedAt = nowISO();
     b.changeLog = b.changeLog || [];
-    b.changeLog.push({ ...summary, extraGbp: extra, deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
     delete b.pendingAction;
+    // ATOMIC: a customer must NEVER be charged for a change we haven't fulfilled.
+    // A LIVE airline ticket ('issued' with a real Duffel order / PNR) can only be
+    // reissued through the carrier — done by the ops desk (Duffel order-change is
+    // not automated). So we DEFER the fee (nothing charged), mark the ticket
+    // 'reissue-pending' (never fake 'reissued'), and raise an ops ticket; the fee
+    // is collected and the updated e-ticket emailed ONLY once the new ticket
+    // actually issues.
+    const wasLiveTicketed = (b.fulfilment.ticketing === 'issued' || b.fulfilment.ticketing === 'held') && !!(b.fulfilment.duffelOrderId || b.fulfilment.holdOrderId || b.fulfilment.pnr);
+    if (wasLiveTicketed) {
+      b.fulfilment.ticketing = 'reissue-pending';
+      b.fulfilment.reissueRequestedAt = nowISO();
+      b.pendingChangeFee = { amountGbp: extra, description: summary.description, hasDeferred: !!pa.quote.hasDeferred, at: nowISO() };
+      b.changeLog.push({ ...summary, extraGbp: extra, status: 'reissue-pending', deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
+      createSupportTicket({ userId: b.userId, intent: 'ops-reissue', message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. Confirm the airline fare difference, reissue the ticket, THEN collect the £${extra} 3JN change fee and email the updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
+      recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.change-requested', entity: 'booking', entityId: b.id, summary: `${summary.description} · reissue pending · £${extra} fee deferred until issued` });
+      if (b.userId) pushNotification(b.userId, { type: 'info', icon: '🔄', title: 'Change requested — reissuing your ticket', body: `We're confirming the new fare with the airline and reissuing your ticket for "${summary.description}". Your updated e-ticket will be emailed to you, and the £${extra} change fee applies ONLY once your new ticket is issued — never before.` });
+      return { ok: true, kind: 'change', summary, extraGbp: extra, reissuePending: true, hasDeferred: !!pa.quote.hasDeferred, booking: b };
+    }
+    // NOT live-ticketed → the itinerary document IS the deliverable. applyChange
+    // already updated the components, so the change is fulfilled now: collect the
+    // fee and flag the updated-document email for the server layer to send.
+    if (extra > 0) b.payments.push({ type: 'change-charge', amount: extra, gateway: b.gateway, at: nowISO(), status: 'paid', note: summary.description });
+    b.fulfilment.ticketing = 'reissued'; // the itinerary document is regenerated = fulfilled
+    b.fulfilment.reissuedAt = nowISO();
+    b.pendingChangeEmail = { description: summary.description, extraGbp: extra, at: nowISO() };
+    b.changeLog.push({ ...summary, extraGbp: extra, status: 'applied', deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
     recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.changed', entity: 'booking', entityId: b.id, summary: `${summary.description} · +£${extra}` });
-    if (b.userId) pushNotification(b.userId, { type: 'success', icon: '🔄', title: 'Booking updated', body: `We've ${summary.description}. ${extra > 0 ? `£${extra} change cost applied. ` : ''}Your updated e-ticket is ready in your Console.` });
-    return { ok: true, kind: 'change', summary, extraGbp: extra, hasDeferred: !!pa.quote.hasDeferred, booking: b };
+    if (b.userId) pushNotification(b.userId, { type: 'success', icon: '🔄', title: 'Booking updated', body: `We've ${summary.description}. ${extra > 0 ? `£${extra} change fee applied. ` : ''}Your updated itinerary is in your Console and on its way by email.` });
+    return { ok: true, kind: 'change', summary, extraGbp: extra, reissuePending: false, hasDeferred: !!pa.quote.hasDeferred, booking: b };
   }
 
   if (pa.kind === 'cancel') {

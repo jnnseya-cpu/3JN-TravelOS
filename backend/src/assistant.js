@@ -94,7 +94,12 @@ export function assist(message, userId, history = []) {
   if (ctx.booking && operatorHasPending(ctx.booking.id) && isConfirmation(message)) {
     const r = operatorConfirm(ctx.booking.id);
     if (r.ok && r.kind === 'change') {
-      return mkResult(intent.key, `Done — your change is applied: ${r.summary.description}.${r.extraGbp > 0 ? ` The ${money(r.extraGbp)} change cost has been applied.` : ''}${r.hasDeferred ? ' Any airline fare difference is confirmed with the carrier at re-issue.' : ''} Your updated e-ticket is ready in your Console (🎫 View e-ticket).`, ctx, { resolved: true });
+      if (r.reissuePending) {
+        // A live airline ticket — the carrier reissue is handled by our team, and
+        // the fee is charged ONLY once the new ticket issues (never before).
+        return mkResult(intent.key, `Done — I've requested your change: ${r.summary.description}. Our travel team is confirming the new fare with the airline and reissuing your ticket now. You'll receive the updated e-ticket by email, and the ${money(r.extraGbp)} change fee applies only once your new ticket is issued — never before.${r.hasDeferred ? ' Any airline fare difference is confirmed with the carrier at re-issue.' : ''}`, ctx, { resolved: true });
+      }
+      return mkResult(intent.key, `Done — your change is applied: ${r.summary.description}.${r.extraGbp > 0 ? ` The ${money(r.extraGbp)} change fee has been applied.` : ''}${r.hasDeferred ? ' Any airline fare difference is confirmed with the carrier at re-issue.' : ''} Your updated itinerary is in your Console and on its way to you by email.`, ctx, { resolved: true });
     }
     if (r.ok && r.kind === 'cancel') {
       return mkResult(intent.key, `Your booking is cancelled.${r.refundGbp > 0 ? ` A refund of ${money(r.refundGbp)} is being processed to your original payment method.` : ' This fare was non-refundable, so no refund is due.'}`, ctx, { resolved: true });

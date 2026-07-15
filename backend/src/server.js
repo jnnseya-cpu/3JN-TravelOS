@@ -131,7 +131,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-14-instalment-reminders-cutoff-v88';
+const BUILD_TAG = '2026-07-15-date-change-atomic-v89';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3120,6 +3120,25 @@ app.post('/api/support/chat', safe(async (req, res) => {
           recordAudit({ actor: 'system', role: 'system', action: 'refund.issued', entity: 'booking', entityId: b.id, summary: `£${f.refundGbp} · ${r.refundId}` });
         }
       }
+    }
+  }
+  // A booking change was just APPLIED (non-live booking → the itinerary document
+  // is the deliverable). Email the customer their UPDATED document. The change fee
+  // is only ever collected once the change is fulfilled, so this email always
+  // reflects a real completed change — never a charge without a document.
+  if (user) {
+    for (const b of listBookings(user.id)) {
+      if (!b.pendingChangeEmail) continue;
+      const info = b.pendingChangeEmail;
+      delete b.pendingChangeEmail;
+      const to = b.leadTraveller?.email || b.lead?.email || getUser(user.id)?.email;
+      if (!to || /@guest\.3jn$/.test(to)) continue;
+      try {
+        const sym = b.option?.pricing?.symbol || '£';
+        const html = bookingDocument(b, { user: getUser(user.id), currencySymbol: sym });
+        await sendMail({ to, subject: `Your updated 3JN booking — ${b.id}`, text: `Your booking ${b.id} has been updated: ${info.description}.${info.extraGbp > 0 ? ` A ${sym}${Number(info.extraGbp).toFixed(2)} change fee was applied.` : ''} Your updated itinerary is in this email and in your Console.`, html });
+        recordAudit({ actor: 'system', role: 'system', action: 'booking.change-emailed', entity: 'booking', entityId: b.id, summary: `updated document emailed to ${to}` });
+      } catch { /* email best-effort */ }
     }
   }
   let ticket = null;

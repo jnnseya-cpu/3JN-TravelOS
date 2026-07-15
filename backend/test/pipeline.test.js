@@ -3122,6 +3122,20 @@ test('assistant executes a date change with confirmation and charges the fee', (
   assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 45), 'change fee charged');
 });
 
+test('assistant date change on a LIVE-ticketed booking defers the fee until reissue (never charge without fulfilment)', () => {
+  const u = createUser({ email: 'opr.live@x.co', name: 'Live Reissue Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  // Simulate a real airline ticket already issued (Duffel order + PNR).
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_live_1', pnr: 'ABC123' };
+  assert.ok(/CONFIRM/i.test(assist('change my flight date to 20 October 2027', u.id).reply), 'quotes and asks to confirm');
+  const done = assist('confirm', u.id);
+  assert.equal(done.resolved, true);
+  // NO fee is charged (deferred until the reissue actually happens).
+  assert.ok(!b.payments.some((p) => p.type === 'change-charge'), 'live ticket: fee NOT charged before reissue');
+  assert.equal(b.fulfilment.ticketing, 'reissue-pending', 'ticket is reissue-pending, never faked as reissued');
+  assert.ok(b.pendingChangeFee && b.pendingChangeFee.amountGbp === 45, 'the £45 fee is recorded as deferred until the reissue');
+});
+
 test('assistant adds baggage on confirmation with the extra charge', () => {
   const u = createUser({ email: 'opr2@x.co', name: 'Bag Test' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
