@@ -3086,6 +3086,7 @@ async function renderAdmin() {
 // them (previously there was no UI, so ops-reissue tickets were invisible).
 const OPS_INTENT = {
   'ops-reissue': ['🔄 Airline reissue', 'var(--gold)'],
+  'ops-reroute': ['🛫 Airport change (re-route)', 'var(--gold)'],
   'ops-refund': ['💸 Refund', '#ff8a8a'],
   'ops-manifest': ['🧑‍✈️ Manifest', 'var(--gold)'],
   'ops-hotel': ['🏨 Hotel booking', 'var(--blue-bright)'],

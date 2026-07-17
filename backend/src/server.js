@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-confirm-targets-pending-v102';
+const BUILD_TAG = '2026-07-15-origin-respect-reroute-v103';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3385,8 +3385,15 @@ app.get('/api/support/tickets', safe((req, res) => {
   res.json({ tickets: supportTicketsForUser(user.id) });
 }));
 // Admin queue: open escalations + resolve.
-app.get('/api/admin/support/tickets', safe((req, res) => {
+app.get('/api/admin/support/tickets', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
+  // Pull the LATEST tickets from the durable store first — otherwise this instance
+  // serves its own stale in-memory list, so a ticket resolved (or created) on
+  // another instance looks unresolved/absent here ("cleared items come back, new
+  // ones don't show"). GETs don't hydrate by default, so do it explicitly.
+  if (IS_SERVERLESS && isEnabled()) {
+    try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ }
+  }
   res.json({ tickets: listSupportTickets(req.query.status) });
 }));
 app.post('/api/admin/support/tickets/:id/resolve', safe((req, res) => {

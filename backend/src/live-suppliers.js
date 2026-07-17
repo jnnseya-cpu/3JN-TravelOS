@@ -865,8 +865,13 @@ export async function fetchLiveFlights(intent, dest, origin) {
   // the traveller + 3JN. The call count is capped so one search can't fan out.
   const NEARBY_KM = 130;   // reasonable ground-transfer radius
   const MAX_ALT_EACH = 2;  // at most 2 alternate airports per end
+  // NEARBY-AIRPORT ORIGINS only. We NEVER substitute the DESTINATION airport — the
+  // customer must ARRIVE where they asked (a "nearby" arrival can be a different
+  // city or even country, e.g. Brazzaville (BZV) for Kinshasa (FIH)). A nearby
+  // DEPARTURE with a short ground transfer is a legitimate savings option, but it
+  // is only ever offered as a clearly-labelled ALTERNATIVE — never the default —
+  // so the booked trip always departs from the city the customer named.
   const altOrigins = nearbyAirports(originCode, NEARBY_KM).slice(0, MAX_ALT_EACH).map((a) => a.code).filter((c) => c !== destCode);
-  const altDests = nearbyAirports(destCode, NEARBY_KM).slice(0, MAX_ALT_EACH).map((a) => a.code).filter((c) => c !== originCode);
 
   const tasks = [
     fetchDuffelFlights(intent, originCode, destCode, 'economy').catch(() => null),
@@ -874,9 +879,8 @@ export async function fetchLiveFlights(intent, dest, origin) {
     fetchDuffelFlights(intent, originCode, destCode, 'business').catch(() => null),
     fetchTequilaFlights(intent, originCode, destCode).catch(() => null),
   ];
-  // Nearby-airport economy fetches (the cheap signal), tagged with the alternate.
+  // Nearby-DEPARTURE economy fetches (the cheap signal), tagged with the alternate.
   for (const o of altOrigins) tasks.push(fetchDuffelFlights(intent, o, destCode, 'economy').then((r) => tagFares(r, { altAirport: true, altOriginCode: o, requestedOriginCode: originCode })).catch(() => null));
-  for (const d of altDests) tasks.push(fetchDuffelFlights(intent, originCode, d, 'economy').then((r) => tagFares(r, { altAirport: true, altDestCode: d, requestedDestCode: destCode })).catch(() => null));
   // ±1 day flex on the requested route (economy), tagged with the shifted date.
   for (const days of [-1, 1]) {
     const flexed = shiftIntentDays(intent, days);
@@ -884,7 +888,16 @@ export async function fetchLiveFlights(intent, dest, origin) {
   }
 
   const results = await Promise.all(tasks);
-  const merged = results.flat().filter(Boolean).sort((a, b) => a.priceUSD - b.priceUSD).slice(0, 24);
+  const all = results.flat().filter(Boolean);
+  // RANK: fares that depart from the REQUESTED origin always come first (the
+  // default/recommended trip must match what the customer asked for). Nearby-origin
+  // alternatives are kept — cheapest first — but strictly BELOW every requested-
+  // origin fare, so a cheaper Manchester fare can never silently become a booking
+  // for a customer who asked to fly from Birmingham. Each group is price-sorted.
+  const byPrice = (a, b) => a.priceUSD - b.priceUSD;
+  const requested = all.filter((f) => !f?.details?.altOriginCode).sort(byPrice);
+  const altOrigin = all.filter((f) => f?.details?.altOriginCode).sort(byPrice);
+  const merged = [...requested, ...altOrigin].slice(0, 24);
   return merged.length ? merged : null;
 }
 

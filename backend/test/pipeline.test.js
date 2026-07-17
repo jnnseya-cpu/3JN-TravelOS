@@ -3215,6 +3215,25 @@ test('assistant: a bare CONFIRM lands on the booking with the pending change, no
   assert.equal(b.option.components[0].details.outbound.date, '2027-11-01', 'the newer booking B was untouched');
 });
 
+test('assistant: a departure-airport change is a re-route (asks, then logs to ops — never a date change)', () => {
+  const u = createUser({ email: 'reroute@x.co', name: 'Reroute Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'MAN', to: 'FIH', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_rr', pnr: 'RR1' };
+  const hist = [];
+  const step = (m) => { const r = assist(m, u.id, hist.slice(-8)); hist.push({ role: 'user', text: m }); hist.push({ role: 'assistant', text: r.reply }); return r; };
+  const r1 = step('i need to change my departure airport');
+  assert.ok(/which airport|depart from/i.test(r1.reply), 'asks which airport, not a date');
+  assert.ok(!/date/i.test(r1.reply) || /airport/i.test(r1.reply), 'does not treat it as a date change');
+  const before = supportTicketsForUser(u.id).length;
+  const r2 = step('from Manchester to Birmingham');
+  assert.equal(r2.escalated, undefined, 'not a generic escalation');
+  assert.ok(/re-route|departure airport|specialist|travel team/i.test(r2.reply), 'confirms a re-route was logged');
+  const after = supportTicketsForUser(u.id);
+  assert.equal(after.length, before + 1, 'exactly one ops re-route ticket is created');
+  assert.equal(after[0].intent, 'ops-reroute', 'the ticket is an ops-reroute');
+  assert.equal(after[0].bookingId, b.id, 'the ticket carries the booking id for the Ops queue');
+});
+
 test('Duffel order-change: disabled without keys returns not-configured (safe manual fallback)', async () => {
   assert.equal((await getDuffelOrder('ord_x')).ok, false);
   assert.equal((await duffelOrderChangeQuote({ orderId: 'ord_x', departISO: '2027-10-20' })).ok, false);

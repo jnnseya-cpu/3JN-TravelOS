@@ -16,6 +16,7 @@ import {
   getUserRaw, latestBookingForUser, bookingsForUser, findUserBookingByRef,
   acuWallet, partnerDashboard,
   operatorQuoteChange, operatorQuoteCancel, operatorConfirm, operatorHasPending,
+  createSupportTicket,
 } from './store.js';
 import { visaCheck } from './intelligence.js';
 import { resolveDestinationFromText } from './destinations.js';
@@ -120,6 +121,26 @@ export function assist(message, userId, history = []) {
   // the conversation going and only quote once we have something concrete.
   const followingChange = topic === 'change' && (intent.key === 'change' || intent.key === 'unknown' || !!changeSlot(message) || hasTravelDate(message));
   if (ctx.booking && (intent.key === 'change' || followingChange)) {
+    // (a0) DEPARTURE-AIRPORT / re-route — a different origin airport means a whole
+    // new set of flights, NOT a date shift or a simple fee. Capture it as an ops
+    // re-route request (with the airports if named) and set the expectation clearly:
+    // the team confirms the new-origin options + any fare difference, and nothing is
+    // charged until the customer approves. (Previously "change my departure airport"
+    // was misread as a date change, then dead-ended in a generic escalation.)
+    if (changeSlot(message) === 'airport' || slotFromHistory(history) === 'airport') {
+      const air = message.match(/from\s+([A-Za-zÀ-ÿ'’\- ]{2,30}?)\s+(?:to|into|→|-\s*>)\s+([A-Za-zÀ-ÿ'’\- ]{2,30})/i);
+      // A bare place answer ("Manchester", "from Birmingham") — but NOT the intent
+      // sentence itself ("change my departure airport"), so we don't log on turn 1.
+      const bareM = !air && message.trim().match(/^(?:(?:i(?:['’]?d)?\s+(?:want|like|prefer)\s+)?(?:to\s+(?:fly|depart|leave)\s+)?(?:from|out of)\s+)?([A-Za-z][A-Za-zÀ-ÿ'’\- ]{1,28})$/i);
+      const bare = bareM && !/\b(change|airport|departure|depart|leaving|ticket|flight|dates?|book(?:ing)?|please|help)\b/i.test(bareM[1]) ? bareM[1].trim() : null;
+      if (air || bare) {
+        const detail = air ? ` (from ${air[1].trim()} to ${air[2].trim()})` : ` (to ${bare})`;
+        try { createSupportTicket({ userId, bookingId: ctx.booking.id, intent: 'ops-reroute', message: `Departure-airport / re-route request on booking ${ctx.booking.id}${detail}. Customer said: "${message}". Confirm the new-origin flight options and any fare difference with the customer, then reissue. Do NOT charge until the customer approves.`, reason: 'departure-airport change (re-route)' }); } catch { /* still answer the customer */ }
+        return mkResult('change', `Changing your **departure airport**${detail} is a re-route — different flights, so our travel team arranges it directly with the airline to keep your ticket valid. I've logged it on booking ${ctx.booking.id} and a specialist will come back with the options and any fare difference. **Nothing is changed or charged until you approve.**`, ctx, { resolved: true });
+      }
+      // Named the intent but not the airport yet → ask, staying in the flow.
+      return mkResult('change', `Sure — which airport would you like to **depart from** instead? Tell me the city or airport and I'll pass the re-route to our travel team; they'll confirm the flight options and any fare difference before anything is charged.`, ctx, { resolved: true });
+    }
     // (a) A concrete change we can parse outright → quote it.
     let changes = parseChange(message);
     // (b) In flow, a bare date ("12 August") is the new date for the slot the
@@ -289,6 +310,10 @@ function recentTopic(history) {
 // Which part of a booking is the customer naming ("departure", "add a bag")?
 function changeSlot(message) {
   const t = String(message || '');
+  // Airport / origin re-route ("change my departure AIRPORT", "fly from a different
+  // airport", "wrong airport") — checked BEFORE 'departure' so "departure airport"
+  // isn't mistaken for a departure-date change. This is a re-route, not a date shift.
+  if (/\bairport\b|\b(?:fly|depart|leav\w*)\s+(?:out\s+)?from\s+(?:a\s+)?(?:different|another|new|wrong)\b|\b(?:different|another|wrong)\s+airport\b/i.test(t)) return 'airport';
   if (/\b(depart(ure|ing)?|outbound|leaving|fly out|go out|onward|out ?bound)\b/i.test(t)) return 'departure';
   if (/\b(return|inbound|coming back|come back|way back|back home)\b/i.test(t)) return 'return';
   if (/\b(passenger|traveller|traveler|add (a )?(person|name|guest)|extra person)\b/i.test(t)) return 'passenger';
