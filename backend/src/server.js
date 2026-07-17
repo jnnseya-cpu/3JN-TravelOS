@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-baggage-checkout-recalc-v93';
+const BUILD_TAG = '2026-07-15-persist-flush-await-v94';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -266,9 +266,24 @@ app.use(async (req, res, next) => {
           } catch { changed = null; }
         }
         if (changed && Object.keys(changed).length) {
-          // MERGING write of just the changed records, flushed before the response.
-          Promise.race([saveMerge(changed).catch(() => {}), new Promise((r) => setTimeout(r, 4000))])
-            .finally(() => origJson(body));
+          // MERGING write of just the changed records, flushed BEFORE the response.
+          // CRITICAL (serverless correctness): the durable write must actually LAND
+          // before we answer. On Vercel the instance can freeze the instant the
+          // response is sent, killing an in-flight save — so a just-recorded
+          // instalment payment, an issued-ticket status, or a profile edit would
+          // silently revert on the next request ("I paid but it still says I owe /
+          // no ticket", "my profile won't save"). The old code raced the save
+          // against a 4s timer and answered on whichever won; a cold firebase-admin
+          // first-write on a fresh instance regularly exceeds 4s, so the very first
+          // money/profile write on each new instance was the one that got dropped.
+          // Now we AWAIT the merge (with one retry on a soft failure) and only fall
+          // back to answering after a generous 9s guard, so a real store outage
+          // can't hang the request past the function budget but a normal (even
+          // cold) write always completes first.
+          const flush = saveMerge(changed)
+            .then((ok) => (ok ? ok : saveMerge(changed)))
+            .catch((e) => { console.error('[persist] saveMerge failed', e?.message || e); return false; });
+          Promise.race([flush, new Promise((r) => setTimeout(r, 9000))]).finally(() => origJson(body));
         } else {
           origJson(body);
         }
