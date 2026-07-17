@@ -2461,6 +2461,11 @@ function bookingCard(b) {
       </div>
       ${tripLine ? `<div style="font-size:13px;font-weight:600;margin:4px 0 2px">✈ ${tripLine}</div>` : ''}
       ${((o.components || []).length > 1 || !tripLine) ? `<p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>` : ''}
+      ${b.fulfilment?.ticketing === 'reissue-pending' ? `
+        <div class="card pad" style="margin:8px 0;border-color:rgba(216,180,106,.5);background:rgba(216,180,106,.08)">
+          <strong style="color:var(--gold)">🔄 Change requested — being reissued</strong>
+          <div class="muted" style="font-size:12px;margin-top:3px">Our travel team is confirming your ${esc(b.pendingChangeFee?.description || 'change')} with the airline and reissuing your e-ticket.${b.pendingChangeFee?.amountGbp ? ` The £${b.pendingChangeFee.amountGbp} change fee applies only once your new ticket is issued — never before.` : ''} Your updated e-ticket will arrive by email.</div>
+        </div>` : ''}
       ${progress}
       <div style="margin:10px 0">${sched}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -2731,19 +2736,28 @@ window.openDocs = async (bookingId) => {
     'manifest-incomplete': 'We still need every traveller’s full name (as on passport) before tickets can be issued.',
   };
   const issued = d.ticketing === 'issued';
-  const explain = !issued && d.ticketing !== 'confirmed' && d.ticketing !== 'pending'
+  // A change awaiting airline reissue is NOT a failure — show it in gold, not red.
+  const reissuing = d.ticketing === 'reissue-pending';
+  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: 'e-ticket issued', held: 'fare held', reissued: 'reissued' };
+  const explain = !issued && !reissuing && d.ticketing !== 'confirmed' && d.ticketing !== 'pending'
     ? `<div class="card pad" style="border-color:rgba(255,107,107,.4);margin-top:10px">
          <strong style="color:#ff8f8f">Ticket not issued — ${esc(d.ticketing)}</strong>
          <div class="muted" style="font-size:12.5px;margin-top:6px">${esc(REASONS[String(d.reason || '').replace(/:.*/, '')] || d.reason || 'Ticketing is being completed by our team.')}</div>
          ${d.refunded ? `<div style="color:#79d99b;font-size:12.5px;margin-top:6px">✓ Your payment has been refunded in full${d.refundId ? ` (ref ${esc(d.refundId)})` : ''}.</div>`
             : d.needsRefund ? `<div style="color:var(--gold);font-size:12.5px;margin-top:6px">Your full refund is being processed — you’ll get a confirmation shortly.</div>` : ''}
        </div>` : '';
+  const reissueCard = reissuing
+    ? `<div class="card pad" style="border-color:rgba(216,180,106,.5);background:rgba(216,180,106,.08);margin-top:10px">
+         <strong style="color:var(--gold)">🔄 Change requested — being reissued</strong>
+         <div class="muted" style="font-size:12.5px;margin-top:6px">Our travel team is confirming your change with the airline and reissuing your e-ticket. You'll receive the updated e-ticket by email, and any change fee applies <b>only once your new ticket is issued</b> — never before. Your existing PNR below stays valid until the new one is confirmed.</div>
+       </div>` : '';
   modal(`
     <span class="eyebrow">📄 Documents · ${esc(d.bookingId)}</span>
     <h3 style="margin:6px 0 2px">Your travel documents & service instructions</h3>
-    <div class="kv"><span>Status</span><span>${esc(d.status)} · ${esc(d.ticketing)}</span></div>
+    <div class="kv"><span>Status</span><span>${esc(d.status)} · ${esc(TICKET_LABEL[d.ticketing] || d.ticketing)}</span></div>
     ${d.pnr ? `<div class="kv"><span>Airline PNR</span><span><b>${esc(d.pnr)}</b></span></div>` : ''}
     ${(d.ticketNumbers || []).length ? `<div class="kv"><span>E-ticket number(s)</span><span><b>${d.ticketNumbers.map(esc).join(', ')}</b></span></div>` : ''}
+    ${reissueCard}
     ${explain}
     ${issued || d.ticketing === 'confirmed' ? `<button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal();viewEticket('${esc(d.bookingId)}')">🎫 Open full e-ticket / itinerary</button>` : ''}
     <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="downloadBookingPdf('${esc(d.bookingId)}')">📥 Download confirmation PDF</button>
