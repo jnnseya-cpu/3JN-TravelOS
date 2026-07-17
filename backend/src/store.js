@@ -1922,7 +1922,10 @@ export function operatorConfirm(bookingId) {
     if (wasLiveTicketed) {
       b.fulfilment.ticketing = 'reissue-pending';
       b.fulfilment.reissueRequestedAt = nowISO();
-      b.pendingChangeFee = { amountGbp: extra, description: summary.description, hasDeferred: !!pa.quote.hasDeferred, at: nowISO() };
+      // Carry the airline-priced offer (if the customer was shown an exact total)
+      // so the auto-reissue commits that exact price. Expiry/tolerance is guarded
+      // in attemptAutoReissue.
+      b.pendingChangeFee = { amountGbp: extra, description: summary.description, hasDeferred: !!pa.quote.hasDeferred, airlineQuote: pa.airlineQuote || null, at: nowISO() };
       b.changeLog.push({ ...summary, extraGbp: extra, status: 'reissue-pending', deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
       // Tell the ops desk EXACTLY where to reissue — the new PNR/e-ticket comes from
       // the airline/supplier system, never from the customer. Duffel API orders can

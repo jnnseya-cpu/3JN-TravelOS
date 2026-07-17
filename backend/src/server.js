@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-reissue-workorder-v111';
+const BUILD_TAG = '2026-07-17-exact-total-before-confirm-v112';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3292,15 +3292,38 @@ async function attemptAutoReissue(booking) {
   const departISO = fc?.details?.outbound?.date;
   const returnISO = fc?.details?.inbound?.date || null;
   if (!departISO) return { ok: false };
-  const quote = await duffelOrderChangeQuote({ orderId, departISO, returnISO }).catch(() => ({ ok: false }));
-  if (!quote.ok || !quote.offer) return { ok: false };
-  // Only auto-collect when the airline price is in the booking's own currency, so
-  // we never charge a wrongly FX-converted amount; otherwise fall back to manual.
-  const bookingCode = booking.option?.pricing?.code || 'GBP';
-  if (String(quote.offer.changeCurrency || '').toUpperCase() !== String(bookingCode).toUpperCase()) return { ok: false };
-  const commit = await duffelOrderChangeCommit({ offerId: quote.offer.id, amount: quote.offer.changeAmount, currency: quote.offer.changeCurrency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
-  if (!commit.ok) return { ok: false };
-  const airlineDiff = Math.max(0, Math.round(Number(quote.offer.changeAmount) * 100) / 100);
+  const bookingCode = String(booking.option?.pricing?.code || 'GBP').toUpperCase();
+  // If the customer was shown an EXACT total at quote time, we pinned that priced
+  // offer. Commit THAT offer so they're charged exactly what they approved. Duffel
+  // order-change offers expire, so if the pinned commit fails we re-quote and only
+  // auto-commit when the new price is within a small tolerance of the approved one
+  // — otherwise we DON'T surprise-charge and leave it for the manual ops desk.
+  const pinned = booking.pendingChangeFee?.airlineQuote || null;
+  let offer = null;
+  if (pinned?.offerId && String(pinned.currency || '').toUpperCase() === bookingCode) {
+    const c = await duffelOrderChangeCommit({ offerId: pinned.offerId, amount: pinned.amountGbp, currency: pinned.currency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
+    if (c.ok) offer = { commit: c, changeAmount: pinned.amountGbp, changeCurrency: pinned.currency };
+  }
+  if (!offer) {
+    const quote = await duffelOrderChangeQuote({ orderId, departISO, returnISO }).catch(() => ({ ok: false }));
+    if (!quote.ok || !quote.offer) return { ok: false };
+    // Only auto-collect when the airline price is in the booking's own currency, so
+    // we never charge a wrongly FX-converted amount; otherwise fall back to manual.
+    if (String(quote.offer.changeCurrency || '').toUpperCase() !== bookingCode) return { ok: false };
+    // If we had promised an exact total, honour it: only auto-charge the re-quoted
+    // price if it hasn't moved materially (≤ £1 or 2%). A bigger move goes manual so
+    // the customer is never charged more than they approved without a re-confirm.
+    if (pinned && Number.isFinite(Number(pinned.amountGbp))) {
+      const newAmt = Math.max(0, Math.round(Number(quote.offer.changeAmount) * 100) / 100);
+      const tol = Math.max(1, Math.round(Number(pinned.amountGbp) * 0.02 * 100) / 100);
+      if (Math.abs(newAmt - Number(pinned.amountGbp)) > tol) return { ok: false, priceMoved: true };
+    }
+    const c = await duffelOrderChangeCommit({ offerId: quote.offer.id, amount: quote.offer.changeAmount, currency: quote.offer.changeCurrency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
+    if (!c.ok) return { ok: false };
+    offer = { commit: c, changeAmount: quote.offer.changeAmount, changeCurrency: quote.offer.changeCurrency };
+  }
+  const commit = offer.commit;
+  const airlineDiff = Math.max(0, Math.round(Number(offer.changeAmount) * 100) / 100);
   const r = completeReissue(booking.id, { pnr: commit.orderChange.bookingReference || ful.pnr, ticketNumbers: commit.orderChange.ticketNumbers || [], fareDifferenceGbp: airlineDiff, agent: 'auto-duffel' });
   if (!r.ok) return { ok: false };
   try { booking.confirmationEmailSent = false; await emailBookingConfirmation(booking); } catch (e) { console.error('[auto-reissue-email]', e?.message || e); }
@@ -3317,6 +3340,32 @@ app.post('/api/support/chat', safe(async (req, res) => {
   // authorise an action — and hands the human a full diagnostic. The recent
   // transcript keeps multi-turn requests (e.g. a booking change) coherent.
   const out = assist(message, user?.id, Array.isArray(history) ? history.slice(-8) : []);
+  // EXACT TOTAL BEFORE CONFIRM: when the assistant just QUOTED a date change on a
+  // real Duffel order, ask the airline for the true change price NOW and show the
+  // customer the exact total (3JN fee + real airline fare difference) instead of
+  // "confirmed at re-issue". We PIN the priced offer onto the pending action so a
+  // CONFIRM reissues at exactly the amount shown (with an expiry/tolerance guard).
+  if (user && out.intent === 'change' && /reply\s+\*\*confirm\*\*/i.test(out.reply || '')) {
+    for (const b of listBookings(user.id)) {
+      const pa = b.pendingAction;
+      if (!pa || pa.kind !== 'change' || pa.quote?.changes?.kind !== 'date') continue;
+      const orderId = b.fulfilment?.duffelOrderId || b.fulfilment?.holdOrderId;
+      if (!orderId) continue; // only a real Duffel order can be priced live
+      const ch = pa.quote.changes;
+      const q = await duffelOrderChangeQuote({ orderId, departISO: ch.newDate, returnISO: ch.newReturnDate || null }).catch(() => ({ ok: false }));
+      if (!q.ok || !q.offer) break; // fare doesn't allow an online change → keep the "confirmed at re-issue" wording
+      const code = (b.option?.pricing?.code || 'GBP').toUpperCase();
+      if (String(q.offer.changeCurrency || '').toUpperCase() !== code) break; // never show an FX-converted price
+      const sym = b.option?.pricing?.symbol || '£';
+      const feeGbp = Number(pa.quote.totalExtraGbp) || 0;
+      const airlineDiff = Math.max(0, Math.round(Number(q.offer.changeAmount) * 100) / 100);
+      const total = Math.round((feeGbp + airlineDiff) * 100) / 100;
+      pa.airlineQuote = { offerId: q.offer.id, amountGbp: airlineDiff, currency: q.offer.changeCurrency, expiresAt: q.offer.expiresAt || null, quotedTotalGbp: total, at: new Date().toISOString() };
+      const dmy = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || ''); };
+      out.reply = `I can move your trip to ${dmy(ch.newDate)}${ch.newReturnDate ? ' → ' + dmy(ch.newReturnDate) : ''} on booking ${b.id}. The airline has priced this change right now:\n• 3JN change service fee: ${sym}${feeGbp.toFixed(2)}\n• Airline fare difference: ${sym}${airlineDiff.toFixed(2)}\n**Total to pay: ${sym}${total.toFixed(2)}** — the exact amount, confirmed with the airline.\n\nReply **CONFIRM** and your ticket is reissued immediately at this price. Nothing is charged until the new ticket is issued.`;
+      break;
+    }
+  }
   // LIVE AUTO-REISSUE: if the customer JUST confirmed a date change on a real
   // airline ticket, try to complete it with the carrier now (Duffel Order Change)
   // — real price, real reissue. Scoped to the change confirmed in THIS message
@@ -3330,6 +3379,7 @@ app.post('/api/support/chat', safe(async (req, res) => {
       if (!f.reissueRequestedAt || (now - Date.parse(f.reissueRequestedAt)) > 20000) continue;
       const auto = await attemptAutoReissue(b).catch(() => ({ ok: false }));
       if (auto.ok) out.reply = `Done — the airline has reissued your ticket for your new dates. Your updated e-ticket and confirmation are in your Console and on their way by email. ${b.option?.pricing?.symbol || '£'}${Number(auto.collectedGbp).toFixed(2)} was charged (3JN change fee + the airline's real fare difference) — nothing was taken until the new ticket was issued.`;
+      else if (auto.priceMoved) out.reply = `The airline's fare difference changed since I quoted it, so I haven't charged you. Our travel team will confirm the updated price with you before reissuing — nothing is taken until you approve it and the new ticket is issued.`;
       break;
     }
   }

@@ -3230,6 +3230,21 @@ test('assistant date change on a LIVE-ticketed booking defers the fee until reis
   assert.ok(b.pendingChangeFee && b.pendingChangeFee.amountGbp === 45, 'the £45 fee is recorded as deferred until the reissue');
 });
 
+test('exact total: a pinned airline-priced offer is carried from the pending action to the deferred fee (so the reissue charges exactly what was shown)', () => {
+  const u = createUser({ email: 'opr.exact@x.co', name: 'Exact Total' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_exact', pnr: 'EXCT1' };
+  assert.ok(/CONFIRM/i.test(assist('change my flight date to 20 October 2027', u.id).reply));
+  // The server layer pins the airline-priced offer onto the pending action after
+  // fetching the live Duffel order-change quote. Simulate that here.
+  b.pendingAction.airlineQuote = { offerId: 'oco_pinned', amountGbp: 125, currency: 'GBP', quotedTotalGbp: 170, expiresAt: null };
+  assist('confirm', u.id);
+  assert.equal(b.fulfilment.ticketing, 'reissue-pending');
+  assert.ok(b.pendingChangeFee?.airlineQuote, 'the pinned offer is carried onto the deferred fee');
+  assert.equal(b.pendingChangeFee.airlineQuote.offerId, 'oco_pinned', 'the exact offer id is preserved for commit');
+  assert.equal(b.pendingChangeFee.airlineQuote.amountGbp, 125, 'the approved airline fare difference is preserved');
+});
+
 test('assistant refuses a SECOND change while a reissue is still pending (no double fee)', () => {
   const u = createUser({ email: 'opr.stack@x.co', name: 'Stack Test' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
