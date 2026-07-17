@@ -401,6 +401,15 @@ test('live suppliers: disabled without keys, normalisers map provider shapes', (
   assert.equal(nf.details.outbound.stops, 0);
   assert.equal(nf.details.outbound.depart, '20:05');
   assert.equal(nf.details.inbound.depart, '03:00');
+  // A holdable fare (no payment_requirements, or requires_instant_payment=false)
+  // is instalment-eligible — the flag must be falsy so the plan gate leaves it be.
+  assert.equal(nf.details.requiresInstantPayment, false);
+
+  // An INSTANT-PAYMENT-ONLY fare (airline won't hold it) must be flagged so the
+  // instalment engine forces pay-in-full instead of a doomed hold.
+  const instantOffer = { ...offer, id: 'off_inst', payment_requirements: { requires_instant_payment: true, payment_required_by: null } };
+  const nfi = normalizeDuffelOffer(instantOffer, 900, { total: 3 });
+  assert.equal(nfi.details.requiresInstantPayment, true, 'requires_instant_payment surfaces on the fare');
 
   // Normalise an Amadeus hotel entry → our hotel shape.
   const entry = {

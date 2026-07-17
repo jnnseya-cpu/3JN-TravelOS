@@ -1383,6 +1383,23 @@ function priceZoneHTML(quote) {
       <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels and the deposit is forfeited; any balance beyond the deposit follows the supplier refund policy.</div>
       ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}
     </div>` : '';
+  // INSTANT-PAYMENT-ONLY FARE: the airline won't hold this fare, so instalments
+  // aren't possible — the customer is told clearly and shown a single pay-in-full
+  // option (no deposit choice), and the ticket issues immediately on payment.
+  if (inst.instantOnly) {
+    return `
+    <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
+    <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.45);background:rgba(216,180,106,0.06)">
+      <strong>🔒 This fare is paid in full at booking</strong>
+      <div class="muted" style="font-size:12px;margin-top:4px">The airline doesn't allow this fare to be held, so it can't be split into instalments. You pay the full ${money2(option.pricing.local.total, sym)} now and your e-ticket is issued straight away. Prefer to pay monthly? Choose a holdable fare and the instalment plan comes back automatically.</div>
+    </div>
+    <input type="hidden" id="payChoice" value="full">
+    <div id="depositSchedule" style="display:none"></div>
+    <div id="fullSchedule">
+      <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">One payment — your booking is settled in full and ticketed immediately.</div>
+    </div>`;
+  }
   return `
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
     ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>`}
@@ -1526,6 +1543,10 @@ window.openBooking = async (tier) => {
     </div>
     <div id="bkValidate"></div>
     <button class="btn btn-gold btn-block" id="bkConfirmBtn" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
+  // Sync the confirm button + schedule visibility to the pay choice (a
+  // pay-in-full-only fare renders payChoice='full', so the button must read "pay
+  // in full", not "pay deposit").
+  togglePayChoice();
   // IN-CHECKOUT BAGGAGE: real Duffel add-on bag prices for this live fare, with a
   // quantity stepper per bag. Changing a quantity re-quotes live (server re-prices
   // from Duffel — client prices are never trusted) so the total, deposit,

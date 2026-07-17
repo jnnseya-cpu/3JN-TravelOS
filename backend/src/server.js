@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-persist-flush-await-v94';
+const BUILD_TAG = '2026-07-15-instant-pay-fares-v95';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -632,6 +632,17 @@ async function autoTicketFlight(booking) {
     const check = await validateDuffelOffer(flight.details.offerId);
     if (check.ok && (check.expired || check.live === false)) {
       await failTicketingWithRefund(booking, 'offer-expired-before-hold');
+      return;
+    }
+    // SAFETY NET: never hold a fare the airline requires paid in full — the hold
+    // would create a PNR that can never be paid later (money taken, no ticket).
+    // The plan gate normally forces pay-in-full for these, so we should only get
+    // here on a stale/legacy booking: DON'T hold and DON'T refund the deposit —
+    // mark it awaiting full payment and tell the customer so they can settle it.
+    if (flight.details.requiresInstantPayment || check.requiresInstantPayment) {
+      ful().ticketing = 'instant-required';
+      booking.fulfilment.reason = 'fare-requires-full-payment';
+      if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '💳', title: 'Pay in full to ticket this fare', body: 'This airline requires this fare to be paid in full to issue the ticket — it cannot be held on instalments. Pay the remaining balance in your Console and your e-ticket issues immediately.' });
       return;
     }
     const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers, idempotencyKey: `hold:${booking.id}`, services: bagServices });
@@ -2352,7 +2363,32 @@ function smartPlanForRequest(req, option, intent) {
   }) : null;
   // No departure date / past date → fall back to the legacy 3-month split so a
   // quote is never blocked; real bookings always carry a checkIn.
-  return plan || instalmentPlan({ totalLocal: option.pricing.local.total, currency, months: 3, depositPct: 0.2, checkIn: departISO });
+  let result = plan || instalmentPlan({ totalLocal: option.pricing.local.total, currency, months: 3, depositPct: 0.2, checkIn: departISO });
+  // INSTANT-PAYMENT-ONLY FARES: some live fares (often the cheapest) must be paid
+  // in full at booking — the airline won't hold them. Instalments would create a
+  // PNR that can never be paid later (the customer pays to £0 but no ticket ever
+  // issues). Business policy: require pay-in-full for these — never front 3JN cash
+  // or hold. Force a full-payment plan so the deposit IS the whole fare and the
+  // ticket issues instantly, no hold path.
+  if (result && optionRequiresInstantPayment(option)) {
+    const total = option.pricing.local.total;
+    result = {
+      ...result,
+      plan: 'Pay in full — this fare is not held by the airline',
+      depositPct: 1,
+      deposit: total,
+      months: 0,
+      schedule: [],
+      finalDue: null,
+      instantOnly: true,
+    };
+  }
+  return result;
+}
+// True when the option carries a LIVE flight the airline won't hold (must be paid
+// in full at booking). Drives the pay-in-full gate above and the hold guard below.
+function optionRequiresInstantPayment(option) {
+  return (option?.components || []).some((c) => c.type === 'flight' && c.live && c.details?.requiresInstantPayment === true);
 }
 // A well-formed option must carry a pricing block with a positive local total and
 // a components array — otherwise the pricing/quote/booking engines dereference

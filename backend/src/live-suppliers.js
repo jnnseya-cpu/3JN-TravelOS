@@ -265,6 +265,11 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       offerExpiresAt: offer.expires_at || null,
       liveAmount: offer.total_amount || null,
       liveCurrency: offer.total_currency || null,
+      // Some fares (often the cheapest LCC ones) MUST be paid in full at booking —
+      // the airline won't hold them. We can't offer instalments on these (a hold
+      // would create a PNR that can never be paid later), so this flag forces a
+      // pay-in-full plan at booking. Absent/false → holdable → instalments allowed.
+      requiresInstantPayment: offer.payment_requirements?.requires_instant_payment === true,
       offerPassengers: (offer.passengers || []).map((p) => ({ id: p.id, type: p.type, age: p.age })),
     },
     priceUSD,
@@ -297,7 +302,7 @@ export async function validateDuffelOffer(offerId) {
   if (!offer) return { ok: false, live: false, expired: false, reason: 'unexpected-response' };
   const expired = offer.expires_at ? (Date.parse(offer.expires_at) < Date.now()) : false;
   const usd = await toUSD(offer.total_amount, offer.total_currency);
-  return { ok: true, live: !expired, expired, priceUSD: usd, amount: offer.total_amount, currency: offer.total_currency, expiresAt: offer.expires_at };
+  return { ok: true, live: !expired, expired, priceUSD: usd, amount: offer.total_amount, currency: offer.total_currency, expiresAt: offer.expires_at, requiresInstantPayment: offer.payment_requirements?.requires_instant_payment === true };
 }
 
 // Read the ADD-ON checked-bag services a live offer sells (Duffel returns them
