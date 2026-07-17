@@ -2145,7 +2145,7 @@ function loyaltyHub(u) {
     <div class="card pad" style="margin-top:16px">
       <span class="eyebrow">Loyalty Hub</span>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-        <strong style="font-family:'Space Grotesk';font-size:18px;color:var(--gold)">${esc(u.tier)}</strong>
+        <strong style="font-family:'Space Grotesk';font-size:18px;color:var(--gold)">${esc(u.tier)} <span class="muted" style="font-size:11px;font-weight:400">· points tier</span></strong>
         <span class="muted" style="font-size:12.5px">${u.points.toLocaleString()} pts · ${discLine}</span>
       </div>
       <div class="rel-bar" style="margin:10px 0 6px"><i style="width:${pct}%"></i></div>

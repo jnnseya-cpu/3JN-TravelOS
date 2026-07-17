@@ -168,6 +168,11 @@ export function assist(message, userId, history = []) {
       }
       // A change is already being reissued — don't let a second one stack a fee.
       if (q.error === 'change-in-progress') return mkResult('change', q.message, ctx, { resolved: true });
+      // A stay change (breakfast/board/nights/room upgrade) on a booking that has
+      // NO accommodation — a flights-only booking. Don't ask "which board?" (a
+      // dead-end for a trip with no stay) and don't escalate: explain there's no
+      // stay on this booking and offer to add one.
+      if (q.error === 'no-hotel') return mkResult('change', `This booking is flights-only — there's no hotel or stay on it to add ${changes.kind === 'board' ? 'breakfast/board' : changes.kind === 'nights' ? 'nights' : 'a room upgrade'} to. If you'd like, tell me your destination and dates and I'll find you a stay to add.`, ctx, { resolved: true });
     }
     // (c) The customer named WHAT to change but not the value yet → ask for the
     // specific detail and stay in the flow. This is the case that used to
@@ -176,7 +181,16 @@ export function assist(message, userId, history = []) {
     if (slot) return mkResult('change', slotPrompt(slot, ctx), ctx, { resolved: true });
   }
   // 3) A cancellation → quote the refund and ask to confirm (operator self-serve).
-  if (ctx.booking && intent.key === 'cancel') {
+  // "Cancel and read the refund quote" mentions "refund", which the classifier
+  // scores as a refund DISPUTE (hard-escalate) before it sees "cancel". A customer
+  // asking to cancel and see their refund is NOT a dispute — so when they clearly
+  // say cancel and there's no genuine dispute language (charged twice, chargeback,
+  // unauthorised, overcharged, fraud), handle it as a cancellation and quote the
+  // refund instead of escalating.
+  const saysCancel = /\bcancel(l?ation)?\b|\bcall off\b/i.test(message || '');
+  const hasDispute = /charged twice|double char|chargeback|didn'?t authori[sz]e|unauthori[sz]|overcharged|wrong amount|\bfraud\b|\bscam\b/i.test(message || '');
+  const treatAsCancel = intent.key === 'cancel' || (saysCancel && intent.key === 'refund' && !hasDispute);
+  if (ctx.booking && treatAsCancel) {
     const q = operatorQuoteCancel(ctx.booking.id);
     if (q.ok) {
       return mkResult('cancel', `I can cancel booking ${ctx.booking.id}. You've paid ${money(q.quote.paidGbp)}; per the fare rules ${q.quote.refundablePct}% is refundable, so you'd get back **${money(q.quote.refundGbp)}**${q.quote.nonRefundableGbp > 0 ? ` (${money(q.quote.nonRefundableGbp)} non-refundable)` : ''}. Reply **CONFIRM** to cancel, or tell me if you'd rather change the dates instead.`, ctx, { resolved: true });

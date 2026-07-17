@@ -3354,6 +3354,33 @@ test('assistant adds baggage on confirmation with the extra charge', () => {
   assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 80), '£80 charged');
 });
 
+test('assistant: "cancel and read the refund quote" is handled as a cancellation, not escalated as a refund dispute', () => {
+  const u = createUser({ email: 'canref@x.co', name: 'Cancel Refund' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 434 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id, instalment: { deposit: 200, depositNonRefundable: true } });
+  b.payments = [{ type: 'deposit', amount: 238.78, status: 'paid' }];
+  const r = assist('I WANT TO cancel and read the refund quote', u.id);
+  assert.notEqual(r.escalate, true, 'a cancellation that mentions "refund" is NOT escalated as a dispute');
+  assert.equal(r.intent, 'cancel');
+  assert.ok(/refundable|non-refundable|get back/i.test(r.reply), 'it quotes the cancellation refund');
+});
+
+test('assistant: a genuine refund DISPUTE (charged twice) still escalates to a human', () => {
+  const u = createUser({ email: 'disp@x.co', name: 'Dispute' });
+  createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 434 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  const r = assist('I was charged twice, I want a refund', u.id);
+  assert.equal(r.escalate, true, 'a real double-charge dispute is escalated, not self-served');
+  assert.equal(r.intent, 'refund');
+});
+
+test('assistant: "add breakfast" on a flights-only booking explains there is no stay (never a dead-end or escalation)', () => {
+  const u = createUser({ email: 'bkfast@x.co', name: 'Breakfast' });
+  createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 449 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  const r = assist('add breakfast to my booking', u.id);
+  assert.notEqual(r.escalate, true, 'not escalated');
+  assert.ok(/flights-only|no hotel|no.*stay/i.test(r.reply), 'explains there is no stay to add breakfast to');
+  assert.ok(!/which would you like/i.test(r.reply), 'does not dead-end asking "which board?" for a stay that doesn\'t exist');
+});
+
 test('assistant cancels with a policy-based refund quote', () => {
   const u = createUser({ email: 'opr3@x.co', name: 'Cancel Test' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 500 } }, totalUSD: 635, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id, instalment: { deposit: 200, schedule: [{ due: '2027-01-01', amount: 200, status: 'paid' }] } });
