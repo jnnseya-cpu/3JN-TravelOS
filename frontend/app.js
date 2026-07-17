@@ -3149,9 +3149,13 @@ window.completeReissueOps = async (bookingId, tid) => {
   const ticketNumbers = document.getElementById(`ri_tkt_${tid}`)?.value.trim() || '';
   const fareDifferenceGbp = Number(document.getElementById(`ri_fare_${tid}`)?.value) || 0;
   if (!pnr) { toast('Enter the new airline PNR from the reissue.'); return; }
-  try { await api(`/api/admin/book/${bookingId}/complete-reissue`, { method: 'POST', body: JSON.stringify({ pnr, ticketNumbers, fareDifferenceGbp, ticketId: tid }) }); }
+  let res;
+  try { res = await api(`/api/admin/book/${bookingId}/complete-reissue`, { method: 'POST', body: JSON.stringify({ pnr, ticketNumbers, fareDifferenceGbp, ticketId: tid }) }); }
   catch (e) { toast('Could not complete reissue — ' + (e?.message || 'try again.')); return; }
-  toast('🎫 Reissue complete — ticket issued, fee collected, customer emailed.');
+  // The booking was already reissued (or a stale/duplicate ticket) — we cleared it
+  // from the queue rather than erroring.
+  if (res?.alreadyReissued) toast('✓ ' + (res.message || 'Already reissued — stale ticket cleared.'), 6000);
+  else toast('🎫 Reissue complete — ticket issued, fee collected, customer emailed.');
   openOpsQueue();
 };
 

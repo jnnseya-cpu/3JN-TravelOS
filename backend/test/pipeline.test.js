@@ -3259,6 +3259,24 @@ test('assistant refuses a SECOND change while a reissue is still pending (no dou
   assert.ok(!(b.payments || []).some((p) => p.type === 'change-charge'), 'no change fee is charged on a live ticket');
 });
 
+test('reissue tickets never pile up: a fresh change supersedes a lingering open reissue ticket for the same booking', () => {
+  const u = createUser({ email: 'opr.dedupe@x.co', name: 'Dedupe Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_dd', pnr: 'DDPNR1' };
+  assist('change my flight date to 20 October 2027', u.id);
+  assist('confirm', u.id); // → reissue-pending + ticket A
+  const openForBooking = () => listSupportTickets('open').filter((t) => t.intent === 'ops-reissue' && t.bookingId === b.id);
+  assert.equal(openForBooking().length, 1, 'one open reissue ticket after the first change');
+  // Simulate an ORPHANED ticket A (the booking was reissued but the ticket wasn't
+  // cleared — the old clobber residue). Flip back to issued WITHOUT resolving it.
+  b.fulfilment.ticketing = 'issued';
+  delete b.pendingChangeFee;
+  // A brand-new change on the same booking must SUPERSEDE the orphan, not stack.
+  assist('change my flight date to 25 October 2027', u.id);
+  assist('confirm', u.id);
+  assert.equal(openForBooking().length, 1, 'still exactly one open reissue ticket — the stale one was superseded, not duplicated');
+});
+
 test('ops completeReissue: issues the ticket, collects the deferred fee + fare diff, emails', () => {
   const u = createUser({ email: 'opr.finish@x.co', name: 'Finish Reissue' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });

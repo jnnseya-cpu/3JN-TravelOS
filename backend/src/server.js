@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-exact-total-before-confirm-v112';
+const BUILD_TAG = '2026-07-17-clear-stale-reissue-v113';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3472,7 +3472,20 @@ app.post('/api/admin/book/:id/complete-reissue', safe(async (req, res) => {
   const { pnr, ticketNumbers, fareDifferenceGbp, ticketId } = req.body || {};
   const nums = Array.isArray(ticketNumbers) ? ticketNumbers : String(ticketNumbers || '').split(/[,\s]+/).filter(Boolean);
   const r = completeReissue(req.params.id, { pnr, ticketNumbers: nums, fareDifferenceGbp: Number(fareDifferenceGbp) || 0, agent: user?.name || 'admin' });
-  if (!r.ok) return res.status(400).json(r);
+  if (!r.ok) {
+    // The booking is no longer awaiting a reissue — almost always because it was
+    // ALREADY reissued (an auto-reissue completed, or a duplicate/orphan ticket
+    // survived from the old whole-array clobber). The ticket is stale, so CLEAR it
+    // instead of leaving the queue stuck. Only do this for the "already done" case,
+    // never a missing booking.
+    if (r.error === 'not-pending-reissue' && ticketId) {
+      const bk = getBooking(req.params.id);
+      const done = bk?.fulfilment?.ticketing === 'issued' || bk?.fulfilment?.ticketing === 'reissued';
+      try { resolveSupportTicket(ticketId, { note: done ? 'Booking already reissued — stale ticket cleared.' : 'No reissue pending — ticket cleared.', agent: user?.name || 'admin' }); } catch { /* best-effort */ }
+      return res.json({ ok: true, alreadyReissued: true, cleared: true, message: done ? 'This booking was already reissued — the stale ticket has been cleared.' : 'This booking is not awaiting a reissue — the ticket has been cleared.' });
+    }
+    return res.status(400).json(r);
+  }
   // Email the UPDATED confirmation + PDF (reset the send-once flag so the reissue
   // gets its own confirmation with the new PNR/ticket).
   try { r.booking.confirmationEmailSent = false; await emailBookingConfirmation(r.booking); } catch (e) { console.error('[reissue-email]', e?.message || e); }
