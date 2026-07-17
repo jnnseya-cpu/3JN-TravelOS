@@ -63,7 +63,16 @@ function bookingSnapshot(b) {
 export function gatherContext(message, userId) {
   const user = userId ? getUserRaw(userId) : null;
   const ref = extractRef(message);
-  const booking = user ? (ref && findUserBookingByRef(user.id, ref)) || latestBookingForUser(user.id) : null;
+  let booking = user ? ((ref && findUserBookingByRef(user.id, ref)) || null) : null;
+  if (user && !booking) {
+    // Mid-flow (e.g. a bare "CONFIRM" with no ref): prefer the booking that has a
+    // PENDING action so the confirmation lands on the change we just quoted — even
+    // if the customer has a NEWER booking that would otherwise be "latest". Without
+    // this, "CONFIRM" resolved to the latest booking, missed the pending change on
+    // the referenced booking, and wrongly escalated to a human.
+    const pending = bookingsForUser(user.id).find((b) => operatorHasPending(b.id));
+    booking = pending || latestBookingForUser(user.id);
+  }
   const nationality = user?.travelProfile?.nationality || user?.country || null;
   const dest = resolveDestinationFromText(message);
   return {

@@ -3200,6 +3200,21 @@ test('date parse: an arrow "→" is a valid range separator (round-trip change k
   assert.equal(d.checkOut, '2026-08-30', 'the return date after the arrow is captured, not dropped');
 });
 
+test('assistant: a bare CONFIRM lands on the booking with the pending change, not the newest booking', () => {
+  const u = createUser({ email: 'opr.target@x.co', name: 'Confirm Target' });
+  // Booking A — the one the customer is changing (referenced by id).
+  const a = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  // Quote a change on A (creates a pending action on A).
+  assist(`change booking ${a.id} date to 20 October 2027`, u.id);
+  // Now the customer makes a NEWER booking B — it becomes "latest".
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 500 } }, totalUSD: 630, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'CDG', date: '2027-11-01' } } }] }, userId: u.id });
+  // A bare CONFIRM (no ref) must apply the change on A, NOT escalate or touch B.
+  const done = assist('confirm', u.id);
+  assert.ok(/reissue|updated|applied|change/i.test(done.reply), 'confirm executed the pending change, not an escalation');
+  assert.equal(a.option.components[0].details.outbound.date, '2027-10-20', 'the pending change on A was applied');
+  assert.equal(b.option.components[0].details.outbound.date, '2027-11-01', 'the newer booking B was untouched');
+});
+
 test('Duffel order-change: disabled without keys returns not-configured (safe manual fallback)', async () => {
   assert.equal((await getDuffelOrder('ord_x')).ok, false);
   assert.equal((await duffelOrderChangeQuote({ orderId: 'ord_x', departISO: '2027-10-20' })).ok, false);
