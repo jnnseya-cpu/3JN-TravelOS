@@ -1021,7 +1021,7 @@ function flightItinBlock(c, o, sym, intent) {
     ${deepBadge}${legRow(d.outbound, 'Outbound')}${legRow(d.inbound, 'Return')}
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;padding:7px 0 2px;border-top:1px dashed rgba(223,229,238,.12);font-size:11.5px">
       <span class="muted">🧳 ${esc(d.baggage || 'Baggage per fare rules')} <span style="opacity:.75">· per person</span></span>
-      <span><strong style="color:var(--gold)">${perPax}</strong> <span class="muted">per person${pax > 1 ? ` · ${pax} travellers` : ''}</span></span>
+      <span><strong style="color:var(--gold)">${perPax}</strong> <span class="muted">per person${pax > 1 ? ` · ${pax} travellers` : ''}${d.fareBreakdown?.infant ? ` · incl. ${d.fareBreakdown.infant} lap infant${d.fareBreakdown.infant > 1 ? 's' : ''} (on an adult's lap)` : ''}</span></span>
     </div>
   </div>`;
 }
