@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-instant-pay-fares-v95';
+const BUILD_TAG = '2026-07-15-instant-pay-authoritative-v96';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2390,6 +2390,21 @@ function smartPlanForRequest(req, option, intent) {
 function optionRequiresInstantPayment(option) {
   return (option?.components || []).some((c) => c.type === 'flight' && c.live && c.details?.requiresInstantPayment === true);
 }
+// AUTHORITATIVE instant-payment stamp. Duffel SEARCH offers frequently OMIT
+// payment_requirements, so the flag set in normalizeDuffelOffer can be missing —
+// which let an un-holdable fare reach the instalment hold path (a PNR that can
+// never be paid later). The single-offer GET (validateDuffelOffer) DOES carry it,
+// so we re-fetch each live flight offer once and stamp the fare before the plan is
+// derived. Idempotent + cheap: skipped when the flag is already set (so a re-quote
+// on a bag change doesn't re-hit Duffel) and when Duffel isn't configured.
+async function stampInstantPaymentFares(option) {
+  for (const c of (option?.components || [])) {
+    if (c.type === 'flight' && c.live && c.details?.offerId && c.details.requiresInstantPayment !== true) {
+      try { const chk = await validateDuffelOffer(c.details.offerId); if (chk?.requiresInstantPayment) c.details.requiresInstantPayment = true; }
+      catch { /* leave as-is; the hold-time safety net in autoTicketFlight still guards */ }
+    }
+  }
+}
 // A well-formed option must carry a pricing block with a positive local total and
 // a components array — otherwise the pricing/quote/booking engines dereference
 // undefined and 500. Guard at the edge so malformed input is a clean 400 and
@@ -2418,6 +2433,10 @@ app.post('/api/quote', safe(async (req, res) => {
     const bag = await baggageSurcharge(baggage.offerId, baggage.services, ctx.currency);
     if (bag) { applyBaggageToOption(option, bag); }
   }
+  // Stamp any pay-in-full-only fare NOW so the quote (and the checkout banner)
+  // already reflect it; the flag rides on the returned option, so a later re-quote
+  // on a bag change won't re-hit Duffel.
+  await stampInstantPaymentFares(option);
   const instalment = smartPlanForRequest(req, option, intent);
   const quote = saveQuote({ option, intent, instalment });
   recordBehaviour(currentUser(req)?.id, {
@@ -2531,6 +2550,11 @@ app.post('/api/book', safe(async (req, res) => {
     bagApplied = await baggageSurcharge(baggage.offerId, baggage.services, ctx.currency);
     if (bagApplied) applyBaggageToOption(quote.option, bagApplied);
   }
+
+  // AUTHORITATIVE: confirm whether any live fare must be paid in full (the search
+  // offer may not have said), so the plan gate below reliably forces pay-in-full
+  // and the fare is NEVER put on a doomed instalment hold.
+  await stampInstantPaymentFares(quote.option);
 
   // The AI-selected plan from the quote stands — the schedule is re-derived
   // fresh at booking time so a quote left open for days still books on the
