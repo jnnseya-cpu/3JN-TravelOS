@@ -67,7 +67,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage, duffelOrderChangeQuote, duffelOrderChangeCommit } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-complete-reissue-v100';
+const BUILD_TAG = '2026-07-15-duffel-auto-reissue-v101';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3265,6 +3265,39 @@ app.post('/api/admin/vendors/sales/:saleId/flag', safe((req, res) => {
 // Answers customer requests; escalates to a human ONLY when required (explicit
 // request, refund/dispute, complaint/safety, or low confidence). Uses the
 // signed-in user's latest booking as context when available.
+// LIVE AUTO-REISSUE via Duffel Order Change. When a date change is confirmed on a
+// real airline ticket, ask the carrier for the true change price, pay it, and let
+// the airline reissue — then collect the 3JN fee + the real airline difference and
+// issue the customer's new ticket. Returns { ok, collectedGbp } on success. ANY
+// problem (carrier doesn't support online change, price in a different currency,
+// pay error) returns { ok:false } and the booking stays on the MANUAL reissue path
+// (ops ticket already raised) — a customer is never charged without a reissue.
+async function attemptAutoReissue(booking) {
+  const ful = booking.fulfilment || (booking.fulfilment = {});
+  if (ful.ticketing !== 'reissue-pending' || ful.autoReissueAttempted) return { ok: false };
+  ful.autoReissueAttempted = true; // once per pending change (failure → manual path)
+  const orderId = ful.duffelOrderId || ful.holdOrderId;
+  if (!orderId) return { ok: false };
+  const fc = (booking.option?.components || []).find((c) => c.type === 'flight');
+  const departISO = fc?.details?.outbound?.date;
+  const returnISO = fc?.details?.inbound?.date || null;
+  if (!departISO) return { ok: false };
+  const quote = await duffelOrderChangeQuote({ orderId, departISO, returnISO }).catch(() => ({ ok: false }));
+  if (!quote.ok || !quote.offer) return { ok: false };
+  // Only auto-collect when the airline price is in the booking's own currency, so
+  // we never charge a wrongly FX-converted amount; otherwise fall back to manual.
+  const bookingCode = booking.option?.pricing?.code || 'GBP';
+  if (String(quote.offer.changeCurrency || '').toUpperCase() !== String(bookingCode).toUpperCase()) return { ok: false };
+  const commit = await duffelOrderChangeCommit({ offerId: quote.offer.id, amount: quote.offer.changeAmount, currency: quote.offer.changeCurrency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
+  if (!commit.ok) return { ok: false };
+  const airlineDiff = Math.max(0, Math.round(Number(quote.offer.changeAmount) * 100) / 100);
+  const r = completeReissue(booking.id, { pnr: commit.orderChange.bookingReference || ful.pnr, ticketNumbers: commit.orderChange.ticketNumbers || [], fareDifferenceGbp: airlineDiff, agent: 'auto-duffel' });
+  if (!r.ok) return { ok: false };
+  try { booking.confirmationEmailSent = false; await emailBookingConfirmation(booking); } catch (e) { console.error('[auto-reissue-email]', e?.message || e); }
+  try { for (const t of listSupportTickets('open')) if (t.intent === 'ops-reissue' && t.bookingId === booking.id) resolveSupportTicket(t.id, { note: `Auto-reissued via Duffel — £${r.collected} collected`, agent: 'auto-duffel' }); } catch { /* best-effort */ }
+  recordAudit({ actor: 'system', role: 'system', action: 'booking.auto-reissued', entity: 'booking', entityId: booking.id, summary: `Duffel order-change · £${r.collected} collected (fee + £${airlineDiff} airline)` });
+  return { ok: true, collectedGbp: r.collected };
+}
 app.post('/api/support/chat', safe(async (req, res) => {
   const { message, history } = req.body || {};
   if (message != null && typeof message !== 'string') return res.status(400).json({ error: 'message-must-be-string' });
@@ -3274,6 +3307,22 @@ app.post('/api/support/chat', safe(async (req, res) => {
   // authorise an action — and hands the human a full diagnostic. The recent
   // transcript keeps multi-turn requests (e.g. a booking change) coherent.
   const out = assist(message, user?.id, Array.isArray(history) ? history.slice(-8) : []);
+  // LIVE AUTO-REISSUE: if the customer JUST confirmed a date change on a real
+  // airline ticket, try to complete it with the carrier now (Duffel Order Change)
+  // — real price, real reissue. Scoped to the change confirmed in THIS message
+  // (reissue requested in the last few seconds). On success we tell them the new
+  // ticket is issued; any failure leaves the manual ops path untouched.
+  if (user && out.resolved && /reissu/i.test(out.reply || '')) {
+    const now = Date.now();
+    for (const b of listBookings(user.id)) {
+      const f = b.fulfilment;
+      if (!f || f.ticketing !== 'reissue-pending' || f.autoReissueAttempted) continue;
+      if (!f.reissueRequestedAt || (now - Date.parse(f.reissueRequestedAt)) > 20000) continue;
+      const auto = await attemptAutoReissue(b).catch(() => ({ ok: false }));
+      if (auto.ok) out.reply = `Done — the airline has reissued your ticket for your new dates. Your updated e-ticket and confirmation are in your Console and on their way by email. ${b.option?.pricing?.symbol || '£'}${Number(auto.collectedGbp).toFixed(2)} was charged (3JN change fee + the airline's real fare difference) — nothing was taken until the new ticket was issued.`;
+      break;
+    }
+  }
   // A cancellation just flagged a refund due (operatorConfirm). Actually issue
   // it via Stripe when a captured PaymentIntent is on file — idempotent (guarded
   // by refundId). The in-module ops ticket remains the fallback if this can't

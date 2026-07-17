@@ -419,6 +419,83 @@ export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey
   return { ok: true, order: { id: orderId, bookingReference: o.booking_reference || null, ticketNumbers } };
 }
 
+// ---- ORDER CHANGE (date change / reissue via the airline) ------------------
+// Read a live Duffel order → its slice ids + route + original dates. Needed to
+// build an order-change request (we remove the existing slices and add new ones
+// on the customer's new dates).
+export async function getDuffelOrder(orderId) {
+  if (!duffelEnabled() || !orderId) return { ok: false, error: 'not-configured' };
+  const res = await httpJSON(`${DUFFEL_BASE}/air/orders/${encodeURIComponent(orderId)}`, {
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, Accept: 'application/json' },
+  });
+  if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'order-fetch-failed', status: res?.__status };
+  const o = res.data;
+  const slices = (o.slices || []).map((s) => ({
+    id: s.id,
+    origin: s.origin?.iata_code || '',
+    destination: s.destination?.iata_code || '',
+    cabin: s.segments?.[0]?.passengers?.[0]?.cabin_class || 'economy',
+    departureDate: dateOf(s.segments?.[0]?.departing_at),
+  }));
+  return { ok: true, order: { id: o.id, bookingReference: o.booking_reference || null, slices, totalAmount: o.total_amount, totalCurrency: o.total_currency } };
+}
+
+// Ask the AIRLINE for the real cost of moving the trip to new dates. Returns the
+// cheapest order-change offer with the true change amount (fare difference +
+// penalty). Read-only — nothing is charged or reissued here.
+//   departISO = new outbound date; returnISO = new return date (optional; keeps
+//   the original return date when omitted on a round trip).
+export async function duffelOrderChangeQuote({ orderId, departISO, returnISO = null }) {
+  if (!duffelEnabled() || !orderId || !departISO) return { ok: false, error: 'not-configured' };
+  const ord = await getDuffelOrder(orderId);
+  if (!ord.ok) return { ok: false, error: ord.error || 'order-fetch-failed' };
+  const slices = ord.order.slices;
+  if (!slices.length) return { ok: false, error: 'no-slices' };
+  const add = [{ origin: slices[0].origin, destination: slices[0].destination, departure_date: departISO, cabin_class: slices[0].cabin }];
+  if (slices[1]) add.push({ origin: slices[1].origin, destination: slices[1].destination, departure_date: returnISO || slices[1].departureDate, cabin_class: slices[1].cabin });
+  const body = { data: { order_id: orderId, slices: { remove: slices.map((s) => ({ slice_id: s.id })), add } } };
+  const res = await httpJSON(`${DUFFEL_BASE}/air/order_change_requests`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'order-change-quote-failed', status: res?.__status };
+  const offers = (res.data.order_change_offers || [])
+    .map((o) => ({ id: o.id, changeAmount: o.change_total_amount, changeCurrency: o.change_total_currency, newTotalAmount: o.new_total_amount, penaltyAmount: o.penalty_total_amount, expiresAt: o.expires_at }))
+    .filter((o) => o.id && o.changeAmount != null)
+    .sort((a, b) => Number(a.changeAmount) - Number(b.changeAmount));
+  if (!offers.length) return { ok: false, error: 'no-change-offers' }; // carrier/fare doesn't allow an online change
+  return { ok: true, requestId: res.data.id, offer: offers[0], offers };
+}
+
+// Commit a chosen order-change offer: create the change, then confirm + pay it —
+// the AIRLINE reissues the ticket. Idempotency-Key makes a retried confirm safe.
+export async function duffelOrderChangeCommit({ offerId, amount, currency, paymentType = 'balance', idempotencyKey = null }) {
+  if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
+  const hdr = { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const create = await httpJSON(`${DUFFEL_BASE}/air/order_changes`, {
+    method: 'POST', headers: hdr, body: JSON.stringify({ data: { selected_order_change_offer: offerId } }),
+  });
+  if (create?.__error || !create?.data?.id) return { ok: false, error: create?.__error?.errors?.[0]?.message || 'order-change-create-failed', status: create?.__status };
+  const ocId = create.data.id;
+  const confirm = await httpJSON(`${DUFFEL_BASE}/air/order_changes/${encodeURIComponent(ocId)}/actions/confirm`, {
+    method: 'POST',
+    headers: { ...hdr, ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
+    body: JSON.stringify({ data: { payment: { type: paymentType, amount: String(amount), currency } } }),
+  });
+  if (confirm?.__error || !confirm?.data) return { ok: false, error: confirm?.__error?.errors?.[0]?.message || 'order-change-confirm-failed', status: confirm?.__status };
+  const oc = confirm.data;
+  // Re-read the order to pick up the reissued e-ticket numbers + (unchanged) PNR.
+  let ticketNumbers = [], bookingReference = null;
+  if (oc.order_id) {
+    const ord = await httpJSON(`${DUFFEL_BASE}/air/orders/${encodeURIComponent(oc.order_id)}`, { headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, Accept: 'application/json' } });
+    const o = ord?.data || {};
+    bookingReference = o.booking_reference || null;
+    for (const d of (o.documents || [])) if (d.type === 'electronic_ticket' && d.unique_identifier) ticketNumbers.push(d.unique_identifier);
+  }
+  return { ok: true, orderChange: { id: oc.id, changeAmount: oc.change_total_amount, changeCurrency: oc.change_total_currency, bookingReference, ticketNumbers } };
+}
+
 // Build Duffel passenger records for order creation from the stored manifest.
 // Each offer passenger is matched 1:1 (same order the search built the fare
 // units: adults, then children) to a captured traveller, so a group/family

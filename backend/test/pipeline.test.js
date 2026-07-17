@@ -46,7 +46,7 @@ import { bookingRequirements, validateBooking, bookingRiskScore, fieldCount } fr
 import { architecture as commsArchitecture, emit as commsEmit, renderEmail as commsRenderEmail, EVENTS as COMMS_EVENTS } from '../src/comms.js';
 import { track, learnProfile, journeyDashboard } from '../src/learning.js';
 import { flightFareUnits, fareBandForAge } from '../src/suppliers.js';
-import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured, oagInstanceToLeg, oagScheduleEnabled } from '../src/live-suppliers.js';
+import { duffelPassengers, durationLabel, normalizeDuffelOffer, normalizeAmadeusHotel, liveSuppliersConfigured, oagInstanceToLeg, oagScheduleEnabled, duffelOrderChangeQuote, duffelOrderChangeCommit, getDuffelOrder } from '../src/live-suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from '../src/baggage.js';
 import { estimateFlightFares } from '../src/suppliers.js';
 import { haversineKm, distanceFareUSD, routeFareBaseUSD, airportCoords } from '../src/airports.js';
@@ -3198,6 +3198,12 @@ test('date parse: an arrow "→" is a valid range separator (round-trip change k
   const d = parseExplicitDates('15/08/2026 → 30/08/2026', new Date('2026-01-01'));
   assert.equal(d.checkIn, '2026-08-15');
   assert.equal(d.checkOut, '2026-08-30', 'the return date after the arrow is captured, not dropped');
+});
+
+test('Duffel order-change: disabled without keys returns not-configured (safe manual fallback)', async () => {
+  assert.equal((await getDuffelOrder('ord_x')).ok, false);
+  assert.equal((await duffelOrderChangeQuote({ orderId: 'ord_x', departISO: '2027-10-20' })).ok, false);
+  assert.equal((await duffelOrderChangeCommit({ offerId: 'oco_x', amount: '10', currency: 'GBP' })).ok, false);
 });
 
 test('assistant adds baggage on confirmation with the extra charge', () => {
