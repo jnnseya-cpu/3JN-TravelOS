@@ -1788,9 +1788,10 @@ export function requestWithdrawal(userId, { amountGbp, method = 'bank' } = {}) {
 // ---- AI Support Concierge: human-escalation tickets -----------------------
 // The chatbot resolves most requests; when it must hand off, it opens a ticket
 // and notifies the customer. Admins work the queue and resolve.
-export function createSupportTicket({ userId, intent, message, reason, transcript = [] } = {}) {
+export function createSupportTicket({ userId, intent, message, reason, transcript = [], bookingId = null } = {}) {
   const ticket = {
     id: id('tkt'), userId: userId || null, intent: intent || 'unknown',
+    bookingId: bookingId || null,
     message: String(message || '').slice(0, 2000), reason: reason || 'Requires human assistance',
     status: 'open', transcript, createdAt: nowISO(), resolvedAt: null,
   };
@@ -1896,7 +1897,7 @@ export function operatorConfirm(bookingId) {
       b.fulfilment.reissueRequestedAt = nowISO();
       b.pendingChangeFee = { amountGbp: extra, description: summary.description, hasDeferred: !!pa.quote.hasDeferred, at: nowISO() };
       b.changeLog.push({ ...summary, extraGbp: extra, status: 'reissue-pending', deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
-      createSupportTicket({ userId: b.userId, intent: 'ops-reissue', message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. CUSTOMER'S EXACT REQUEST: "${pa.rawRequest || summary.description}". Confirm the customer's intended new dates with them, confirm the airline fare difference, reissue the ticket, THEN collect the £${extra} 3JN change fee and email the updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
+      createSupportTicket({ userId: b.userId, bookingId: b.id, intent: 'ops-reissue', message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. CUSTOMER'S EXACT REQUEST: "${pa.rawRequest || summary.description}". Confirm the customer's intended new dates with them, confirm the airline fare difference, reissue the ticket, THEN collect the £${extra} 3JN change fee and email the updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
       recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.change-requested', entity: 'booking', entityId: b.id, summary: `${summary.description} · reissue pending · £${extra} fee deferred until issued` });
       if (b.userId) pushNotification(b.userId, { type: 'info', icon: '🔄', title: 'Change requested — reissuing your ticket', body: `We're confirming the new fare with the airline and reissuing your ticket for "${summary.description}". Your updated e-ticket will be emailed to you, and the £${extra} change fee applies ONLY once your new ticket is issued — never before.` });
       return { ok: true, kind: 'change', summary, extraGbp: extra, reissuePending: true, hasDeferred: !!pa.quote.hasDeferred, booking: b };
@@ -1941,6 +1942,43 @@ export function operatorConfirm(bookingId) {
     return { ok: true, kind: 'cancel', refundGbp: refund, booking: b };
   }
   return { ok: false, error: 'unknown-action' };
+}
+
+// OPS DESK completes a reissue: after actually reissuing the ticket with the
+// airline (Duffel dashboard / carrier), the agent enters the NEW airline
+// reference + e-ticket number(s) and any airline fare difference. This is the step
+// that finishes the change the customer requested — it collects the previously
+// DEFERRED 3JN change fee (+ fare difference), stamps the new ticket, flips the
+// booking back to 'issued', and flags the updated e-ticket email. Without this,
+// resolving the ops ticket alone left the customer stuck on 'reissue-pending' with
+// no new ticket ("customer not received ticket").
+export function completeReissue(bookingId, { pnr, ticketNumbers = [], fareDifferenceGbp = 0, agent } = {}) {
+  const b = db.bookings.get(bookingId);
+  if (!b) return { ok: false, error: 'not-found' };
+  const ful = (b.fulfilment = b.fulfilment || {});
+  if (ful.ticketing !== 'reissue-pending') return { ok: false, error: 'not-pending-reissue', message: 'This booking is not awaiting a reissue.' };
+  b.payments = Array.isArray(b.payments) ? b.payments : [];
+  const fee = Number(b.pendingChangeFee?.amountGbp) || 0;
+  const fareDiff = Math.max(0, Number(fareDifferenceGbp) || 0);
+  const collected = Math.round((fee + fareDiff) * 100) / 100;
+  const desc = b.pendingChangeFee?.description || 'date/itinerary change';
+  // Collect the DEFERRED change fee + any airline fare difference — only now that
+  // the ticket is genuinely reissued (never before).
+  if (collected > 0) b.payments.push({ type: 'change-charge', amount: collected, gateway: b.gateway || 'ops', at: nowISO(), status: 'paid', note: `${desc}${fareDiff ? ` + £${fareDiff} airline fare difference` : ''}` });
+  const cleanPnr = pnr ? String(pnr).trim().toUpperCase().slice(0, 12) : null;
+  if (cleanPnr) ful.pnr = cleanPnr;
+  const nums = (Array.isArray(ticketNumbers) ? ticketNumbers : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 20);
+  if (nums.length) ful.ticketNumbers = nums;
+  ful.ticketing = 'issued';
+  ful.reissuedAt = nowISO();
+  ful.issuedAt = nowISO();
+  delete b.pendingChangeFee;
+  b.changeLog = b.changeLog || [];
+  b.changeLog.push({ description: desc, status: 'reissued', extraGbp: collected, pnr: ful.pnr || null, at: nowISO() });
+  b.pendingReissueEmail = { description: desc, extraGbp: collected, at: nowISO() };
+  recordAudit({ actor: agent || 'admin', role: 'admin', action: 'booking.reissued', entity: 'booking', entityId: b.id, summary: `${desc} · reissued PNR ${ful.pnr || 'n/a'} · £${collected} collected` });
+  if (b.userId) pushNotification(b.userId, { type: 'success', icon: '🎫', title: 'Your new ticket is issued', body: `Your change (${desc}) is complete — new airline reference ${ful.pnr || ''}. Your updated e-ticket is in your Console and on its way by email.` });
+  return { ok: true, booking: b, collected };
 }
 
 // ===========================================================================

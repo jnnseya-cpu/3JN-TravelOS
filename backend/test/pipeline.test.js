@@ -22,7 +22,7 @@ import { snapshot, hydrate } from '../src/store.js';
 import { markEmailVerified } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
-import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment } from '../src/store.js';
+import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment, completeReissue } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
@@ -3170,6 +3170,34 @@ test('assistant refuses a SECOND change while a reissue is still pending (no dou
   assert.ok(/still being completed|travel team/i.test(second.reply), 'second change is blocked while the first reissue is pending');
   assert.equal(b.pendingAction, undefined, 'no new pending action is created for the stacked change');
   assert.ok(!(b.payments || []).some((p) => p.type === 'change-charge'), 'no change fee is charged on a live ticket');
+});
+
+test('ops completeReissue: issues the ticket, collects the deferred fee + fare diff, emails', () => {
+  const u = createUser({ email: 'opr.finish@x.co', name: 'Finish Reissue' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_fin', pnr: 'OLDPNR' };
+  assist('change my flight date to 20 October 2027', u.id);
+  assist('confirm', u.id);
+  assert.equal(b.fulfilment.ticketing, 'reissue-pending');
+  assert.equal(b.pendingChangeFee.amountGbp, 45, 'the £45 fee is deferred');
+  // Ops reissued with the carrier and enters the new PNR + a £70 fare difference.
+  const r = completeReissue(b.id, { pnr: 'newpnr9', ticketNumbers: ['176-9990001'], fareDifferenceGbp: 70, agent: 'Ops' });
+  assert.ok(r.ok);
+  assert.equal(b.fulfilment.ticketing, 'issued', 'ticket is issued again');
+  assert.equal(b.fulfilment.pnr, 'NEWPNR9', 'new PNR stamped (upper-cased)');
+  assert.deepEqual(b.fulfilment.ticketNumbers, ['176-9990001'], 'new e-ticket number recorded');
+  assert.equal(r.collected, 115, 'collected the £45 deferred fee + £70 fare difference');
+  assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 115), 'the change charge is recorded ONLY now, at reissue');
+  assert.equal(b.pendingChangeFee, undefined, 'the deferred fee is cleared');
+  assert.ok(b.pendingReissueEmail, 'the updated-confirmation email is flagged');
+  // Not-pending-reissue bookings are rejected (no double collection).
+  assert.equal(completeReissue(b.id, { pnr: 'X' }).ok, false, 'a second complete-reissue is refused');
+});
+
+test('date parse: an arrow "→" is a valid range separator (round-trip change keeps the return date)', () => {
+  const d = parseExplicitDates('15/08/2026 → 30/08/2026', new Date('2026-01-01'));
+  assert.equal(d.checkIn, '2026-08-15');
+  assert.equal(d.checkOut, '2026-08-30', 'the return date after the arrow is captured, not dropped');
 });
 
 test('assistant adds baggage on confirmation with the extra charge', () => {

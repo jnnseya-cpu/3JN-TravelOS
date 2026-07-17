@@ -38,7 +38,7 @@ import {
   searchToBookStats,
   earnAcu, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
-  createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket,
+  createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, completeReissue,
   applyVendor, decideVendor, vendorDashboard, vendorLeaderboard,
   addVendorService, removeVendorService, recordVendorServiceJob,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-reissue-status-line-v99';
+const BUILD_TAG = '2026-07-15-complete-reissue-v100';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3344,6 +3344,24 @@ app.post('/api/admin/support/tickets/:id/resolve', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const user = currentUser(req);
   res.json(resolveSupportTicket(req.params.id, { note: req.body?.note, agent: user?.name || 'admin' }));
+}));
+// OPS: complete an airline reissue — enter the NEW PNR + e-ticket number(s) (and
+// any airline fare difference) after reissuing with the carrier. This collects the
+// deferred change fee, stamps the ticket 'issued', emails the updated confirmation
+// + PDF, and resolves the linked ops ticket. This is what actually gets the new
+// ticket to the customer.
+app.post('/api/admin/book/:id/complete-reissue', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const user = currentUser(req);
+  const { pnr, ticketNumbers, fareDifferenceGbp, ticketId } = req.body || {};
+  const nums = Array.isArray(ticketNumbers) ? ticketNumbers : String(ticketNumbers || '').split(/[,\s]+/).filter(Boolean);
+  const r = completeReissue(req.params.id, { pnr, ticketNumbers: nums, fareDifferenceGbp: Number(fareDifferenceGbp) || 0, agent: user?.name || 'admin' });
+  if (!r.ok) return res.status(400).json(r);
+  // Email the UPDATED confirmation + PDF (reset the send-once flag so the reissue
+  // gets its own confirmation with the new PNR/ticket).
+  try { r.booking.confirmationEmailSent = false; await emailBookingConfirmation(r.booking); } catch (e) { console.error('[reissue-email]', e?.message || e); }
+  if (ticketId) { try { resolveSupportTicket(ticketId, { note: `Reissued — PNR ${pnr || 'n/a'}, £${r.collected} collected`, agent: user?.name || 'admin' }); } catch { /* best-effort */ } }
+  res.json(r);
 }));
 
 // ---- Visa Centre + Risk Intelligence Feed ---------------------------------

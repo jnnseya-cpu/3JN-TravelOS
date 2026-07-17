@@ -3097,6 +3097,24 @@ window.openOpsQueue = async () => {
   const tickets = d.tickets || [];
   const rows = tickets.length ? tickets.map((t) => {
     const [label, color] = OPS_INTENT[t.intent] || [`🎧 ${esc(t.intent)}`, 'var(--muted)'];
+    // A reissue ticket gets a REAL completion form: enter the new PNR + e-ticket
+    // (and any airline fare difference) → it stamps the ticket, collects the
+    // deferred fee, emails the customer the new e-ticket, and closes the ticket.
+    const isReissue = t.intent === 'ops-reissue' && t.bookingId;
+    const action = isReissue
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
+           <div class="muted" style="font-size:11px;margin-bottom:6px">After reissuing with the airline, enter the new details to issue the customer's ticket:</div>
+           <div style="display:flex;gap:6px;flex-wrap:wrap">
+             <input class="in" id="ri_pnr_${esc(t.id)}" placeholder="New airline PNR" style="flex:1;min-width:120px;font-size:12px">
+             <input class="in" id="ri_tkt_${esc(t.id)}" placeholder="E-ticket number(s), comma-separated" style="flex:2;min-width:160px;font-size:12px">
+             <input class="in" id="ri_fare_${esc(t.id)}" type="number" min="0" step="0.01" placeholder="Fare diff £ (0 if none)" style="width:150px;font-size:12px">
+           </div>
+           <button class="btn btn-gold btn-sm btn-block" style="margin-top:8px" onclick="completeReissueOps('${esc(t.bookingId)}','${esc(t.id)}')">🎫 Complete reissue &amp; issue ticket</button>
+         </div>`
+      : `<div style="display:flex;gap:8px;margin-top:8px">
+           <input class="in" id="opsNote_${esc(t.id)}" placeholder="Resolution note" style="flex:1;font-size:12px">
+           <button class="btn btn-gold btn-sm" onclick="resolveOpsTicket('${esc(t.id)}')">Mark done</button>
+         </div>`;
     return `<div class="card pad" style="margin-bottom:10px;border-color:rgba(216,180,106,.3)">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">
         <strong style="color:${color}">${label}</strong>
@@ -3104,10 +3122,7 @@ window.openOpsQueue = async () => {
       </div>
       <div style="font-size:12.5px;margin-top:6px;white-space:pre-wrap">${esc(t.message)}</div>
       <div class="muted" style="font-size:11px;margin-top:4px">${esc(t.reason || '')}${t.userId ? ` · user ${esc(t.userId)}` : ''}</div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <input class="in" id="opsNote_${esc(t.id)}" placeholder="Resolution note (e.g. reissued PNR + fee taken)" style="flex:1;font-size:12px">
-        <button class="btn btn-gold btn-sm" onclick="resolveOpsTicket('${esc(t.id)}')">Mark done</button>
-      </div>
+      ${action}
     </div>`;
   }).join('') : '<p class="muted" style="font-size:13px">Nothing waiting — every hand-off to the team is cleared. New reissues, refunds and manifests appear here automatically.</p>';
   modal(`<span class="eyebrow">🎫 Ops queue · ${tickets.length} open</span>
@@ -3120,6 +3135,19 @@ window.resolveOpsTicket = async (tid) => {
   try { await api(`/api/admin/support/tickets/${tid}/resolve`, { method: 'POST', body: JSON.stringify({ note }) }); }
   catch { toast('Could not resolve — try again.'); return; }
   toast('✓ Ticket resolved — customer notified.');
+  openOpsQueue();
+};
+// Finish a reissue: enter the airline's new PNR + e-ticket (+ any fare difference)
+// → collects the deferred fee, issues the ticket, emails the customer, closes the
+// ticket. This is the step that actually gets the new ticket to the customer.
+window.completeReissueOps = async (bookingId, tid) => {
+  const pnr = document.getElementById(`ri_pnr_${tid}`)?.value.trim() || '';
+  const ticketNumbers = document.getElementById(`ri_tkt_${tid}`)?.value.trim() || '';
+  const fareDifferenceGbp = Number(document.getElementById(`ri_fare_${tid}`)?.value) || 0;
+  if (!pnr) { toast('Enter the new airline PNR from the reissue.'); return; }
+  try { await api(`/api/admin/book/${bookingId}/complete-reissue`, { method: 'POST', body: JSON.stringify({ pnr, ticketNumbers, fareDifferenceGbp, ticketId: tid }) }); }
+  catch (e) { toast('Could not complete reissue — ' + (e?.message || 'try again.')); return; }
+  toast('🎫 Reissue complete — ticket issued, fee collected, customer emailed.');
   openOpsQueue();
 };
 

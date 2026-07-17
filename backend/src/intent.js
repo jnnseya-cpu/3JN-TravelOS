@@ -142,7 +142,7 @@ export function parseExplicitDates(text, today = new Date()) {
 
   // 0) ISO dates "YYYY-MM-DD" (and ISO ranges) — the format a date <input> and
   // many users type. Runs FIRST so the DD/MM matcher below never mis-reads it.
-  const isoRe = /\b(\d{4})-(\d{2})-(\d{2})(?:\s*(?:to|until|till|[\-–—])\s*(\d{4})-(\d{2})-(\d{2}))?/;
+  const isoRe = /\b(\d{4})-(\d{2})-(\d{2})(?:\s*(?:to|until|till|→|➜|->|[\-–—])\s*(\d{4})-(\d{2})-(\d{2}))?/;
   const im = text.match(isoRe);
   if (im) {
     const y1 = +im[1], mo1 = +im[2], d1 = +im[3];
@@ -160,7 +160,7 @@ export function parseExplicitDates(text, today = new Date()) {
   }
 
   // 1) Numeric DD/MM[/YYYY] (optionally a range with to / - / – / until).
-  const num = /\b(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?\s*(?:to|until|till|[\-–—])\s*(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?/i;
+  const num = /\b(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?\s*(?:to|until|till|→|➜|->|[\-–—])\s*(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?/i;
   let m = text.match(num);
   if (m) {
     const d1 = +m[1], mo1 = +m[2], d2 = +m[4], mo2 = +m[5];
