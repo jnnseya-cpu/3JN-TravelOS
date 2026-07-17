@@ -554,6 +554,12 @@ function publicIntent(intent) {
     nights: intent.nights,
     month: intent.month,
     dates: intent.dates,
+    // ONE-WAY must survive into the returned intent — the LIVE flight overlay reads
+    // it to search a single leg. Without it the live search defaulted to a round
+    // trip and fabricated a return (wrong itinerary + higher price). originCity is
+    // carried for the same reason (respect the named departure city downstream).
+    oneWay: !!intent.oneWay,
+    originCity: intent.originCity || null,
     components: intent.components,
     wantsInstalments: intent.wantsInstalments,
     priority: intent.priority,

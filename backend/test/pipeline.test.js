@@ -134,6 +134,13 @@ test('flight preferences: cabin class from the selector and from free text', () 
   assert.equal(any.flightPrefs.cabin, null, 'no cabin → cheapest any cabin');
 });
 
+test('one-way survives into the returned intent (so the live search books a single leg)', () => {
+  const ow = plan({ text: 'one way flight from London to Lagos on 10/09/26', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(ow.intent.oneWay, true, 'oneWay is carried on plan().intent (the live overlay reads it)');
+  const rt = plan({ text: 'flight from London to Lagos on 10/09/26 returning 17/09/26', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(!!rt.intent.oneWay, false, 'a return trip is not flagged one-way');
+});
+
 test('accuracy: real airport codes, UK date range, child ages and hotel area are captured', () => {
   const text = 'I want to travel to Dubai from birmingham on 17/08 to 24/08 with my family ( 2 adults , and 3 children 16,13 and 9 years old) on a direct flight . I want direct flights and hotel in sheikh zayed road dubai , instalments and the cheapest reliable price.';
   const r = plan({ text, context: GB, user: null, searchTier: 'deep', preferences: { directOnly: true } });

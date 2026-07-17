@@ -54,6 +54,29 @@ function accommodationPool(list) {
   return [...hotels, ...earned];
 }
 
+// Tier blurb ADAPTED to the trip's actual transport — never promise "a higher-rated
+// airline" or "premium cabins" on a rail/ferry/coach or stay-only trip (that copy
+// read as broken on e.g. Dover→Amsterdam by train). Flights keep the original
+// wording; ground/sea trips say "travel"; a stay-only trip drops transport entirely.
+function tierBlurb(tierName, selections) {
+  const has = (t) => selections.some((s) => s.type === t);
+  const hasFlight = has('flight');
+  const hasTransport = ['flight', 'train', 'coach', 'ferry', 'cruise'].some((t) => has(t));
+  const hasStay = has('hotel') || has('host');
+  if (tierName === 'Premium') {
+    const travel = hasFlight ? 'a higher-rated airline' : hasTransport ? 'a higher-rated travel option' : null;
+    const stay = hasStay ? 'a real 4★ hotel' : null;
+    const bits = [travel, stay].filter(Boolean).join(' and ');
+    return `A step up — ${bits || 'higher-rated verified options'}, for a modest uplift.`;
+  }
+  if (tierName === 'Luxury') {
+    const stay = hasStay ? '5★ stays' : null;
+    const travel = hasFlight ? 'premium cabins' : hasTransport ? 'top-rated travel' : null;
+    const bits = [stay, travel].filter(Boolean).join(' and ');
+    return `The highest-rated, most premium verified options${bits ? ' — ' + bits : ''}.`;
+  }
+  return (TIERS[tierName] || {}).blurb || 'The lowest total price across verified, reliable suppliers.';
+}
 // Selection strategy per tier.
 const TIERS = {
   Standard: {
@@ -300,7 +323,7 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
   return {
     tier: tierName,
     label: tier.label,
-    blurb: tier.blurb,
+    blurb: tierBlurb(tierName, selections),
     verified: selections.every((s) => s.verified),
     // Integrity Verification Shield: every surfaced supplier passed the
     // 50-point rubric (verified + at/above the reliability floor).
