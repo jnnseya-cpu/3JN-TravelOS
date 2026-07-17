@@ -264,7 +264,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     origin.airport,
     intent.dates?.checkIn || '-', intent.dates?.checkOut || '-',
     (intent.components || []).slice().sort().join(','),       // flights-only ≠ full package
-    `${t.adults || 0}a${t.children || 0}c`,                   // party composition
+    `${t.adults || 0}a${t.children || 0}c${t.infants || 0}i`, // party composition (infants MUST be keyed — a lap infant changes the fare, and its omission made "2 adults + 1 infant" collide with a cached "2 adults" result)
     intent.flightPrefs.directOnly ? 'D1' : 'D0', intent.flightPrefs.departureWindow || '-',
     intent.flightPrefs.cabin || 'any',                        // cabin changes the fares served
 
