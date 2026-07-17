@@ -3320,6 +3320,28 @@ test('assistant: a bare CONFIRM lands on the booking with the pending change, no
   assert.equal(b.option.components[0].details.outbound.date, '2027-11-01', 'the newer booking B was untouched');
 });
 
+test('assistant: pasting a booking reference mid-change picks that booking and re-asks what to change (never escalates)', () => {
+  const u = createUser({ email: 'refswitch@x.co', name: 'Ref Switch' });
+  createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 434 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  const b2 = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 449 } }, totalUSD: 580, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'BHX', to: 'DXB', date: '2027-11-01' } } }] }, userId: u.id });
+  const hist = [];
+  const step = (m) => { const r = assist(m, u.id, hist.slice(-8)); hist.push({ role: 'user', text: m }); hist.push({ role: 'assistant', text: r.reply }); return r; };
+  step('i want to change my booking');
+  const r = step(b2.id);
+  assert.notEqual(r.escalate, true, 'a pasted booking reference is NOT escalated to a human');
+  assert.ok(/what would you like to change|date.*passenger.*baggage/i.test(r.reply), 're-asks what to change on the referenced booking');
+  assert.ok(r.reply.includes(b2.id), 'acknowledges the specific booking the customer referenced');
+});
+
+test('assistant: a plain word ("change"/"departure") is NOT mistaken for a booking reference', () => {
+  const u = createUser({ email: 'noref@x.co', name: 'No Ref' });
+  createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 434 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  // Turn 1 keeps the normal opening prompt (a word is not a reference).
+  const r = assist('i want to change my booking', u.id, []);
+  assert.notEqual(r.escalate, true);
+  assert.ok(/start a change|what would you like to change|tell me exactly what to change/i.test(r.reply));
+});
+
 test('assistant: a departure-airport change is a re-route (asks, then logs to ops — never a date change)', () => {
   const u = createUser({ email: 'reroute@x.co', name: 'Reroute Test' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'MAN', to: 'FIH', date: '2027-10-03' } } }] }, userId: u.id });

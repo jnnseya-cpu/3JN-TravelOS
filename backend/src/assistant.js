@@ -172,13 +172,18 @@ export function assist(message, userId, history = []) {
       // NO accommodation — a flights-only booking. Don't ask "which board?" (a
       // dead-end for a trip with no stay) and don't escalate: explain there's no
       // stay on this booking and offer to add one.
-      if (q.error === 'no-hotel') return mkResult('change', `This booking is flights-only — there's no hotel or stay on it to add ${changes.kind === 'board' ? 'breakfast/board' : changes.kind === 'nights' ? 'nights' : 'a room upgrade'} to. If you'd like, tell me your destination and dates and I'll find you a stay to add.`, ctx, { resolved: true });
+      if (q.error === 'no-hotel') return mkResult('change', `This booking is flights-only — there's no hotel or stay on it to add ${changes.kind === 'board' ? 'breakfast/board' : changes.kind === 'nights' ? 'nights' : 'a room upgrade'} to. To add a hotel, start a **hotel search in the Planner** for your dates and I'll show stays (with breakfast/board options) you can book alongside this trip. I can't add a stay to an existing flight-only booking from here.`, ctx, { resolved: true });
     }
     // (c) The customer named WHAT to change but not the value yet → ask for the
     // specific detail and stay in the flow. This is the case that used to
     // dead-end into an escalation ("departure" → handed to a human).
     const slot = changeSlot(message);
     if (slot) return mkResult('change', slotPrompt(slot, ctx), ctx, { resolved: true });
+    // (d) The customer pasted a BOOKING REFERENCE mid-change to pick which booking
+    // (gatherContext already resolved ctx.booking to it). That's a valid "which
+    // booking" answer, not an unknown request — acknowledge the booking and re-ask
+    // what to change, instead of dead-ending into a human hand-off.
+    if (extractRef(message)) return mkResult('change', `Got it — booking ${ctx.booking.id}. What would you like to change on it: the **date**, a **passenger**, or **baggage**? Tell me the detail and I'll price it before anything's confirmed.`, ctx, { resolved: true });
   }
   // 3) A cancellation → quote the refund and ask to confirm (operator self-serve).
   // "Cancel and read the refund quote" mentions "refund", which the classifier
@@ -404,8 +409,16 @@ function parseChange(message) {
   return null;
 }
 function extractRef(message) {
-  const m = String(message || '').match(/\b((?:bkg|bk|qr)_[a-z0-9]+|[A-Z0-9]{5,7})\b/i);
-  return m ? m[1] : null;
+  const s = String(message || '');
+  // A prefixed 3JN reference (bkg_/bk_/qr_…) — case-insensitive.
+  const pref = s.match(/\b(?:bkg|bk|qr)_[a-z0-9]+\b/i);
+  if (pref) return pref[0];
+  // A bare airline PNR: 5–7 alphanumerics CONTAINING AT LEAST ONE DIGIT. The digit
+  // requirement stops ordinary words ("change", "departure", "booking") from being
+  // mistaken for a reference (the old /[A-Z0-9]{5,7}/i matched any 5–7 letter word),
+  // which used to make a bare word resolve a booking and derail the change flow.
+  const pnr = s.match(/\b(?=[a-z0-9]{5,7}\b)[a-z0-9]*\d[a-z0-9]*\b/i);
+  return pnr ? pnr[0].toUpperCase() : null;
 }
 function summarisePolicy(rp, money) {
   if (Array.isArray(rp?.tiers) && rp.tiers.length) {
