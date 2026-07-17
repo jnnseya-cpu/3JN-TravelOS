@@ -127,11 +127,17 @@ export function assist(message, userId, history = []) {
       }
     }
     if (changes) {
-      const q = operatorQuoteChange(ctx.booking.id, changes);
+      const q = operatorQuoteChange(ctx.booking.id, changes, message);
       if (q.ok) {
         const items = q.quote.lines.map((l) => `• ${l.label}: ${l.deferred ? 'confirmed at re-issue' : money(l.amountGbp)}`).join('\n');
-        return mkResult('change', `I can ${q.quote.description} on booking ${ctx.booking.id}. Here's the cost:\n${items}\n**Total now: ${money(q.quote.totalExtraGbp)}${q.quote.hasDeferred ? ' + any airline fare difference' : ''}.** Reply **CONFIRM** and I'll make the change and re-issue your e-ticket.`, ctx, { resolved: true });
+        // For a live airline ticket the dates are confirmed with the customer by
+        // the ops desk at reissue, so we ECHO the dates we understood and ask them
+        // to check them — never assert a parsed date as final on a real ticket.
+        const echo = changes.kind === 'date' ? `\n\nI've read your new dates as **${uk(changes.newDate)}${changes.newReturnDate ? ' → ' + uk(changes.newReturnDate) : ''}** — please check that's right before you confirm.` : '';
+        return mkResult('change', `I can ${q.quote.description} on booking ${ctx.booking.id}. Here's the cost:\n${items}\n**Total now: ${money(q.quote.totalExtraGbp)}${q.quote.hasDeferred ? ' + any airline fare difference' : ''}.**${echo}\nReply **CONFIRM** and our travel team will reissue your e-ticket — the fee applies only once the new ticket is issued.`, ctx, { resolved: true });
       }
+      // A change is already being reissued — don't let a second one stack a fee.
+      if (q.error === 'change-in-progress') return mkResult('change', q.message, ctx, { resolved: true });
     }
     // (c) The customer named WHAT to change but not the value yet → ask for the
     // specific detail and stay in the flow. This is the case that used to

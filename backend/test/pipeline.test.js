@@ -3158,6 +3158,20 @@ test('assistant date change on a LIVE-ticketed booking defers the fee until reis
   assert.ok(b.pendingChangeFee && b.pendingChangeFee.amountGbp === 45, 'the £45 fee is recorded as deferred until the reissue');
 });
 
+test('assistant refuses a SECOND change while a reissue is still pending (no double fee)', () => {
+  const u = createUser({ email: 'opr.stack@x.co', name: 'Stack Test' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_live_2', pnr: 'STK123' };
+  assist('change my flight date to 20 October 2027', u.id);
+  assist('confirm', u.id); // → reissue-pending, fee deferred
+  assert.equal(b.fulfilment.ticketing, 'reissue-pending');
+  // The SECOND attempt must be refused — never quote/stack another fee.
+  const second = assist('change my flight date to 25 October 2027', u.id);
+  assert.ok(/still being completed|travel team/i.test(second.reply), 'second change is blocked while the first reissue is pending');
+  assert.equal(b.pendingAction, undefined, 'no new pending action is created for the stacked change');
+  assert.ok(!(b.payments || []).some((p) => p.type === 'change-charge'), 'no change fee is charged on a live ticket');
+});
+
 test('assistant adds baggage on confirmation with the extra charge', () => {
   const u = createUser({ email: 'opr2@x.co', name: 'Bag Test' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });

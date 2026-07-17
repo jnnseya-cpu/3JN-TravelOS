@@ -2926,6 +2926,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
       <button class="btn btn-ghost btn-sm" onclick="openPlacements()">💰 Sponsored placements</button>
       <button class="btn btn-ghost btn-sm" onclick="manageUser()">👤 Manage user (ACU / membership)</button>
+      <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openOpsQueue()">🎫 Ops queue</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
     </div>
     <div id="selfTestOut"></div>
@@ -3064,6 +3065,50 @@ async function renderAdmin() {
 // ---- Ops Fulfilment Desk + Supplier Doors ------------------------------------
 // Every paid booking's non-auto components land here, channel-routed (Rayna
 // portal, visa desk, vendor marketplace…) with a pre-packed payload. Complete
+// OPS QUEUE — the human work list. Every automated hand-off to the team lands as
+// a support ticket: airline reissues (date changes), refunds that couldn't
+// auto-fire, incomplete passenger manifests, hotel bookings to complete, and
+// website contact-form messages. This is where the travel team SEES and clears
+// them (previously there was no UI, so ops-reissue tickets were invisible).
+const OPS_INTENT = {
+  'ops-reissue': ['🔄 Airline reissue', 'var(--gold)'],
+  'ops-refund': ['💸 Refund', '#ff8a8a'],
+  'ops-manifest': ['🧑‍✈️ Manifest', 'var(--gold)'],
+  'ops-hotel': ['🏨 Hotel booking', 'var(--blue-bright)'],
+  'contact-form': ['✉️ Contact form', 'var(--muted)'],
+};
+window.openOpsQueue = async () => {
+  let d;
+  try { d = await api('/api/admin/support/tickets?status=open'); } catch { toast('Admin only.'); return; }
+  const tickets = d.tickets || [];
+  const rows = tickets.length ? tickets.map((t) => {
+    const [label, color] = OPS_INTENT[t.intent] || [`🎧 ${esc(t.intent)}`, 'var(--muted)'];
+    return `<div class="card pad" style="margin-bottom:10px;border-color:rgba(216,180,106,.3)">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">
+        <strong style="color:${color}">${label}</strong>
+        <span class="muted" style="font-size:11px">${esc(ukDate(t.createdAt))}</span>
+      </div>
+      <div style="font-size:12.5px;margin-top:6px;white-space:pre-wrap">${esc(t.message)}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">${esc(t.reason || '')}${t.userId ? ` · user ${esc(t.userId)}` : ''}</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input class="in" id="opsNote_${esc(t.id)}" placeholder="Resolution note (e.g. reissued PNR + fee taken)" style="flex:1;font-size:12px">
+        <button class="btn btn-gold btn-sm" onclick="resolveOpsTicket('${esc(t.id)}')">Mark done</button>
+      </div>
+    </div>`;
+  }).join('') : '<p class="muted" style="font-size:13px">Nothing waiting — every hand-off to the team is cleared. New reissues, refunds and manifests appear here automatically.</p>';
+  modal(`<span class="eyebrow">🎫 Ops queue · ${tickets.length} open</span>
+    <h3 style="margin:6px 0 10px">Human work list</h3>
+    <p class="muted" style="font-size:12px;margin:0 0 12px">Airline reissues, refunds, manifests and hotel bookings the automation handed to the team. Clear each once done — the customer is notified automatically.</p>
+    ${rows}`);
+};
+window.resolveOpsTicket = async (tid) => {
+  const note = document.getElementById(`opsNote_${tid}`)?.value.trim() || '';
+  try { await api(`/api/admin/support/tickets/${tid}/resolve`, { method: 'POST', body: JSON.stringify({ note }) }); }
+  catch { toast('Could not resolve — try again.'); return; }
+  toast('✓ Ticket resolved — customer notified.');
+  openOpsQueue();
+};
+
 // an order = paste the supplier confirmation; the OS updates the customer's
 // documents and notifies them. The doors list is the API acquisition tracker.
 async function renderFulfilment() {

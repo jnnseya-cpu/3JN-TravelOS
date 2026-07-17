@@ -1838,12 +1838,18 @@ export function findUserBookingByRef(userId, ref) {
 // customer confirms, then it EXECUTES — applying the change, collecting the
 // extra, re-issuing the e-ticket, auditing and notifying. Nothing is charged
 // or changed without an explicit confirmation.
-export function operatorQuoteChange(bookingId, changes) {
+export function operatorQuoteChange(bookingId, changes, rawRequest = null) {
   const b = db.bookings.get(bookingId);
   if (!b) return { ok: false, error: 'not-found' };
+  // NEVER stack a second change while a previous one is still being reissued by
+  // the travel team — that is how a customer ends up "charged twice, ticket never
+  // arrived". Make them wait for the in-flight reissue (or contact us to amend it).
+  if (b.fulfilment?.ticketing === 'reissue-pending' || b.pendingChangeFee) {
+    return { ok: false, error: 'change-in-progress', message: 'A previous change on this booking is still being completed by our travel team, so I can\'t start another one yet. Your earlier change is being reissued with the airline and you\'ll get the updated e-ticket by email — no new fee is taken until it\'s issued. If you need to adjust that pending change, reply here and a specialist will amend it for you.' };
+  }
   const q = quoteChange(b, changes, { todayISO: nowISO().slice(0, 10) });
   if (!q.ok) return q;
-  b.pendingAction = { id: id('act'), kind: 'change', quote: q.quote, at: nowISO() };
+  b.pendingAction = { id: id('act'), kind: 'change', quote: q.quote, rawRequest: rawRequest ? String(rawRequest).slice(0, 400) : null, at: nowISO() };
   return { ok: true, quote: q.quote, actionId: b.pendingAction.id };
 }
 export function operatorQuoteCancel(bookingId) {
@@ -1877,13 +1883,20 @@ export function operatorConfirm(bookingId) {
     // 'reissue-pending' (never fake 'reissued'), and raise an ops ticket; the fee
     // is collected and the updated e-ticket emailed ONLY once the new ticket
     // actually issues.
-    const wasLiveTicketed = (b.fulfilment.ticketing === 'issued' || b.fulfilment.ticketing === 'held') && !!(b.fulfilment.duffelOrderId || b.fulfilment.holdOrderId || b.fulfilment.pnr);
+    // A booking with a REAL airline locator (PNR / Duffel order / hold) is a live
+    // airline booking whose date/itinerary change can ONLY be reissued through the
+    // carrier by the ops desk — regardless of the transient ticketing status
+    // ('issued', 'held', or even a prior 'reissue-pending'/'reissued'). Keying on
+    // the presence of the locator (not the status string) closes the hole where a
+    // second change on an already-reissuing ticket fell through to the "charge now"
+    // branch and took a fee with no reissue.
+    const wasLiveTicketed = !!(b.fulfilment.duffelOrderId || b.fulfilment.holdOrderId || b.fulfilment.pnr);
     if (wasLiveTicketed) {
       b.fulfilment.ticketing = 'reissue-pending';
       b.fulfilment.reissueRequestedAt = nowISO();
       b.pendingChangeFee = { amountGbp: extra, description: summary.description, hasDeferred: !!pa.quote.hasDeferred, at: nowISO() };
       b.changeLog.push({ ...summary, extraGbp: extra, status: 'reissue-pending', deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
-      createSupportTicket({ userId: b.userId, intent: 'ops-reissue', message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. Confirm the airline fare difference, reissue the ticket, THEN collect the £${extra} 3JN change fee and email the updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
+      createSupportTicket({ userId: b.userId, intent: 'ops-reissue', message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. CUSTOMER'S EXACT REQUEST: "${pa.rawRequest || summary.description}". Confirm the customer's intended new dates with them, confirm the airline fare difference, reissue the ticket, THEN collect the £${extra} 3JN change fee and email the updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
       recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.change-requested', entity: 'booking', entityId: b.id, summary: `${summary.description} · reissue pending · £${extra} fee deferred until issued` });
       if (b.userId) pushNotification(b.userId, { type: 'info', icon: '🔄', title: 'Change requested — reissuing your ticket', body: `We're confirming the new fare with the airline and reissuing your ticket for "${summary.description}". Your updated e-ticket will be emailed to you, and the £${extra} change fee applies ONLY once your new ticket is issued — never before.` });
       return { ok: true, kind: 'change', summary, extraGbp: extra, reissuePending: true, hasDeferred: !!pa.quote.hasDeferred, booking: b };
