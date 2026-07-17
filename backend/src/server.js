@@ -72,7 +72,7 @@ import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { submitReview, leaderboard } from './reviews.js';
-import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS } from './revenue.js';
+import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS, cachedSearchAcu } from './revenue.js';
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-origin-respect-reroute-v103';
+const BUILD_TAG = '2026-07-15-member-cache-fee-v104';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2207,8 +2207,18 @@ app.post('/api/plan', safe(async (req, res) => {
     // Treating that as free lost every charge behind an approval. So a cache hit
     // that arrives WITH an approval is the round-trip artifact — fall through and
     // charge it. A genuine popular-cache hit never carries approveAcu (no prompt
-    // was shown), so it stays free.
-    result.acuCharged = 0;
+    // was shown), so it stays free — EXCEPT active members, who pay a small
+    // cache-access fee so their ACU keeps reflecting usage (see cachedSearchAcu).
+    const cacheFee = cachedSearchAcu(user);
+    if (cacheFee > 0) {
+      const s = spendAcu(user.id, cacheFee, 'search:cached');
+      // Never BLOCK a cached result over the nominal fee — charge it if the member
+      // can cover it, otherwise serve the cached answer free.
+      if (s.ok) { result.acuCharged = cacheFee; result.acuBalance = s.balance; result.cachedFee = true; }
+      else { result.acuCharged = 0; }
+    } else {
+      result.acuCharged = 0;
+    }
   } else if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     // MEMBERS pay the AT-COST rate (their subscription is the margin); NON-MEMBERS

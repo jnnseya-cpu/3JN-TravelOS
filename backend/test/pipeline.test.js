@@ -6,7 +6,7 @@ import { parseIntent } from '../src/intent.js';
 import { detectContext } from '../src/geo.js';
 import { plan } from '../src/planner.js';
 import { priceBreakdown, instalmentPlan, tierForPoints } from '../src/pricing.js';
-import { costProtectionGate, whiteLabelPayout, SEARCH_TIERS } from '../src/revenue.js';
+import { costProtectionGate, whiteLabelPayout, SEARCH_TIERS, cachedSearchAcu, CACHED_SEARCH_ACU_MEMBER } from '../src/revenue.js';
 import {
   createUser, createBooking, saveQuote, updateUser, seedAllRoles,
   createApiKey, listApiKeys, revokeApiKey, useApiKey, adminOverview,
@@ -521,6 +521,15 @@ test('loyalty tiers map points correctly', () => {
   assert.equal(tierForPoints(1200).name, 'Voyager');
   assert.equal(tierForPoints(6000).name, 'Nomad');
   assert.equal(tierForPoints(20000).name, 'Elite');
+});
+
+test('cache-access fee: members pay a small ACU on cached results; others free; Full Access exempt', () => {
+  assert.equal(cachedSearchAcu(null), 0, 'guest → free');
+  assert.equal(cachedSearchAcu({ membership: null }), 0, 'non-member → free');
+  assert.equal(cachedSearchAcu({ membership: { active: true }, allAccess: true }), 0, 'Full Access → exempt');
+  assert.equal(cachedSearchAcu({ membership: { active: true } }), CACHED_SEARCH_ACU_MEMBER, 'active member → small fee');
+  assert.equal(cachedSearchAcu({ membership: { active: false } }), 0, 'lapsed member → free');
+  assert.ok(CACHED_SEARCH_ACU_MEMBER > 0 && CACHED_SEARCH_ACU_MEMBER < 10, 'the fee is small, well below a fresh search');
 });
 
 test('instalment plan: deposit + interest-free schedule sums to total', () => {

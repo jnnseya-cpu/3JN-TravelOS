@@ -626,6 +626,8 @@ async function runPlan(overrides = {}) {
   // A paid tier was funded by ACUs — reflect the new balance.
   if (typeof data.acuBalance === 'number' && state.user) {
     setUser({ ...state.user, acuBalance: data.acuBalance });
+    // Show the small member cache-access fee so ACU movement is visible.
+    if (data.cachedFee && data.acuCharged > 0) toast(`⚡ ${data.acuCharged} ACU · cached result · balance ${data.acuBalance.toLocaleString()}`);
   }
   renderOptions(data);
 }

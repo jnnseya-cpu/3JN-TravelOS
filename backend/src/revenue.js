@@ -90,6 +90,17 @@ export const SEARCH_TIERS = {
 // Revenue must be at least this multiple of AI cost (spec: revenue >= cost x10).
 export const REVENUE_TO_COST_MULTIPLE = 10;
 
+// Cache-access fee (ACU). A cached search does NO fresh AI/supplier work, so it is
+// free for everyone by default — EXCEPT active members, who pay a small nominal fee
+// so their ACU balance keeps reflecting usage (their subscription funds the ACU,
+// and the ACU economy would otherwise never move for a member on warm cache).
+// Full Access accounts are always exempt (billing is bypassed for them).
+export const CACHED_SEARCH_ACU_MEMBER = 2;
+export function cachedSearchAcu(user) {
+  if (!user || user.allAccess) return 0;
+  return user.membership?.active ? CACHED_SEARCH_ACU_MEMBER : 0;
+}
+
 // Decide whether an AI search may run, and at what depth.
 //   ctx: { tier, user, hasDeposit, subscriptionActive, expectedBookingUSD }
 // Master Rule: AI cost must never exceed 5–10% of expected 3JN profit.
