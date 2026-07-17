@@ -3106,9 +3106,10 @@ window.openOpsQueue = async () => {
     const isReissue = t.intent === 'ops-reissue' && t.bookingId;
     const action = isReissue
       ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
-           <div class="muted" style="font-size:11px;margin-bottom:6px">After reissuing with the airline, enter the new details to issue the customer's ticket:</div>
+           ${t.reissueChannel ? `<div style="font-size:11.5px;margin-bottom:6px;padding:6px 8px;background:rgba(216,180,106,.1);border-radius:6px;line-height:1.5">${esc(t.reissueChannel)}</div>` : ''}
+           <div class="muted" style="font-size:11px;margin-bottom:6px">Reissue with the airline/supplier first (above). The new PNR + e-ticket come from <strong>them, not the customer</strong> — then enter what the airline gave you. If the reissue kept the same PNR, leave it as-is.</div>
            <div style="display:flex;gap:6px;flex-wrap:wrap">
-             <input class="in" id="ri_pnr_${esc(t.id)}" placeholder="New airline PNR" style="flex:1;min-width:120px;font-size:12px">
+             <input class="in" id="ri_pnr_${esc(t.id)}" placeholder="Airline PNR" value="${esc(t.pnr || '')}" style="flex:1;min-width:120px;font-size:12px">
              <input class="in" id="ri_tkt_${esc(t.id)}" placeholder="E-ticket number(s), comma-separated" style="flex:2;min-width:160px;font-size:12px">
              <input class="in" id="ri_fare_${esc(t.id)}" type="number" min="0" step="0.01" placeholder="Fare diff £ (0 if none)" style="width:150px;font-size:12px">
            </div>

@@ -1788,10 +1788,16 @@ export function requestWithdrawal(userId, { amountGbp, method = 'bank' } = {}) {
 // ---- AI Support Concierge: human-escalation tickets -----------------------
 // The chatbot resolves most requests; when it must hand off, it opens a ticket
 // and notifies the customer. Admins work the queue and resolve.
-export function createSupportTicket({ userId, intent, message, reason, transcript = [], bookingId = null } = {}) {
+export function createSupportTicket({ userId, intent, message, reason, transcript = [], bookingId = null, pnr = null, reissueChannel = null } = {}) {
   const ticket = {
     id: id('tkt'), userId: userId || null, intent: intent || 'unknown',
     bookingId: bookingId || null,
+    // For an ops-reissue: the CURRENT airline locator (so the desk can keep it if
+    // the reissue preserves the PNR) and a plain-English "where to reissue" channel
+    // (Duffel dashboard vs GDS/airline portal vs hotel extranet). These make the
+    // ticket a real work-order — the new details come from the AIRLINE, never the
+    // customer.
+    pnr: pnr || null, reissueChannel: reissueChannel || null,
     message: String(message || '').slice(0, 2000), reason: reason || 'Requires human assistance',
     status: 'open', transcript, createdAt: nowISO(), resolvedAt: null,
   };
@@ -1918,7 +1924,22 @@ export function operatorConfirm(bookingId) {
       b.fulfilment.reissueRequestedAt = nowISO();
       b.pendingChangeFee = { amountGbp: extra, description: summary.description, hasDeferred: !!pa.quote.hasDeferred, at: nowISO() };
       b.changeLog.push({ ...summary, extraGbp: extra, status: 'reissue-pending', deferredFareToConfirm: !!pa.quote.hasDeferred, at: nowISO() });
-      createSupportTicket({ userId: b.userId, bookingId: b.id, intent: 'ops-reissue', message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. CUSTOMER'S EXACT REQUEST: "${pa.rawRequest || summary.description}". Confirm the customer's intended new dates with them, confirm the airline fare difference, reissue the ticket, THEN collect the £${extra} 3JN change fee and email the updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
+      // Tell the ops desk EXACTLY where to reissue — the new PNR/e-ticket comes from
+      // the airline/supplier system, never from the customer. Duffel API orders can
+      // reissue automatically (attempted first at confirm); this manual work-order is
+      // the fallback for non-API fares and for Duffel fares that don't allow an
+      // online change.
+      const flightComp = (b.option?.components || []).find((c) => c.type === 'flight');
+      const stayComp = (b.option?.components || []).find((c) => c.type === 'hotel' || c.type === 'host');
+      const orderId = b.fulfilment.duffelOrderId || b.fulfilment.holdOrderId || null;
+      const parts = [];
+      if (flightComp) {
+        if (orderId) parts.push(`✈ Flights: reissue in your Duffel dashboard — order ${orderId} (PNR ${b.fulfilment.pnr || 'n/a'}). Duffel pays the airline fare difference from your balance and returns the new e-ticket.`);
+        else parts.push(`✈ Flights: reissue with ${flightComp.supplier || 'the airline'} via your GDS / airline agent portal / consolidator, under PNR ${b.fulfilment.pnr || 'n/a'}. The airline gives you the new PNR + e-ticket number.`);
+      }
+      if (stayComp && (pa.quote.kind === 'date')) parts.push(`🏨 Stay: amend the dates with ${stayComp.supplier || stayComp.details?.supplier || 'the accommodation provider'} in their extranet / booking portal and confirm any rate difference.`);
+      const reissueChannel = parts.join(' ');
+      createSupportTicket({ userId: b.userId, bookingId: b.id, intent: 'ops-reissue', pnr: b.fulfilment.pnr || null, reissueChannel, message: `Reissue booking ${b.id} (PNR ${b.fulfilment.pnr || 'n/a'}): ${summary.description}. CUSTOMER'S EXACT REQUEST: "${pa.rawRequest || summary.description}".\n\nHOW TO REISSUE — the new PNR/e-ticket comes from the AIRLINE, not the customer:\n${reissueChannel || 'Reissue with the supplier, then record the new details below.'}\n\nThen enter the new PNR + e-ticket + any fare difference to collect the £${extra} 3JN change fee and email the customer their updated e-ticket. Do NOT charge before the new ticket is issued.`, reason: 'airline reissue required for a date/itinerary change' });
       recordAudit({ actor: b.userId || 'guest', role: 'consumer', action: 'booking.change-requested', entity: 'booking', entityId: b.id, summary: `${summary.description} · reissue pending · £${extra} fee deferred until issued` });
       if (b.userId) pushNotification(b.userId, { type: 'info', icon: '🔄', title: 'Change requested — reissuing your ticket', body: `We're confirming the new fare with the airline and reissuing your ticket for "${summary.description}". Your updated e-ticket will be emailed to you, and the £${extra} change fee applies ONLY once your new ticket is issued — never before.` });
       return { ok: true, kind: 'change', summary, extraGbp: extra, reissuePending: true, hasDeferred: !!pa.quote.hasDeferred, booking: b };
