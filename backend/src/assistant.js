@@ -61,10 +61,18 @@ function bookingSnapshot(b) {
 }
 
 // Build the full context the agent reasons over for THIS user + message.
-export function gatherContext(message, userId) {
+export function gatherContext(message, userId, history = []) {
   const user = userId ? getUserRaw(userId) : null;
   const ref = extractRef(message);
   let booking = user ? ((ref && findUserBookingByRef(user.id, ref)) || null) : null;
+  // STICKY SELECTION: once the customer names/pastes a booking reference, keep the
+  // whole conversation on THAT booking for follow-ups that name no booking — a bare
+  // "departure" or a date must not silently revert to the NEWEST booking (which
+  // quoted, and then tried to reissue, the wrong trip).
+  if (user && !booking) {
+    const histRef = recentBookingRef(history);
+    if (histRef) booking = findUserBookingByRef(user.id, histRef) || null;
+  }
   if (user && !booking) {
     // Mid-flow (e.g. a bare "CONFIRM" with no ref): prefer the booking that has a
     // PENDING action so the confirmation lands on the change we just quoted — even
@@ -73,6 +81,13 @@ export function gatherContext(message, userId) {
     // the referenced booking, and wrongly escalated to a human.
     const pending = bookingsForUser(user.id).find((b) => operatorHasPending(b.id));
     booking = pending || latestBookingForUser(user.id);
+  }
+  // A CONFIRMATION must ALWAYS land on the booking that actually holds the pending
+  // action, whatever the sticky/latest resolution picked — so "CONFIRM" never
+  // misses the quote we just gave (which used to escalate to a human).
+  if (user && isConfirmation(message)) {
+    const pend = bookingsForUser(user.id).find((b) => operatorHasPending(b.id));
+    if (pend) booking = pend;
   }
   const nationality = user?.travelProfile?.nationality || user?.country || null;
   const dest = resolveDestinationFromText(message);
@@ -92,7 +107,7 @@ export function gatherContext(message, userId) {
 // ---- The agent: resolve with real data, escalate only when required --------
 export function assist(message, userId, history = []) {
   const intent = classifySupport(message);
-  const ctx = gatherContext(message, userId);
+  const ctx = gatherContext(message, userId, history);
   const money = (n) => `${ctx.booking?.symbol || '£'}${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   // The assistant is stateless per request, so a bare follow-up ("departure")
   // would otherwise re-classify to "unknown" and escalate. Read the recent
@@ -115,6 +130,12 @@ export function assist(message, userId, history = []) {
       return mkResult(intent.key, `Your booking is cancelled.${r.refundGbp > 0 ? ` A refund of ${money(r.refundGbp)} is being processed to your original payment method.` : ' This fare was non-refundable, so no refund is due.'}`, ctx, { resolved: true });
     }
     return mkResult(intent.key, 'I couldn’t complete that just now — I’m passing it to a specialist to finish safely.', ctx, { escalate: true, reason: 'operator action failed' });
+  }
+  // 1b) A confirmation arrived but NOTHING is pending — e.g. the quote timed out or
+  // wasn't found. NEVER escalate a bare "CONFIRM": explain there's nothing queued
+  // and offer to re-quote, keeping the customer self-served.
+  if (ctx.booking && isConfirmation(message) && !operatorHasPending(ctx.booking.id) && (topic === 'change' || topic === 'cancel')) {
+    return mkResult('change', `I don't have a change queued to confirm right now — it may have timed out. Just tell me the booking and what to change (for example: "change booking ${ctx.booking.id} departure to 12 August 2026") and I'll re-quote it before anything is charged.`, ctx, { resolved: true });
   }
   // 2) A change request — a fresh "change" intent OR a follow-up to one already
   // in flight (e.g. the customer answers "departure", then "12 August"). We keep
@@ -405,6 +426,18 @@ function parseChange(message) {
   if (/\b(change|move|reschedul|shift|new date|different date|bring forward|push back)\b/i.test(t)) {
     const dates = safe(() => parseExplicitDates(t, new Date()));
     if (dates?.checkIn) return { kind: 'date', newDate: dates.checkIn, newReturnDate: dates.checkOut || null };
+  }
+  return null;
+}
+// The most recently referenced 3JN booking id anywhere in the recent transcript
+// (customer message OR the assistant's "booking bkg_…" echo), newest first. Used
+// to keep a multi-turn change on the booking the customer actually picked.
+function recentBookingRef(history) {
+  const turns = Array.isArray(history) ? history : [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const text = String(turns[i]?.text || turns[i]?.message || turns[i]?.content || '');
+    const m = text.match(/\bbkg_[a-z0-9]{6,}\b/i);
+    if (m) return m[0];
   }
   return null;
 }

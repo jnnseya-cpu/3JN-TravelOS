@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-change-ref-switch-v116';
+const BUILD_TAG = '2026-07-17-sticky-booking-confirm-v117';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3432,6 +3432,25 @@ app.post('/api/support/chat', safe(async (req, res) => {
         recordAudit({ actor: 'system', role: 'system', action: 'booking.change-emailed', entity: 'booking', entityId: b.id, summary: `updated document emailed to ${to}` });
       } catch { /* email best-effort */ }
     }
+  }
+  // DURABILITY of a pending quote: on serverless the CONFIRM arrives as a SEPARATE
+  // request that may land on another instance, so the quote (booking.pendingAction)
+  // MUST be persisted before we answer — otherwise CONFIRM finds no pending action
+  // and wrongly escalates to a human. The request middleware also flushes, but we
+  // persist the affected booking(s) explicitly and uncapped here so a fresh quote
+  // is guaranteed durable the instant the customer can reply CONFIRM.
+  if (user && IS_SERVERLESS && isEnabled()) {
+    try {
+      const snap = flatSnapshot();
+      const leaf = {};
+      for (const b of listBookings(user.id)) {
+        if (b.pendingAction || b.fulfilment?.ticketing === 'reissue-pending') {
+          const k = `bookings/${b.id}`;
+          if (snap[k]) leaf[k] = snap[k];
+        }
+      }
+      if (Object.keys(leaf).length) await saveMerge(leaf);
+    } catch (e) { console.error('[pending-persist]', e?.message || e); }
   }
   let ticket = null;
   if (out.escalate) {

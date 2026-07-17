@@ -3333,6 +3333,26 @@ test('assistant: pasting a booking reference mid-change picks that booking and r
   assert.ok(r.reply.includes(b2.id), 'acknowledges the specific booking the customer referenced');
 });
 
+test('assistant: a selected booking stays sticky through the whole change — quote AND confirm hit that booking, not the newest', () => {
+  const u = createUser({ email: 'sticky@x.co', name: 'Sticky' });
+  const older = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 434 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  older.fulfilment = { ticketing: 'issued', duffelOrderId: 'o_old', pnr: 'OLD111' };
+  const newer = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 449 } }, totalUSD: 580, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'BHX', to: 'DXB', date: '2027-11-01' } } }] }, userId: u.id });
+  newer.fulfilment = { ticketing: 'issued', duffelOrderId: 'o_new', pnr: 'NEW222' };
+  const hist = [];
+  const step = (m) => { const r = assist(m, u.id, hist.slice(-8)); hist.push({ role: 'user', text: m }); hist.push({ role: 'assistant', text: r.reply }); return r; };
+  step('i want to change my booking');
+  step(older.id);          // pick the OLDER booking explicitly
+  step('departure');
+  const q = step('07/12/2026');
+  assert.ok(q.reply.includes(older.id), 'the quote is on the SELECTED (older) booking, not the newest');
+  assert.ok(!q.reply.includes(newer.id), 'the newest booking is not the one being quoted');
+  const c = step('CONFIRM');
+  assert.notEqual(c.escalate, true, 'CONFIRM is not escalated');
+  assert.equal(older.option.components[0].details.outbound.date, '2026-12-07', 'the SELECTED booking was moved');
+  assert.equal(newer.option.components[0].details.outbound.date, '2027-11-01', 'the newest booking was left untouched');
+});
+
 test('assistant: a plain word ("change"/"departure") is NOT mistaken for a booking reference', () => {
   const u = createUser({ email: 'noref@x.co', name: 'No Ref' });
   createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 434 } }, totalUSD: 568, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
