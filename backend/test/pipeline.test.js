@@ -22,7 +22,7 @@ import { snapshot, hydrate } from '../src/store.js';
 import { markEmailVerified } from '../src/store.js';
 import { listNotifications, pushNotification, recordVisaApplication, govAnalytics } from '../src/store.js';
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
-import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment, completeReissue } from '../src/store.js';
+import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment, completeReissue, listSupportTickets, hydrateMerge } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
@@ -3114,6 +3114,41 @@ test('support escalation opens a ticket and notifies the customer', () => {
   assert.ok(r.ok && r.ticket.status === 'resolved');
 });
 
+test('support tickets: a resolve persists at its OWN record leaf and a peer\'s new ticket merges in (the ops-queue reappearing bug)', () => {
+  const u = createUser({ email: 'clobber@x.co', name: 'Clobber Test' });
+  const t = createSupportTicket({ userId: u.id, intent: 'ops-reissue', message: 'reissue me', reason: 'reissue' });
+  // This instance resolves the ticket, then flushes. The persisted write is a
+  // PER-RECORD leaf (supportTickets/<id>) carrying the resolved status — so a peer
+  // instance writing a DIFFERENT ticket can never overwrite this one back to open
+  // (the whole-array write was the old clobber source).
+  resolveSupportTicket(t.id, { note: 'done', agent: 'Ops' });
+  const flat = flatSnapshot();
+  assert.equal(flat[`supportTickets/${t.id}`]?.status, 'resolved', 'the resolved status is persisted at its own record leaf');
+  assert.equal(Object.prototype.hasOwnProperty.call(flat, 'supportTickets'), false, 'no whole-array write to clobber peers');
+  // A peer instance created a brand-new ticket; a refresh merges it in without
+  // disturbing the already-resolved one.
+  hydrateMerge({ supportTickets: { tkt_new_x: { id: 'tkt_new_x', userId: u.id, intent: 'refund', status: 'open', createdAt: new Date().toISOString() } } });
+  const after = listSupportTickets();
+  assert.equal(after.find((x) => x.id === t.id)?.status, 'resolved', 'resolved ticket stays resolved — does not reappear as open');
+  assert.ok(after.some((x) => x.id === 'tkt_new_x'), 'the peer instance\'s new ticket is present — not clobbered');
+});
+
+test('support tickets: an OLD array-format snapshot migrates losslessly to per-record, keyed by ticket id', () => {
+  // The pre-migration persisted format stored supportTickets as a flat array.
+  const arraySnap = { supportTickets: [
+    { id: 'tkt_old_1', userId: 'uMig', intent: 'ops-reissue', status: 'open', createdAt: new Date().toISOString() },
+    { id: 'tkt_old_2', userId: 'uMig', intent: 'refund', status: 'resolved', createdAt: new Date().toISOString() },
+  ] };
+  hydrate(arraySnap);
+  assert.equal(db.supportTickets instanceof Map, true, 'supportTickets is now a Map');
+  assert.equal(db.supportTickets.get('tkt_old_1')?.intent, 'ops-reissue', 'keyed by real ticket id, not array index');
+  assert.equal(db.supportTickets.get('tkt_old_2')?.status, 'resolved');
+  // flatSnapshot emits per-record leaves so writes MERGE instead of clobbering.
+  const flat = flatSnapshot();
+  assert.ok(Object.prototype.hasOwnProperty.call(flat, 'supportTickets/tkt_old_1'), 'per-record leaf emitted');
+  assert.equal(Object.prototype.hasOwnProperty.call(flat, 'supportTickets'), false, 'no whole-array leaf (that was the clobber source)');
+});
+
 // ---- 3JN Assistant (deep, system-aware agent) -----------------------------
 test('assistant resolves with the user\'s real system data before escalating', () => {
   const u = createUser({ email: 'agent@x.co', name: 'Alan Turing' });
@@ -3154,9 +3189,11 @@ test('admin can approve an influencer who has not formally applied yet', () => {
 });
 
 // ---- Assistant as booking operator (quote → confirm → execute) ------------
-test('assistant executes a date change with confirmation and charges the fee', () => {
+test('assistant executes a date change with confirmation and charges the fee (estimated/non-live booking → the itinerary document is the deliverable)', () => {
   const u = createUser({ email: 'opr@x.co', name: 'Operator Test' });
-  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 2 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  // NON-live flight: no carrier ticket to reissue, so the change is fulfilled by
+  // regenerating the itinerary document and the fee is collected now.
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 2 }, components: [{ type: 'flight', supplier: 'BA', details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
   const quote = assist('change my flight date to 20 October 2027', u.id);
   assert.ok(/CONFIRM/i.test(quote.reply) && /45/.test(quote.reply), 'quotes the change fee and asks to confirm');
   const done = assist('confirm', u.id);
@@ -3164,6 +3201,19 @@ test('assistant executes a date change with confirmation and charges the fee', (
   assert.equal(b.option.components[0].details.outbound.date, '2027-10-20', 'date is actually changed');
   assert.equal(b.fulfilment.ticketing, 'reissued', 'e-ticket re-issued');
   assert.ok(b.payments.some((p) => p.type === 'change-charge' && p.amount === 45), 'change fee charged');
+});
+
+test('assistant date change on a LIVE fare with NO stored locator STILL defers the fee (never charge without a real reissue)', () => {
+  const u = createUser({ email: 'opr.livefare@x.co', name: 'Live Fare No Locator' });
+  // A real airline fare (live) that has not yet had its Duffel/PNR locator stamped
+  // onto fulfilment. A date change must still route to reissue-pending — never the
+  // "charge now + fake reissue" branch that produced "charged but no ticket".
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { baggage: '1 cabin bag', outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  assert.ok(/CONFIRM/i.test(assist('change my flight date to 20 October 2027', u.id).reply));
+  assist('confirm', u.id);
+  assert.equal(b.fulfilment.ticketing, 'reissue-pending', 'live fare → reissue-pending, not a faked reissue');
+  assert.ok(!(b.payments || []).some((p) => p.type === 'change-charge'), 'no fee charged before the real reissue');
+  assert.ok(b.pendingChangeFee && b.pendingChangeFee.amountGbp === 45, 'the £45 fee is deferred until the ticket is reissued');
 });
 
 test('assistant date change on a LIVE-ticketed booking defers the fee until reissue (never charge without fulfilment)', () => {

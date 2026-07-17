@@ -58,7 +58,7 @@ const db = {
   influencerProfiles: new Map(), // userId -> influencer/partner profile (tier, followers, standing)
   revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
   rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
-  supportTickets: [], // AI Support Concierge escalations to a human { id, userId, intent, message, reason, status, transcript }
+  supportTickets: new Map(), // AI Support Concierge escalations to a human, keyed by ticket id { id, userId, intent, message, reason, status, transcript }
   embassyConfigs: new Map(), // Embassy governance: country -> { embassyName, branding, language, criteria, fees, templates }
   vendorProfiles: new Map(), // Vendor Partner Programme: userId -> { tier, status, vendorCode, riskReview, ... }
   vendorSales: [], // { id, vendorId, bookingId, saleGbp, vendorGbp, platformKeepsGbp, status, flags..., at }
@@ -1795,21 +1795,31 @@ export function createSupportTicket({ userId, intent, message, reason, transcrip
     message: String(message || '').slice(0, 2000), reason: reason || 'Requires human assistance',
     status: 'open', transcript, createdAt: nowISO(), resolvedAt: null,
   };
-  db.supportTickets.push(ticket);
-  capArr(db.supportTickets, SUPPORT_TICKET_CAP);
+  db.supportTickets.set(ticket.id, ticket);
+  capTicketMap(SUPPORT_TICKET_CAP);
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'support.escalated', entity: 'ticket', entityId: ticket.id, summary: `${ticket.intent}: ${ticket.reason}` });
   if (userId) pushNotification(userId, { type: 'info', icon: '🎧', title: 'Connected to our team', body: 'Your request needs a human touch — a 3JN travel specialist will pick this up and reply shortly.' });
   return ticket;
 }
+// Cap the ticket map by dropping the OLDEST resolved tickets first (never evict
+// an OPEN ticket while any resolved one remains — an unworked ops item must not
+// silently vanish from the queue).
+function capTicketMap(cap) {
+  if (db.supportTickets.size <= cap) return;
+  const all = [...db.supportTickets.values()].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  let over = db.supportTickets.size - cap;
+  for (const t of all) { if (over <= 0) break; if (t.status === 'resolved') { db.supportTickets.delete(t.id); over--; } }
+  for (const t of all) { if (over <= 0) break; if (db.supportTickets.has(t.id)) { db.supportTickets.delete(t.id); over--; } }
+}
 export function listSupportTickets(status) {
-  const rows = status ? db.supportTickets.filter((t) => t.status === status) : db.supportTickets;
-  return [...rows].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const rows = [...db.supportTickets.values()].filter((t) => !status || t.status === status);
+  return rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 export function supportTicketsForUser(userId) {
-  return db.supportTickets.filter((t) => t.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return [...db.supportTickets.values()].filter((t) => t.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 export function resolveSupportTicket(ticketId, { note, agent } = {}) {
-  const t = db.supportTickets.find((x) => x.id === ticketId);
+  const t = db.supportTickets.get(ticketId);
   if (!t) return { ok: false, error: 'not-found' };
   t.status = 'resolved';
   t.resolvedAt = nowISO();
@@ -1891,7 +1901,18 @@ export function operatorConfirm(bookingId) {
     // the presence of the locator (not the status string) closes the hole where a
     // second change on an already-reissuing ticket fell through to the "charge now"
     // branch and took a fee with no reissue.
-    const wasLiveTicketed = !!(b.fulfilment.duffelOrderId || b.fulfilment.holdOrderId || b.fulfilment.pnr);
+    // A REAL airline fare can only be changed by re-issuing through the carrier.
+    // Detect it by a stored locator (Duffel order / hold / PNR) OR, for the change
+    // kinds that actually reissue the TICKET (date/itinerary + adding a passenger),
+    // by the flight simply being a live carrier fare (`live`). This closes the hole
+    // where a live-fare date change with no stored locator fell through to the
+    // "charge now, regenerate a document" branch — taking a fee and faking a
+    // reissue with no real new ticket behind it ("charged but no ticket"). Baggage
+    // and hotel-only changes keep the locator-only rule (they don't reissue a
+    // flight ticket, so the service fee is collected on completion as before).
+    const reissuesTicket = pa.quote.kind === 'date' || pa.quote.kind === 'passenger';
+    const liveFlight = reissuesTicket && (b.option?.components || []).some((c) => c.type === 'flight' && c.live);
+    const wasLiveTicketed = !!(b.fulfilment.duffelOrderId || b.fulfilment.holdOrderId || b.fulfilment.pnr || liveFlight);
     if (wasLiveTicketed) {
       b.fulfilment.ticketing = 'reissue-pending';
       b.fulfilment.reissueRequestedAt = nowISO();
@@ -2410,8 +2431,26 @@ export function sponsoredPlacementRevenueGBP() {
 // Serialise the whole store to a plain JSON-safe object, and restore it. Maps
 // become objects; arrays pass through. Lets a persistence layer survive
 // restarts without rewriting every accessor to be async.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'supportTickets', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
+// supportTickets is a MAP (per-record persistence): on serverless the whole-array
+// write clobbered across instances — a ticket resolved on one instance reappeared
+// (its stale copy re-uploaded by another), and new tickets vanished under a stale
+// array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
+// resolve on any instance sticks and a new ticket can't be overwritten by a peer.
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
+
+// A previously-persisted supportTickets node may be an ARRAY (old whole-array
+// format) or a Firebase object with integer keys. Re-key by the ticket's own id
+// so migration from the old format is lossless and idempotent. Mutates the loaded
+// snapshot in place (it's a transient load-and-discard object).
+function normaliseTicketSnapshot(s) {
+  if (!s || !s.supportTickets) return;
+  const v = s.supportTickets;
+  const src = Array.isArray(v) ? v : (typeof v === 'object' ? Object.values(v) : []);
+  const out = {};
+  for (const t of src) if (t && t.id) out[t.id] = t;
+  s.supportTickets = out;
+}
 
 // ---- Bot Defence: dormant-bot sweep + quarantine -------------------------------
 // Flags accounts with machine-generated names/emails AND zero activity.
@@ -2898,6 +2937,7 @@ export function flatSnapshot() {
 
 export function hydrate(s) {
   if (!s || typeof s !== 'object') return false;
+  normaliseTicketSnapshot(s);
   if (typeof s.counter === 'number') counter = Math.max(counter, s.counter);
   for (const k of MAP_KEYS) if (s[k]) db[k] = new Map(Object.entries(s[k]));
   for (const k of ARRAY_KEYS) if (Array.isArray(s[k])) db[k] = s[k];
@@ -2913,6 +2953,7 @@ export function hydrate(s) {
 // For arrays: union by id (or by identity) so neither side's entries are lost.
 export function hydrateMerge(s) {
   if (!s || typeof s !== 'object') return false;
+  normaliseTicketSnapshot(s);
   if (typeof s.counter === 'number') counter = Math.max(counter, s.counter);
   for (const k of MAP_KEYS) {
     if (!s[k] || typeof s[k] !== 'object') continue;
