@@ -27,7 +27,7 @@ import { supportRespond } from '../src/chatbot.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
 import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
-import { bookingDocument } from '../src/documents.js';
+import { bookingDocument, bookingPdf } from '../src/documents.js';
 import { saveEmbassyConfig, getEmbassyConfig, redactVisaForApplicant, releaseVisaDecision } from '../src/store.js';
 import { updateHostPayout, hostDashboard } from '../src/store.js';
 import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
@@ -3456,6 +3456,14 @@ test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insur
   assert.ok(bookingDocument(held, {}).includes('Issued automatically on final instalment'), 'held state is explained');
   // Same booking always renders the same confirmation refs (stable reprints).
   assert.equal(bookingDocument(b, {}), html, 'documents are deterministic');
+
+  // The SAME record renders as a real, well-formed PDF (attachable to the email).
+  const pdf = bookingPdf(b, { currencySymbol: '£' });
+  assert.ok(Buffer.isBuffer(pdf) && pdf.length > 800, 'a non-trivial PDF buffer is produced');
+  assert.equal(pdf.slice(0, 5).toString('latin1'), '%PDF-', 'valid PDF header');
+  assert.ok(pdf.slice(-6).toString('latin1').includes('%%EOF'), 'valid PDF trailer');
+  assert.ok(pdf.includes(Buffer.from('startxref', 'latin1')), 'has a cross-reference table');
+  assert.equal(bookingPdf(b, { currencySymbol: '£' }).length, pdf.length, 'PDF is deterministic');
 });
 
 test('visa AI result is officer-only until the officer RELEASES the decision', () => {

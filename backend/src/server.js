@@ -57,7 +57,7 @@ import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { assist } from './assistant.js';
-import { bookingDocument, includedServices } from './documents.js';
+import { bookingDocument, bookingPdf, includedServices } from './documents.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-15-instant-pay-authoritative-v96';
+const BUILD_TAG = '2026-07-15-confirmation-pdf-v97';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -482,13 +482,23 @@ async function emailBookingConfirmation(booking) {
     // Pass the account so the document can fall back to the account name if the
     // booking's lead traveller name is somehow missing (belt-and-braces on top of
     // the booking-creation backfill).
-    const html = bookingDocument(booking, { user: booking.userId ? getUser(booking.userId) : null, currencySymbol: sym });
+    const acct = booking.userId ? getUser(booking.userId) : null;
+    const html = bookingDocument(booking, { user: acct, currencySymbol: sym });
     const ref = booking.fulfilment?.pnr || booking.id;
+    // Attach a REAL PDF of the confirmation (not just "print this yourself"). Built
+    // by the dependency-free writer so it works on serverless; if it ever throws,
+    // the email still goes out with the HTML body (never block the confirmation).
+    let attachments;
+    try {
+      const pdf = bookingPdf(booking, { user: acct, currencySymbol: sym });
+      if (pdf && pdf.length) attachments = [{ filename: `3JN-booking-${ref}.pdf`, content: pdf, contentType: 'application/pdf' }];
+    } catch (e) { console.error('[confirm-pdf]', e?.message || e); }
     await sendMail({
       to,
       subject: `Your 3JN booking confirmation — ${ref}`,
-      text: `Your ${booking.option?.tier || ''} trip is confirmed and paid in full (3JN reference ${booking.id}). Your full booking document — flights, stay, transfers and everything included — is in this email and in your Console. Open it and use your browser's Print → "Save as PDF" to keep a PDF copy.`,
+      text: `Your ${booking.option?.tier || ''} trip is confirmed and paid in full (3JN reference ${booking.id}). Your booking confirmation is attached as a PDF and the full document is in your Console.`,
       html,
+      attachments,
     });
     recordAudit({ actor: 'system', role: 'system', action: 'booking.confirmation-emailed', entity: 'booking', entityId: booking.id, summary: `full document emailed to ${to}` });
   } catch (e) { booking.confirmationEmailSent = false; console.error('[confirm-email]', e?.message || e); }
@@ -2765,6 +2775,20 @@ app.get('/api/book/:id/document', safe((req, res) => {
   const html = bookingDocument(booking, { user, currencySymbol: booking.option?.pricing?.symbol });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
+}));
+// Same document as a downloadable PDF (Console "Download PDF" button). Same owner/
+// admin auth as the HTML document above.
+app.get('/api/book/:id/document.pdf', safe((req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  if (ownerlessBookingBlocked(req, res, booking)) return;
+  const user = currentUser(req);
+  if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
+  const pdf = bookingPdf(booking, { user, currencySymbol: booking.option?.pricing?.symbol });
+  const ref = booking.fulfilment?.pnr || booking.id;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="3JN-booking-${ref}.pdf"`);
+  res.send(pdf);
 }));
 
 // ---- Stripe Checkout: live card payments -----------------------------------

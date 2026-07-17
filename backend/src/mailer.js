@@ -42,11 +42,11 @@ export function initMailer() {
 export function isMailerEnabled() { return enabled; }
 
 // Send an email. Returns { ok, skipped? } — never throws (email is non-critical).
-export async function sendMail({ to, subject, html, text, replyTo }) {
+export async function sendMail({ to, subject, html, text, replyTo, attachments }) {
   if (!enabled) return { ok: false, skipped: true };
   if (!to || /@guest\.3jn$/.test(to)) return { ok: false, skipped: true, reason: 'no-real-recipient' };
   try {
-    const info = await transporter.sendMail({ from: MAIL_FROM, to, subject, html, text, replyTo });
+    const info = await transporter.sendMail({ from: MAIL_FROM, to, subject, html, text, replyTo, ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}) });
     return { ok: true, id: info.messageId };
   } catch (err) {
     console.warn('[mail] send failed:', err?.message || err);

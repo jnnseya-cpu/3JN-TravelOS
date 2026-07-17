@@ -2745,7 +2745,8 @@ window.openDocs = async (bookingId) => {
     ${d.pnr ? `<div class="kv"><span>Airline PNR</span><span><b>${esc(d.pnr)}</b></span></div>` : ''}
     ${(d.ticketNumbers || []).length ? `<div class="kv"><span>E-ticket number(s)</span><span><b>${d.ticketNumbers.map(esc).join(', ')}</b></span></div>` : ''}
     ${explain}
-    ${issued || d.ticketing === 'confirmed' ? `<button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal();viewEticket('${esc(d.bookingId)}')">🎫 Open full e-ticket / itinerary (print or save as PDF)</button>` : ''}
+    ${issued || d.ticketing === 'confirmed' ? `<button class="btn btn-gold btn-block" style="margin-top:10px" onclick="closeModal();viewEticket('${esc(d.bookingId)}')">🎫 Open full e-ticket / itinerary</button>` : ''}
+    <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="downloadBookingPdf('${esc(d.bookingId)}')">📥 Download confirmation PDF</button>
     ${cards || '<p class="muted" style="font-size:12.5px;margin-top:10px">No additional services on this booking.</p>'}
     <p class="muted" style="font-size:11px;margin-top:10px">Anything unclear? Ask the 💬 3JN Assistant — it reads this exact booking and can resend documents, reschedule services or connect you to a specialist.</p>`);
 };
@@ -2756,6 +2757,21 @@ window.downloadDoc = (id, text) => {
   a.href = url; a.download = `3JN-${id}.txt`; a.click();
   URL.revokeObjectURL(url);
   toast('✓ Confirmation downloaded.');
+};
+// Fetch the real booking-confirmation PDF (auth-checked endpoint) and save it.
+window.downloadBookingPdf = async (id) => {
+  try {
+    const headers = {};
+    if (state.user) headers['x-user-id'] = state.user.id;
+    const res = await fetch(API_BASE + `/api/book/${id}/document.pdf`, { headers });
+    if (!res.ok) { toast('Could not generate the PDF — please try again.'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `3JN-booking-${id}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+    toast('✓ Confirmation PDF downloaded.');
+  } catch { toast('Could not download the PDF.'); }
 };
 
 window.payInstalment = async (id, index, amount) => {

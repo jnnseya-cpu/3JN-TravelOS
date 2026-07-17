@@ -7,7 +7,11 @@
 //
 // Output is a SELF-CONTAINED printable HTML page (inline CSS) — the customer can
 // view it in the browser and "Save as PDF". No external assets, so it renders
-// anywhere and can be emailed as-is.
+// anywhere and can be emailed as-is. bookingPdf() below renders the SAME record as
+// a real attached PDF (dependency-free) so the confirmation email carries a proper
+// PDF, not just a "print this yourself" HTML body.
+
+import { renderPdf } from './pdf.js';
 
 const BRAND = {
   name: '3JN Travel OS',
@@ -236,6 +240,100 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
     Baggage, fare rules and cancellation terms are governed by the operating carrier/supplier and your fare conditions.
   </div>
 </div></body></html>`;
+}
+
+// A REAL, attachable PDF of the booking confirmation — same record as
+// bookingDocument(), rendered by the dependency-free writer in ./pdf.js so it works
+// on serverless with no headless browser. Returns a Buffer (application/pdf).
+export function bookingPdf(booking, { user, currencySymbol } = {}) {
+  const o = booking.option || {};
+  const ful = booking.fulfilment || {};
+  const lead = booking.leadTraveller || {};
+  const sym = currencySymbol || o.pricing?.symbol || '£';
+  const paidTotal = (booking.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const total = o.pricing?.local?.total || 0;
+  const fullyPaid = total > 0 && paidTotal + 0.01 >= total;
+  const paidAnything = paidTotal > 0.01;
+  const payable = booking.priceBasis === 'live' || booking.priceBasis === 'confirmed';
+  const status = ful.ticketing === 'issued' ? 'E-TICKET ISSUED'
+    : ful.ticketing === 'held' ? 'FARE HELD — TICKET ON FINAL PAYMENT'
+    : fullyPaid ? 'CONFIRMED — PAID'
+    : paidAnything ? 'RESERVED — DEPOSIT PAID'
+    : !payable ? 'INDICATIVE QUOTE — NOT YET BOOKED'
+    : 'RESERVED — AWAITING PAYMENT';
+  const pnr = ful.pnr || ful.duffelOrderId || null;
+  const tickets = (ful.ticketNumbers || []).filter(Boolean);
+  const ticketLine = tickets.length ? tickets.join(', ')
+    : ful.ticketing === 'held' ? 'Issued automatically on final instalment'
+    : ful.eTicketNumber || null;
+
+  const comps = (o.components || []);
+  const flights = comps.filter((c) => c.type === 'flight');
+  const stays = comps.filter((c) => c.type === 'hotel' || c.type === 'host');
+  const others = comps.filter((c) => !['flight', 'hotel', 'host'].includes(c.type));
+  const trip = flights[0]?.details || {};
+  const startDate = uk(trip.outbound?.date || stays[0]?.details?.checkIn || '');
+  const endDate = uk(trip.inbound?.date || stays[0]?.details?.checkOut || '');
+  const firstPax = (Array.isArray(booking.travellers) && booking.travellers[0]) || {};
+  const paxName = lead.fullName || lead.fullLegalName || lead.name || firstPax.fullName || user?.name || 'Lead traveller';
+  const paxCount = o.travellers?.total || flights[0]?.details?.passengers || 1;
+  const destCity = (o.destination && typeof o.destination === 'object') ? o.destination.city : o.destination;
+
+  const blocks = [];
+  blocks.push({ type: 'title', text: '3JN Travel OS — Booking confirmation' });
+  blocks.push({ type: 'subtitle', text: `${BRAND.tagline} · issued by ${BRAND.name}` });
+  blocks.push({ type: 'rule' });
+  blocks.push({ type: 'row', label: 'Status', value: status, strong: true });
+  blocks.push({ type: 'row', label: 'Booking reference', value: booking.id, strong: true });
+  if (flights.length && pnr) blocks.push({ type: 'row', label: 'Airline PNR', value: pnr, strong: true });
+  if (flights.length && ticketLine) blocks.push({ type: 'row', label: 'E-ticket number(s)', value: ticketLine });
+  blocks.push({ type: 'row', label: 'Lead traveller', value: paxName });
+  blocks.push({ type: 'row', label: 'Travellers', value: String(paxCount) });
+  if (startDate) blocks.push({ type: 'row', label: 'Travel dates', value: `${startDate}${endDate ? ' - ' + endDate : ''}` });
+
+  if (flights.length) {
+    blocks.push({ type: 'heading', text: 'Flights' });
+    for (const c of flights) {
+      blocks.push({ type: 'row', label: 'Airline', value: `${c.supplier || 'Airline'} · ${c.details?.cabin || 'Economy'}` });
+      blocks.push({ type: 'row', label: 'Baggage', value: c.details?.baggage || 'Per fare rules' });
+      for (const [lbl, leg] of [['Outbound', c.details?.outbound], ['Return', c.details?.inbound]]) {
+        if (!leg) continue;
+        const route = `${leg.fromCity || leg.from} (${leg.from}) → ${leg.toCity || leg.to} (${leg.to})`;
+        const when = `${uk(leg.date)}${leg.depart ? ` · ${leg.depart}` : ''}${leg.arrive ? `–${leg.arrive}` : ''}${leg.stops ? ` · ${leg.stops} stop(s)` : ' · non-stop'}`;
+        blocks.push({ type: 'row', label: lbl, value: route });
+        blocks.push({ type: 'row', label: '', value: when });
+      }
+    }
+  }
+  if (stays.length) {
+    blocks.push({ type: 'heading', text: 'Accommodation' });
+    for (const c of stays) {
+      const d = c.details || {};
+      blocks.push({ type: 'row', label: 'Property', value: d.propertyName || c.supplier || 'Stay', strong: true });
+      const addr = d.address || [d.area, destCity || d.city].filter(Boolean).join(', ');
+      if (addr) blocks.push({ type: 'row', label: 'Address', value: addr });
+      blocks.push({ type: 'row', label: 'Check-in', value: `${uk(d.checkIn || startDate)} from 15:00` });
+      blocks.push({ type: 'row', label: 'Check-out', value: `${uk(d.checkOut || endDate)} by 11:00` });
+      blocks.push({ type: 'row', label: 'Stay', value: `${d.nights || '-'} night(s) · ${d.rooms || 1} room(s) · ${d.board || d.boardBasis || 'Room only'}` });
+      if (d.confirmationNumber || d.stayReference) blocks.push({ type: 'row', label: 'Confirmation', value: d.confirmationNumber || d.stayReference });
+    }
+  }
+  if (others.length) {
+    blocks.push({ type: 'heading', text: 'Included services' });
+    for (const c of others) blocks.push({ type: 'row', label: labelFor(c.type), value: c.supplier || 'Confirmed · details in your Console' });
+  }
+  if (booking.specialRequests?.length) blocks.push({ type: 'row', label: 'Special requests', value: booking.specialRequests.join(', ') });
+
+  blocks.push({ type: 'heading', text: 'Payment' });
+  blocks.push({ type: 'row', label: `${o.tier || 'Package'} total`, value: money(total, sym), strong: true });
+  blocks.push({ type: 'row', label: 'Paid', value: fullyPaid ? `${money(total, sym)} — paid in full` : `${money(paidTotal, sym)} of ${money(total, sym)}${booking.instalment ? ' (instalment plan)' : ''}` });
+
+  blocks.push({ type: 'heading', text: 'Help while travelling' });
+  blocks.push({ type: 'para', muted: true, text: `24/7: open the 3JN app and use the chat assistant — it reads this exact booking, resends documents and hands you to a specialist. Email ${BRAND.support}, quoting booking reference ${booking.id}.` });
+  blocks.push({ type: 'space', h: 6 });
+  blocks.push({ type: 'para', muted: true, text: `Issued by ${BRAND.name} as your booking agent and merchant of record. Present the booking reference and PNR at check-in. Baggage, fare rules and cancellation terms are governed by the operating carrier/supplier and your fare conditions. ${BRAND.site}` });
+
+  return renderPdf(blocks);
 }
 
 function labelFor(type) {
