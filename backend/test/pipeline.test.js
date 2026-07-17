@@ -390,6 +390,12 @@ test('live suppliers: disabled without keys, normalisers map provider shapes', (
   // Duffel passenger mapping: 2 adults + ages 16, 9, 1.
   const pax = duffelPassengers({ adults: 2, children: 3, childAges: [16, 9, 1] });
   assert.deepEqual(pax, [{ type: 'adult' }, { type: 'adult' }, { age: 16 }, { age: 9 }, { type: 'infant_without_seat' }]);
+  // A lap infant given as a COUNT (not an age) is booked, not dropped ("2 adults
+  // and 1 infant" → 2 adults + 1 infant_without_seat).
+  assert.deepEqual(duffelPassengers({ adults: 2, children: 0, infants: 1 }),
+    [{ type: 'adult' }, { type: 'adult' }, { type: 'infant_without_seat' }], 'lap infant is added');
+  // Never double-count an infant already provided via an under-2 age.
+  assert.equal(duffelPassengers({ adults: 1, children: 0, childAges: [1], infants: 1 }).filter((p) => p.type === 'infant_without_seat').length, 1, 'no double infant');
 
   assert.equal(durationLabel('PT7H30M'), '7h 30m');
 

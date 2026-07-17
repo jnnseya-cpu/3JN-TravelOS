@@ -150,6 +150,12 @@ export function duffelPassengers(travellers) {
   // Children counted but without a stated age → assume age 8 (child band).
   const unpriced = Math.max(0, (travellers.children || 0) - ages.length);
   for (let i = 0; i < unpriced; i++) out.push({ age: 8 });
+  // LAP INFANTS given as a COUNT (travellers.infants) rather than a specific age —
+  // add any not already represented by an under-2 age above, so "2 adults + 1
+  // infant" actually books the infant on the live fare instead of dropping it.
+  const agedInfants = ages.filter((a) => a < 2).length;
+  const extraInfants = Math.max(0, (travellers.infants || 0) - agedInfants);
+  for (let i = 0; i < extraInfants; i++) out.push({ type: 'infant_without_seat' });
   return out;
 }
 
@@ -271,6 +277,23 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       // pay-in-full plan at booking. Absent/false → holdable → instalments allowed.
       requiresInstantPayment: offer.payment_requirements?.requires_instant_payment === true,
       offerPassengers: (offer.passengers || []).map((p) => ({ id: p.id, type: p.type, age: p.age })),
+      // Per-band fare split (adults / 2–11 children / under-2 lap infants) so a lap
+      // infant is SHOWN in the breakdown, not hidden in the total — mirrors the
+      // estimator's split. Derived from the offer's actual passengers + total.
+      ...(function () {
+        const bands = { adult: 0, youth: 0, child: 0, infant: 0 };
+        for (const p of (offer.passengers || [])) {
+          if (p.type === 'infant_without_seat' || (p.age != null && p.age < 2)) bands.infant++;
+          else if (p.age != null && p.age <= 11) bands.child++;
+          else if (p.age != null && p.age <= 17) bands.youth++;
+          else bands.adult++;
+        }
+        if (!bands.child && !bands.infant && !bands.youth) return {};
+        const units = bands.adult + bands.youth + bands.child * 0.75 + bands.infant * 0.10;
+        const perUnit = units > 0 && priceUSD ? priceUSD / units : (priceUSD || 0);
+        const r2 = (n) => Math.round(n * 100) / 100;
+        return { fareBreakdown: bands, adultFareUSD: r2(perUnit), childFareUSD: r2(perUnit * 0.75), infantFareUSD: r2(perUnit * 0.10) };
+      })(),
     },
     priceUSD,
   };
@@ -730,6 +753,7 @@ async function fetchTequilaFlights(intent, originCode, destCode) {
     date_to: tequilaDate(intent.dates.checkIn),
     adults: String(intent.travellers.adults || 1),
     children: String(intent.travellers.children || 0),
+    infants: String(intent.travellers.infants || 0), // lap infants — never dropped
     curr: 'GBP',
     limit: '8',
     sort: 'price',
