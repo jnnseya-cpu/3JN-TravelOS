@@ -2291,7 +2291,11 @@ window.saveProfile = async () => {
   catch (e) { toast('⚠ Profile not saved — ' + (e?.message || 'please try again.'), 8000); return; }
   setUser(data.user);
   closeModal();
-  toast('✓ Profile updated.');
+  // The server tells us whether the edit was written to durable storage. If it
+  // wasn't (durable store unreachable), say so honestly rather than showing a
+  // success that will vanish on reload.
+  if (data.persisted === false) toast('⚠ Saved on screen, but the change didn\'t reach storage — please try again in a moment.', 9000);
+  else toast('✓ Profile updated.');
   renderConsole();
 };
 

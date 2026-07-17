@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-cancel-refund-breakfast-v114';
+const BUILD_TAG = '2026-07-17-profile-durable-write-v115';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1129,7 +1129,7 @@ app.get('/api/account/:id', safe(async (req, res) => {
 // OWNERSHIP: only the signed-in account itself (or an all-access admin) may
 // edit — the Master Travel Profile holds passport data. Role changes are
 // stripped here; roles are granted through admin paths only.
-app.patch('/api/account/:id', safe((req, res) => {
+app.patch('/api/account/:id', safe(async (req, res) => {
   const caller = currentUser(req);
   if (!caller) return res.status(401).json({ error: 'auth-required' });
   if (caller.id !== req.params.id && !caller.allAccess && caller.role !== 'admin') {
@@ -1147,7 +1147,20 @@ app.patch('/api/account/:id', safe((req, res) => {
   }
   const user = updateUser(req.params.id, body);
   if (!user) return res.status(404).json({ error: 'not-found' });
-  res.json({ user });
+  // Belt-and-braces durable write for the profile: persist THIS account record now
+  // and REPORT whether it landed. The request middleware also flushes, but on
+  // serverless a large avatar/cover write on a cold instance can race the freeze;
+  // awaiting the merge here (uncapped) guarantees the edit is durable before we
+  // answer, so name/photo/cover can never silently revert on the next reload. If
+  // the durable store is unreachable we tell the client instead of pretending.
+  let persisted = true;
+  if (IS_SERVERLESS && isEnabled()) {
+    try {
+      const leaf = flatSnapshot()[`users/${req.params.id}`];
+      persisted = leaf ? await saveMerge({ [`users/${req.params.id}`]: leaf }) : false;
+    } catch (e) { console.error('[profile-persist]', e?.message || e); persisted = false; }
+  }
+  res.json({ user, persisted });
 }));
 
 // Provision one account per role (consumer/business/merchant/partner/admin).
