@@ -133,7 +133,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-pay-monthly-fee-v133';
+const BUILD_TAG = '2026-07-18-trust-layer-trustpilot-human-v134';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -799,9 +799,47 @@ async function autoBookStays(booking) {
 }
 
 // ---- Context / config -----------------------------------------------------
+// Public, config-driven contact + trust details. Everything is env-gated so the
+// site NEVER shows a channel or credential that isn't real — a WhatsApp button
+// only appears when CONTACT_WHATSAPP is set, the Trustpilot widget only when
+// TRUSTPILOT_DOMAIN is set, etc. (the honesty rule: no fabricated trust signal).
+function publicContact() {
+  const e = process.env;
+  const clean = (v) => { const s = String(v || '').trim(); return s || null; };
+  const waRaw = clean(e.CONTACT_WHATSAPP);
+  return {
+    email: clean(e.CONTACT_EMAIL) || MAIN_CONTACT || null,
+    whatsapp: waRaw ? waRaw.replace(/[^\d]/g, '') : null, // digits for wa.me/<n>
+    whatsappDisplay: waRaw,
+    phone: clean(e.CONTACT_PHONE),
+    hours: clean(e.CONTACT_HOURS),
+    address: clean(e.CONTACT_ADDRESS),
+    company: { name: clean(e.COMPANY_NAME), number: clean(e.COMPANY_NUMBER), vat: clean(e.COMPANY_VAT) },
+    about: {
+      founderName: clean(e.ABOUT_FOUNDER_NAME),
+      founderRole: clean(e.ABOUT_FOUNDER_ROLE),
+      founderPhoto: clean(e.ABOUT_FOUNDER_PHOTO),
+      story: clean(e.ABOUT_STORY),
+    },
+  };
+}
+function trustpilotConfig() {
+  const domain = String(process.env.TRUSTPILOT_DOMAIN || '').trim();
+  if (!domain) return null; // no domain → no widget, no invites (nothing fake)
+  return {
+    domain,
+    businessUnitId: String(process.env.TRUSTPILOT_BUSINESS_UNIT_ID || '').trim() || null,
+    templateId: String(process.env.TRUSTPILOT_TEMPLATE_ID || '').trim() || null,
+    reviewUrl: `https://www.trustpilot.com/review/${domain}`,
+    evaluateUrl: `https://www.trustpilot.com/evaluate/${domain}`,
+  };
+}
+
 app.get('/api/context', safe((req, res) => {
   res.json({
     context: detectContext(req),
+    contact: publicContact(),
+    trustpilot: trustpilotConfig(),
     currencies: listCurrencies(),
     searchTiers: SEARCH_TIERS,
     membershipTiers: MEMBERSHIP_TIERS,
@@ -2536,6 +2574,50 @@ app.get('/api/instalments/preview', safe((req, res) => {
 // Run the dunning sweep AND email the customer-facing actions. store.js does the
 // state changes + in-OS notifications; the EMAIL fan-out lives here (store.js has
 // no mailer). Emails are AWAITED so they complete before a serverless freeze.
+// The latest travel date on a booking (return leg / checkout / last service) —
+// used to know when a trip has actually COMPLETED so a review invite is honest.
+function bookingEndISO(b) {
+  const dates = [];
+  for (const c of (b?.option?.components || [])) {
+    const d = c.details || {};
+    for (const v of [d.inbound?.date, d.outbound?.date, d.checkOut, d.date]) if (v) dates.push(v);
+  }
+  if (b?.option?.dates?.checkOut) dates.push(b.option.dates.checkOut);
+  if (b?.instalment?.departISO) dates.push(b.instalment.departISO);
+  const valid = dates.filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x)));
+  return valid.length ? valid.sort().pop() : null; // latest = trip end
+}
+// TRUSTPILOT review invites: once a REAL trip has completed (travel date passed,
+// not cancelled), email the customer a one-time invitation to review. Gated on
+// TRUSTPILOT_DOMAIN — with no Trustpilot configured, nothing is ever sent. The
+// `reviewInviteSent` flag is persisted per booking so it fires exactly once.
+async function sendReviewInvites(today) {
+  const tp = trustpilotConfig();
+  if (!tp || !isMailerEnabled()) return { invited: 0 };
+  const todayISO = today || new Date().toISOString().slice(0, 10);
+  let invited = 0;
+  for (const b of allBookings()) {
+    if (!b || b.reviewInviteSent) continue;
+    if (String(b.status || '').startsWith('cancelled')) continue;
+    const endISO = bookingEndISO(b);
+    if (!endISO || endISO > todayISO) continue; // trip not finished yet
+    const to = b.leadTraveller?.email || b.lead?.email || (b.userId ? getUser(b.userId)?.email : null);
+    if (!to || /@guest\.3jn$/.test(to)) continue;
+    b.reviewInviteSent = new Date().toISOString();
+    const name = b.leadTraveller?.fullName || b.lead?.fullName || 'there';
+    try {
+      await sendMail({
+        to, subject: 'How was your trip? A quick review helps other travellers',
+        text: `Hi ${name},\n\nWe hope you had a wonderful trip. An honest review helps other travellers book with confidence — it takes about 30 seconds:\n${tp.evaluateUrl}\n\nThank you for travelling with 3JN.`,
+        html: `<p>Hi ${htmlEsc(name)},</p><p>We hope you had a wonderful trip. An honest review helps other travellers book with confidence — it takes about 30 seconds.</p><p><a href="${tp.evaluateUrl}" style="display:inline-block;background:#00b67a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">★ Review 3JN on Trustpilot</a></p><p style="color:#6b7799;font-size:12px">Thank you for travelling with 3JN.</p>`,
+      });
+      invited++;
+    } catch { /* best-effort */ }
+    // Persist the one-time flag NOW (the cron is a GET → no request-level flush).
+    if (IS_SERVERLESS && isEnabled()) { try { await saveMerge({ [`bookings/${b.id}`]: b }); } catch { /* retry next run */ } }
+  }
+  return { invited };
+}
 async function runInstalmentEnforcement(today) {
   const results = enforceInstalments(today);
   for (const a of results.actions || []) {
@@ -2558,6 +2640,7 @@ async function runInstalmentEnforcement(today) {
       }
     } catch { /* email is best-effort — never break the sweep */ }
   }
+  try { const r = await sendReviewInvites(today); results.reviewInvites = r.invited; } catch { /* invites are best-effort */ }
   return results;
 }
 // Enforcement sweep: reminders (14/7/3/1/0 days), the 3-day cancellation warning,

@@ -354,6 +354,9 @@ async function boot() {
     // testing/sales (e.g. LIVE_MODE on with a test Duffel token → everything
     // shows as an unpayable estimate), surface it loudly so it's never a mystery.
     if (state.context.configWarning) showConfigWarning(state.context.configWarning);
+    // Trust layer: a real WhatsApp button + live Trustpilot reviews — each mounts
+    // ONLY when its real credential is configured (never a fake signal).
+    try { mountWhatsApp(); mountTrustpilot(); } catch { /* non-fatal */ }
     const sel = $('#countrySelect');
     sel.innerHTML = state.context.currencies
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
@@ -5459,16 +5462,100 @@ window.calcGroupQuote = async () => {
   </div>`;
 };
 
-$('#contactLink')?.addEventListener('click', () => {
+// Real, config-driven contact channels — each row appears ONLY when that detail
+// is set in config (nothing fake is ever shown). A human in reach is the trust
+// signal Booking.com can't match for a diaspora customer wiring £2k.
+function contactChannelsHTML() {
+  const c = state.context?.contact || {};
+  const email = c.email || 'info@3jntravel.com';
+  const rows = [];
+  if (c.whatsapp) rows.push(`<a class="kv" style="text-decoration:none;color:inherit" href="https://wa.me/${esc(c.whatsapp)}?text=${encodeURIComponent('Hi 3JN, I have a question about booking a trip')}" target="_blank" rel="noopener"><span>💬 WhatsApp</span><span style="color:#25D366;font-weight:600">${esc(c.whatsappDisplay || c.whatsapp)}</span></a>`);
+  if (c.phone) rows.push(`<a class="kv" style="text-decoration:none;color:inherit" href="tel:${esc(String(c.phone).replace(/[^\d+]/g, ''))}"><span>📞 Phone</span><span style="color:var(--gold);font-weight:600">${esc(c.phone)}</span></a>`);
+  rows.push(`<a class="kv" style="text-decoration:none;color:inherit" href="mailto:${esc(email)}"><span>✉️ Email</span><span style="color:var(--gold);font-weight:600">${esc(email)}</span></a>`);
+  if (c.hours) rows.push(`<div class="kv"><span>🕑 Hours</span><span>${esc(c.hours)}</span></div>`);
+  if (c.address) rows.push(`<div class="kv"><span>📍 Address</span><span style="text-align:right;font-size:12px">${esc(c.address)}</span></div>`);
+  const co = c.company || {};
+  const comp = [co.name, co.number ? `Company no. ${co.number}` : null, co.vat ? `VAT ${co.vat}` : null].filter(Boolean).join(' · ');
+  return `<div class="card pad" style="margin:10px 0">${rows.join('')}</div>${comp ? `<p class="muted" style="font-size:11px;text-align:center;margin:0 0 6px">${esc(comp)}</p>` : ''}`;
+}
+window.openContact = () => {
+  const c = state.context?.contact || {};
+  const human = c.whatsapp || c.phone;
   modal(`
-    <span class="eyebrow">Contact 3JN Travel OS</span>
-    <h3 style="margin:6px 0">We'd love to hear from you</h3>
-    <p class="muted" style="font-size:13px">Goes straight to <strong>info@3jntravel.com</strong>. We reply as quickly as we can.</p>
-    <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="ctName"></div>
-    <div class="field" style="margin-top:10px"><label>Your email</label><input class="in" id="ctEmail" placeholder="you@email.com"></div>
-    <div class="field" style="margin-top:10px"><label>Message</label><textarea class="in" id="ctMsg" style="width:100%;min-height:90px"></textarea></div>
-    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="sendContact()">Send message</button>`);
-});
+    <span class="eyebrow">Contact 3JN Travel</span>
+    <h3 style="margin:6px 0">Talk to a real person</h3>
+    <p class="muted" style="font-size:13px">${human ? 'Booking a big trip? Message or call us — a real member of our team will help you personally before you pay a penny.' : 'Send us a message and a real member of our team will reply as quickly as we can.'}</p>
+    ${contactChannelsHTML()}
+    <details style="margin-top:6px"><summary style="cursor:pointer;font-size:13px;color:var(--gold)">Or send a message here</summary>
+      <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="ctName"></div>
+      <div class="field" style="margin-top:10px"><label>Your email</label><input class="in" id="ctEmail" placeholder="you@email.com"></div>
+      <div class="field" style="margin-top:10px"><label>Message</label><textarea class="in" id="ctMsg" style="width:100%;min-height:90px"></textarea></div>
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="sendContact()">Send message</button>
+    </details>`);
+};
+$('#contactLink')?.addEventListener('click', () => window.openContact());
+
+// About / founder page — the face behind the brand. A real name, role and story
+// (from config) turn a faceless site into someone you can trust with a family
+// trip. Photo/name/story appear only when set; the mission copy is always honest.
+window.openAbout = () => {
+  const a = state.context?.contact?.about || {};
+  const photo = a.founderPhoto ? `<img src="${esc(a.founderPhoto)}" alt="${esc(a.founderName || 'Founder')}" style="width:84px;height:84px;border-radius:50%;object-fit:cover;border:2px solid var(--gold)">` : '';
+  const founder = a.founderName ? `
+    <div style="display:flex;gap:14px;align-items:center;margin:12px 0;padding:12px;border:1px solid rgba(216,180,106,.25);border-radius:12px">
+      ${photo}
+      <div><div style="font-weight:700">${esc(a.founderName)}</div>${a.founderRole ? `<div class="muted" style="font-size:12.5px">${esc(a.founderRole)}</div>` : ''}</div>
+    </div>` : '';
+  const story = a.story ? `<p class="muted" style="font-size:13.5px;white-space:pre-line">${esc(a.story)}</p>` : '';
+  modal(`
+    <span class="eyebrow">About 3JN Travel</span>
+    <h3 style="margin:6px 0">Built for the journey home</h3>
+    ${founder}
+    ${story || `<p class="muted" style="font-size:13.5px">3JN Travel exists to make the trip home affordable and stress-free — book today, pay monthly, at a price that's locked and can't rise before you fly. Flights, hotel, transfer, visa support and an eSIM, packaged into one honest price with every fee shown up front.</p>`}
+    <div class="card pad" style="margin-top:10px">
+      <div class="kv" style="font-size:12.5px"><span>✓ Price locked</span><span class="muted">no fare-rise surprises</span></div>
+      <div class="kv" style="font-size:12.5px"><span>✓ Pay monthly, interest-free</span><span class="muted">spread the cost</span></div>
+      <div class="kv" style="font-size:12.5px"><span>✓ Every fee shown before you pay</span><span class="muted">no hidden extras</span></div>
+      <div class="kv" style="font-size:12.5px"><span>✓ A real person to talk to</span><span class="muted">not just a chatbot</span></div>
+    </div>
+    <button class="btn btn-gold btn-block" style="margin-top:12px" onclick="closeModal(); window.openContact()">Talk to us</button>`);
+};
+document.getElementById('aboutLink')?.addEventListener('click', () => window.openAbout());
+
+// FLOATING WHATSAPP button — the single highest-impact trust element for a
+// diaspora buyer. Injected ONLY when a real WhatsApp number is configured.
+function mountWhatsApp() {
+  const c = state.context?.contact || {};
+  if (!c.whatsapp || document.getElementById('waFloat')) return;
+  const a = document.createElement('a');
+  a.id = 'waFloat';
+  a.href = `https://wa.me/${c.whatsapp}?text=${encodeURIComponent('Hi 3JN, I have a question about booking a trip')}`;
+  a.target = '_blank'; a.rel = 'noopener';
+  a.title = 'Chat with us on WhatsApp';
+  a.setAttribute('aria-label', 'Chat with us on WhatsApp');
+  a.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:900;width:56px;height:56px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.3);text-decoration:none;font-size:28px';
+  a.innerHTML = '<span style="filter:grayscale(0)">💬</span>';
+  document.body.appendChild(a);
+}
+
+// TRUSTPILOT widget — loads Trustpilot's official TrustBox ONLY when a real
+// business unit is configured. Real, un-fakeable reviews; never a fake badge.
+function mountTrustpilot() {
+  const tp = state.context?.trustpilot;
+  const slot = document.getElementById('trustpilotSlot');
+  if (!tp || !tp.businessUnitId || !slot) return;
+  slot.innerHTML = `<div class="trustpilot-widget" data-locale="en-GB" data-template-id="${esc(tp.templateId || '5419b6a8b0d04a076446a9ad')}" data-businessunit-id="${esc(tp.businessUnitId)}" data-style-height="52px" data-style-width="100%" data-theme="dark">
+    <a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener">Trustpilot</a></div>`;
+  slot.style.display = '';
+  if (!document.getElementById('tpScript')) {
+    const s = document.createElement('script');
+    s.id = 'tpScript'; s.async = true;
+    s.src = '//widget.trustpilot.com/bootstrap/v5/tp.widget.bootstrap.min.js';
+    document.head.appendChild(s);
+  } else if (window.Trustpilot) {
+    window.Trustpilot.loadFromElement(slot.querySelector('.trustpilot-widget'), true);
+  }
+}
 window.sendContact = async () => {
   const email = $('#ctEmail').value.trim();
   const message = $('#ctMsg').value.trim();
