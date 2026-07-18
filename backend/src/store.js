@@ -68,6 +68,7 @@ const db = {
   sponsoredPlacements: [], // Suppliers paying for LABELLED placement in curated sections { id, partner, section, destination, feeGBPMonth, active, since }
   processedStripeEvents: [], // Stripe event ids already fulfilled (idempotency — Stripe redelivers at-least-once)
   deals: new Map(), // Curated real-product catalogue (admin-managed, really bookable)
+  testimonials: new Map(), // First-party customer testimonials { id, name, location, rating, text, photo, bookingId, userId, consentPublic, status, at } — admin-moderated before public display
 };
 
 // Ring-buffer cap for the high-frequency append-only logs. Without this they
@@ -1590,6 +1591,63 @@ export function allReviews() {
   return db.reviews;
 }
 
+// ---- First-party testimonials (brand social proof, admin-moderated) -----------
+// The "seed proof" engine: real community customers submit a review + photo; an
+// admin reviews it INTERNALLY (approve/reject) before it can ever show publicly.
+// Nothing is shown until a human approves it — no fabricated proof.
+export function createTestimonial({ name, location, rating, text, photo = null, bookingId = null, userId = null, consentPublic = false } = {}) {
+  const clean = (v, n) => String(v || '').trim().slice(0, n);
+  const r = Math.max(1, Math.min(5, Math.round(Number(rating) || 0)));
+  const t = {
+    id: id('tst'),
+    name: clean(name, 60) || 'Traveller',
+    location: clean(location, 60),
+    rating: r,
+    text: clean(text, 1000),
+    // Accept a hosted URL or a small inline data-URI (capped so the store can't be
+    // bloated by anonymous input); anything larger is dropped rather than stored.
+    photo: photo && String(photo).length <= 300000 ? String(photo) : null,
+    bookingId: bookingId || null,
+    userId: userId || null,
+    consentPublic: !!consentPublic,
+    status: 'pending', // pending → approved | rejected (internal review)
+    at: nowISO(),
+  };
+  if (!t.text) return { ok: false, error: 'text-required' };
+  if (!t.consentPublic) return { ok: false, error: 'consent-required' };
+  db.testimonials.set(t.id, t);
+  capTestimonialMap();
+  recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'testimonial.submitted', entity: 'testimonial', entityId: t.id, summary: `${t.rating}★ from ${t.name}${t.location ? ' · ' + t.location : ''} — pending review` });
+  return { ok: true, testimonial: t };
+}
+function capTestimonialMap(max = 5000) {
+  if (db.testimonials.size <= max) return;
+  // Evict oldest REJECTED first, then oldest, keeping approved/pending.
+  const entries = [...db.testimonials.entries()];
+  const drop = entries.filter(([, t]) => t.status === 'rejected').concat(entries.filter(([, t]) => t.status !== 'rejected'));
+  for (let i = 0; i < entries.length - max && i < drop.length; i++) db.testimonials.delete(drop[i][0]);
+}
+export function listTestimonials(status) {
+  const all = [...db.testimonials.values()].sort((a, b) => (a.at < b.at ? 1 : -1));
+  return status ? all.filter((t) => t.status === status) : all;
+}
+// Public proof: approved testimonials only, newest first, capped.
+export function publicTestimonials(limit = 24) {
+  return listTestimonials('approved').slice(0, limit).map((t) => ({
+    id: t.id, name: t.name, location: t.location, rating: t.rating, text: t.text, photo: t.photo, at: t.at,
+  }));
+}
+export function moderateTestimonial(testimonialId, { status, by = 'admin' } = {}) {
+  const t = db.testimonials.get(testimonialId);
+  if (!t) return { ok: false, error: 'not-found' };
+  if (!['approved', 'rejected', 'pending'].includes(status)) return { ok: false, error: 'bad-status' };
+  t.status = status;
+  t.moderatedBy = by;
+  t.moderatedAt = nowISO();
+  recordAudit({ actor: by, role: 'admin', action: 'testimonial.moderated', entity: 'testimonial', entityId: t.id, summary: `${status} — ${t.rating}★ ${t.name}` });
+  return { ok: true, testimonial: t };
+}
+
 // ===========================================================================
 // GLOBAL REWARDS & INFLUENCER PROGRAMME (docs/REWARDS-INFLUENCER-PROGRAMME.md)
 // Travel Together. Earn Together. Grow Together.
@@ -2490,7 +2548,7 @@ export function sponsoredPlacementRevenueGBP() {
 // (its stale copy re-uploaded by another), and new tickets vanished under a stale
 // array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
 // resolve on any instance sticks and a new ticket can't be overwritten by a peer.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
 // A previously-persisted supportTickets node may be an ARRAY (old whole-array

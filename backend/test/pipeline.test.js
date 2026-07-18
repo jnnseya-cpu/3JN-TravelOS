@@ -13,7 +13,35 @@ import {
   recordAudit, adminAudit, saveDraft, getDraft,
   createPaymentLink, settlePaymentLink, merchantSettlement,
   listApprovals, decideApproval, flatSnapshot, getUser as getUserById,
+  createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
 } from '../src/store.js';
+
+test('testimonials: submit requires consent + text, then holds for internal review', () => {
+  assert.equal(createTestimonial({ name: 'A', rating: 5, text: 'Great', consentPublic: false }).ok, false, 'no consent → rejected');
+  assert.equal(createTestimonial({ name: 'A', rating: 5, text: '', consentPublic: true }).ok, false, 'no text → rejected');
+  const r = createTestimonial({ name: 'Marie', location: 'Birmingham', rating: 5, text: 'Booked our trip home, paid monthly, price never moved.', consentPublic: true });
+  assert.ok(r.ok);
+  assert.equal(r.testimonial.status, 'pending', 'starts pending — never public until approved');
+});
+
+test('testimonials: only APPROVED ones are ever public; rejected never shows', () => {
+  const a = createTestimonial({ name: 'Approved', rating: 5, text: 'Loved it', consentPublic: true }).testimonial;
+  const b = createTestimonial({ name: 'Rejected', rating: 1, text: 'spam spam', consentPublic: true }).testimonial;
+  moderateTestimonial(a.id, { status: 'approved', by: 'admin' });
+  moderateTestimonial(b.id, { status: 'rejected', by: 'admin' });
+  const pub = publicTestimonials(50);
+  assert.ok(pub.some((t) => t.id === a.id), 'approved is public');
+  assert.ok(!pub.some((t) => t.id === b.id), 'rejected is NOT public');
+  // Public shape never leaks moderation/user fields.
+  const one = pub.find((t) => t.id === a.id);
+  assert.equal(one.userId, undefined); assert.equal(one.status, undefined);
+});
+
+test('testimonials: rating is clamped 1–5 and text is length-capped', () => {
+  const r = createTestimonial({ name: 'X', rating: 9, text: 'y'.repeat(5000), consentPublic: true });
+  assert.equal(r.testimonial.rating, 5, 'rating clamped to 5');
+  assert.ok(r.testimonial.text.length <= 1000, 'text capped at 1000 chars');
+});
 import { runPriceGuard } from '../src/monitor.js';
 import { visaCheck, riskFeed } from '../src/intelligence.js';
 import { destinationsCatalog } from '../src/destinations.js';

@@ -49,6 +49,7 @@ import {
   sweepBotAccounts, unflagBotAccount, applyMobilityEvent,
   createDeal, updateDeal, setDealActive, deleteDeal, getDeal, publicDeal,
   listDeals, listDealsAdmin, dealTotalGBP, buildDealOption, createDealFulfilment,
+  createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -133,7 +134,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-trust-layer-trustpilot-human-v134';
+const BUILD_TAG = '2026-07-18-testimonials-checkout-wa-v135';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1090,6 +1091,42 @@ app.post('/api/contact', safe(async (req, res) => {
   // Report the outcome honestly (and the reason on failure) so a non-delivering
   // contact form is diagnosable instead of silently "received".
   res.json({ sent: r.ok, to: MAIN_CONTACT, queued: !r.ok && r.skipped ? 'email-disabled' : undefined, error: r.ok ? undefined : (r.error || r.reason || 'send-failed') });
+}));
+
+// ---- Testimonials (first-party social proof, admin-moderated) -------------
+// Seed proof for the community launch: a real customer submits a review + photo;
+// it stays PENDING until an admin approves it (internal review). Only approved
+// testimonials are ever served publicly — no fabricated proof.
+app.post('/api/testimonials', safe((req, res) => {
+  const rl = rateLimitAuth(clientIp(req)); // stop testimonial spam / bombs
+  if (!rl.ok) return res.status(429).json(rl);
+  const { name, location, rating, text, photo, bookingId, consentPublic } = req.body || {};
+  const user = currentUser(req);
+  const result = createTestimonial({ name, location, rating, text, photo, bookingId, userId: user?.id || null, consentPublic });
+  if (!result.ok) {
+    const msg = result.error === 'consent-required' ? 'Please tick the box to allow us to show your review publicly.'
+      : result.error === 'text-required' ? 'Please write a few words about your experience.' : 'Could not submit your review.';
+    return res.status(400).json({ ok: false, error: result.error, message: msg });
+  }
+  // Notify ops there's a testimonial to review.
+  try { createSupportTicket({ userId: user?.id || null, intent: 'testimonial-review', message: `New ${result.testimonial.rating}★ testimonial from ${result.testimonial.name} awaiting approval.`, reason: 'internal review — approve/reject before it shows publicly' }); } catch { /* best-effort */ }
+  res.json({ ok: true, message: 'Thank you! Your review is with our team and appears once approved.', id: result.testimonial.id });
+}));
+// Public: approved testimonials for the homepage proof strip.
+app.get('/api/testimonials', safe((req, res) => {
+  res.json({ testimonials: publicTestimonials(Math.min(48, Number(req.query.limit) || 24)) });
+}));
+// Admin INTERNAL REVIEW queue — all testimonials (or ?status=pending) to moderate.
+app.get('/api/admin/testimonials', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ testimonials: listTestimonials(req.query.status || null) });
+}));
+app.post('/api/admin/testimonials/:id/moderate', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const status = String(req.body?.status || '').trim();
+  const result = moderateTestimonial(req.params.id, { status, by: currentUser(req)?.name || 'admin' });
+  if (!result.ok) return res.status(result.error === 'not-found' ? 404 : 400).json(result);
+  res.json(result);
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------

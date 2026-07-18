@@ -356,7 +356,7 @@ async function boot() {
     if (state.context.configWarning) showConfigWarning(state.context.configWarning);
     // Trust layer: a real WhatsApp button + live Trustpilot reviews — each mounts
     // ONLY when its real credential is configured (never a fake signal).
-    try { mountWhatsApp(); mountTrustpilot(); } catch { /* non-fatal */ }
+    try { mountWhatsApp(); mountTrustpilot(); loadTestimonialStrip(); } catch { /* non-fatal */ }
     const sel = $('#countrySelect');
     sel.innerHTML = state.context.currencies
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
@@ -1592,7 +1592,8 @@ window.openBooking = async (tier) => {
       <div class="muted" style="font-size:11px">Card numbers are entered on the secure payment page — never stored by 3JN (PCI SAQ-A).</div>
     </div>
     <div id="bkValidate"></div>
-    <button class="btn btn-gold btn-block" id="bkConfirmBtn" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>`);
+    <button class="btn btn-gold btn-block" id="bkConfirmBtn" style="margin-top:16px" onclick="confirmBooking()">Validate, pay deposit &amp; confirm</button>
+    ${checkoutHelpHTML()}`);
   // Sync the confirm button + schedule visibility to the pay choice (a
   // pay-in-full-only fare renders payChoice='full', so the button must read "pay
   // in full", not "pay deposit").
@@ -2529,6 +2530,7 @@ function bookingCard(b) {
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
+        <button class="btn btn-ghost btn-sm" onclick="openReviewForm('${b.id}')">💬 Share your story</button>
         ${String(b.status || '').startsWith('cancelled') ? '<span class="muted" style="font-size:11.5px;align-self:center">Cancelled</span>' : `<button class="btn btn-ghost btn-sm" onclick="openCancel('${b.id}')" style="color:#ff8a8a">✕ Cancel booking</button>`}
       </div>
       ${pgEvents ? `<div style="margin-top:10px"><span class="eyebrow">Price Lock</span>${pgEvents}</div>` : ''}
@@ -3031,6 +3033,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" onclick="manageUser()">👤 Manage user (ACU / membership)</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openOpsQueue()">🎫 Ops queue</button>
       <button class="btn btn-sm btn-ghost" onclick="openExposure()">🔒 Lock exposure</button>
+      <button class="btn btn-sm btn-ghost" onclick="openTestimonialModeration()">💬 Review testimonials</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
     </div>
     <div id="selfTestOut"></div>
@@ -5556,6 +5559,101 @@ function mountTrustpilot() {
     window.Trustpilot.loadFromElement(slot.querySelector('.trustpilot-widget'), true);
   }
 }
+
+// Reassurance at the moment of hesitation (checkout): secure-payment note + a
+// WhatsApp button so a nervous buyer can talk to a human before paying.
+function checkoutHelpHTML() {
+  const c = state.context?.contact || {};
+  const wa = c.whatsapp ? `<a class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;color:#25D366;border-color:rgba(37,211,102,.4)" href="https://wa.me/${esc(c.whatsapp)}?text=${encodeURIComponent('Hi 3JN, I have a question before I book')}" target="_blank" rel="noopener">💬 Questions? Message us on WhatsApp</a>` : '';
+  return `<div class="muted" style="font-size:11.5px;text-align:center;margin-top:10px">🔒 ${state.stripeReady ? 'Payments secured by Stripe — we never see or store your card details.' : 'Secure checkout. We never store your card details.'}</div>${wa}`;
+}
+
+// ---- First-party testimonials (seed proof) --------------------------------
+// Customer submits a real review + optional photo; it's held for internal review
+// (admin approval) before it ever shows publicly.
+window.openReviewForm = (bookingId) => {
+  modal(`
+    <span class="eyebrow">Share your experience</span>
+    <h3 style="margin:6px 0">How was your trip with 3JN?</h3>
+    <p class="muted" style="font-size:13px">Your honest review helps other travellers book with confidence. It's checked by our team before it appears.</p>
+    <div class="field" style="margin-top:10px"><label>Your rating</label>
+      <select class="in" id="tvRating"><option value="5">★★★★★ Excellent</option><option value="4">★★★★ Great</option><option value="3">★★★ Good</option><option value="2">★★ Okay</option><option value="1">★ Poor</option></select></div>
+    <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="tvName" placeholder="e.g. Marie N." value="${esc(state.user?.name || '')}"></div>
+    <div class="field" style="margin-top:10px"><label>Where you're from (optional)</label><input class="in" id="tvLoc" placeholder="e.g. Birmingham, UK"></div>
+    <div class="field" style="margin-top:10px"><label>Your review</label><textarea class="in" id="tvText" style="width:100%;min-height:90px" placeholder="Tell us about your trip — booking, the price lock, paying monthly, the journey…"></textarea></div>
+    <div class="field" style="margin-top:10px"><label>Photo link (optional)</label><input class="in" id="tvPhoto" placeholder="https://… a photo from your trip"></div>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:12.5px"><input type="checkbox" id="tvConsent" style="margin-top:3px"><span>I'm happy for 3JN to show my review (name, location, rating, words and photo) publicly.</span></label>
+    <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitTestimonial('${bookingId || ''}')">Submit review</button>`);
+};
+window.submitTestimonial = async (bookingId) => {
+  const rating = $('#tvRating')?.value; const text = $('#tvText')?.value.trim();
+  const consent = $('#tvConsent')?.checked;
+  if (!text) { toast('Please write a few words about your experience.'); return; }
+  if (!consent) { toast('Please tick the box so we can show your review.'); return; }
+  let d;
+  try {
+    d = await api('/api/testimonials', { method: 'POST', body: JSON.stringify({
+      name: $('#tvName')?.value.trim(), location: $('#tvLoc')?.value.trim(), rating,
+      text, photo: $('#tvPhoto')?.value.trim() || null, bookingId: bookingId || null, consentPublic: true,
+    }) });
+  } catch (e) { toast(e?.message || 'Could not submit your review.'); return; }
+  closeModal();
+  toast(d.message || 'Thank you! Your review is with our team.', 7000);
+  // Nudge toward Trustpilot too (real, off-site proof) when configured.
+  const tp = state.context?.trustpilot;
+  if (tp?.evaluateUrl) setTimeout(() => { if (confirm('Thank you! Would you also leave a quick review on Trustpilot? It helps other travellers a lot.')) window.open(tp.evaluateUrl, '_blank'); }, 600);
+};
+// Public proof strip on the homepage — approved testimonials only; hidden if none.
+async function loadTestimonialStrip() {
+  const slot = document.getElementById('testimonialStrip');
+  if (!slot) return;
+  let d; try { d = await api('/api/testimonials?limit=12'); } catch { return; }
+  const list = d.testimonials || [];
+  if (!list.length) { slot.style.display = 'none'; return; }
+  const stars = (n) => '★★★★★'.slice(0, n) + '☆☆☆☆☆'.slice(0, 5 - n);
+  slot.innerHTML = `
+    <div class="section-head center"><h2>Loved by our travellers</h2><p class="muted">Real reviews from real 3JN trips.</p></div>
+    <div style="display:flex;gap:14px;overflow-x:auto;padding:6px 2px 14px;scroll-snap-type:x mandatory">
+      ${list.map((t) => `<div class="card pad" style="min-width:260px;max-width:280px;scroll-snap-align:start">
+        <div style="color:var(--gold);font-size:15px">${stars(t.rating)}</div>
+        <p style="font-size:13.5px;margin:8px 0">${esc(t.text)}</p>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          ${t.photo ? `<img src="${esc(t.photo)}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover" onerror="this.style.display='none'">` : ''}
+          <div><div style="font-weight:600;font-size:12.5px">${esc(t.name)}</div>${t.location ? `<div class="muted" style="font-size:11px">${esc(t.location)}</div>` : ''}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+    <div class="center" style="margin-top:6px"><button class="btn btn-ghost btn-sm" onclick="openReviewForm()">★ Share your experience</button></div>`;
+  slot.style.display = '';
+}
+
+// ---- Admin: INTERNAL REVIEW queue (moderate testimonials) -----------------
+window.openTestimonialModeration = async () => {
+  let d; try { d = await api('/api/admin/testimonials'); } catch { toast('Admin only.'); return; }
+  const list = d.testimonials || [];
+  const stars = (n) => '★★★★★'.slice(0, n) + '☆☆☆☆☆'.slice(0, 5 - n);
+  const pending = list.filter((t) => t.status === 'pending');
+  const badge = (s) => s === 'approved' ? '<span style="color:#7fe0a5">approved</span>' : s === 'rejected' ? '<span style="color:#ff8a8a">rejected</span>' : '<span style="color:#ffcf6a">pending</span>';
+  const row = (t) => `<div class="card pad" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:6px"><span style="color:var(--gold)">${stars(t.rating)}</span><span style="font-size:11px">${badge(t.status)}</span></div>
+      <p style="font-size:13px;margin:6px 0">${esc(t.text)}</p>
+      <div class="muted" style="font-size:11.5px">${esc(t.name)}${t.location ? ' · ' + esc(t.location) : ''} · ${esc((t.at || '').slice(0, 10))}</div>
+      ${t.photo ? `<img src="${esc(t.photo)}" alt="" style="max-width:100%;border-radius:8px;margin-top:6px" onerror="this.style.display='none'">` : ''}
+      <div style="display:flex;gap:6px;margin-top:8px">
+        ${t.status !== 'approved' ? `<button class="btn btn-sm btn-gold" onclick="moderateTestimonial('${t.id}','approved')">✓ Approve</button>` : ''}
+        ${t.status !== 'rejected' ? `<button class="btn btn-sm btn-ghost" style="color:#ff8a8a" onclick="moderateTestimonial('${t.id}','rejected')">✕ Reject</button>` : ''}
+      </div></div>`;
+  modal(`<span class="eyebrow">Internal review · testimonials</span>
+    <h3 style="margin:6px 0 4px">Moderate reviews</h3>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">${pending.length} awaiting review · ${list.length} total. Only approved reviews show publicly.</p>
+    <div style="max-height:60vh;overflow:auto">${list.length ? list.map(row).join('') : '<p class="muted" style="font-size:13px">No testimonials yet.</p>'}</div>`);
+};
+window.moderateTestimonial = async (id, status) => {
+  try { await api(`/api/admin/testimonials/${id}/moderate`, { method: 'POST', body: JSON.stringify({ status }) }); }
+  catch (e) { toast(e?.message || 'Failed.'); return; }
+  toast(`Review ${status}.`);
+  window.openTestimonialModeration();
+};
 window.sendContact = async () => {
   const email = $('#ctEmail').value.trim();
   const message = $('#ctMsg').value.trim();
