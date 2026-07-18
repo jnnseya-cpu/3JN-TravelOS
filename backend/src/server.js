@@ -135,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-planner-member-fee-copy-v146';
+const BUILD_TAG = '2026-07-18-eticket-pnr-sync-defer-confirm-v147';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -472,6 +472,13 @@ async function emailBookingConfirmation(booking) {
   if (!booking || booking.confirmationEmailSent) return;
   const completed = bookingFullyPaid(booking) || (!booking.instalment && booking.pointsAwarded);
   if (!completed) return;
+  // DEFER: a live flight that's ticketed but whose PNR/e-ticket is still syncing
+  // from Duffel → hold the confirmation so the PDF carries the REAL reference, not
+  // "e-ticket finalising". It re-fires from the booking-read sync once the PNR
+  // lands (never set the send-once flag while deferring).
+  const ful = booking.fulfilment || {};
+  const liveFlight = (booking.option?.components || []).some((c) => c.type === 'flight' && c.live);
+  if (liveFlight && ful.ticketing === 'issued' && (ful.ticketSyncPending || !ful.pnr)) return;
   const lead = booking.leadTraveller || booking.lead || {};
   // Prefer the traveller's own email; fall back to the account owner's email so a
   // booking made without a captured traveller email STILL gets its confirmation
@@ -747,10 +754,16 @@ async function autoTicketFlight(booking) {
   // Duffel may still be populating the PNR / e-ticket documents — flag it so a
   // later booking read re-syncs them onto the customer's record.
   booking.fulfilment.ticketSyncPending = !(order.order.bookingReference && (order.order.ticketNumbers || []).length);
-  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference} · ${(order.order.ticketNumbers || []).length} e-ticket(s)` });
-  if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${order.order.bookingReference}. E-tickets are in your Console and on their way by email.` });
-  if (booking.lead?.email) {
-    try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${order.order.bookingReference}`, text: `Your flight is ticketed. Airline booking reference: ${order.order.bookingReference}. E-ticket(s): ${(order.order.ticketNumbers || []).join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${order.order.bookingReference}</p>` }); } catch {}
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference || '(syncing)'} · ${(order.order.ticketNumbers || []).length} e-ticket(s)` });
+  // Only tell the customer "ticketed" with a REAL airline reference — never send
+  // "reference: null". If Duffel hasn't populated the PNR yet, the booking-read
+  // sync fires this once it lands (via the deferred confirmation).
+  const ref = order.order.bookingReference;
+  if (ref) {
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${ref}. E-tickets are in your Console and on their way by email.` });
+    if (booking.lead?.email) {
+      try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${ref}`, text: `Your flight is ticketed. Airline booking reference: ${ref}. E-ticket(s): ${(order.order.ticketNumbers || []).join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${htmlEsc(ref)}</p>` }); } catch {}
+    }
   }
 }
 
@@ -760,7 +773,12 @@ async function autoTicketFlight(booking) {
 // ticketSyncPending. Best-effort; never throws.
 async function syncDuffelTicket(booking) {
   const ful = booking?.fulfilment;
-  if (!ful || !ful.ticketSyncPending || !ful.duffelOrderId || !liveFlightsEnabled()) return false;
+  if (!ful || !ful.duffelOrderId || !liveFlightsEnabled()) return false;
+  // Sync whenever an issued order is still missing its PNR or e-ticket numbers —
+  // covers both the freshly-flagged case AND older bookings issued before the
+  // sync existed (their pnr/tickets were captured empty from the create response).
+  const needs = ful.ticketSyncPending || (ful.ticketing === 'issued' && (!ful.pnr || !(ful.ticketNumbers || []).length));
+  if (!needs) return false;
   const synced = (await getDuffelOrder(ful.duffelOrderId).catch(() => null))?.order;
   if (!synced) return false;
   let changed = false;
@@ -1285,7 +1303,16 @@ app.get('/api/account/:id', safe(async (req, res) => {
   // the owner reliably lands in admin — consistent on every serverless instance
   // (the staff PIN in the request is the stateless second factor).
   const user = applyOwnerRole(stored, staffPinOk(req));
-  res.json({ user, bookings: listBookings(stored.id) });
+  // Console load: opportunistically pull any PNR/e-ticket Duffel has issued since
+  // the order was created (it populates them asynchronously). Sync + persist so the
+  // console and e-ticket show the real reference, not "finalising".
+  const mine = listBookings(stored.id);
+  try {
+    let any = false;
+    for (const b of mine) { if (await syncDuffelTicket(b)) { any = true; try { await emailBookingConfirmation(b); } catch { /* best-effort */ } } }
+    if (any && IS_SERVERLESS && isEnabled()) await saveMerge(Object.fromEntries(mine.map((b) => [`bookings/${b.id}`, b])));
+  } catch (e) { console.error('[console-ticket-sync]', e?.message || e); }
+  res.json({ user, bookings: mine });
 }));
 
 // Edit an account profile (name, email, bio, avatar, travel profile).
@@ -2976,7 +3003,12 @@ app.get('/api/book/:id', safe(async (req, res) => {
   // order was created (it populates them asynchronously). A GET doesn't auto-persist
   // on serverless, so persist the synced reference explicitly.
   try {
-    if (await syncDuffelTicket(booking) && IS_SERVERLESS && isEnabled()) { await saveMerge({ [`bookings/${booking.id}`]: booking }); }
+    if (await syncDuffelTicket(booking)) {
+      // The real PNR/e-ticket just landed — send the (previously deferred) full
+      // confirmation PDF now that it carries the reference, then persist.
+      try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); }
+      if (IS_SERVERLESS && isEnabled()) await saveMerge({ [`bookings/${booking.id}`]: booking });
+    }
   } catch (e) { console.error('[ticket-sync]', e?.message || e); }
   res.json({ booking });
 }));
@@ -3112,13 +3144,16 @@ app.get('/api/book/:id/documents', safe((req, res) => {
 
 // Branded travel document — e-ticket / itinerary / confirmation. Returns a
 // self-contained, printable 3JN-branded HTML page (customer can Save as PDF).
-app.get('/api/book/:id/document', safe((req, res) => {
+app.get('/api/book/:id/document', safe(async (req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   if (ownerlessBookingBlocked(req, res, booking)) return;
   const user = currentUser(req);
   // Only the owner (or an admin) may fetch a booking document.
   if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
+  // Pull the real PNR/e-ticket before rendering the document (Duffel issues them
+  // asynchronously), so the e-ticket never prints "finalising" once they exist.
+  try { if (await syncDuffelTicket(booking) && IS_SERVERLESS && isEnabled()) await saveMerge({ [`bookings/${booking.id}`]: booking }); } catch { /* render with what we have */ }
   const html = bookingDocument(booking, { user, currencySymbol: booking.option?.pricing?.symbol });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
