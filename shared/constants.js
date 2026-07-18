@@ -19,10 +19,10 @@ export const FLIGHT_ONLY_FEE_RATE = 0.02;   // 2% of the flight value (non-membe
 export const FLIGHT_ONLY_FEE_GBP = 4.99;    // floor — never below supplier/booking cost
 export const FLIGHT_ONLY_FEE_CAP_GBP = 15;  // cap — stays competitive on long-haul
 // COMMERCIAL MODEL: members never fly at £0 — every booking must earn. A member's
-// flight carries a small FLAT booking & servicing fee (no % markup), well below
-// the non-member 2%/£4.99-floor, so membership is still a real saving.
-export const FLIGHT_ONLY_MEMBER_FEE_GBP = 2.99;
-export const FLIGHT_ONLY_MEMBER_FREE = false; // retired — members pay the flat fee above
+// Travel+ members pay NO flight service fee — flights are FREE of the 3JN fee for
+// members (a core membership benefit). Non-members pay the 2% (£4.99 min / £15 cap).
+export const FLIGHT_ONLY_MEMBER_FEE_GBP = 0;
+export const FLIGHT_ONLY_MEMBER_FREE = true; // members: no flights-only service fee
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never
 // of booking value) — plus lifetime attribution on the customer they brought.

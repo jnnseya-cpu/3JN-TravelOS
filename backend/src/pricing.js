@@ -105,9 +105,9 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   const atFloor = flightsOnly && !memberActive && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_GBP / 0.79) < 0.02;
   const atCap = flightsOnly && !memberActive && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_CAP_GBP / 0.79) < 0.02;
   const feeLabel = flightsOnly
-    ? (memberActive ? `3JN member flight fee (£${FLIGHT_ONLY_MEMBER_FEE_GBP.toFixed(2)} flat · no % markup)`
+    ? (memberActive ? (FLIGHT_ONLY_MEMBER_FEE_GBP > 0 ? `3JN member flight fee (£${FLIGHT_ONLY_MEMBER_FEE_GBP.toFixed(2)} flat · no % markup)` : 'No flight service fee — Travel+ member')
       : `3JN flight service fee (${(FLIGHT_ONLY_FEE_RATE * 100).toFixed(0)}%${atFloor ? ` · £${FLIGHT_ONLY_FEE_GBP.toFixed(2)} min` : atCap ? ` · £${FLIGHT_ONLY_FEE_CAP_GBP} cap` : ''})`)
-    : '3JN commission (10%)';
+    : '3JN service fee (10%)';
   // Duffel pass-through — added ON TOP on a live Duffel order so our supplier
   // cost never erodes the margin. Zero on non-Duffel bookings. Customer price =
   // full supplier cost + our post-loyalty commission + Duffel fees.

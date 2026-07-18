@@ -4294,16 +4294,15 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   const opt2 = r2.packages.options[0];
   assert.equal(opt2.pricing.feeModel, 'commission-10');
   assert.ok(opt2.pricing.lines.commissionUSD > feeUSD * 3, 'package commission is the real margin');
-  // Active Travel+ member: a small FLAT booking fee (£2.99) — never £0, and well
-  // below the non-member 2%/£4.99-floor, so every booking still earns.
+  // Active Travel+ member: flights are FREE of the 3JN service fee — a core
+  // membership benefit (non-members pay the 2% / £4.99 min / £15 cap).
   const member = createUser({ name: 'Member Flyer', email: 'member.flyer@example.com' });
   subscribeMembership(member.id, 'nomad');
   const r3 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: findUserByEmail('member.flyer@example.com'), searchTier: 'smart' });
   const opt3 = r3.packages.options[0];
   assert.equal(opt3.pricing.feeModel, 'flight-flat-member');
-  assert.ok(Math.abs(opt3.pricing.lines.commissionUSD - 2.99 / 0.79) < 0.02, 'members pay the flat £2.99 flight fee (never £0)');
-  assert.ok(opt3.pricing.lines.commissionUSD > 0, 'no booking ever earns 3JN £0');
-  assert.ok(opt3.pricing.lines.commissionUSD < feeUSD, 'member flat fee is below the non-member fee');
+  assert.ok(Math.abs(opt3.pricing.lines.commissionUSD) < 0.02, 'Travel+ members pay NO flight service fee (free)');
+  assert.ok(opt3.pricing.lines.commissionUSD < feeUSD, 'member fee is below the non-member fee');
 });
 
 test('tiered take-rate: partners earn a share of the flight take + lifetime attribution', async () => {
@@ -5008,10 +5007,9 @@ test('flights-only fee: 2% of fare, floored at £4.99, capped at £15', () => {
   assert.ok(Math.abs(feeGbp(450) - 9) < 0.05, 'mid-haul → 2% (£9 on £450)');
   assert.equal(feeGbp(750), 15, 'exactly at the cap');
   assert.equal(feeGbp(1500), 15, 'long-haul stays capped at £15 (1%, competitive)');
-  // Members pay a small FLAT £2.99 booking fee regardless of fare — never £0.
+  // Travel+ members pay NO flight service fee — flights are free of the 3JN fee.
   const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
-  assert.ok(Math.abs(memberFee - 2.99) < 0.02, 'Travel+ members pay the flat £2.99 flight fee');
-  assert.ok(memberFee > 0, 'no member booking is ever £0');
+  assert.ok(Math.abs(memberFee) < 0.02, 'Travel+ members pay no flight service fee (free)');
 });
 
 // ---- WAVE 6: deep-clean critical-fix regressions ----------------------------

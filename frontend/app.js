@@ -5217,7 +5217,7 @@ const CONTENT = {
   },
   terms: {
     title: '📜 Terms of Use',
-    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. Deposits and instalments are interest-free; refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>`,
+    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers with transparent fees, always shown before you pay: <strong>flights-only</strong> carry a small <strong>2%</strong> service fee (min £4.99, capped at £15; <strong>free for Travel+ members</strong>); <strong>packages</strong> carry a transparent <strong>10%</strong>. The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. Deposits and instalments are interest-free; refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>`,
   },
   support: {
     title: '🛟 Support — before, during & after your trip',
