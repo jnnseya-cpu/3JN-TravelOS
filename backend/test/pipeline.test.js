@@ -4134,7 +4134,19 @@ test('a paid LCC booking routes to the ops desk with the customer told honestly'
 });
 
 // ---- AI Smart Instalment Payment Engine --------------------------------------
-import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil, refundOutcome, CANCEL_ADMIN_FEE_PER_PAX_GBP } from '../src/instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP } from '../src/instalments.js';
+
+test('ticket-release GATE: an e-ticket is issued ONLY when the balance is £0 (anti-abuse)', () => {
+  const mk = (paid) => ({ option: { pricing: { local: { total: 1000 } } }, payments: [{ type: 'deposit', amount: paid, status: 'paid' }] });
+  // The core abuse the gate defeats: 3/4 paid must NOT be releasable.
+  assert.equal(isBookingFullyPaid(mk(750)), false, '75% paid → NO ticket (the "pay 3/4 and walk" case)');
+  assert.equal(isBookingFullyPaid(mk(999)), false, '99.9% paid → still gated; balance must be £0');
+  assert.equal(isBookingFullyPaid(mk(1000)), true, 'balance £0 → ticket releases');
+  assert.equal(isBookingFullyPaid(mk(1000.005)), true, 'penny-rounding tolerated at full payment');
+  // A change-charge payment must NOT count toward the plan and prematurely release.
+  const withChange = { option: { pricing: { local: { total: 1000 } } }, payments: [{ type: 'deposit', amount: 400, status: 'paid' }, { type: 'change-fee', amount: 700, status: 'paid' }] };
+  assert.equal(isBookingFullyPaid(withChange), false, 'a change-fee never pushes an instalment plan to fully-paid');
+});
 
 // Build a minimal instalment booking: total 1000 (deposit + schedule), `paid`
 // funded via one deposit payment, N passengers, optional issued ticket.

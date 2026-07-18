@@ -2518,7 +2518,7 @@ function bookingCard(b) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         ${(b.fulfilment?.ticketing === 'issued' || (totalLocal > 0 && paidTotal + 0.01 >= totalLocal))
           ? `<button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>`
-          : `<button class="btn btn-ghost btn-sm" disabled title="Your e-ticket is issued only once the balance is paid in full — a deposit never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket on full payment</button>`}
+          : `<button class="btn btn-ghost btn-sm" disabled title="Your price is locked now. Your e-ticket is issued and released the moment your balance reaches ${sym || '£'}0 — a deposit or part-payment never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket at ${sym || '£'}0 balance</button>`}
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
@@ -2786,7 +2786,7 @@ window.openDocs = async (bookingId) => {
   const issued = d.ticketing === 'issued';
   // A change awaiting airline reissue is NOT a failure — show it in gold, not red.
   const reissuing = d.ticketing === 'reissue-pending';
-  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: 'e-ticket issued', held: 'fare held', reissued: 'reissued', 'lock-scheduled': 'price locked · ticket securing' };
+  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: 'e-ticket issued', held: 'fare held', reissued: 'reissued', 'lock-scheduled': 'price locked · e-ticket at £0 balance' };
   const explain = !issued && !reissuing && d.ticketing !== 'confirmed' && d.ticketing !== 'pending'
     ? `<div class="card pad" style="border-color:rgba(255,107,107,.4);margin-top:10px">
          <strong style="color:#ff8f8f">Ticket not issued — ${esc(d.ticketing)}</strong>

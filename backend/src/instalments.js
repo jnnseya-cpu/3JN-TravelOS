@@ -225,6 +225,14 @@ export function planPaid(booking) {
     .reduce((s, p) => s + Number(p.amount), 0);
 }
 
+// TICKET-RELEASE GATE predicate: an e-ticket is issued/released ONLY when the
+// balance is £0. This is the single rule that defeats the "pay 3/4, take the
+// ticket, abandon the rest" abuse — no ticket ever exists worth more than paid.
+export function isBookingFullyPaid(booking) {
+  const total = booking?.option?.pricing?.local?.total || 0;
+  return total > 0 && planPaid(booking) + 0.01 >= total;
+}
+
 // ---- Instalment state machine -------------------------------------------------
 // Cumulative view: how much SHOULD have been paid by `today` vs how much HAS
 // been. Drives dunning: on-track → due → in-grace → defaulted.

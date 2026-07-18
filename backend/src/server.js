@@ -10,7 +10,7 @@ import { destinationsCatalog, findDestination, resolveOrigin, originForCountry }
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund,
@@ -133,7 +133,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-refund-policy-50pct-admin-v131';
+const BUILD_TAG = '2026-07-18-ticket-release-gate-v132';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -454,13 +454,12 @@ const safe = (fn) => async (req, res) => {
 // ---- Auto-ticketing: create the Duffel order after payment (issue the ticket)
 // Is the booking fully paid (total covered by payments)? Instalment bookings
 // are NOT fully paid until the final instalment lands.
+// Count ONLY plan-funding payments (deposit/instalment/full) — a booking
+// change-charge must NOT push a still-owed instalment plan to "fully paid" and
+// release the ticket/room/deal early. Single source of truth in instalments.js
+// so the ticket-release gate can be unit-tested independently of the server.
 function bookingFullyPaid(booking) {
-  const total = booking.option?.pricing?.local?.total || 0;
-  // Count ONLY plan-funding payments (deposit/instalment/full) — a booking
-  // change-charge must NOT push a still-owed instalment plan to "fully paid" and
-  // release the ticket/room/deal early.
-  const paid = planPaid(booking);
-  return total > 0 && paid + 0.01 >= total;
+  return isBookingFullyPaid(booking);
 }
 // Email the FULL branded booking document (the same printable, "Save as PDF"
 // record shown in the Console) once a booking is paid IN FULL — on top of the
@@ -656,33 +655,30 @@ async function autoTicketFlight(booking) {
       if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '💳', title: 'Pay in full to ticket this fare', body: 'This airline requires this fare to be paid in full to issue the ticket — it cannot be held on instalments. Pay the remaining balance in your Console and your e-ticket issues immediately.' });
       return;
     }
-    // GUARANTEED HOLIDAY LOCK — decide how to SECURE the flight, honestly:
-    //  • ticket-now: the paid deposit already covers the fare (within the front
-    //    cap) → buy the ticket immediately (price locked because it's bought; the
-    //    deposit funds it, 3JN fronts nothing). Fall through to the issue block.
-    //  • lock-scheduled: it doesn't → LOCK the price and secure the flight closer
-    //    to departure. NO months-long airline hold (that expired before the
-    //    instalments finished — the bug you found); 3JN never fronts beyond the cap.
+    // GUARANTEED HOLIDAY LOCK + TICKET-RELEASE GATE — the anti-abuse rule:
+    // an instalment booking is NEVER ticketed while a balance remains. Paying 3/4
+    // and abandoning the last 1/4 can NOT yield a ticket worth more than was paid —
+    // because no ticket is issued until the balance is £0. The PRICE is locked and
+    // the fare is secured (consolidator/allocation near departure, funded by the
+    // customer's own completed payments); the e-ticket issues only at full payment.
+    // We NEVER front 3JN cash for a ticket the customer hasn't finished paying.
     const rate = booking.option?.pricing?.rateFromUSD || 0.79;
     const sym = booking.option?.pricing?.symbol || '£';
     const plan = flightSecuringPlan(booking, { rateFromUSD: rate });
-    if (plan.action !== 'ticket-now') {
-      const firstLock = booking.fulfilment?.ticketing !== 'lock-scheduled';
-      ful().ticketing = 'lock-scheduled';
-      booking.fulfilment.lockScheduled = { netGbp: plan.netGbp, paidGbp: plan.paidGbp, gapGbp: plan.gapGbp, at: new Date().toISOString() };
-      // Raise the ops "secure the flight" work-order ONCE (a later instalment
-      // re-enters this path; don't stack duplicate tickets).
-      if (firstLock) try {
-        createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-secure-flight',
-          message: `SECURE FLIGHT before departure — booking ${booking.id}. Price is LOCKED for the customer at their booked rate. Net fare ≈ ${sym}${plan.netGbp}, paid so far ${sym}${plan.paidGbp}, shortfall ${sym}${plan.gapGbp}. Auto-ticket at deposit isn't possible (deposit < fare; front cap ${sym}${autoFrontCapGbp()}). Secure via consolidator/allocation, or once payments cover the fare — re-price within the lock margin (${Math.round(lockMarginPct() * 100)}%). Do NOT exceed the locked customer price.`,
-          reason: 'guaranteed-lock: flight to be secured before departure' });
-      } catch { /* still confirm the booking */ }
-      if (firstLock && booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🔒', title: 'Booking confirmed — price locked', body: `Your trip is confirmed and your price is locked at ${sym}${Number(booking.option?.pricing?.local?.total || 0).toFixed(2)}. Pay monthly, interest-free — no increases before you travel. Your e-ticket is secured ahead of departure and emailed to you.` });
-      if (firstLock) recordAudit({ actor: 'system', role: 'system', action: 'ticketing.lock-scheduled', entity: 'booking', entityId: booking.id, summary: `price locked · fare ${sym}${plan.netGbp} secured before departure · paid ${sym}${plan.paidGbp}` });
-      return;
-    }
-    // ticket-now → fall through to the issue block (buy & ticket the fare the
-    // deposit already covers).
+    const fareFunded = plan.action === 'ticket-now'; // payments already cover the net fare
+    const firstLock = booking.fulfilment?.ticketing !== 'lock-scheduled';
+    ful().ticketing = 'lock-scheduled';
+    booking.fulfilment.lockScheduled = { netGbp: plan.netGbp, paidGbp: plan.paidGbp, gapGbp: plan.gapGbp, fareFunded, at: new Date().toISOString() };
+    // Raise the ops "secure the flight" work-order ONCE (a later instalment
+    // re-enters this path; don't stack duplicate tickets).
+    if (firstLock) try {
+      createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-secure-flight',
+        message: `SECURE FLIGHT before departure — booking ${booking.id}. Price is LOCKED for the customer at their booked rate. Net fare ≈ ${sym}${plan.netGbp}, paid so far ${sym}${plan.paidGbp}, shortfall ${sym}${plan.gapGbp}. The e-ticket is issued ONLY when the balance is £0 (anti-abuse gate). Secure via consolidator/allocation near departure once fully paid — re-price within the lock margin (${Math.round(lockMarginPct() * 100)}%). Do NOT exceed the locked customer price, and do NOT issue before full payment.`,
+        reason: 'guaranteed-lock: flight to be secured before departure' });
+    } catch { /* still confirm the booking */ }
+    if (firstLock && booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🔒', title: 'Booking confirmed — price locked', body: `Your trip is confirmed and your price is locked at ${sym}${Number(booking.option?.pricing?.local?.total || 0).toFixed(2)}. Pay monthly, interest-free — no increases before you travel. Your e-ticket is issued and released the moment your balance reaches ${sym}0.` });
+    if (firstLock) recordAudit({ actor: 'system', role: 'system', action: 'ticketing.lock-scheduled', entity: 'booking', entityId: booking.id, summary: `price locked · fare ${sym}${plan.netGbp} · paid ${sym}${plan.paidGbp} · e-ticket gated until balance £0` });
+    return;
   }
 
   // --- FULLY PAID: issue the ticket ----------------------------------------
@@ -691,6 +687,12 @@ async function autoTicketFlight(booking) {
   // order (double ticket + double charge), or re-pay an already-paid hold order
   // and wrongly flag a correctly-ticketed booking for refund.
   if (booking.fulfilment?.ticketing === 'issued') return;
+  // MONEY-SAFETY + RELEASE GATE (the "paid 3/4, walk on the rest" abuse): NEVER
+  // issue a ticket until the booking balance is £0. A customer can't obtain a
+  // ticket worth more than they've paid and then abandon the rest, because no
+  // ticket exists until they've paid in full. Hard gate, belt-and-braces against
+  // any future refactor of the securing flow above.
+  if (!bookingFullyPaid(booking)) return;
   let order;
   if (booking.fulfilment?.holdOrderId) {
     // Pay off the held order → issues the ticket. Pay the HELD ORDER'S total
@@ -3709,6 +3711,14 @@ app.post('/api/admin/book/:id/issue-secured', safe(async (req, res) => {
   const ful = (b.fulfilment = b.fulfilment || {});
   if (ful.ticketing === 'issued') return res.json({ ok: true, already: true, message: 'This booking is already ticketed.' });
   if (ful.ticketing !== 'lock-scheduled') return res.status(400).json({ ok: false, error: 'not-lock-scheduled', message: 'This booking is not awaiting flight securing.' });
+  // RELEASE GATE: do NOT issue the e-ticket until the customer's balance is £0.
+  // The final instalment falls due 7 days before departure, so a genuine booking
+  // is fully paid by securing time. Blocking here stops a ticket ever being
+  // released for a part-paid booking (the "paid 3/4, walk on the rest" abuse).
+  if (!bookingFullyPaid(b) && req.body?.overrideUnpaid !== true) {
+    const total = b.option?.pricing?.local?.total || 0; const paid = planPaid(b); const sym = b.option?.pricing?.symbol || '£';
+    return res.status(409).json({ ok: false, error: 'balance-outstanding', message: `Balance not settled — ${sym}${Math.max(0, (total - paid)).toFixed(2)} outstanding. The e-ticket is only issued once the customer has paid in full.` });
+  }
   const cleanPnr = pnr ? String(pnr).trim().toUpperCase().slice(0, 12) : null;
   if (!cleanPnr) return res.status(400).json({ ok: false, error: 'pnr-required', message: 'Enter the airline PNR from the secured booking.' });
   const nums = (Array.isArray(ticketNumbers) ? ticketNumbers : String(ticketNumbers || '').split(/[,\s]+/)).map((t) => String(t).trim()).filter(Boolean).slice(0, 20);
