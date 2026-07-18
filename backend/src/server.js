@@ -133,7 +133,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-member-free-flights-v126';
+const BUILD_TAG = '2026-07-18-lock-exposure-queue-v127';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3587,10 +3587,31 @@ app.get('/api/admin/exposure', safe(async (req, res) => {
   if (IS_SERVERLESS && isEnabled()) { try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ } }
   const all = allBookings();
   const summary = portfolioExposure(all);
-  // The individual price-locked flights waiting to be secured (the work list).
+  // How many days before departure the ops desk secures a locked flight live
+  // (consolidator / fresh airline booking) — the point where fares stabilise.
+  const SECURE_WINDOW_DAYS = Math.max(1, Number(process.env.SECURE_WINDOW_DAYS) || 21);
+  const todayISO = new Date().toISOString().slice(0, 10);
+  // The individual price-locked flights waiting to be secured (the work list),
+  // enriched with WHEN each one needs action so ops works the queue by urgency.
   const pending = all
     .filter((b) => b.fulfilment?.ticketing === 'lock-scheduled')
-    .map((b) => ({ ...bookingExposure(b), readyToSecure: !!b.fulfilment?.readyToSecure, symbol: b.option?.pricing?.symbol || '£', departDate: (b.option?.components || []).map((c) => c.details?.outbound?.date).find(Boolean) || null }));
+    .map((b) => {
+      const departISO = b.instalment?.departISO || (b.option?.components || []).map((c) => c.details?.outbound?.date).find(Boolean) || b.option?.dates?.checkIn || null;
+      const dd = departISO ? daysUntil(departISO, todayISO) : null;
+      const ex = bookingExposure(b);
+      const gapGbp = Math.max(0, Math.round((ex.netCostGbp - ex.paidGbp) * 100) / 100);
+      const paidInFull = gapGbp <= 0.01;
+      // Due to secure when inside the window OR already fully funded / flagged ready.
+      const dueToSecure = !!b.fulfilment?.readyToSecure || paidInFull || (dd != null && dd <= SECURE_WINDOW_DAYS);
+      // Overdue: departure is within a week (or past) and still not secured.
+      const overdue = dd != null && dd <= 7;
+      return { ...ex, readyToSecure: !!b.fulfilment?.readyToSecure, symbol: b.option?.pricing?.symbol || '£', departDate: departISO, daysToDepart: dd, secureWindowDays: SECURE_WINDOW_DAYS, dueToSecure, overdue, paidInFull, gapGbp };
+    })
+    // Soonest departure first (unknown dates sink to the bottom).
+    .sort((a, b) => (a.daysToDepart ?? 1e9) - (b.daysToDepart ?? 1e9));
+  summary.dueToSecureCount = pending.filter((p) => p.dueToSecure).length;
+  summary.overdueCount = pending.filter((p) => p.overdue).length;
+  summary.lockScheduledCount = pending.length;
   res.json({ summary, pending });
 }));
 

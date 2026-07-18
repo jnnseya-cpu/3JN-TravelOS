@@ -3145,9 +3145,25 @@ window.openExposure = async () => {
       <div class="muted" style="font-size:11.5px;margin-top:4px">${label}</div>
       ${hint ? `<div class="muted" style="font-size:10px;margin-top:2px">${hint}</div>` : ''}
     </div>`;
+  // A locked flight's timing line: how many days to departure and whether it's
+  // inside the securing window (ops must act) / overdue / parked.
+  const when = (p) => {
+    if (p.daysToDepart == null) return '<span class="muted">departure date TBC</span>';
+    const d = p.daysToDepart;
+    if (d < 0) return `<strong style="color:#ff8a8a">DEPARTED ${-d}d ago — secure immediately</strong>`;
+    if (p.overdue) return `<strong style="color:#ff8a8a">departs in ${d}d — SECURE NOW</strong>`;
+    if (p.dueToSecure) return `<strong style="color:#ffcf6a">departs in ${d}d — inside ${p.secureWindowDays}d window, secure now</strong>`;
+    return `<span class="muted">departs in ${d}d — parked (secure ~${Math.max(0, d - p.secureWindowDays)}d)</span>`;
+  };
   const pend = (d.pending || []).length
-    ? (d.pending).map((p) => `<div class="kv" style="font-size:12px"><span>${esc(p.bookingId)}${p.readyToSecure ? ' <strong style="color:#ff8a8a">· PAID — secure now</strong>' : ''}</span><span>${p.symbol}${Number(p.netCostGbp).toFixed(2)} fare · ${p.symbol}${Number(p.paidGbp).toFixed(2)} paid${p.departDate ? ' · ' + esc(p.departDate) : ''}</span></div>`).join('')
+    ? (d.pending).map((p) => `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06)">
+        <div class="kv" style="font-size:12px"><span><strong>${esc(p.bookingId)}</strong>${p.paidInFull ? ' <span style="color:#7fe0a5">· FARE FUNDED — zero exposure</span>' : p.readyToSecure ? ' <span style="color:#ff8a8a">· flagged ready</span>' : ''}</span><span>${p.symbol}${Number(p.netCostGbp).toFixed(2)} fare · ${p.symbol}${Number(p.paidGbp).toFixed(2)} paid${p.gapGbp > 0 ? ` · ${p.symbol}${Number(p.gapGbp).toFixed(2)} to fund` : ''}</span></div>
+        <div style="font-size:11px;margin-top:3px">${when(p)}${p.departDate ? ` <span class="muted">· ${esc(p.departDate)}</span>` : ''}</div>
+      </div>`).join('')
     : '<p class="muted" style="font-size:12.5px">No price-locked flights waiting to be secured.</p>';
+  const dueBadge = (s.dueToSecureCount || 0) > 0
+    ? `<span style="background:${(s.overdueCount||0)>0?'rgba(255,138,138,.18)':'rgba(255,207,106,.16)'};color:${(s.overdueCount||0)>0?'#ff8a8a':'#ffcf6a'};padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600">${s.dueToSecureCount} to secure${(s.overdueCount||0)>0?` · ${s.overdueCount} overdue`:''}</span>`
+    : `<span style="color:#7fe0a5;font-size:11px">✓ nothing due</span>`;
   modal(`<span class="eyebrow">🔒 Guaranteed Holiday Lock — exposure</span>
     <h3 style="margin:6px 0 4px">Capital at risk</h3>
     <p class="muted" style="font-size:12px;margin:0 0 12px">Across ${s.bookings || 0} instalment booking(s). Front cap ${gbp(s.frontCapGbp)} · lock margin ${Math.round((s.lockMarginPct || 0) * 100)}%.</p>
@@ -3157,8 +3173,11 @@ window.openExposure = async () => {
       ${stat('Deposits held (cushion)', s.depositsHeldGbp, 'Non-refundable on default')}
       ${stat('Net at risk after deposits', s.netAtRiskGbp, 'The number that matters', true)}
     </div>
-    <span class="eyebrow">Price-locked flights to secure</span>
-    <div style="margin-top:8px">${pend}</div>`);
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+      <span class="eyebrow">Price-locked flights to secure (${s.lockScheduledCount || 0})</span>
+      ${dueBadge}
+    </div>
+    <div style="margin-top:4px">${pend}</div>`);
 };
 window.openOpsQueue = async () => {
   let d;
