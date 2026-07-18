@@ -3166,10 +3166,15 @@ window.openExposure = async () => {
     : `<span style="color:#7fe0a5;font-size:11px">✓ nothing due</span>`;
   modal(`<span class="eyebrow">🔒 Guaranteed Holiday Lock — exposure</span>
     <h3 style="margin:6px 0 4px">Capital at risk</h3>
-    <p class="muted" style="font-size:12px;margin:0 0 12px">Across ${s.bookings || 0} instalment booking(s). Front cap ${gbp(s.frontCapGbp)} · lock margin ${Math.round((s.lockMarginPct || 0) * 100)}%.</p>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">Across ${s.bookings || 0} instalment booking(s). Front cap ${gbp(s.frontCapGbp)} · lock margin ${Math.round((s.lockMarginPct || 0) * 100)}% · assumed fare rise ${Math.round((s.fareRiseAssumptionPct || 0) * 100)}%.</p>
+    <div style="margin:0 0 12px;padding:8px 10px;border-radius:8px;font-size:12px;background:${s.guaranteeFunded ? 'rgba(127,224,165,.12)' : 'rgba(255,138,138,.12)'};color:${s.guaranteeFunded ? '#7fe0a5' : '#ff8a8a'}">
+      ${s.guaranteeFunded
+        ? '✓ <strong>Price guarantee is FUNDED</strong> — the lock margin covers the assumed fare rise on every locked flight. A rise at securing is absorbed by the margin, not 3JN cash.'
+        : `⚠ <strong>Price guarantee is UNFUNDED</strong> — if a locked fare rises before securing, 3JN wears up to ${gbp(s.fareRiskGbp)}. Fund it by setting <code>LOCK_MARGIN_PCT</code> (≥ the assumed rise) so it's baked into the sell price, and/or secure flights the moment the fare is funded.`}
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
       ${stat('Fronted (3JN cash ahead of payment)', s.frontedGbp, 'Should be £0 at a £0 front cap', true)}
-      ${stat('Fare-movement risk (locked flights)', s.fareRiskGbp, 'Bounded by the lock margin')}
+      ${stat('Unfunded fare-rise risk', s.fareRiskGbp, `Assumed rise ${gbp(s.assumedRiseGbp)} − margin ${gbp(s.marginBufferGbp)}`, true)}
       ${stat('Deposits held (cushion)', s.depositsHeldGbp, 'Non-refundable on default')}
       ${stat('Net at risk after deposits', s.netAtRiskGbp, 'The number that matters', true)}
     </div>

@@ -3325,16 +3325,37 @@ test('Guaranteed Holiday Lock: deposit does NOT cover the fare → lock-schedule
   assert.equal(plan.gapGbp, 480, 'the shortfall 3JN would have had to front');
 });
 
-test('Guaranteed Holiday Lock: exposure counts fare-movement risk on a locked flight, cushioned by the deposit', () => {
+test('Guaranteed Holiday Lock: exposure quantifies the UNFUNDED fare-rise risk on a locked flight', () => {
   const locked = { id: 'bk3', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
   const exp = bookingExposure(locked);
-  // With lock margin 0 by default, fare-risk is 0 — the customer's payments buy the
-  // ticket; 3JN fronts nothing. atRisk is never the whole fare.
-  assert.ok(exp.atRiskGbp <= exp.netCostGbp, 'exposure is never more than the fare');
+  // A locked flight is NOT ticketed, so nothing is fronted...
   assert.equal(exp.frontedGbp, 0, 'a lock-scheduled (unticketed) booking fronts nothing');
+  // ...but with LOCK_MARGIN_PCT=0 the price guarantee is UNFUNDED: the fare could
+  // rise ~8% (default assumption) with no margin to absorb it → real exposure.
+  // net 500 × 8% assumed rise − 0 margin buffer = £40 at risk (NOT zero).
+  assert.ok(Math.abs(exp.assumedRiseGbp - 40) < 0.01, 'assumed rise = 8% of the £500 fare');
+  assert.equal(exp.marginBufferGbp, 0, 'no margin collected at LOCK_MARGIN_PCT=0');
+  assert.ok(Math.abs(exp.fareRiskGbp - 40) < 0.01, 'unfunded rise risk = assumed rise − margin buffer');
+  assert.ok(exp.atRiskGbp <= exp.netCostGbp, 'exposure is never more than the fare');
   const roll = portfolioExposure([locked]);
   assert.equal(roll.bookings, 1);
   assert.equal(roll.frontedGbp, 0, 'zero fronting across the portfolio at the £0 cap');
+  assert.equal(roll.guaranteeFunded, false, 'at 0 margin the guarantee is NOT funded');
+  assert.ok(Math.abs(roll.fareRiskGbp - 40) < 0.01, 'portfolio rolls up the unfunded rise risk');
+});
+
+test('Guaranteed Holiday Lock: a lock margin ≥ the assumed rise FUNDS the guarantee (fareRisk→0)', () => {
+  const prev = process.env.LOCK_MARGIN_PCT;
+  process.env.LOCK_MARGIN_PCT = '0.10'; // 10% margin > 8% assumed rise → fully funded
+  try {
+    const locked = { id: 'bk3b', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
+    const exp = bookingExposure(locked);
+    assert.ok(exp.marginBufferGbp >= exp.assumedRiseGbp, 'margin buffer covers the assumed rise');
+    assert.equal(exp.fareRiskGbp, 0, 'a funded guarantee shows zero unfunded rise risk');
+    assert.equal(portfolioExposure([locked]).guaranteeFunded, true, 'guarantee is funded');
+  } finally {
+    if (prev === undefined) delete process.env.LOCK_MARGIN_PCT; else process.env.LOCK_MARGIN_PCT = prev;
+  }
 });
 
 test('Guaranteed Holiday Lock: applyLockMargin only touches instalment bookings and is idempotent', () => {

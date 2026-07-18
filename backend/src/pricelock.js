@@ -34,6 +34,14 @@ export function lockMarginPct() { return Math.max(0, Math.min(0.25, num(env.LOCK
 // £0 (default) = never front — the safe launch posture with no credit facility.
 export function autoFrontCapGbp() { return Math.max(0, num(env.AUTO_FRONT_CAP_GBP, 0)); }
 
+// Assumed short-window airfare volatility — how much a locked fare could RISE
+// between now and when ops secures it. This is the honest size of the price
+// guarantee's downside: if the live fare at securing exceeds the locked price by
+// more than the margin buffer, 3JN wears the difference (or, per the fare-rise
+// clause, a capped, disclosed surcharge applies). Default 8% is a reasonable
+// economy short-window figure; set FARE_RISE_ASSUMPTION_PCT from your own data.
+export function fareRiseAssumptionPct() { return Math.max(0, Math.min(0.5, num(env.FARE_RISE_ASSUMPTION_PCT, 0.08))); }
+
 const gbp2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // Apply the lock margin to an option's sell price IN PLACE (total, USD, and a
@@ -105,13 +113,20 @@ export function bookingExposure(booking, { rateFromUSD = 0.79 } = {}) {
   const ticketed = ful.ticketing === 'issued' || ful.ticketing === 'held';
   // Fronted = supplier cost we've committed beyond the customer's payments.
   const fronted = ticketed ? gbp2(Math.max(0, net - paid)) : 0;
-  // Scheduled = a locked flight not yet secured; the fare-MOVEMENT risk (bounded by
-  // the lock margin), not the whole fare, since the customer keeps paying.
-  const scheduled = ful.ticketing === 'lock-scheduled' ? gbp2(net * lockMarginPct()) : 0;
+  // The price-guarantee downside on a locked (not-yet-secured) flight: the fare
+  // could RISE before ops secures it. Money already collected to absorb that is
+  // the lock margin; anything the assumed rise exceeds the margin is UNFUNDED —
+  // real cash 3JN would wear (or recover via the capped fare-rise clause). With
+  // LOCK_MARGIN_PCT=0 this is NOT zero — that was the old model's blind spot.
+  const marginBuffer = gbp2(net * lockMarginPct());
+  const assumedRise = gbp2(net * fareRiseAssumptionPct());
+  const scheduled = ful.ticketing === 'lock-scheduled' ? gbp2(Math.max(0, assumedRise - marginBuffer)) : 0;
   const depositHeld = gbp2((booking?.payments || []).filter((p) => p.type === 'deposit').reduce((s, p) => s + (Number(p.amount) || 0), 0));
   return {
     bookingId: booking?.id, ticketing: ful.ticketing || 'confirmed',
     netCostGbp: net, paidGbp: paid, frontedGbp: fronted, fareRiskGbp: scheduled,
+    marginBufferGbp: ful.ticketing === 'lock-scheduled' ? marginBuffer : 0,
+    assumedRiseGbp: ful.ticketing === 'lock-scheduled' ? assumedRise : 0,
     depositHeldGbp: depositHeld,
     atRiskGbp: gbp2(fronted + scheduled), // capital genuinely at risk right now
   };
@@ -132,7 +147,13 @@ export function portfolioExposure(bookings, { rateFromUSD = 0.79 } = {}) {
     atRiskGbp: sum('atRiskGbp'),
     // Net exposure after the non-refundable deposits that cushion a default.
     netAtRiskGbp: gbp2(Math.max(0, sum('atRiskGbp') - sum('depositHeldGbp'))),
+    marginBufferGbp: sum('marginBufferGbp'), // collected to absorb fare rises
+    assumedRiseGbp: sum('assumedRiseGbp'),   // total assumed rise across locked flights
     frontCapGbp: autoFrontCapGbp(),
     lockMarginPct: lockMarginPct(),
+    fareRiseAssumptionPct: fareRiseAssumptionPct(),
+    // Is the price guarantee funded? True when the margin ≥ the assumed rise on
+    // every locked flight (fareRiskGbp rolls up to ~0).
+    guaranteeFunded: sum('fareRiskGbp') <= 0.01,
   };
 }
