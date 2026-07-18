@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-no-stale-whole-store-flush-v118';
+const BUILD_TAG = '2026-07-17-await-fulfilment-v119';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2647,7 +2647,8 @@ app.post('/api/book', safe(async (req, res) => {
   }
   // Paid IN FULL at booking (no instalment plan) → also email the full booking
   // document (PDF-ready). Instalment bookings get it when the balance clears.
-  emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
+  // AWAIT so the confirmation + PDF actually send before the serverless freeze.
+  await emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   res.json({ booking, user: user ? getUser(user.id) : null });
 }));
 
@@ -2715,11 +2716,13 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
       createDealFulfilment(booking);
       if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Balance paid — booking confirmed', body: 'Your package is now paid in full — our team is finalising your booking with the supplier and will email your documents shortly.' });
     }
-    autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
-    autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
-    // Balance cleared → email the full booking document (PDF-ready), on top of
-    // the Console copy.
-    emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
+    // AWAIT fulfilment: on serverless the instance freezes the instant res.json
+    // returns, which would kill an in-flight Duffel ticketing call — the customer
+    // pays in full but no e-ticket ever issues. Await so the ticket (and stays +
+    // confirmation email) actually complete before we respond.
+    await autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
+    await autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+    await emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
   res.json({ booking });
 }));
