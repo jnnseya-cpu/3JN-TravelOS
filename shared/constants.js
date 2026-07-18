@@ -7,6 +7,13 @@
 
 // ---- Commission & savings (3JN's headline economics) ----------------------
 export const COMMISSION_RATE = 0.10;      // 10% final-payment fee
+// BEDBANK / NET-RATE HOTEL MARGIN — the real profit engine. Contracted net (whole-
+// sale) hotel rates sit ~20–40% below retail, so 3JN marks them up to a still-
+// competitive retail price and keeps the spread. This applies ONLY to components
+// flagged `netRate: true` (TBO/RateHawk bedbank); retail hotels keep the 10%. It
+// lets flights stay a near-free hook while hotels carry the margin. No-op until
+// net rates flow (Duffel Stays retail isn't net). Override with HOTEL_MARGIN_RATE.
+export const HOTEL_MARGIN_RATE = 0.20;
 // TIERED TAKE-RATE: flights-only bookings pay a small % service fee instead of
 // 10% (a 10% flight loses every Skyscanner comparison → 10% of nothing).
 // A flat fee left money on the table on high-value long-haul (3JN's core

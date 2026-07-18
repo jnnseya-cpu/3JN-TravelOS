@@ -312,7 +312,11 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
   // TIERED TAKE-RATE: a basket of nothing but flights pays the flat flight
   // fee (free for Travel+) instead of 10% — see pricing.js.
   const flightsOnly = selections.length > 0 && selections.every((s2) => s2.type === 'flight');
-  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive, membershipDiscount, membershipName, duffelOrderValueUSD: duffelOrder ? duffelOrderValueUSD : null });
+  // Bedbank margin engine: the wholesale (net-rate) hotel cost in this basket is
+  // marked up at the hotel-margin rate instead of the 10% — the profit lever that
+  // lets flights stay near-free. Zero unless a net-rate hotel is present.
+  const bedbankNetUSD = selections.filter((s2) => s2.type === 'hotel' && (s2.details?.netRate || s2.netRate)).reduce((t, s2) => t + (s2.priceUSD || 0), 0);
+  const breakdown = priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints, duffelOrder, flightsOnly, memberActive, membershipDiscount, membershipName, duffelOrderValueUSD: duffelOrder ? duffelOrderValueUSD : null, bedbankNetUSD });
 
   // Average reliability across selected suppliers — used for the "reliable"
   // promise and ranking.

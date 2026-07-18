@@ -8,6 +8,7 @@
 import {
   COMMISSION_RATE, SAVINGS_SHARE_RATE, SAVINGS_SHARE_MIN_USD, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
   FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP, FLIGHT_ONLY_MEMBER_FREE, FLIGHT_ONLY_MEMBER_FEE_GBP,
+  HOTEL_MARGIN_RATE,
 } from '../../shared/constants.js';
 
 export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP };
@@ -61,7 +62,7 @@ export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) 
   };
 }
 
-export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, membershipDiscount = 0, membershipName = null, duffelOrderValueUSD = null }) {
+export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyPoints = 0, duffelOrder = false, ancillaries = 0, flightsOnly = false, memberActive = false, membershipDiscount = 0, membershipName = null, duffelOrderValueUSD = null, bedbankNetUSD = 0 }) {
   const pointsTier = tierForPoints(loyaltyPoints);
   // The discount a customer actually gets is the BETTER of their loyalty-points
   // tier and their paid membership's discount — so a Concierge Elite member is
@@ -86,7 +87,14 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   const flightFeeUSD = memberActive
     ? FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79
     : Math.min(FLIGHT_ONLY_FEE_CAP_GBP / 0.79, Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE));
-  const grossCommissionUSD = flightsOnly ? flightFeeUSD : componentsUSD * COMMISSION_RATE;
+  // BEDBANK MARGIN: net-rate (wholesale) hotel cost is marked up at HOTEL_MARGIN_RATE
+  // (the real profit) instead of the 10% — so the standard commission applies only
+  // to the NON-bedbank remainder, and the bedbank spread is added on top. No-op when
+  // bedbankNetUSD is 0 (retail hotels / no bedbank), so current pricing is unchanged.
+  const bedbank = Math.max(0, Math.min(bedbankNetUSD || 0, componentsUSD));
+  const commissionBaseUSD = Math.max(0, componentsUSD - bedbank);
+  const bedbankMarginUSD = bedbank * HOTEL_MARGIN_RATE;
+  const grossCommissionUSD = flightsOnly ? flightFeeUSD : (commissionBaseUSD * COMMISSION_RATE + bedbankMarginUSD);
 
   // LOYALTY DISCOUNT is funded ENTIRELY out of 3JN's commission and is CAPPED at
   // it — it is NEVER taken off the supplier-cost base. The full supplier cost is
@@ -147,6 +155,8 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
       // commission = total, and commission is what we actually keep.
       grossCommissionUSD: round2(grossCommissionUSD),
       commissionUSD: round2(commissionUSD),
+      bedbankNetUSD: round2(bedbank),           // wholesale hotel cost in this basket
+      bedbankMarginUSD: round2(bedbankMarginUSD), // 3JN margin on the net rate (the profit engine)
       duffelFeeUSD: round2(duffelFeeUSD),
       totalUSD: round2(totalUSD),
       marketRefUSD: round2(marketRefUSD),

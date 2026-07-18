@@ -606,6 +606,20 @@ test('price breakdown: MEMBER discount funded from commission, never below suppl
   assert.equal(noMember.lines.totalUSD, 1100);
 });
 
+test('bedbank margin: net-rate hotel cost is marked up 20% (the profit engine), not the 10%', () => {
+  // $1000 basket, of which $600 is a wholesale NET-rate hotel.
+  const b = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1400, currency: GB.currency, bedbankNetUSD: 600 });
+  // Non-bedbank $400 @ 10% = $40; bedbank $600 @ 20% = $120 → gross $160.
+  assert.ok(Math.abs(b.lines.grossCommissionUSD - 160) < 0.01, '10% on retail + 20% on the net rate');
+  assert.ok(Math.abs(b.lines.bedbankMarginUSD - 120) < 0.01, 'bedbank margin = 20% of the net rate');
+  assert.ok(Math.abs(b.lines.totalUSD - 1160) < 0.01, 'customer pays cost + margin');
+  assert.ok(b.lines.commissionUSD > 100, 'bedbank hotels carry far more margin than a flight');
+  // No bedbank in the basket → unchanged 10% behaviour (backward-compatible).
+  const retail = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1400, currency: GB.currency });
+  assert.ok(Math.abs(retail.lines.grossCommissionUSD - 100) < 0.01, 'no net rate → plain 10%');
+  assert.equal(retail.lines.bedbankMarginUSD, 0);
+});
+
 test('loyalty ladder collapsed to a single neutral tier (discounts come from membership)', () => {
   assert.equal(tierForPoints(0).name, 'Member');
   assert.equal(tierForPoints(20000).name, 'Member');
