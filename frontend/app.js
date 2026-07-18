@@ -1646,8 +1646,12 @@ window.openBooking = async (tier) => {
         const bags = d.bags.filter((b) => b.id && b.priceLocal != null).slice(0, 6);
         if (!bags.length) return;
         bags.forEach((b) => { window.__bagSel.items[b.id] = { qty: 0, priceLocal: b.priceLocal, kind: b.kind, kg: b.kg, maxQuantity: Math.max(1, Number(b.maxQuantity) || 1) }; });
+        // On the Duffel SANDBOX (test token) the bag prices are generic TEST data
+        // (the same figure on every route), not the real airline price — say so
+        // honestly instead of claiming "real airline price".
+        const liveDuffel = state.context?.suppliers?.duffelMode === 'live';
         el.innerHTML = `<div style="margin-top:14px"><span class="eyebrow">🧳 Add checked baggage</span>
-          <p class="muted" style="font-size:11.5px;margin:2px 0 6px">Your fare includes: <strong>${esc(flightC.details.baggage || 'cabin bag')}</strong>. Add extra checked bags at the real airline price — they're added to your total below and ticketed on your airline booking.</p>
+          <p class="muted" style="font-size:11.5px;margin:2px 0 6px">Your fare includes: <strong>${esc(flightC.details.baggage || 'cabin bag')}</strong>. ${liveDuffel ? 'Add extra checked bags at the real airline price — they\'re added to your total below and ticketed on your airline booking.' : 'Add extra checked bags — <em>test fares show a sample bag price (the same on every route); the real per-airline price applies on live fares</em>. They\'re added to your total and ticketed on the airline booking.'}</p>
           ${bags.map((b) => `<div class="kv" style="align-items:center">
             <span>${b.kind === 'carry_on' ? 'Cabin' : 'Checked'} bag${b.kg ? ` · up to ${b.kg}kg` : ''} <span class="muted" style="font-size:11.5px">· ${esc(sym)}${(b.priceLocal || 0).toFixed(2)} each</span></span>
             <span style="display:inline-flex;align-items:center;gap:10px">
