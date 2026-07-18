@@ -71,7 +71,7 @@ import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, m
 import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
-import { applyLockMargin, lockMarginOn, flightSecuringPlan, portfolioExposure, bookingExposure, lockMarginPct, autoFrontCapGbp } from './pricelock.js';
+import { applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, flightSecuringPlan, portfolioExposure, bookingExposure, lockMarginPct, autoFrontCapGbp } from './pricelock.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS, cachedSearchAcu } from './revenue.js';
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
@@ -133,7 +133,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-ticket-release-gate-v132';
+const BUILD_TAG = '2026-07-18-pay-monthly-fee-v133';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2437,19 +2437,25 @@ function smartPlanForRequest(req, option, intent) {
       instantOnly: true,
     };
   }
-  // PRICE-LOCK MARGIN (Guaranteed Holiday Lock): the margin funds the MONTHS-LONG
-  // price guarantee, so it applies ONLY to a real instalment plan — never the
-  // pay-now cash price (that stays the competitive headline) and never a
-  // pay-in-full / instant fare. When it applies, REBUILD the plan on the locked
-  // total so the deposit + instalments the customer sees ARE the locked price.
+  // INSTALMENT UPLIFT — applies ONLY to a real instalment plan, never the pay-now
+  // cash price (competitive headline) or a pay-in-full / instant fare:
+  //  • Lock margin (Guaranteed Holiday Lock): funds the months-long price guarantee.
+  //  • Pay-monthly service fee: covers the N separate card charges an instalment
+  //    plan incurs (a pay-in-full booking is one charge; a 4-part plan is four).
+  // Both are computed from the same cash base (no compounding) and the plan is
+  // REBUILT on the locked total so the deposit + instalments the customer sees ARE
+  // the locked, all-in price.
   const hasInstalments = !!(result && !result.instantOnly && result.depositPct < 1 && Array.isArray(result.schedule) && result.schedule.length > 0);
-  if (result && hasInstalments && lockMarginPct() > 0) {
-    const locked = lockMarginOn(cashTotal);
-    result = buildPlan(locked.lockedTotal) || result;
-    result.lockMargin = { pct: locked.pct, cashTotal: locked.cashTotal, margin: locked.margin, lockedTotal: locked.lockedTotal, applies: true };
+  const p = instalmentPricing(cashTotal);
+  if (result && hasInstalments && p.uplift > 0) {
+    result = buildPlan(p.lockedTotal) || result;
+    result.lockMargin = { pct: p.lockPct, cashTotal: p.cash, margin: p.lockMargin, lockedTotal: p.lockedTotal, applies: true };
+    result.instalmentFee = { pct: p.feePct, cashTotal: p.cash, fee: p.processingFee, applies: p.processingFee > 0 };
+    result.payMonthlyUplift = { cashTotal: p.cash, uplift: p.uplift, lockedTotal: p.lockedTotal };
   } else if (result) {
-    // No margin applied (0% configured, pay-in-full, or instant fare).
+    // No uplift (both 0%, pay-in-full, or instant fare).
     result.lockMargin = { pct: lockMarginPct(), cashTotal, margin: 0, lockedTotal: cashTotal, applies: false };
+    result.instalmentFee = { pct: instalmentFeeRate(), cashTotal, fee: 0, applies: false };
   }
   return result;
 }
@@ -2630,11 +2636,11 @@ app.post('/api/book', safe(async (req, res) => {
   // not a stale Smart Plan). Manual months/deposit overrides are not accepted;
   // paying more, earlier is always allowed.
   const instalment = smartPlanForRequest(req, quote.option, quote.intent);
-  // The customer is booking on instalments AND the price-lock margin applies →
-  // bake it into the stored option so the booked/locked total, deposit, schedule,
-  // documents and exposure are all the ONE guaranteed number. The pay-now cash
-  // headline was shown at search; instalments pay the locked price. No-op at 0%.
-  if (instalment?.lockMargin?.applies) applyLockMargin(quote.option, { hasInstalments: true });
+  // The customer is booking on instalments → bake the combined uplift (lock margin
+  // + pay-monthly service fee) into the stored option so the booked/locked total,
+  // deposit, schedule, documents and exposure are all the ONE all-in number. The
+  // pay-now cash headline was shown at search; instalments pay the locked price.
+  if (instalment?.lockMargin?.applies || instalment?.instalmentFee?.applies) applyInstalmentPricing(quote.option, { hasInstalments: true });
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
   // Store the ticketed-baggage selection so autoTicketFlight adds the services to

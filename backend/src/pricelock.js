@@ -42,7 +42,51 @@ export function autoFrontCapGbp() { return Math.max(0, num(env.AUTO_FRONT_CAP_GB
 // economy short-window figure; set FARE_RISE_ASSUMPTION_PCT from your own data.
 export function fareRiseAssumptionPct() { return Math.max(0, Math.min(0.5, num(env.FARE_RISE_ASSUMPTION_PCT, 0.08))); }
 
+// PAY-MONTHLY SERVICE FEE — covers the extra cost of instalments: paying by
+// instalments means N separate card charges, each carrying a processing fee
+// (~2.5% + a fixed part). A single pay-in-full booking is one charge; a 4-part
+// plan is four. Without this the fee (esp. flights-only 2%) is eaten by Stripe on
+// a monthly plan. Applies to the INSTALMENT (locked) price only — never the
+// pay-now cash headline. Default 3% (covers ~2.5% processing + a slim margin);
+// override with INSTALMENT_FEE_RATE. The tiny fixed-per-charge part is folded in.
+export function instalmentFeeRate() { return Math.max(0, Math.min(0.15, num(env.INSTALMENT_FEE_RATE, 0.03))); }
+
 const gbp2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Combined instalment uplift on a cash total — the price-guarantee margin PLUS
+// the pay-monthly service fee, BOTH computed from the same cash base (no
+// compounding). Pure; no mutation. At 0% for both it's a no-op (locked===cash).
+export function instalmentPricing(cashTotal) {
+  const cash = gbp2(cashTotal);
+  const lockPct = lockMarginPct();
+  const feePct = instalmentFeeRate();
+  const lockMargin = gbp2(cash * lockPct);
+  const processingFee = gbp2(cash * feePct);
+  const uplift = gbp2(lockMargin + processingFee);
+  return { cash, lockPct, feePct, lockMargin, processingFee, uplift, lockedTotal: gbp2(cash + uplift) };
+}
+
+// Apply the combined instalment uplift (lock margin + pay-monthly fee) to an
+// option IN PLACE, so the booked/locked total, deposit, schedule, documents and
+// exposure all reflect the one guaranteed number. Instalment bookings only;
+// idempotent via option.pricing.instalmentPricing.
+export function applyInstalmentPricing(option, { hasInstalments } = {}) {
+  if (!option || !hasInstalments) return option;
+  option.pricing = option.pricing || {}; option.pricing.local = option.pricing.local || {};
+  if (option.pricing.instalmentPricing) return option; // already applied
+  const p = instalmentPricing(Number(option.pricing.local.total) || 0);
+  if (p.uplift <= 0) return option;
+  const usdBase = Number(option.totalUSD) || 0;
+  const usdUplift = gbp2(usdBase * (p.lockPct + p.feePct));
+  option.pricing.local.total = p.lockedTotal;
+  option.pricing.local.lockMargin = p.lockMargin;
+  option.pricing.local.instalmentFee = p.processingFee;
+  option.totalUSD = gbp2(usdBase + usdUplift);
+  option.pricing.instalmentPricing = { lockMargin: p.lockMargin, processingFee: p.processingFee, lockPct: p.lockPct, feePct: p.feePct, usd: usdUplift };
+  // Back-compat: keep the lockMargin marker some callers read.
+  option.pricing.lockMargin = { pct: p.lockPct, local: p.lockMargin, usd: gbp2(usdBase * p.lockPct) };
+  return option;
+}
 
 // Pure margin breakdown for a base (cash) total — no mutation. Used to build the
 // instalment (locked) figures for DISPLAY without touching the pay-now cash price:

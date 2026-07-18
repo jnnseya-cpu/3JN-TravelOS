@@ -1403,16 +1403,20 @@ function priceZoneHTML(quote) {
   const inst = quote.instalment;
   const sym = option.pricing.symbol;
   const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
-  // PRICE-LOCK MARGIN disclosure — shown ONLY when it applies (0% → invisible).
-  // The pay-now cash price is the headline; the monthly/locked plan adds a small,
-  // openly-shown Guaranteed Holiday Lock fee that funds the fixed price + interest-
-  // free instalments. Full transparency: the customer sees exactly what they lock.
-  const lm = inst.lockMargin;
-  const locksAtPremium = !!(lm && lm.applies && lm.margin > 0.005);
-  const lockedTotalLine = locksAtPremium ? `
-      <div class="kv" style="font-size:11.5px;color:var(--muted);margin-top:2px"><span>🔒 Guaranteed Holiday Lock (fixes your price, funds interest-free instalments)</span><span>+${money2(lm.margin, sym)}</span></div>
-      <div class="kv" style="font-weight:700;font-size:12.5px"><span>Price-locked total</span><span style="color:var(--gold)">${money2(lm.lockedTotal, sym)}</span></div>
-      <div class="muted" style="font-size:11px;margin-top:2px">Pay in full instead and you skip the lock fee — ${money2(option.pricing.local.total, sym)} today, no guarantee needed.</div>` : '';
+  // PAY-MONTHLY disclosure — shown ONLY when it applies (0% → invisible). The
+  // pay-now cash price is the headline; the monthly/locked plan openly adds the
+  // Guaranteed Holiday Lock (fixes your price) AND a pay-monthly service fee (the
+  // cost of paying by instalments). Full transparency — you see exactly what you
+  // lock, and that paying in full skips both.
+  const lm = inst.lockMargin; const ifee = inst.instalmentFee;
+  const hasLock = !!(lm && lm.applies && lm.margin > 0.005);
+  const hasFee = !!(ifee && ifee.applies && ifee.fee > 0.005);
+  const lockedTotal = (lm && lm.lockedTotal) || option.pricing.local.total;
+  const lockedTotalLine = (hasLock || hasFee) ? `
+      ${hasLock ? `<div class="kv" style="font-size:11.5px;color:var(--muted);margin-top:2px"><span>🔒 Guaranteed Holiday Lock (fixes your price against fare rises)</span><span>+${money2(lm.margin, sym)}</span></div>` : ''}
+      ${hasFee ? `<div class="kv" style="font-size:11.5px;color:var(--muted)"><span>📅 Pay-monthly service fee (${(ifee.pct * 100).toFixed(1)}% — interest-free instalments)</span><span>+${money2(ifee.fee, sym)}</span></div>` : ''}
+      <div class="kv" style="font-weight:700;font-size:12.5px"><span>Price-locked total</span><span style="color:var(--gold)">${money2(lockedTotal, sym)}</span></div>
+      <div class="muted" style="font-size:11px;margin-top:2px">Pay in full instead and skip ${hasLock && hasFee ? 'both fees' : 'this fee'} — ${money2(option.pricing.local.total, sym)} today.</div>` : '';
   const smart = inst.engine === 'ai-smart' ? `
     <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.35)">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
@@ -1421,7 +1425,7 @@ function priceZoneHTML(quote) {
       <div class="muted" style="font-size:12px;margin-top:6px">
         Deposit <strong>${(inst.depositPct * 100).toFixed(0)}%</strong> today (<strong style="color:var(--gold)">non-refundable</strong> — it secures your booking and locks the fare) ·
         ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
-        pay any amount early, any time, no penalty.
+        pay any amount early, any time, no penalty${(inst.instalmentFee && inst.instalmentFee.applies) ? ' · a small pay-monthly service fee applies (shown below) — paying in full skips it' : ''}.
       </div>
       <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels. Deposits are non-refundable. If you've paid <strong>over 50%</strong> and no ticket has been issued, you're refunded less a <strong>£100 admin fee per passenger</strong>; once a ticket is issued the airline's rules govern the flight.</div>
       ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}

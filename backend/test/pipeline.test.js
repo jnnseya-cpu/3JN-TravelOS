@@ -3304,7 +3304,46 @@ test('ops completeReissue: issues the ticket, collects the deferred fee + fare d
   assert.equal(completeReissue(b.id, { pnr: 'X' }).ok, false, 'a second complete-reissue is refused');
 });
 
-import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginOn, lockMarginPct, autoFrontCapGbp } from '../src/pricelock.js';
+import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, lockMarginPct, autoFrontCapGbp } from '../src/pricelock.js';
+
+test('Instalment uplift: default is lock margin 8% + pay-monthly fee 3% = 11%, from the same cash base', () => {
+  assert.ok(Math.abs(instalmentFeeRate() - 0.03) < 1e-9, 'default pay-monthly fee is 3%');
+  const p = instalmentPricing(1000);
+  assert.ok(Math.abs(p.lockMargin - 80) < 0.01, '8% lock margin = £80');
+  assert.ok(Math.abs(p.processingFee - 30) < 0.01, '3% pay-monthly fee = £30');
+  assert.ok(Math.abs(p.uplift - 110) < 0.01, 'combined uplift = £110 (no compounding)');
+  assert.ok(Math.abs(p.lockedTotal - 1110) < 0.01, 'locked total = £1110');
+});
+
+test('Instalment uplift: applyInstalmentPricing bakes both fees into the option, idempotently', () => {
+  const opt = { totalUSD: 1266, pricing: { local: { total: 1000 } } };
+  applyInstalmentPricing(opt, { hasInstalments: true });
+  assert.ok(Math.abs(opt.pricing.local.total - 1110) < 0.01, 'option total = locked £1110');
+  assert.ok(Math.abs(opt.pricing.local.instalmentFee - 30) < 0.01, 'pay-monthly fee line recorded');
+  assert.ok(Math.abs(opt.pricing.local.lockMargin - 80) < 0.01, 'lock margin line recorded');
+  applyInstalmentPricing(opt, { hasInstalments: true });
+  assert.ok(Math.abs(opt.pricing.local.total - 1110) < 0.01, 'idempotent — not applied twice');
+  // Pay-in-full is never touched.
+  const cash = { totalUSD: 1266, pricing: { local: { total: 1000 } } };
+  applyInstalmentPricing(cash, { hasInstalments: false });
+  assert.equal(cash.pricing.local.total, 1000, 'pay-in-full price untouched');
+});
+
+test('Instalment uplift: turns off cleanly when both rates are 0', () => {
+  const prevL = process.env.LOCK_MARGIN_PCT, prevF = process.env.INSTALMENT_FEE_RATE;
+  process.env.LOCK_MARGIN_PCT = '0'; process.env.INSTALMENT_FEE_RATE = '0';
+  try {
+    const p = instalmentPricing(1000);
+    assert.equal(p.uplift, 0);
+    assert.equal(p.lockedTotal, 1000, 'no uplift → cash === locked');
+    const opt = { totalUSD: 1266, pricing: { local: { total: 1000 } } };
+    applyInstalmentPricing(opt, { hasInstalments: true });
+    assert.equal(opt.pricing.local.total, 1000, 'no-op at 0/0');
+  } finally {
+    if (prevL === undefined) delete process.env.LOCK_MARGIN_PCT; else process.env.LOCK_MARGIN_PCT = prevL;
+    if (prevF === undefined) delete process.env.INSTALMENT_FEE_RATE; else process.env.INSTALMENT_FEE_RATE = prevF;
+  }
+});
 
 const flightOpt = (amount) => ({ pricing: { code: 'GBP', symbol: '£' }, components: [{ type: 'flight', details: { liveAmount: amount, liveCurrency: 'GBP', outbound: { date: '2027-10-03' } } }] });
 
