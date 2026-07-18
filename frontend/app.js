@@ -219,7 +219,7 @@ const AGENTS = [
   ['🏨', 'Hotel Negotiation', 'Compares hotels and private hosts, negotiates upgrades & board.'],
   ['🛂', 'Visa Automation', 'Detects requirements by nationality and processes eVisas.'],
   ['🚘', 'Transfer Logistics', 'Books verified airport transfers for arrival & departure.'],
-  ['🛡', 'Savings Guard', 'Monitors price 24/7 and rebooks or refunds the difference.'],
+  ['🔒', 'Price Lock', 'Fixes your booked price and protects it from fare rises and currency moves until you travel.'],
   ['📊', 'Risk Intelligence', 'Weather, safety, currency and demand signals per destination.'],
   ['📶', 'Connectivity Agent', 'Finds the best-value eSIM / roaming for your data needs.'],
   ['💷', 'Currency Agent', 'Detects your local currency and prices everything transparently.'],
@@ -242,9 +242,9 @@ const ACU_PER_GBP = 100;
 const acuAllocation = (priceNum) => Math.round(priceNum * 0.10 * ACU_PER_GBP);
 
 const STEPS = [
-  ['01', 'AI CORE', 'Neural Intent Extraction', 'Our proprietary AI agents analyse your natural language requests to identify over 40 distinct travel parameters including destination intent, preferred budget tiers, and service requirements.'],
-  ['02', 'INVENTORY', 'Global Wholesaler Negotiation', "3JN connects directly to the world's largest travel wholesalers and GDS networks, bypassing retail markups to identify the 'Global Minimum Price' for your specific itinerary."],
-  ['03', 'SECURITY', 'Integrity Verification Shield', "Every flight and hotel option is cross-referenced against a 50-point integrity check. We only surface 'Verified' suppliers that meet our strict reliability and quality standards."],
+  ['01', 'AI ASSISTANT', 'Understands what you want', 'Type your trip in plain language — the assistant reads your destination, dates, travellers, budget and preferences and turns one sentence into a structured search.'],
+  ['02', 'INVENTORY', 'Live fares + curated deals', 'We search live airline fares (via Duffel) alongside our curated, contracted deals, then package them with a single transparent service fee — no hidden retail markup. More live supplier connections are being added.'],
+  ['03', 'TRUST', 'Verified & reliable', 'Live fares come straight from the airline; every option carries a supplier reliability score. Community hosts and vendors pass a risk review and admin approval before they can be booked.'],
   ['04', 'REWARDS', 'Loyalty Discount Injection', 'The OS automatically checks your 3JN membership status (Explorer to Elite) and injects an additional member-only discount on top of the already reduced wholesale rate.'],
   ['05', 'LOGISTICS', 'Universal Console Sync', 'Once secured, your journey is instantly synchronised with your Universal Console, centralising your visas, transfers, and eSIMs into one high-tech management interface.'],
   ['06', 'GUARANTEED', 'Price Lock', 'The price you book is fixed in your booking terms and fully protected until you travel — no fare increases, no currency surcharges, no hidden add-ons. Pay monthly, interest-free, at the price you locked on day one.'],
@@ -5208,7 +5208,7 @@ const CONTENT = {
   careers: {
     title: '🚀 Careers — build the operating system for global travel',
     body: `<p class="muted">We're a small team rethinking how the world books travel — AI-native, savings-obsessed, globally diverse. If you want your work in the hands of travellers across 195+ countries, we want to hear from you.</p>
-      <p class="muted">Open areas: supplier integrations, pricing & optimisation, growth, and 24/7 traveller support. Email <strong>info@3jntravel.com</strong>.</p>`,
+      <p class="muted">Open areas: supplier integrations, pricing & optimisation, growth, and traveller support. Email <strong>info@3jntravel.com</strong>.</p>`,
   },
   privacy: {
     title: '🔒 Privacy Policy',
@@ -5220,11 +5220,10 @@ const CONTENT = {
     body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. Deposits and instalments are interest-free; refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>`,
   },
   support: {
-    title: '🛟 Support — 24/7, in your language',
-    body: `<p class="muted">Real help, before, during and after your trip: flight-disruption assistance, document checklists, visa-deadline alerts, rebooking and refund guidance. Reach us any time.</p>
+    title: '🛟 Support — before, during & after your trip',
+    body: `<p class="muted">Real help: flight-disruption guidance, document checklists, visa-deadline alerts, and rebooking/refund support. The 3JN Assistant answers most things instantly; anything that needs a person is picked up by our team as quickly as we can.</p>
       <div class="kv"><span>Main contact</span><span><strong style="color:var(--gold)">info@3jntravel.com</strong></span></div>
-      <div class="kv"><span>WhatsApp / Chat</span><span>+44 20 0000 0000</span></div>
-      <div class="kv"><span>In-trip emergency line</span><span>24/7</span></div>`,
+      <div class="kv"><span>In-app</span><span>3JN Assistant (24/7 self-service)</span></div>`,
   },
   cookies: {
     title: '🍪 Cookie Policy',
@@ -5390,7 +5389,7 @@ $('#contactLink')?.addEventListener('click', () => {
   modal(`
     <span class="eyebrow">Contact 3JN Travel OS</span>
     <h3 style="margin:6px 0">We'd love to hear from you</h3>
-    <p class="muted" style="font-size:13px">Goes straight to <strong>info@3jntravel.com</strong>. We reply 24/7.</p>
+    <p class="muted" style="font-size:13px">Goes straight to <strong>info@3jntravel.com</strong>. We reply as quickly as we can.</p>
     <div class="field" style="margin-top:10px"><label>Your name</label><input class="in" id="ctName"></div>
     <div class="field" style="margin-top:10px"><label>Your email</label><input class="in" id="ctEmail" placeholder="you@email.com"></div>
     <div class="field" style="margin-top:10px"><label>Message</label><textarea class="in" id="ctMsg" style="width:100%;min-height:90px"></textarea></div>
@@ -5404,7 +5403,7 @@ window.sendContact = async () => {
   closeModal();
   // Honest outcome: if the email didn't actually send, say so (it's still saved
   // to the support queue) instead of a misleading "sent" — surfaces a mail issue.
-  if (d.sent) toast('✓ Message sent to info@3jntravel.com — we reply 24/7.');
+  if (d.sent) toast('✓ Message sent to info@3jntravel.com — we will reply as soon as we can.');
   else toast('✓ Message received & logged' + (d.error ? ` (email pending: ${d.error})` : '') + ' — our team will reply.', 8000);
 };
 
@@ -5444,7 +5443,7 @@ async function renderHosting() {
       <div class="muted" style="font-size:11px;margin-top:4px">Payouts run on Stripe (bank transfer) or PayPal today. BitriPay wallet unlocks the day BitriPay launches.</div>
       <div id="hostPayoutFields">${payoutFieldsHTML('Bank transfer')}</div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="hostRegister()">Register & open my dashboard</button>
-      <p class="muted" style="font-size:11.5px;margin-top:8px">Payout details are required — we can't pay you without them. They're stored securely, shown masked (last 4 digits only), and verified before your first payout. Identity comes from your 3JN account; properties pass the 50-point integrity check + AI security verification + admin review before going live.</p>
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Payout details are required — we can't pay you without them. They're stored securely, shown masked (last 4 digits only), and verified before your first payout. Identity comes from your 3JN account; properties pass an AI risk review + admin approval before going live.</p>
     </div>`;
     return;
   }
@@ -5587,7 +5586,7 @@ async function renderHosting() {
           <details style="margin-top:8px"><summary class="muted" style="font-size:12px;cursor:pointer">Or paste image URLs (one per line)</summary>
             <textarea class="in" id="hostPhotos" rows="3" placeholder="https://…/living-room.jpg" style="margin-top:6px" oninput="hostPhotoRecount()"></textarea></details></div>
         <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="submitHost()">Verify & publish</button>
-        <p class="muted" style="font-size:11px;margin-top:8px">Every listing passes the 50-point integrity check, AI security verification and 3JN admin review before going live. Guests book through 3JN; you're paid your 90%.</p>
+        <p class="muted" style="font-size:11px;margin-top:8px">Every listing passes an AI risk review and 3JN admin approval before it can be booked. Guests book through 3JN; you're paid your 90%.</p>
         </div>
       </div>
     </div>`;
