@@ -1314,7 +1314,7 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false, sourceDealId = null }) {
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false, sourceDealId = null, confirmedPrice = false }) {
   // Sanitise the full passenger manifest (every traveller's name/DOB/passport) —
   // Duffel needs each real name to ticket a group/family flight. Falls back to
   // just the lead when a manifest wasn't supplied.
@@ -1359,6 +1359,10 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
       // honour and fulfil — so it is payable ('confirmed'), independent of any
       // live supplier feed.
       if (sourceDealId) return 'confirmed';
+      // A CONFIRMED EXACT-QUOTE is the same shape: an agent/supplier has
+      // committed a real bookable price the customer has now paid, so it is
+      // payable ('confirmed') even though the original search was estimated.
+      if (confirmedPrice) return 'confirmed';
       const priced = (option?.components || []).filter((c) => ['flight', 'hotel', 'host', 'train', 'coach', 'ferry', 'cruise'].includes(c.type));
       // Community host stays are 3JN's OWN marketplace inventory — a real,
       // fulfillable price (the host committed it), so they count as live.
@@ -1451,6 +1455,11 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   const completeAtCreation = !instalment || instalmentFullyPrepaid;
   if (userId && !awaitExternalCapture && completeAtCreation && !deferredPayment) {
     addPoints(userId, option.totalUSD * POINTS_PER_USD);
+    // A fully-paid-at-creation package (e.g. a paid exact-quote, or a pay-in-full
+    // live/confirmed booking) earns its Travel Credit NOW — otherwise setting
+    // pointsAwarded here would block the earn path in recordPayment and the
+    // member would get nothing.
+    earnTravelCreditIfEligible(booking, localTotal);
     booking.pointsAwarded = true;
   }
 
@@ -1505,6 +1514,41 @@ export function listBookings(userId) {
   return list;
 }
 
+// TRAVEL CREDIT — the member reward, designed to FUND ITSELF so it can never
+// lose money. Banked ONCE per booking (guarded by `travelCreditProcessed`) the
+// moment the trip is fully paid — whether that's at creation (a pay-in-full
+// 'live'/'confirmed' booking, e.g. a paid exact-quote) or when the final
+// instalment clears in recordPayment. Rules:
+//   • MEMBERS ONLY (recurring-revenue payers).
+//   • PACKAGES ONLY — never flight-only. Flights are the near-free hook (members
+//     already pay no flight fee); 3% credit on a £0-fee flight is a straight loss.
+//   • CAPPED at 3JN's actual retained margin (the 25%-of-gross perk budget, less
+//     any member discount already drawn) — always paid out of real profit.
+function earnTravelCreditIfEligible(b, totalLocal) {
+  if (!b || b.travelCreditProcessed || !b.userId || !(TRAVEL_CREDIT_RATE > 0)) return;
+  const u = db.users.get(b.userId);
+  if (!u?.membership?.active) return;
+  const comps = b.option?.components || [];
+  const isFlightOnly = comps.length > 0 && comps.every((c) => c.type === 'flight');
+  if (isFlightOnly) return;
+  b.travelCreditProcessed = true; // fire once even if this booking earns £0
+  const usd = b.option?.totalUSD || 0;
+  const fx = usd > 0 ? totalLocal / usd : 1;
+  const lines = b.option?.pricing?.lines || {};
+  // The discount was already drawn at booking; credit gets only the REMAINDER
+  // of the 25%-of-gross perk budget, so discount + credit ≤ budget (≥3× keep).
+  const budgetLocal = round2((lines.memberPerkBudgetUSD || 0) * fx);
+  const discountLocal = round2((lines.loyaltyDiscountUSD || 0) * fx);
+  const creditCap = Math.max(0, round2(budgetLocal - discountLocal));
+  const earned = round2(Math.min(totalLocal * TRAVEL_CREDIT_RATE, creditCap));
+  if (earned > 0) {
+    u.travelCreditGbp = round2((u.travelCreditGbp || 0) + earned);
+    b.travelCreditEarned = earned;
+    recordAudit({ actor: 'system', role: 'system', action: 'travelcredit.earned', entity: 'user', entityId: u.id, summary: `+£${earned} Travel Credit on booking ${b.id}` });
+    try { pushNotification(u.id, { type: 'success', icon: '🎁', title: `You earned £${earned.toFixed(2)} Travel Credit`, body: `Thanks for booking with Travel+. Your £${earned.toFixed(2)} credit is ready to use towards your next trip.` }); } catch { /* best-effort */ }
+  }
+}
+
 export function recordPayment(bookingId, payment) {
   const b = normalizeBooking(db.bookings.get(bookingId));
   if (!b) return null;
@@ -1551,36 +1595,8 @@ export function recordPayment(bookingId, payment) {
       // Points ledger kept for history (no discount effect now).
       const totalPts = Math.round((b.option?.totalUSD || 0) * POINTS_PER_USD);
       if (totalPts > 0) { addPoints(b.userId, totalPts); }
-      // TRAVEL CREDIT — the member reward, designed to FUND ITSELF so it can never
-      // lose money:
-      //   • MEMBERS ONLY (recurring-revenue payers).
-      //   • PACKAGES ONLY — never a flight-only booking. Flights are the near-free
-      //     hook (members already pay no flight fee); paying 3% credit on top of a
-      //     £0-fee flight is a straight loss. Packages carry the 10% + bedbank margin
-      //     that pays for the reward.
-      //   • CAPPED at 3JN's actual retained margin on the booking — so the credit is
-      //     always paid out of real profit, never out of pocket.
-      const u = db.users.get(b.userId);
-      const comps = b.option?.components || [];
-      const isFlightOnly = comps.length > 0 && comps.every((c) => c.type === 'flight');
-      if (u?.membership?.active && TRAVEL_CREDIT_RATE > 0 && !isFlightOnly) {
-        const usd = b.option?.totalUSD || 0;
-        const fx = usd > 0 ? totalLocal / usd : 1;
-        const lines = b.option?.pricing?.lines || {};
-        // GOLDEN RULE: discount + credit together must stay within the 25%-of-gross
-        // perk budget, so 3JN always keeps ≥3× the total perk. The discount was
-        // already drawn at booking; credit gets only the REMAINDER of the budget.
-        const budgetLocal = round2((lines.memberPerkBudgetUSD || 0) * fx);
-        const discountLocal = round2((lines.loyaltyDiscountUSD || 0) * fx);
-        const creditCap = Math.max(0, round2(budgetLocal - discountLocal));
-        const earned = round2(Math.min(totalLocal * TRAVEL_CREDIT_RATE, creditCap));
-        if (earned > 0) {
-          u.travelCreditGbp = round2((u.travelCreditGbp || 0) + earned);
-          b.travelCreditEarned = earned;
-          recordAudit({ actor: 'system', role: 'system', action: 'travelcredit.earned', entity: 'user', entityId: u.id, summary: `+£${earned} Travel Credit on booking ${b.id}` });
-          try { pushNotification(u.id, { type: 'success', icon: '🎁', title: `You earned £${earned.toFixed(2)} Travel Credit`, body: `Thanks for booking with Travel+. Your £${earned.toFixed(2)} credit is ready to use towards your next trip.` }); } catch { /* best-effort */ }
-        }
-      }
+      // Travel Credit — the member reward — banks the moment the balance clears.
+      earnTravelCreditIfEligible(b, totalLocal);
       b.pointsAwarded = true;
     }
   }
@@ -2537,6 +2553,10 @@ export function createQuoteRequest({ userId = null, option, intent, contact = {}
     tier: option.tier,
     destination: intent?.destination?.city || intent?.destination?.code || '',
     components: (option.components || []).slice(0, 30).map((c) => ({ type: c.type, supplier: c.supplier, priceUSD: c.priceUSD, live: !!c.live })),
+    // Full priced option — kept so a PAID exact-quote can be turned into a REAL
+    // booking (revenue + Travel Credit + ops fulfilment), not just a "paid" flag.
+    // Deep-cloned so a later search mutation can't rewrite a captured quote.
+    option: (() => { try { return JSON.parse(JSON.stringify(option)); } catch { return option; } })(),
     estimatedTotalLocal: est,
     currency: option?.pricing?.currency || 'GBP',
     symbol: option?.pricing?.symbol || '£',
@@ -2577,14 +2597,93 @@ export function confirmQuoteRequest(requestId, { confirmedTotalLocal, confirmedB
   if (r.userId) pushNotification(r.userId, { type: 'success', icon: '✅', title: 'Your exact price is ready', body: `${r.destination} ${r.tier}: ${r.symbol}${amt} confirmed and bookable. Open your Console to pay securely and lock it in.` });
   return { ok: true, request: r };
 }
+// Rebuild a payable booking option from a confirmed exact-quote, priced at the
+// EXACT amount the customer paid. The stored option was priced at the estimate;
+// we rescale every money field to the confirmed/paid total so the margin lines
+// (memberPerkBudgetUSD, loyaltyDiscountUSD, commission…) that fund Travel Credit
+// and revenue stay consistent with what was actually charged.
+function buildQuoteBookingOption(r, paidLocal) {
+  const base = r.option;
+  if (!base || typeof base !== 'object') return null;
+  let opt;
+  try { opt = JSON.parse(JSON.stringify(base)); } catch { return null; }
+  opt.pricing = opt.pricing || {};
+  const target = round2(Number(paidLocal) || 0) || (r.confirmedTotalLocal || r.estimatedTotalLocal || 0);
+  const oldLocal = opt.pricing?.local?.total || r.confirmedTotalLocal || r.estimatedTotalLocal || target || 0;
+  const scale = oldLocal > 0 && target > 0 ? target / oldLocal : 1;
+  opt.pricing.local = { ...(opt.pricing.local || {}), total: target };
+  if (opt.pricing.symbol == null) opt.pricing.symbol = r.symbol || '£';
+  if (opt.pricing.currency == null) opt.pricing.currency = r.currency || 'GBP';
+  const oldTotalUSD = opt.totalUSD || opt.pricing?.total || 0;
+  opt.totalUSD = round2(oldTotalUSD > 0 ? oldTotalUSD * scale : target / GBP_ANCHOR);
+  if (opt.pricing.total != null) opt.pricing.total = opt.totalUSD;
+  // Rescale the priced components and the revenue/margin lines proportionally.
+  if (Array.isArray(opt.components)) {
+    opt.components = opt.components.map((c) => (c && typeof c === 'object' && typeof c.priceUSD === 'number')
+      ? { ...c, priceUSD: round2(c.priceUSD * scale) } : c);
+  }
+  if (opt.pricing.lines && typeof opt.pricing.lines === 'object') {
+    for (const k of Object.keys(opt.pricing.lines)) {
+      if (typeof opt.pricing.lines[k] === 'number') opt.pricing.lines[k] = round2(opt.pricing.lines[k] * scale);
+    }
+  }
+  if (opt.pricing.revenue && typeof opt.pricing.revenue === 'object') {
+    for (const k of Object.keys(opt.pricing.revenue)) {
+      if (typeof opt.pricing.revenue[k] === 'number') opt.pricing.revenue[k] = round2(opt.pricing.revenue[k] * scale);
+    }
+  }
+  opt.priceBasis = 'confirmed';
+  return opt;
+}
+
 export function markQuoteRequestPaid(requestId, { amount, gateway = 'stripe', reference = '' } = {}) {
   const r = db.quoteRequests.find((x) => x.id === requestId);
   if (!r) return { ok: false, error: 'not-found' };
+  // IDEMPOTENCY: Stripe re-delivers checkout.session.completed. If this quote was
+  // already converted to a booking, don't create a second one (double revenue,
+  // double Travel Credit) — just return the existing booking.
+  if (r.bookingId) {
+    return { ok: true, request: r, booking: getBooking(r.bookingId), already: true };
+  }
   r.status = 'paid';
   r.depositPaid = true;
   r.payment = { amount, gateway, reference, at: nowISO() };
-  recordAudit({ actor: r.userId || 'guest', role: 'consumer', action: 'quote.paid', entity: 'quoteRequest', entityId: r.id, summary: `${gateway} ${r.symbol}${amount}` });
-  return { ok: true, request: r };
+  // CONVERT TO A REAL BOOKING. Without this a paid exact-quote was invisible:
+  // it never appeared in the customer console or the ops desk, banked no
+  // revenue, and earned no Travel Credit. Now the confirmed price becomes a
+  // real 'confirmed' booking, the payment is recorded (which fires revenue,
+  // loyalty, Travel Credit and the fulfilment desk), and ops can fulfil it.
+  const paidLocal = round2(Number(amount) || 0) || (r.confirmedTotalLocal || r.estimatedTotalLocal || 0);
+  let booking = null;
+  try {
+    const option = buildQuoteBookingOption(r, paidLocal);
+    if (option) {
+      booking = createBooking({
+        option,
+        userId: r.userId || null,
+        paymentMethod: 'card',
+        confirmedPrice: true,
+        lead: {
+          fullName: r.contact?.name || '',
+          email: r.contact?.email || '',
+          phone: r.contact?.phone || '',
+        },
+      });
+      // Pay-in-full at the exact confirmed price → records revenue, clears the
+      // plan, banks loyalty + Travel Credit, and hands the booking to ops.
+      recordPayment(booking.id, { type: 'full', amount: paidLocal, gateway, reference: reference || `qr:${r.id}`, status: 'paid' });
+      r.bookingId = booking.id;
+    }
+  } catch (e) {
+    // The payment is still captured on the quote even if booking build fails —
+    // support/ops can reconcile from the audit trail rather than losing money.
+    console.error('[quote.paid→booking]', e?.message || e);
+  }
+  recordAudit({ actor: r.userId || 'guest', role: 'consumer', action: 'quote.paid', entity: 'quoteRequest', entityId: r.id, summary: `${gateway} ${r.symbol}${amount}${r.bookingId ? ` → booking ${r.bookingId}` : ' (booking build failed)'}` });
+  if (r.userId && r.bookingId) {
+    pushNotification(r.userId, { type: 'success', icon: '🧳', title: 'Trip booked', body: `Your ${r.destination || r.tier} trip is booked at the exact quoted price. Track it and your documents in your Console.` });
+  }
+  return { ok: true, request: r, booking };
 }
 export function listQuoteRequests({ userId = null, status = null } = {}) {
   let out = db.quoteRequests;

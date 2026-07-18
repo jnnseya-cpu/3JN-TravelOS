@@ -82,7 +82,7 @@ import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
-import { subscribeMembership, renewMembership, spendAcu, buyAcu, redeemTravelCredit } from '../src/store.js';
+import { subscribeMembership, renewMembership, spendAcu, buyAcu, redeemTravelCredit, listBookings } from '../src/store.js';
 
 // A PACKAGE option (flight + hotel) carrying a member perk budget (25% of gross) +
 // any discount already drawn, so Travel Credit (budget-shared, capped) can be earned.
@@ -2935,6 +2935,37 @@ test('exact-quote flow: estimated option → lead + deposit intent → confirmed
   const paid = markQuoteRequestPaid(req.request.id, { amount: 2480.5, gateway: 'stripe', reference: 'cs_live_1' });
   assert.equal(paid.request.status, 'paid');
   assert.equal(paid.request.depositPaid, true);
+  // A PAID exact-quote must become a REAL, findable booking (not just a flag) —
+  // otherwise it's invisible in the console/ops desk and earns nothing.
+  assert.ok(paid.booking, 'paid quote creates a real booking');
+  assert.equal(paid.request.bookingId, paid.booking.id, 'quote links to its booking');
+  assert.equal(paid.booking.priceBasis, 'confirmed', 'agent-confirmed price is payable/confirmed');
+  assert.ok(Math.abs((paid.booking.option?.pricing?.local?.total || 0) - 2480.5) < 0.01, 'booked at the exact paid price');
+  assert.ok(getBookingById(paid.booking.id), 'booking is retrievable by id');
+  assert.ok(listBookings(user.id).some((b) => b.id === paid.booking.id), 'appears in the customer console list');
+  assert.ok((paid.booking.payments || []).some((p) => Number(p.amount) > 0), 'the payment is recorded (revenue banked)');
+
+  // IDEMPOTENCY: a redelivered Stripe webhook must not create a second booking.
+  const again = markQuoteRequestPaid(req.request.id, { amount: 2480.5, gateway: 'stripe', reference: 'cs_live_1' });
+  assert.equal(again.already, true, 'second call is a no-op');
+  assert.equal(again.booking.id, paid.booking.id, 'same booking, not a duplicate');
+});
+
+test('exact-quote: a member earns Travel Credit on a paid PACKAGE quote', () => {
+  const m = createUser({ name: 'QuoteMember', email: `qr.member.${Date.now()}@x.co` });
+  subscribeMembership(m.id, 'plus');
+  const before = getUserById(m.id).travelCreditGbp || 0;
+  // A packaged (flight+hotel) option carrying the perk-budget line.
+  const option = pkgOpt(1000, 40, 0);
+  const qr = createQuoteRequest({
+    userId: m.id, option, intent: { destination: { city: 'Rome' } },
+    contact: { name: 'QuoteMember', email: 'qr.member@x.co' }, depositIntentGBP: 20,
+  });
+  confirmQuoteRequest(qr.request.id, { confirmedTotalLocal: 1000, confirmedBy: 'agent_1' });
+  const paid = markQuoteRequestPaid(qr.request.id, { amount: 1000, gateway: 'stripe', reference: `cs_qr_${Date.now()}` });
+  assert.ok(paid.booking, 'quote converted to a booking');
+  const earned = (getUserById(m.id).travelCreditGbp || 0) - before;
+  assert.ok(Math.abs(earned - 30) < 0.01, 'member earns the full 3% Travel Credit on the paid package');
 });
 
 test('exact-quote endpoints: request public, confirm admin-gated, pay refuses un-priced', async () => {
