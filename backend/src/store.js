@@ -1407,7 +1407,7 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
   }
 
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'booking.created', entity: 'booking', entityId: bookingId, summary: `${option.tier} via ${gateway} ($${option.totalUSD})` });
-  if (userId) pushNotification(userId, { type: 'success', icon: '✅', title: 'Booking confirmed', body: `${option.tier} package — deposit paid. Price Guard is now active.` });
+  if (userId) pushNotification(userId, { type: 'success', icon: '✅', title: 'Booking confirmed', body: `${option.tier} package — deposit paid. Your price is locked and protected until you travel.` });
 
   // High-value bookings enter the business approval queue.
   if (option.totalUSD >= 4000) {
@@ -1553,7 +1553,7 @@ export function logPriceEvent(bookingId, event) {
   capArr(db.priceEvents, PRICE_EVENT_CAP);
   recordAudit({ actor: 'savings-guard-agent', role: 'agent', action: `priceguard.${event.action}`, entity: 'booking', entityId: bookingId, summary: event.message });
   if (b?.userId && event.action !== 'hold') {
-    pushNotification(b.userId, { type: event.action === 'rebook-refund' ? 'success' : 'info', icon: '🛡', title: 'Price Guard update', body: event.message });
+    pushNotification(b.userId, { type: event.action === 'rebook-refund' ? 'success' : 'info', icon: '🛡', title: 'Price Lock', body: event.message });
   }
   return event;
 }
@@ -3610,7 +3610,7 @@ function buildFulfilment(bookingId, option) {
     checkInStatus: 'Opens after ticketing',
     refundability: free ? 'Refundable (fare rules apply)' : 'Non-refundable — taxes refundable on request',
     changeRules: free ? 'Date changes permitted; fare difference may apply' : 'Changes with fee + fare difference',
-    cancellationRules: free ? 'Free cancellation until 48h before departure' : 'Cancellation fee applies; 3JN Price Guard credit on rebooking',
+    cancellationRules: free ? 'Free cancellation until 48h before departure' : 'Cancellation fee applies per fare rules',
   };
 }
 
@@ -3675,7 +3675,7 @@ export function osIntegrationMap() {
     { from: 'Booking', to: 'Master Travel Profile', via: 'checkout details backfill the profile', fired: osLinkCounters['booking→profile'] || 0 },
     { from: 'Booking', to: 'Host Marketplace', via: 'hosts notified of reservations + 90% payout ledger', fired: osLinkCounters['booking→host'] || 0 },
     { from: 'Booking', to: 'VisaOS', via: 'visa-required trips trigger a prefilled application nudge', fired: osLinkCounters['booking→visaos'] || 0 },
-    { from: 'Booking', to: 'Price Guard', via: '24/7 monitoring armed on confirmation', live: true },
+    { from: 'Booking', to: 'Price Lock', via: 'price fixed in booking terms on confirmation', live: true },
     { from: 'Reviews', to: 'Supplier Scores', via: 'ratings blend into reliability rankings', live: true },
     { from: 'Reviews', to: 'Host Marketplace', via: 'guest reviews move listing reliability', fired: osLinkCounters['review→host'] || 0 },
     { from: 'VisaOS', to: 'Planner', via: 'approval probability shown before booking', live: true },

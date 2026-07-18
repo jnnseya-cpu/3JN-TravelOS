@@ -599,14 +599,19 @@ test('payment rail policy: Stripe carries all money in until BitriPay ships', ()
   assert.equal(card.gateway, 'stripe');
 });
 
-test('price guard refunds the difference when price drops', () => {
+test('price lock protects against a rise and NEVER fabricates a refund on a drop', () => {
   const user = createUser({ name: 'Test' });
   const option = { totalUSD: 1000, pricing: { lines: { totalUSD: 1000 }, local: { total: 790 }, revenue: { commissionUSD: 100, savingsShareUSD: 10 } } };
   const quote = saveQuote({ option, intent: { dates: { checkIn: '2026-08-12' } } });
   const booking = createBooking({ quoteId: quote.id, option, instalment: instalmentPlan({ totalLocal: 790, currency: GB.currency, months: 3, depositPct: 0.2 }), userId: user.id });
-  const event = runPriceGuard(booking.id, -0.10); // force a 10% drop
-  assert.equal(event.action, 'rebook-refund');
-  assert.ok(event.refundUSD > 0);
+  // A market RISE is reported as protection — the real value of the lock.
+  const rise = runPriceGuard(booking.id, 0.10);
+  assert.equal(rise.action, 'rate-locked');
+  assert.equal(rise.refundUSD, 0, 'a price lock never pays out a refund');
+  // A "drop" is NEVER fabricated into a refund payment line.
+  const drop = runPriceGuard(booking.id, -0.10);
+  assert.notEqual(drop.action, 'rebook-refund', 'no fabricated rebooking/refund on a simulated drop');
+  assert.ok(!(booking.payments || []).some((p) => p.type === 'price-guard-refund'), 'no fabricated refund is recorded against the booking');
 });
 
 test('Dubai land products are sourced via the Rayna Tours agent account at net rates', () => {

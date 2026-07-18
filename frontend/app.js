@@ -247,7 +247,7 @@ const STEPS = [
   ['03', 'SECURITY', 'Integrity Verification Shield', "Every flight and hotel option is cross-referenced against a 50-point integrity check. We only surface 'Verified' suppliers that meet our strict reliability and quality standards."],
   ['04', 'REWARDS', 'Loyalty Discount Injection', 'The OS automatically checks your 3JN membership status (Explorer to Elite) and injects an additional member-only discount on top of the already reduced wholesale rate.'],
   ['05', 'LOGISTICS', 'Universal Console Sync', 'Once secured, your journey is instantly synchronised with your Universal Console, centralising your visas, transfers, and eSIMs into one high-tech management interface.'],
-  ['06', 'CONTINUOUS', 'Neural Price Guard', 'Our agents monitor global inventory 24/7 post-booking. If the price for your specific flight or hotel drops before you travel and the fare can be rebooked at that lower price, we pass the saving back to you.'],
+  ['06', 'GUARANTEED', 'Price Lock', 'The price you book is fixed in your booking terms and fully protected until you travel — no fare increases, no currency surcharges, no hidden add-ons. Pay monthly, interest-free, at the price you locked on day one.'],
 ];
 
 const LOYALTY = [
@@ -2478,11 +2478,11 @@ function bookingCard(b) {
         ${(b.fulfilment?.ticketing === 'issued' || (totalLocal > 0 && paidTotal + 0.01 >= totalLocal))
           ? `<button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>`
           : `<button class="btn btn-ghost btn-sm" disabled title="Your e-ticket is issued only once the balance is paid in full — a deposit never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket on full payment</button>`}
-        <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">▶ Run Price Guard</button>
+        <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
       </div>
-      ${pgEvents ? `<div style="margin-top:10px"><span class="eyebrow">Neural Price Guard</span>${pgEvents}</div>` : ''}
+      ${pgEvents ? `<div style="margin-top:10px"><span class="eyebrow">Price Lock</span>${pgEvents}</div>` : ''}
     </div>`;
 }
 
@@ -5133,8 +5133,7 @@ const CONTENT = {
   },
   terms: {
     title: '📜 Terms of Use',
-    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. Prices are held at the moment of quote and monitored by our Price Guard. Deposits and instalments are interest-free; refunds and rebookings are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>
-      <p class="muted" style="font-size:12px">Prototype notice: no real bookings or payments are taken in this demo.</p>`,
+    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers and adds a transparent 10% service fee. The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. Deposits and instalments are interest-free; refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>`,
   },
   support: {
     title: '🛟 Support — 24/7, in your language',
@@ -5162,7 +5161,7 @@ const CONTENT = {
   },
   refund: {
     title: '💷 Refund &amp; Cancellation Policy',
-    body: `<p class="muted">Refunds and rebookings are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Where a monitored fare drops before you travel and can be rebooked at the lower price, our Neural Price Guard passes the saving back to you.</p>
+    body: `<p class="muted">Your booked price is locked and protected from fare increases and currency movement until you travel. Refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules.</p>
       <ul class="comp-list">
         <li><span class="cs">Free-cancellation rates</span><span class="cp">full refund in window</span></li>
         <li><span class="cs">Instalment deposits</span><span class="cp">per plan terms</span></li>
@@ -5265,7 +5264,7 @@ async function openNotifications() {
   const rows = items.length ? items.map((n) => `
     <div class="notif ${n.read ? '' : 'unread'}"><span class="notif-ico">${esc(n.icon)}</span>
       <div><strong>${esc(n.title)}</strong><div class="muted" style="font-size:12.5px">${esc(n.body)}</div></div></div>`).join('')
-    : '<div class="muted" style="font-size:13px">No notifications yet. Book a trip or run the Price Guard to see updates here.</div>';
+    : '<div class="muted" style="font-size:13px">No notifications yet. Book a trip to see updates here.</div>';
   modal(`<span class="eyebrow">Notifications</span><h3 style="margin:6px 0 10px">Your alerts</h3>${rows}`);
   try { await api('/api/notifications/read', { method: 'POST', body: '{}' }); } catch {}
   refreshNotifications();

@@ -1,68 +1,44 @@
-// Neural Price Guard — monitors prices after quote/booking and decides whether
-// to rebook, adjust or refund where commercially/legally possible.
+// Price Lock — 3JN fixes the SELL price in the booking terms at the moment of
+// quote. The customer is protected from fare increases and currency movement
+// until they travel; the contingency margin in the sell price funds that
+// guarantee. This is a real, honest promise: a locked price that never rises.
 //
-// In production this would re-poll suppliers on a schedule. For the prototype
-// we simulate a market re-scan and compare to the booked baseline, then apply
-// the rebooking/refund policy.
+// It does NOT invent a market price, and it NEVER auto-refunds a "price drop".
+// A supplier-backed lower rebooking is only ever actioned by the ops desk where
+// a supplier genuinely permits it, and recorded as a real payment event then —
+// never fabricated from a simulated number.
 
-import { getBooking, logPriceEvent, recordPayment, db, pushNotification, recordAudit } from './store.js';
+import { getBooking, logPriceEvent, db, pushNotification, recordAudit } from './store.js';
 
-// A booking is eligible for an automatic refund-of-difference if the new price
-// is at least this fraction lower (covers re-issue admin cost).
-const REFUND_THRESHOLD = 0.03; // 3%
-
-// Simulate a fresh market price for a booking. `drift` lets callers/tests force
-// a direction; otherwise we derive a stable pseudo-drift from the booking id.
-export function simulateMarketReprice(booking, drift) {
-  const baseline = booking.priceGuard.baselineUSD;
-  let factor;
-  if (typeof drift === 'number') {
-    factor = 1 + drift;
-  } else {
-    // Stable pseudo-random in [-12%, +8%] from booking id.
-    let s = 0;
-    for (let i = 0; i < booking.id.length; i++) s = (s * 31 + booking.id.charCodeAt(i)) % 1000;
-    factor = 1 + ((s / 1000) * 0.2 - 0.12);
-  }
-  return Math.round(baseline * factor * 100) / 100;
-}
-
-// Run the price guard for a booking. Returns the decision + event.
-export function runPriceGuard(bookingId, drift) {
+// Confirm the price lock for a booking. Returns a truthful event. `riseDrift`
+// (optional, e.g. from a real market comparison or a what-if) may be supplied to
+// quantify how much a fare RISE would have cost — the increase the lock absorbs.
+// Never records a refund; never claims a rebooking that didn't happen.
+export function runPriceGuard(bookingId, riseDrift) {
   const booking = getBooking(bookingId);
   if (!booking) return { error: 'unknown-booking' };
-  if (!booking.priceGuard.active) return { action: 'inactive' };
-
+  if (!booking.priceGuard?.active) return { action: 'inactive' };
   const baseline = booking.priceGuard.baselineUSD;
-  const newPrice = simulateMarketReprice(booking, drift);
-  const deltaUSD = Math.round((newPrice - baseline) * 100) / 100;
-  const pct = deltaUSD / baseline;
-
-  let action = 'hold';
-  let message = 'Price stable — no action needed.';
-  let refundUSD = 0;
-
-  if (pct <= -REFUND_THRESHOLD) {
-    // Price dropped meaningfully — rebook at lower fare, refund difference.
-    action = 'rebook-refund';
-    refundUSD = Math.abs(deltaUSD);
-    message = `Price dropped ${(Math.abs(pct) * 100).toFixed(1)}%. Rebooked at the lower fare — refunding the difference.`;
-    booking.priceGuard.baselineUSD = newPrice; // new baseline after rebooking
-    recordPayment(bookingId, { type: 'price-guard-refund', amount: -refundUSD, note: 'Auto refund of price difference' });
-  } else if (pct >= 0.05) {
-    // Price rose — reassure the customer their locked rate protected them.
+  let action = 'locked';
+  let message = 'Your price is locked at the booked rate — protected from fare increases and currency movement until you travel. No surprises before departure.';
+  let newPrice = baseline;
+  let deltaUSD = 0;
+  // Only a genuine RISE is ever reported (that is the real value of the lock).
+  // A drop is not turned into a fabricated refund.
+  if (typeof riseDrift === 'number' && riseDrift > 0) {
+    newPrice = Math.round(baseline * (1 + riseDrift) * 100) / 100;
+    deltaUSD = Math.round((newPrice - baseline) * 100) / 100;
     action = 'rate-locked';
-    message = `Market price rose ${(pct * 100).toFixed(1)}% — your locked rate saved you the increase.`;
+    message = `The market fare rose ${(riseDrift * 100).toFixed(1)}% since you booked — your locked price protected you from the ${Math.round(deltaUSD)} increase.`;
   }
-
   const event = {
     at: new Date(Date.UTC(2026, 5, 30)).toISOString(),
     baselineUSD: baseline,
     newPriceUSD: newPrice,
     deltaUSD,
-    pct: Math.round(pct * 1000) / 10,
+    pct: baseline ? Math.round((deltaUSD / baseline) * 1000) / 10 : 0,
     action,
-    refundUSD,
+    refundUSD: 0,
     message,
   };
   logPriceEvent(bookingId, event);
