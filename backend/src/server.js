@@ -135,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-bedbank-hotel-margin-v138';
+const BUILD_TAG = '2026-07-18-trustpilot-afs-verified-invites-v139';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -501,6 +501,10 @@ async function emailBookingConfirmation(booking) {
       text: `Your ${booking.option?.tier || ''} trip is confirmed and paid in full (3JN reference ${booking.id}). Your booking confirmation is attached as a PDF and the full document is in your Console.`,
       html,
       attachments,
+      // Trustpilot AFS: BCC the invite address so Trustpilot sends the customer a
+      // VERIFIED review invitation (timing controlled in the Trustpilot dashboard).
+      // No-op until TRUSTPILOT_AFS_EMAIL is set.
+      bcc: trustpilotAfsEmail() || undefined,
     });
     recordAudit({ actor: 'system', role: 'system', action: 'booking.confirmation-emailed', entity: 'booking', entityId: booking.id, summary: `full document emailed to ${to}` });
   } catch (e) { booking.confirmationEmailSent = false; console.error('[confirm-email]', e?.message || e); }
@@ -825,15 +829,25 @@ function publicContact() {
     },
   };
 }
+// The Trustpilot Automatic Feedback Service (AFS) BCC address — BCC it on a
+// transactional email and Trustpilot sends the customer a VERIFIED review
+// invitation. Kept server-side only (it carries an account secret); never sent
+// to the browser.
+function trustpilotAfsEmail() {
+  const e = String(process.env.TRUSTPILOT_AFS_EMAIL || '').trim();
+  return /@invite\.trustpilot\.com$/i.test(e) ? e : null;
+}
 function trustpilotConfig() {
   const domain = String(process.env.TRUSTPILOT_DOMAIN || '').trim();
-  if (!domain) return null; // no domain → no widget, no invites (nothing fake)
+  const afs = trustpilotAfsEmail();
+  if (!domain && !afs) return null; // nothing configured → no widget, no invites
   return {
-    domain,
+    domain: domain || null,
     businessUnitId: String(process.env.TRUSTPILOT_BUSINESS_UNIT_ID || '').trim() || null,
     templateId: String(process.env.TRUSTPILOT_TEMPLATE_ID || '').trim() || null,
-    reviewUrl: `https://www.trustpilot.com/review/${domain}`,
-    evaluateUrl: `https://www.trustpilot.com/evaluate/${domain}`,
+    reviewUrl: domain ? `https://www.trustpilot.com/review/${domain}` : null,
+    evaluateUrl: domain ? `https://www.trustpilot.com/evaluate/${domain}` : null,
+    verifiedInvites: !!afs, // the browser only learns IF verified invites are on
   };
 }
 
@@ -2644,8 +2658,11 @@ function bookingEndISO(b) {
 // TRUSTPILOT_DOMAIN — with no Trustpilot configured, nothing is ever sent. The
 // `reviewInviteSent` flag is persisted per booking so it fires exactly once.
 async function sendReviewInvites(today) {
+  // If the Trustpilot AFS is configured, Trustpilot already sends a VERIFIED invite
+  // off the confirmation BCC — don't also send our own (no double emails).
+  if (trustpilotAfsEmail()) return { invited: 0, viaAfs: true };
   const tp = trustpilotConfig();
-  if (!tp || !isMailerEnabled()) return { invited: 0 };
+  if (!tp || !tp.evaluateUrl || !isMailerEnabled()) return { invited: 0 };
   const todayISO = today || new Date().toISOString().slice(0, 10);
   let invited = 0;
   for (const b of allBookings()) {

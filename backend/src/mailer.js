@@ -42,11 +42,11 @@ export function initMailer() {
 export function isMailerEnabled() { return enabled; }
 
 // Send an email. Returns { ok, skipped? } — never throws (email is non-critical).
-export async function sendMail({ to, subject, html, text, replyTo, attachments }) {
+export async function sendMail({ to, subject, html, text, replyTo, attachments, bcc }) {
   if (!enabled) return { ok: false, skipped: true };
   if (!to || /@guest\.3jn$/.test(to)) return { ok: false, skipped: true, reason: 'no-real-recipient' };
   try {
-    const info = await transporter.sendMail({ from: MAIL_FROM, to, subject, html, text, replyTo, ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}) });
+    const info = await transporter.sendMail({ from: MAIL_FROM, to, subject, html, text, replyTo, ...(bcc ? { bcc } : {}), ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}) });
     return { ok: true, id: info.messageId };
   } catch (err) {
     console.warn('[mail] send failed:', err?.message || err);
@@ -64,7 +64,7 @@ export function bookingEmail(option, booking) {
       <p style="color:#9aa6c4;margin:0 0 16px">Booking confirmed · ${booking.id}</p>
       <p><strong>${option.tier} package</strong> — total ${p.symbol}${p.local.total}, paid via ${booking.gateway}.</p>
       <ul style="color:#9aa6c4">${comps}</ul>
-      <p style="color:#46d39a">Your Neural Price Guard is now active — if your fare can be rebooked at a lower price before you travel, we pass the saving back to you.</p>
+      <p style="color:#46d39a">Your price is locked — no fare increases or currency surcharges before you travel. Pay monthly, interest-free, at the price you locked today.</p>
       <p style="color:#6b7799;font-size:12px">Questions? Reply to this email or contact info@3jntravel.com.<br/>Powered by Artificial Intelligence · Built for Better Travel.</p>
     </div>`;
   return { subject: `Your 3JN booking is confirmed (${booking.id})`, html, text: `Booking ${booking.id} confirmed — ${option.tier}, ${p.symbol}${p.local.total}.` };
