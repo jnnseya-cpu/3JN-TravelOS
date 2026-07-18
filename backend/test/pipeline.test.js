@@ -1074,24 +1074,24 @@ test('AI cost optimisation guarantees the 66% minimum saving floor', () => {
 });
 
 test('membership: 20% of the subscription auto-funds ACUs at £1 = 100 ACU', () => {
-  // Allocation rule holds for every tier (20% of the plan funds AI).
+  // Allocation rule holds for every tier (10% of the fee funds AI — matches the card).
   for (const t of MEMBERSHIP_TIERS) {
-    assert.equal(t.acuPerMonth, Math.round(t.pricePerMonth * 0.20 * ACU_PER_GBP));
+    assert.equal(t.acuPerMonth, Math.round(t.pricePerMonth * 0.10 * ACU_PER_GBP));
   }
   const u = createUser({ name: 'MemTest' });
   assert.equal(u.acuBalance, 50, 'new users get a 50 ACU starter to try searches');
   assert.equal(u.membership, null);
 
-  const sub = subscribeMembership(u.id, 'family'); // monthly £11.99 -> 240 ACU (20%)
+  const sub = subscribeMembership(u.id, 'family'); // monthly £11.99 -> 120 ACU (10%)
   assert.equal(sub.ok, true);
-  assert.equal(sub.acuCredited, 240);
-  assert.equal(sub.user.acuBalance, 290, '50 starter + 240 funded');
+  assert.equal(sub.acuCredited, 120);
+  assert.equal(sub.user.acuBalance, 170, '50 starter + 120 funded');
   assert.equal(sub.user.membership.active, true);
 
   // Each billing period re-funds the allocation.
   const ren = renewMembership(u.id);
-  assert.equal(ren.acuCredited, 240);
-  assert.equal(ren.user.acuBalance, 530);
+  assert.equal(ren.acuCredited, 120);
+  assert.equal(ren.user.acuBalance, 290);
 });
 
 test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU', () => {
@@ -2114,9 +2114,9 @@ test('comp elite: admin grants free Elite x2 (2,000 ACU/mo), capped at 5', () =>
     const r = grantComplimentaryElite(admin.id, friend.email);
     assert.equal(r.ok, true, `slot ${i}`);
     assert.equal(r.user.membership.pricePerMonth, 0, 'free');
-    assert.equal(r.user.membership.acuPerMonth, 480, '2x Travel+ Family ACU (£11.99 → 240/mo at 20%)');
+    assert.equal(r.user.membership.acuPerMonth, 240, '2x Travel+ Family ACU (£11.99 → 120/mo at 10%)');
     assert.equal(r.user.membership.complimentary, true);
-    assert.ok(r.user.acuBalance >= 480, 'first month credited');
+    assert.ok(r.user.acuBalance >= 240, 'first month credited');
   }
   assert.equal(compEliteCount(), 5);
   // The sixth grant is refused — hard cap.

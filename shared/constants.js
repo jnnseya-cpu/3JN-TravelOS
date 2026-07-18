@@ -85,10 +85,10 @@ export const ACU_ACTIONS = {
 export const ACU_GBP = 0.003;
 // Customer-facing sale/allocation rate: £1 buys 100 ACUs (members + top-ups).
 export const ACU_PER_GBP = 100;
-// Share of every membership subscription that is auto-converted to ACUs each
-// billing period (the "20% of your plan funds your AI" rule) — members spend
-// this on searches at the margin price and top up when it runs out.
-export const MEMBERSHIP_ACU_FUND_RATE = 0.20;
+// Share of every membership fee returned as ACU on joining/renewal (the "10% of
+// your fee funds your AI" rule shown on the cards). 10% keeps it consistent with
+// the displayed figure AND leans profitable — members top up per search after.
+export const MEMBERSHIP_ACU_FUND_RATE = 0.10;
 
 // ---- Membership plans (blueprint §3.1) ------------------------------------
 // Each plan auto-funds ACUs every billing period: 20% of the subscription,

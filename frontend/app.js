@@ -283,8 +283,8 @@ const STEPS = [
 
 const LOYALTY = [
   ['Free', 'Pay per use', 'Book flights (2% fee) & hotels · pay with ACUs for AI search'],
-  ['Travel+', '£5.99/yr', 'Flat £4.99 flight fee · up to 5% off packages · up to 3% back'],
-  ['Travel+ Family', '£11.99/yr', 'Everything in Travel+ · up to 7% off · family perks'],
+  ['Travel+', '£11.98/yr', 'Flat £4.99 flight fee · up to 5% off packages · up to 3% back'],
+  ['Travel+ Family', '£23.98/yr', 'Everything in Travel+ · up to 7% off · family perks'],
 ];
 
 // Pricing model: pay-as-you-go is the headline (search costs 5-20 ACU; no
@@ -309,7 +309,7 @@ function tierCardsHTML() {
     const acu = Math.round(yearNum * 0.10 * 100);                  // 10% back as ACU (£1 = 100 ACU)
     return `<div class="card tier ${t.feature ? 'feature' : ''}">
       ${t.feature ? `<span class="badge-top">${t.badge}</span>` : ''}
-      <div class="save-chip">Est. Savings ${t.save}</div>
+      <div class="save-chip">${t.save}</div>
       <h3>${t.name}</h3>
       <div class="price">£${yearNum.toLocaleString(undefined, { minimumFractionDigits: 2 })}<span> /year</span></div>
       <div class="muted" style="font-size:11.5px;margin:-4px 0 8px">one-off annual · no monthly charge</div>
@@ -5577,8 +5577,9 @@ function mountWhatsApp() {
   a.target = '_blank'; a.rel = 'noopener';
   a.title = 'Chat with us on WhatsApp';
   a.setAttribute('aria-label', 'Chat with us on WhatsApp');
-  a.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:900;width:56px;height:56px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.3);text-decoration:none;font-size:28px';
-  a.innerHTML = '<span style="filter:grayscale(0)">💬</span>';
+  // Sit ABOVE the gold assistant FAB (58px @ bottom:20px) so the two never overlap.
+  a.style.cssText = 'position:fixed;right:21px;bottom:90px;z-index:899;width:54px;height:54px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.3);text-decoration:none;font-size:26px';
+  a.innerHTML = '<span aria-hidden="true">✆</span>';
   document.body.appendChild(a);
 }
 
