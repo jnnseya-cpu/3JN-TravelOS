@@ -50,6 +50,7 @@ import {
   createDeal, updateDeal, setDealActive, deleteDeal, getDeal, publicDeal,
   listDeals, listDealsAdmin, dealTotalGBP, buildDealOption, createDealFulfilment,
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
+  getModuleFlags, setModuleFlags,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -134,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-testimonials-checkout-wa-v135';
+const BUILD_TAG = '2026-07-18-module-toggles-wa-header-v136';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -841,6 +842,7 @@ app.get('/api/context', safe((req, res) => {
     context: detectContext(req),
     contact: publicContact(),
     trustpilot: trustpilotConfig(),
+    modules: getModuleFlags(), // VisaOS / Corporate / Embassy on-off (else "Coming Soon")
     currencies: listCurrencies(),
     searchTiers: SEARCH_TIERS,
     membershipTiers: MEMBERSHIP_TIERS,
@@ -1127,6 +1129,19 @@ app.post('/api/admin/testimonials/:id/moderate', safe((req, res) => {
   const result = moderateTestimonial(req.params.id, { status, by: currentUser(req)?.name || 'admin' });
   if (!result.ok) return res.status(result.error === 'not-found' ? 404 : 400).json(result);
   res.json(result);
+}));
+
+// ---- Module flags: admin turns VisaOS / Corporate / Embassy on or off ------
+// Off → the app shows a "Coming Soon" placeholder for that module (keeps the
+// launch focused on the core booking flow). Read from /api/context.modules.
+app.get('/api/admin/modules', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ modules: getModuleFlags() });
+}));
+app.post('/api/admin/modules', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const modules = setModuleFlags(req.body || {}, currentUser(req)?.name || 'admin');
+  res.json({ ok: true, modules });
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------

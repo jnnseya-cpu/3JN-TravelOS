@@ -69,6 +69,7 @@ const db = {
   processedStripeEvents: [], // Stripe event ids already fulfilled (idempotency — Stripe redelivers at-least-once)
   deals: new Map(), // Curated real-product catalogue (admin-managed, really bookable)
   testimonials: new Map(), // First-party customer testimonials { id, name, location, rating, text, photo, bookingId, userId, consentPublic, status, at } — admin-moderated before public display
+  settings: new Map(), // Operator-controlled settings, keyed (e.g. 'modules' -> { visaos, corporate, embassy }) — admin-toggleable feature flags
 };
 
 // Ring-buffer cap for the high-frequency append-only logs. Without this they
@@ -1637,6 +1638,25 @@ export function publicTestimonials(limit = 24) {
     id: t.id, name: t.name, location: t.location, rating: t.rating, text: t.text, photo: t.photo, at: t.at,
   }));
 }
+// ---- Module flags (operator turns modules on / off → "Coming Soon") -----------
+// Non-core modules default OFF so a launch stays focused; the admin flips them on
+// from the console. When a module is off the app shows a "Coming Soon" placeholder.
+const MODULE_KEYS = ['visaos', 'corporate', 'embassy'];
+const DEFAULT_MODULES = { visaos: false, corporate: false, embassy: false };
+export function getModuleFlags() {
+  const saved = db.settings.get('modules') || {};
+  const out = {};
+  for (const k of MODULE_KEYS) out[k] = typeof saved[k] === 'boolean' ? saved[k] : DEFAULT_MODULES[k];
+  return out;
+}
+export function setModuleFlags(patch = {}, by = 'admin') {
+  const cur = getModuleFlags();
+  for (const k of MODULE_KEYS) if (typeof patch[k] === 'boolean') cur[k] = patch[k];
+  db.settings.set('modules', cur);
+  recordAudit({ actor: by, role: 'admin', action: 'modules.updated', entity: 'settings', entityId: 'modules', summary: MODULE_KEYS.map((k) => `${k}:${cur[k] ? 'on' : 'off'}`).join(' · ') });
+  return cur;
+}
+
 export function moderateTestimonial(testimonialId, { status, by = 'admin' } = {}) {
   const t = db.testimonials.get(testimonialId);
   if (!t) return { ok: false, error: 'not-found' };
@@ -2548,7 +2568,7 @@ export function sponsoredPlacementRevenueGBP() {
 // (its stale copy re-uploaded by another), and new tickets vanished under a stale
 // array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
 // resolve on any instance sticks and a new ticket can't be overwritten by a peer.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
 // A previously-persisted supportTickets node may be an ARRAY (old whole-array

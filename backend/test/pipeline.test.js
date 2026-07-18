@@ -14,7 +14,24 @@ import {
   createPaymentLink, settlePaymentLink, merchantSettlement,
   listApprovals, decideApproval, flatSnapshot, getUser as getUserById,
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
+  getModuleFlags, setModuleFlags,
 } from '../src/store.js';
+
+test('module flags: default OFF (Coming Soon) and admin toggle persists per module', () => {
+  const def = getModuleFlags();
+  assert.equal(def.visaos, false, 'VisaOS defaults to Coming Soon');
+  assert.equal(def.corporate, false, 'Corporate defaults to Coming Soon');
+  assert.equal(def.embassy, false, 'Embassy defaults to Coming Soon');
+  const after = setModuleFlags({ visaos: true }, 'admin');
+  assert.equal(after.visaos, true, 'VisaOS turned on');
+  assert.equal(after.corporate, false, 'others unchanged');
+  assert.equal(getModuleFlags().visaos, true, 'persisted');
+  // Non-boolean / unknown keys are ignored (no accidental flips).
+  const safe = setModuleFlags({ corporate: 'yes', bogus: true });
+  assert.equal(safe.corporate, false, 'a non-boolean is ignored');
+  assert.equal(safe.bogus, undefined, 'unknown keys are not stored');
+  setModuleFlags({ visaos: false }); // reset for other tests
+});
 
 test('testimonials: submit requires consent + text, then holds for internal review', () => {
   assert.equal(createTestimonial({ name: 'A', rating: 5, text: 'Great', consentPublic: false }).ok, false, 'no consent → rejected');

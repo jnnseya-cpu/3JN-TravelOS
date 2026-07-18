@@ -157,9 +157,44 @@ function applyStorefrontMode() {
   });
 }
 
+// MODULE FLAGS — the admin turns VisaOS / Corporate / Embassy on or off; when off
+// the app shows a "Coming Soon" placeholder (keeps the launch focused). Default to
+// ON only until context loads, so a real module never flickers as "coming soon".
+function moduleOn(key) { const m = state.context?.modules; return m ? m[key] !== false : true; }
+const MODULE_META = {
+  visaos: { label: '3JN VisaOS', blurb: 'AI-assisted visa eligibility, document checks and application support are on the way. In the meantime, visa support is included with our packages.' },
+  corporate: { label: 'Business Travel', blurb: 'Corporate travel — policies, approvals, expense and team booking — is coming soon. Talk to us if you manage travel for a team.' },
+  embassy: { label: 'Embassy Decision Command', blurb: 'The government/embassy visa-decision console is coming soon.' },
+};
+// Which module (if any) gates this view for this user → returns a meta object or null.
+function moduleGate(view) {
+  if (view === 'visaos') {
+    if (isVisaOfficer()) return moduleOn('embassy') ? null : MODULE_META.embassy;
+    return moduleOn('visaos') ? null : MODULE_META.visaos;
+  }
+  if (view === 'business') return moduleOn('corporate') ? null : MODULE_META.corporate;
+  return null;
+}
+function renderComingSoon(meta) {
+  const body = document.getElementById('comingBody');
+  if (!body) return;
+  body.innerHTML = `<div style="max-width:600px;margin:60px auto;text-align:center;padding:40px 22px">
+    <div style="font-size:48px;line-height:1">🚧</div>
+    <span class="eyebrow">Coming soon</span>
+    <h2 style="margin:10px 0 6px">${esc(meta.label)}</h2>
+    <p class="muted" style="font-size:14.5px;max-width:44ch;margin:0 auto">${esc(meta.blurb)}</p>
+    <div class="hero-cta" style="justify-content:center;margin-top:22px">
+      <button class="btn btn-gold" onclick="nav('planner')">Plan a trip</button>
+      ${state.context?.contact?.whatsapp ? `<a class="btn btn-ghost" style="color:#25D366;border-color:rgba(37,211,102,.4)" href="https://wa.me/${esc(state.context.contact.whatsapp)}" target="_blank" rel="noopener">💬 Message us</a>` : `<button class="btn btn-ghost" onclick="nav('home')">Back to home</button>`}
+    </div>
+  </div>`;
+}
 function nav(view) {
   // Commercial mode: customers never reach the estimator — send them to Deals.
   if (dealsOnly() && (view === 'planner' || view === 'marketplace')) view = 'deals';
+  // Module flags: a switched-off module shows "Coming Soon" instead of the real view.
+  const gate = moduleGate(view);
+  if (gate) { renderComingSoon(gate); view = 'coming'; }
   // Block privileged views for the PUBLIC (not signed in). A signed-in user whose
   // role check doesn't pass yet is NOT bounced home — the view's own guard refreshes
   // the account and either renders or shows an in-page unlock, so serverless instance
@@ -3034,6 +3069,7 @@ async function renderAdmin() {
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openOpsQueue()">🎫 Ops queue</button>
       <button class="btn btn-sm btn-ghost" onclick="openExposure()">🔒 Lock exposure</button>
       <button class="btn btn-sm btn-ghost" onclick="openTestimonialModeration()">💬 Review testimonials</button>
+      <button class="btn btn-sm btn-ghost" onclick="openModuleToggles()">🧩 Modules on / off</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
     </div>
     <div id="selfTestOut"></div>
@@ -5529,7 +5565,11 @@ document.getElementById('aboutLink')?.addEventListener('click', () => window.ope
 // diaspora buyer. Injected ONLY when a real WhatsApp number is configured.
 function mountWhatsApp() {
   const c = state.context?.contact || {};
-  if (!c.whatsapp || document.getElementById('waFloat')) return;
+  if (!c.whatsapp) return;
+  // Always-visible header entry point (in addition to the floating button).
+  const nav = document.getElementById('navWhatsApp');
+  if (nav) { nav.href = `https://wa.me/${c.whatsapp}?text=${encodeURIComponent('Hi 3JN, I have a question about booking a trip')}`; nav.classList.remove('hidden'); }
+  if (document.getElementById('waFloat')) return;
   const a = document.createElement('a');
   a.id = 'waFloat';
   a.href = `https://wa.me/${c.whatsapp}?text=${encodeURIComponent('Hi 3JN, I have a question about booking a trip')}`;
@@ -5653,6 +5693,32 @@ window.moderateTestimonial = async (id, status) => {
   catch (e) { toast(e?.message || 'Failed.'); return; }
   toast(`Review ${status}.`);
   window.openTestimonialModeration();
+};
+
+// ---- Admin: Modules on / off (VisaOS · Corporate · Embassy) ----------------
+// Off → the app shows a "Coming Soon" placeholder for that module. Keeps a launch
+// focused on the core booking flow; flip on the moment a module is ready.
+window.openModuleToggles = async () => {
+  let d; try { d = await api('/api/admin/modules'); } catch { toast('Admin only.'); return; }
+  const m = d.modules || {};
+  const meta = { visaos: ['3JN VisaOS', 'AI visa eligibility & application support (applicant side)'], corporate: ['Business Travel', 'Corporate policies, approvals & team booking'], embassy: ['Embassy Decision Command', 'Government/embassy visa-decision console'] };
+  const row = (k) => {
+    const on = m[k] !== false;
+    return `<div class="card pad" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px">
+      <div><div style="font-weight:700;font-size:14px">${meta[k][0]}</div><div class="muted" style="font-size:12px">${meta[k][1]}</div></div>
+      <button class="btn btn-sm ${on ? 'btn-gold' : 'btn-ghost'}" onclick="toggleModule('${k}', ${on ? 'false' : 'true'})">${on ? '● On' : '○ Coming soon'}</button>
+    </div>`;
+  };
+  modal(`<span class="eyebrow">🧩 Modules</span>
+    <h3 style="margin:6px 0 4px">Turn modules on or off</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">When a module is off, visitors see a <strong>Coming Soon</strong> page instead. Change takes effect on their next page load.</p>
+    ${['visaos', 'corporate', 'embassy'].map(row).join('')}`);
+};
+window.toggleModule = async (key, on) => {
+  let d; try { d = await api('/api/admin/modules', { method: 'POST', body: JSON.stringify({ [key]: on }) }); } catch (e) { toast(e?.message || 'Failed.'); return; }
+  if (state.context) state.context.modules = d.modules; // reflect immediately
+  toast(`${key} ${on ? 'turned on' : 'set to Coming Soon'}.`);
+  window.openModuleToggles();
 };
 window.sendContact = async () => {
   const email = $('#ctEmail').value.trim();
