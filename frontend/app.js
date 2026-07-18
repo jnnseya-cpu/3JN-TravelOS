@@ -3117,7 +3117,11 @@ window.openOpsQueue = async () => {
              <input class="in" id="ri_tkt_${esc(t.id)}" placeholder="E-ticket number(s), comma-separated" style="flex:2;min-width:160px;font-size:12px">
              <input class="in" id="ri_fare_${esc(t.id)}" type="number" min="0" step="0.01" placeholder="Fare diff £ (0 if none)" style="width:150px;font-size:12px">
            </div>
-           <button class="btn btn-gold btn-sm btn-block" style="margin-top:8px" onclick="completeReissueOps('${esc(t.bookingId)}','${esc(t.id)}')">🎫 Complete reissue &amp; issue ticket</button>
+           <label style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11.5px;color:var(--muted);cursor:pointer">
+             <input type="checkbox" id="ri_offline_${esc(t.id)}" style="width:auto"> Payment collected offline (skip auto-charge to card)
+           </label>
+           <div class="muted" style="font-size:10.5px;margin-top:3px">On complete, 3JN auto-charges the customer's saved card for the £45 fee + fare difference, then issues the ticket. Tick above only if you've already taken payment another way.</div>
+           <button class="btn btn-gold btn-sm btn-block" style="margin-top:8px" onclick="completeReissueOps('${esc(t.bookingId)}','${esc(t.id)}')">🎫 Charge card &amp; issue ticket</button>
          </div>`
       : `<div style="display:flex;gap:8px;margin-top:8px">
            <input class="in" id="opsNote_${esc(t.id)}" placeholder="Resolution note" style="flex:1;font-size:12px">
@@ -3152,14 +3156,20 @@ window.completeReissueOps = async (bookingId, tid) => {
   const pnr = document.getElementById(`ri_pnr_${tid}`)?.value.trim() || '';
   const ticketNumbers = document.getElementById(`ri_tkt_${tid}`)?.value.trim() || '';
   const fareDifferenceGbp = Number(document.getElementById(`ri_fare_${tid}`)?.value) || 0;
+  const collectedOffline = !!document.getElementById(`ri_offline_${tid}`)?.checked;
   if (!pnr) { toast('Enter the new airline PNR from the reissue.'); return; }
   let res;
-  try { res = await api(`/api/admin/book/${bookingId}/complete-reissue`, { method: 'POST', body: JSON.stringify({ pnr, ticketNumbers, fareDifferenceGbp, ticketId: tid }) }); }
-  catch (e) { toast('Could not complete reissue — ' + (e?.message || 'try again.')); return; }
+  try { res = await api(`/api/admin/book/${bookingId}/complete-reissue`, { method: 'POST', body: JSON.stringify({ pnr, ticketNumbers, fareDifferenceGbp, ticketId: tid, collectedOffline }) }); }
+  catch (e) {
+    // api() already surfaced the message. On a 402 the card couldn't be auto-charged
+    // (declined / no saved card) and the ticket was NOT issued — the message tells
+    // ops to collect payment and retry, or tick "collected offline". Just stop here.
+    return;
+  }
   // The booking was already reissued (or a stale/duplicate ticket) — we cleared it
   // from the queue rather than erroring.
   if (res?.alreadyReissued) toast('✓ ' + (res.message || 'Already reissued — stale ticket cleared.'), 6000);
-  else toast('🎫 Reissue complete — ticket issued, fee collected, customer emailed.');
+  else toast(`🎫 Reissue complete — £${Number(res?.collected || 0).toFixed(2)} ${collectedOffline ? 'recorded (offline)' : 'charged to card'}, ticket issued, customer emailed.`, 7000);
   openOpsQueue();
 };
 

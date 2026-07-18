@@ -68,9 +68,49 @@ export async function createCheckoutSession({ amountMinor, currency = 'gbp', des
       },
     }],
     metadata: meta,
-    payment_intent_data: { metadata: meta },
+    // Create a Customer and SAVE the card for later off-session use, so a booking
+    // CHANGE (fee + airline fare difference) can be auto-charged to the same card
+    // without another checkout. Harmless for one-off payers; required for changes.
+    customer_creation: 'always',
+    payment_intent_data: { metadata: meta, setup_future_usage: 'off_session' },
   });
   return { ok: true, sessionId: session.id, url: session.url };
+}
+
+// Auto-charge the customer's SAVED card OFF-SESSION (no redirect / no customer
+// present) — used to collect a booking-change fee + airline fare difference at
+// re-issue. Reuses the Customer + payment method from the ORIGINAL booking payment
+// (saved via setup_future_usage at checkout). Returns { ok, paymentIntentId } on
+// success; on failure { ok:false, reason, requiresAction } so the caller can fall
+// back to a payment link and NEVER records a charge that didn't happen.
+export async function chargeSavedCard({ originalPaymentIntentId, amountMinor, currency = 'gbp', description, metadata = {} }) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured', reason: 'Card payments are not configured.' };
+  if (!originalPaymentIntentId) return { ok: false, error: 'no-original-intent', reason: 'No card on file for this booking.' };
+  if (!(amountMinor > 0)) return { ok: false, error: 'invalid-amount' };
+  try {
+    const orig = await stripeGet(`/payment_intents/${encodeURIComponent(originalPaymentIntentId)}`);
+    const customer = typeof orig.customer === 'string' ? orig.customer : orig.customer?.id;
+    const paymentMethod = typeof orig.payment_method === 'string' ? orig.payment_method : orig.payment_method?.id;
+    if (!customer || !paymentMethod) return { ok: false, error: 'no-saved-card', reason: 'The original payment did not save a reusable card.' };
+    const pi = await stripePost('/payment_intents', {
+      amount: Math.round(amountMinor),
+      currency: currency.toLowerCase(),
+      customer,
+      payment_method: paymentMethod,
+      off_session: true,
+      confirm: true,
+      description: description || '3JN booking change',
+      metadata,
+    });
+    if (pi.status === 'succeeded') return { ok: true, paymentIntentId: pi.id, amount: pi.amount };
+    // requires_action → the bank wants 3DS; we can't do that off-session, so fall back.
+    return { ok: false, status: pi.status, requiresAction: pi.status === 'requires_action', paymentIntentId: pi.id, reason: `Card needs confirmation (${pi.status}).` };
+  } catch (e) {
+    const msg = e?.message || 'charge-failed';
+    // Stripe throws on a declined off-session charge (card_declined,
+    // authentication_required, …). Surface it so we can send a payment link.
+    return { ok: false, error: msg, requiresAction: /authentication/i.test(msg), reason: msg };
+  }
 }
 
 async function stripeGet(path) {

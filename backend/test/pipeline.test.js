@@ -3299,6 +3299,34 @@ test('ops completeReissue: issues the ticket, collects the deferred fee + fare d
   assert.equal(completeReissue(b.id, { pnr: 'X' }).ok, false, 'a second complete-reissue is refused');
 });
 
+test('completeReissue records the change charge as backed by a REAL payment (ref + status), never a false paid', () => {
+  const u = createUser({ email: 'chg.pay@x.co', name: 'Change Pay' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_pay', pnr: 'PAY1' };
+  assist('change my flight date to 20 October 2027', u.id);
+  assist('confirm', u.id);
+  // Server collected £45 + £80 via Stripe off-session (paymentRef) THEN completes.
+  const r = completeReissue(b.id, { pnr: 'NEW1', ticketNumbers: ['176-1'], fareDifferenceGbp: 80, agent: 'auto-duffel', paymentRef: 'pi_test_123', paymentCollected: true, collectionMethod: 'stripe' });
+  assert.ok(r.ok);
+  const line = b.payments.find((p) => p.type === 'change-charge');
+  assert.equal(line.amount, 125, 'fee £45 + £80 fare difference');
+  assert.equal(line.status, 'paid', 'marked paid because a real charge backs it');
+  assert.equal(line.reference, 'pi_test_123', 'the Stripe PaymentIntent is recorded on the payment line');
+  assert.equal(line.gateway, 'stripe');
+});
+
+test('completeReissue WITHOUT a collected payment records the charge as pending — never a false paid', () => {
+  const u = createUser({ email: 'chg.pend@x.co', name: 'Change Pending' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
+  b.fulfilment = { ticketing: 'issued', duffelOrderId: 'ord_pend', pnr: 'PEND1' };
+  assist('change my flight date to 20 October 2027', u.id);
+  assist('confirm', u.id);
+  const r = completeReissue(b.id, { pnr: 'NEW2', fareDifferenceGbp: 0, agent: 'Ops' }); // no payment passed
+  assert.ok(r.ok);
+  const line = b.payments.find((p) => p.type === 'change-charge');
+  assert.equal(line.status, 'pending', 'not falsely marked paid when no money was collected');
+});
+
 test('date parse: an arrow "→" is a valid range separator (round-trip change keeps the return date)', () => {
   const d = parseExplicitDates('15/08/2026 → 30/08/2026', new Date('2026-01-01'));
   assert.equal(d.checkIn, '2026-08-15');

@@ -81,7 +81,7 @@ import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
-import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-await-fulfilment-v119';
+const BUILD_TAG = '2026-07-17-real-change-charge-v120';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3298,6 +3298,19 @@ app.post('/api/admin/vendors/sales/:saleId/flag', safe((req, res) => {
 // problem (carrier doesn't support online change, price in a different currency,
 // pay error) returns { ok:false } and the booking stays on the MANUAL reissue path
 // (ops ticket already raised) — a customer is never charged without a reissue.
+// Auto-charge the customer's SAVED card for a booking-change total (3JN fee +
+// airline fare difference). Returns { ok, paymentIntentId } when money is actually
+// collected; { ok:false, reason } otherwise — the caller must NOT reissue on a
+// failure. `zero` means there was nothing to collect (fee-free change).
+async function collectChangeCharge(booking, amountGbp, note) {
+  const minor = Math.round((Number(amountGbp) || 0) * 100);
+  if (!(minor > 0)) return { ok: true, zero: true, paymentIntentId: null };
+  if (!stripeEnabled()) return { ok: false, reason: 'card payments are not configured' };
+  if (!booking.stripePaymentIntent) return { ok: false, reason: 'no saved card on file for this booking' };
+  const cur = (booking.option?.pricing?.code || 'GBP').toLowerCase();
+  return chargeSavedCard({ originalPaymentIntentId: booking.stripePaymentIntent, amountMinor: minor, currency: cur, description: note || `3JN change — ${booking.id}`, metadata: { bookingId: booking.id, kind: 'change-charge' } });
+}
+
 async function attemptAutoReissue(booking) {
   const ful = booking.fulfilment || (booking.fulfilment = {});
   if (ful.ticketing !== 'reissue-pending' || ful.autoReissueAttempted) return { ok: false };
@@ -3309,42 +3322,47 @@ async function attemptAutoReissue(booking) {
   const returnISO = fc?.details?.inbound?.date || null;
   if (!departISO) return { ok: false };
   const bookingCode = String(booking.option?.pricing?.code || 'GBP').toUpperCase();
-  // If the customer was shown an EXACT total at quote time, we pinned that priced
-  // offer. Commit THAT offer so they're charged exactly what they approved. Duffel
-  // order-change offers expire, so if the pinned commit fails we re-quote and only
-  // auto-commit when the new price is within a small tolerance of the approved one
-  // — otherwise we DON'T surprise-charge and leave it for the manual ops desk.
+  // SELECT the airline offer (the pinned exact-total the customer approved, or a
+  // fresh quote) but DO NOT commit yet — we collect the customer's payment FIRST.
   const pinned = booking.pendingChangeFee?.airlineQuote || null;
-  let offer = null;
+  let sel = null; // { offerId, amountGbp, currency }
   if (pinned?.offerId && String(pinned.currency || '').toUpperCase() === bookingCode) {
-    const c = await duffelOrderChangeCommit({ offerId: pinned.offerId, amount: pinned.amountGbp, currency: pinned.currency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
-    if (c.ok) offer = { commit: c, changeAmount: pinned.amountGbp, changeCurrency: pinned.currency };
-  }
-  if (!offer) {
+    sel = { offerId: pinned.offerId, amountGbp: Math.max(0, Number(pinned.amountGbp) || 0), currency: pinned.currency };
+  } else {
     const quote = await duffelOrderChangeQuote({ orderId, departISO, returnISO }).catch(() => ({ ok: false }));
     if (!quote.ok || !quote.offer) return { ok: false };
     // Only auto-collect when the airline price is in the booking's own currency, so
     // we never charge a wrongly FX-converted amount; otherwise fall back to manual.
     if (String(quote.offer.changeCurrency || '').toUpperCase() !== bookingCode) return { ok: false };
-    // If we had promised an exact total, honour it: only auto-charge the re-quoted
-    // price if it hasn't moved materially (≤ £1 or 2%). A bigger move goes manual so
-    // the customer is never charged more than they approved without a re-confirm.
+    const newAmt = Math.max(0, Math.round(Number(quote.offer.changeAmount) * 100) / 100);
+    // If we promised an exact total, only auto-charge a re-quote within tolerance
+    // (≤ £1 or 2%); a bigger move goes manual so we never exceed the approved price.
     if (pinned && Number.isFinite(Number(pinned.amountGbp))) {
-      const newAmt = Math.max(0, Math.round(Number(quote.offer.changeAmount) * 100) / 100);
       const tol = Math.max(1, Math.round(Number(pinned.amountGbp) * 0.02 * 100) / 100);
       if (Math.abs(newAmt - Number(pinned.amountGbp)) > tol) return { ok: false, priceMoved: true };
     }
-    const c = await duffelOrderChangeCommit({ offerId: quote.offer.id, amount: quote.offer.changeAmount, currency: quote.offer.changeCurrency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
-    if (!c.ok) return { ok: false };
-    offer = { commit: c, changeAmount: quote.offer.changeAmount, changeCurrency: quote.offer.changeCurrency };
+    sel = { offerId: quote.offer.id, amountGbp: newAmt, currency: quote.offer.changeCurrency };
   }
-  const commit = offer.commit;
-  const airlineDiff = Math.max(0, Math.round(Number(offer.changeAmount) * 100) / 100);
-  const r = completeReissue(booking.id, { pnr: commit.orderChange.bookingReference || ful.pnr, ticketNumbers: commit.orderChange.ticketNumbers || [], fareDifferenceGbp: airlineDiff, agent: 'auto-duffel' });
+  const feeGbp = Math.max(0, Number(booking.pendingChangeFee?.amountGbp) || 0);
+  const totalGbp = Math.round((feeGbp + sel.amountGbp) * 100) / 100;
+  // COLLECT FIRST — auto-charge the saved card for the 3JN fee + airline difference.
+  // Never reissue (and never record a charge) unless the money is actually taken.
+  const pay = await collectChangeCharge(booking, totalGbp, `Change reissue ${booking.id}`);
+  if (!pay.ok && !pay.zero) return { ok: false, chargeFailed: true, reason: pay.reason || 'card declined' };
+  // Paid → NOW reissue with the airline.
+  const commit = await duffelOrderChangeCommit({ offerId: sel.offerId, amount: sel.amountGbp, currency: sel.currency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
+  if (!commit.ok) {
+    // We took the money but the airline reissue failed — refund at once so the
+    // customer is NEVER charged without receiving the change.
+    if (pay.ok && pay.paymentIntentId) { try { await createRefund({ paymentIntentId: pay.paymentIntentId }); } catch (e) { console.error('[change-refund]', e?.message || e); } }
+    return { ok: false };
+  }
+  const airlineDiff = sel.amountGbp;
+  const r = completeReissue(booking.id, { pnr: commit.orderChange.bookingReference || ful.pnr, ticketNumbers: commit.orderChange.ticketNumbers || [], fareDifferenceGbp: airlineDiff, agent: 'auto-duffel', paymentRef: pay.paymentIntentId || null, paymentCollected: true });
   if (!r.ok) return { ok: false };
   try { booking.confirmationEmailSent = false; await emailBookingConfirmation(booking); } catch (e) { console.error('[auto-reissue-email]', e?.message || e); }
-  try { for (const t of listSupportTickets('open')) if (t.intent === 'ops-reissue' && t.bookingId === booking.id) resolveSupportTicket(t.id, { note: `Auto-reissued via Duffel — £${r.collected} collected`, agent: 'auto-duffel' }); } catch { /* best-effort */ }
-  recordAudit({ actor: 'system', role: 'system', action: 'booking.auto-reissued', entity: 'booking', entityId: booking.id, summary: `Duffel order-change · £${r.collected} collected (fee + £${airlineDiff} airline)` });
+  try { for (const t of listSupportTickets('open')) if (t.intent === 'ops-reissue' && t.bookingId === booking.id) resolveSupportTicket(t.id, { note: `Auto-reissued via Duffel — £${r.collected} charged to card`, agent: 'auto-duffel' }); } catch { /* best-effort */ }
+  recordAudit({ actor: 'system', role: 'system', action: 'booking.auto-reissued', entity: 'booking', entityId: booking.id, summary: `Duffel order-change · £${r.collected} charged (fee + £${airlineDiff} airline)` });
   return { ok: true, collectedGbp: r.collected };
 }
 app.post('/api/support/chat', safe(async (req, res) => {
@@ -3504,27 +3522,40 @@ app.post('/api/admin/support/tickets/:id/resolve', safe((req, res) => {
 app.post('/api/admin/book/:id/complete-reissue', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const user = currentUser(req);
-  const { pnr, ticketNumbers, fareDifferenceGbp, ticketId } = req.body || {};
+  const { pnr, ticketNumbers, fareDifferenceGbp, ticketId, collectedOffline } = req.body || {};
   const nums = Array.isArray(ticketNumbers) ? ticketNumbers : String(ticketNumbers || '').split(/[,\s]+/).filter(Boolean);
-  const r = completeReissue(req.params.id, { pnr, ticketNumbers: nums, fareDifferenceGbp: Number(fareDifferenceGbp) || 0, agent: user?.name || 'admin' });
-  if (!r.ok) {
-    // The booking is no longer awaiting a reissue — almost always because it was
-    // ALREADY reissued (an auto-reissue completed, or a duplicate/orphan ticket
-    // survived from the old whole-array clobber). The ticket is stale, so CLEAR it
-    // instead of leaving the queue stuck. Only do this for the "already done" case,
-    // never a missing booking.
-    if (r.error === 'not-pending-reissue' && ticketId) {
-      const bk = getBooking(req.params.id);
-      const done = bk?.fulfilment?.ticketing === 'issued' || bk?.fulfilment?.ticketing === 'reissued';
-      try { resolveSupportTicket(ticketId, { note: done ? 'Booking already reissued — stale ticket cleared.' : 'No reissue pending — ticket cleared.', agent: user?.name || 'admin' }); } catch { /* best-effort */ }
-      return res.json({ ok: true, alreadyReissued: true, cleared: true, message: done ? 'This booking was already reissued — the stale ticket has been cleared.' : 'This booking is not awaiting a reissue — the ticket has been cleared.' });
-    }
-    return res.status(400).json(r);
+  const bk = getBooking(req.params.id);
+  if (!bk) return res.status(404).json({ ok: false, error: 'not-found' });
+  // Stale / already-reissued ticket → clear it from the queue instead of erroring
+  // (orphan from an auto-reissue that completed, or the old whole-array clobber).
+  if (bk.fulfilment?.ticketing !== 'reissue-pending') {
+    const done = bk.fulfilment?.ticketing === 'issued' || bk.fulfilment?.ticketing === 'reissued';
+    if (ticketId) { try { resolveSupportTicket(ticketId, { note: done ? 'Booking already reissued — stale ticket cleared.' : 'No reissue pending — ticket cleared.', agent: user?.name || 'admin' }); } catch { /* best-effort */ } }
+    return res.json({ ok: true, alreadyReissued: true, cleared: true, message: done ? 'This booking was already reissued — the stale ticket has been cleared.' : 'This booking is not awaiting a reissue — the ticket has been cleared.' });
   }
+  // COLLECT FIRST: auto-charge the customer's saved card for the 3JN fee + the
+  // airline fare difference the ops desk entered. The new ticket is issued ONLY
+  // after the money is taken — unless the ops desk ticks "collected offline"
+  // (they took payment another way), which records the collection without a card
+  // charge. Never issue a ticket while recording a charge that didn't happen.
+  const fareDiff = Math.max(0, Number(fareDifferenceGbp) || 0);
+  const feeGbp = Math.max(0, Number(bk.pendingChangeFee?.amountGbp) || 0);
+  const totalGbp = Math.round((feeGbp + fareDiff) * 100) / 100;
+  let paymentRef = null;
+  if (totalGbp > 0 && !collectedOffline) {
+    const pay = await collectChangeCharge(bk, totalGbp, `Change reissue ${bk.id}`);
+    if (!pay.ok && !pay.zero) {
+      return res.status(402).json({ ok: false, error: 'change-charge-failed', reason: pay.reason, feeGbp, fareDiff, totalGbp,
+        message: `Couldn't auto-charge the customer's card (${pay.reason}). Collect £${totalGbp.toFixed(2)} and retry — or tick "collected offline" if you took payment another way.` });
+    }
+    paymentRef = pay.paymentIntentId || null;
+  }
+  const r = completeReissue(req.params.id, { pnr, ticketNumbers: nums, fareDifferenceGbp: fareDiff, agent: user?.name || 'admin', paymentRef, paymentCollected: true, collectionMethod: collectedOffline ? 'offline' : (paymentRef ? 'stripe' : 'none') });
+  if (!r.ok) return res.status(400).json(r);
   // Email the UPDATED confirmation + PDF (reset the send-once flag so the reissue
   // gets its own confirmation with the new PNR/ticket).
   try { r.booking.confirmationEmailSent = false; await emailBookingConfirmation(r.booking); } catch (e) { console.error('[reissue-email]', e?.message || e); }
-  if (ticketId) { try { resolveSupportTicket(ticketId, { note: `Reissued — PNR ${pnr || 'n/a'}, £${r.collected} collected`, agent: user?.name || 'admin' }); } catch { /* best-effort */ } }
+  if (ticketId) { try { resolveSupportTicket(ticketId, { note: `Reissued — PNR ${pnr || 'n/a'}, £${r.collected} ${collectedOffline ? 'collected offline' : 'charged to card'}`, agent: user?.name || 'admin' }); } catch { /* best-effort */ } }
   res.json(r);
 }));
 

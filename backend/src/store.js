@@ -2001,7 +2001,7 @@ export function operatorConfirm(bookingId) {
 // booking back to 'issued', and flags the updated e-ticket email. Without this,
 // resolving the ops ticket alone left the customer stuck on 'reissue-pending' with
 // no new ticket ("customer not received ticket").
-export function completeReissue(bookingId, { pnr, ticketNumbers = [], fareDifferenceGbp = 0, agent } = {}) {
+export function completeReissue(bookingId, { pnr, ticketNumbers = [], fareDifferenceGbp = 0, agent, paymentRef = null, paymentCollected = false, collectionMethod = null } = {}) {
   const b = db.bookings.get(bookingId);
   if (!b) return { ok: false, error: 'not-found' };
   const ful = (b.fulfilment = b.fulfilment || {});
@@ -2011,9 +2011,13 @@ export function completeReissue(bookingId, { pnr, ticketNumbers = [], fareDiffer
   const fareDiff = Math.max(0, Number(fareDifferenceGbp) || 0);
   const collected = Math.round((fee + fareDiff) * 100) / 100;
   const desc = b.pendingChangeFee?.description || 'date/itinerary change';
-  // Collect the DEFERRED change fee + any airline fare difference — only now that
-  // the ticket is genuinely reissued (never before).
-  if (collected > 0) b.payments.push({ type: 'change-charge', amount: collected, gateway: b.gateway || 'ops', at: nowISO(), status: 'paid', note: `${desc}${fareDiff ? ` + £${fareDiff} airline fare difference` : ''}` });
+  // Record the change fee + airline fare difference. The caller (server) has
+  // ALREADY collected the money (Stripe off-session on the saved card, or the ops
+  // desk collected it offline) before calling this — so the payment line is backed
+  // by a real charge. `paymentRef` is the Stripe PaymentIntent; `collectionMethod`
+  // is 'stripe' | 'offline'. If somehow nothing was collected it is recorded
+  // 'pending' (never a false 'paid'), but the reissue paths gate on payment first.
+  if (collected > 0) b.payments.push({ type: 'change-charge', amount: collected, gateway: collectionMethod === 'offline' ? 'offline' : (paymentRef ? 'stripe' : (b.gateway || 'ops')), reference: paymentRef || null, at: nowISO(), status: paymentCollected ? 'paid' : 'pending', note: `${desc}${fareDiff ? ` + £${fareDiff} airline fare difference` : ''}${collectionMethod === 'offline' ? ' · collected offline' : ''}` });
   const cleanPnr = pnr ? String(pnr).trim().toUpperCase().slice(0, 12) : null;
   if (cleanPnr) ful.pnr = cleanPnr;
   const nums = (Array.isArray(ticketNumbers) ? ticketNumbers : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 20);
