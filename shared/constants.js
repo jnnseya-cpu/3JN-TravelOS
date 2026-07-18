@@ -35,18 +35,24 @@ export const SAVINGS_SHARE_RATE = 0.10;   // 10% of value created vs market
 // is charged. Below that, the customer keeps 100% of the saving.
 export const SAVINGS_SHARE_MIN_USD = 127;
 
-// ---- Loyalty (1 point per $2 spent; 250-point signup bonus) ---------------
+// ---- Loyalty → Travel Credit (members only, flat, no tiers) ----------------
+// REDESIGNED: the old four-rung ladder (Explorer/Voyager/Nomad/Elite) overlapped
+// confusingly with the membership discount. Replaced by ONE simple mechanic:
+// Travel+ members earn a flat % of what they spend back as Travel Credit toward
+// their next trip. No tiers, no thresholds. Members-only (recurring-revenue
+// payers), so it never bleeds the thin flight margin.
+export const TRAVEL_CREDIT_RATE = 0.03; // members earn 3% of booking value as credit
+export const TRAVEL_CREDIT_MEMBERS_ONLY = true;
+// LOYALTY_TIERS retained as a single neutral tier for back-compat with callers
+// that still read a "tier" — it grants NO discount (discounts come from
+// membership only now, so the two never stack or confuse).
 export const LOYALTY_TIERS = [
-  { name: 'Explorer', minPoints: 0, discount: 0 },
-  { name: 'Voyager', minPoints: 1000, discount: 0.03 },
-  { name: 'Nomad', minPoints: 5000, discount: 0.06 },
-  { name: 'Elite', minPoints: 15000, discount: 0.08 },
+  { name: 'Member', minPoints: 0, discount: 0 },
 ];
-// 1 loyalty point per £2 spent — the engine prices in USD, so at the platform's
-// 0.79 GBP/USD anchor £2 ≈ $2.53 → 0.4 points per USD (was 0.5/USD, which
-// under-delivered the "£2" promise shown on the site).
+// Points ledger kept internally for history, but points no longer grant a
+// discount — Travel Credit (in £) is the member reward shown to customers.
 export const POINTS_PER_USD = 0.4;
-export const SIGNUP_BONUS_POINTS = 250;
+export const SIGNUP_BONUS_POINTS = 0;
 
 // ---- ACU economy (blueprint Appendix B + §12.2) ---------------------------
 export const ACU_ACTIONS = {
@@ -73,14 +79,13 @@ export const MEMBERSHIP_ACU_FUND_RATE = 0.20;
 // ---- Membership plans (blueprint §3.1) ------------------------------------
 // Each plan auto-funds ACUs every billing period: 20% of the subscription,
 // converted at £1 = 100 ACU. e.g. £12.99 → £2.598 → ~260 ACU / month.
+// REDESIGNED: four overlapping tiers → TWO clear ones (plus a Free tier that isn't
+// listed here). `discount` = the member package discount, funded from 3JN's
+// commission and capped at it, so a booking is never sold below supplier cost.
+// Members also pay no flight service fee and earn Travel Credit on every trip.
 export const MEMBERSHIP_TIERS = [
-  // `discount` = the members' fee/package discount (the "Discounted fees" benefit),
-  // funded from 3JN's commission and capped at it, so a booking is never sold
-  // below supplier cost. It applies even before a member earns any loyalty points.
-  { key: 'nomad', name: 'Travel+ Smart Traveller', pricePerMonth: 4.99, discount: 0.03 },
-  { key: 'family', name: 'Travel+ Family Saver', pricePerMonth: 12.99, discount: 0.05 },
-  { key: 'executive', name: 'Travel+ Frequent Flyer', pricePerMonth: 24.99, discount: 0.06 },
-  { key: 'elite', name: 'Travel+ Concierge Elite', pricePerMonth: 49.99, discount: 0.08 },
+  { key: 'plus', name: 'Travel+', pricePerMonth: 5.99, discount: 0.05 },
+  { key: 'family', name: 'Travel+ Family', pricePerMonth: 11.99, discount: 0.07 },
 ].map((t) => ({
   ...t,
   acuPerMonth: Math.round(t.pricePerMonth * MEMBERSHIP_ACU_FUND_RATE * ACU_PER_GBP),

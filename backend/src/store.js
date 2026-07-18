@@ -4,7 +4,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
-import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD } from '../../shared/constants.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD, TRAVEL_CREDIT_RATE } from '../../shared/constants.js';
 import {
   REWARD_ACTIONS, REDEEM_CATEGORIES, acuForAction, PARTNER_TIERS, tierForFollowers,
   effectiveRevshareRate, accrueRevshare, isValidAttribution, derivePartnerMetrics,
@@ -614,6 +614,30 @@ export function addPoints(userId, points) {
   return publicUser(u);
 }
 
+// Apply a member's Travel Credit against an outstanding booking balance. Credit is
+// real money 3JN already owes the customer (earned on a prior paid trip), so it
+// settles the balance like a payment. Capped at both the credit balance and what's
+// still owed — never over-applied.
+export function redeemTravelCredit(userId, bookingId, requestedAmount = null) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'user-not-found' };
+  const b = db.bookings.get(bookingId);
+  if (!b) return { ok: false, error: 'booking-not-found' };
+  if (b.userId !== userId) return { ok: false, error: 'not-your-booking' };
+  const credit = round2(u.travelCreditGbp || 0);
+  if (credit <= 0) return { ok: false, error: 'no-credit', message: 'You have no Travel Credit to apply.' };
+  const total = b.option?.pricing?.local?.total || 0;
+  const outstanding = round2(Math.max(0, total - planPaid(b)));
+  if (outstanding <= 0.01) return { ok: false, error: 'nothing-due', message: 'This booking is already fully paid.' };
+  let amt = requestedAmount != null ? round2(Number(requestedAmount) || 0) : credit;
+  amt = round2(Math.min(amt, credit, outstanding));
+  if (amt <= 0) return { ok: false, error: 'zero', message: 'Nothing to apply.' };
+  u.travelCreditGbp = round2(credit - amt);
+  recordPayment(bookingId, { type: 'travel-credit', amount: amt, gateway: 'travel-credit', reference: `credit:${u.id}`, status: 'paid' });
+  recordAudit({ actor: userId, role: 'consumer', action: 'travelcredit.redeemed', entity: 'booking', entityId: bookingId, summary: `−£${amt} Travel Credit applied to ${bookingId}` });
+  return { ok: true, applied: amt, remainingCredit: u.travelCreditGbp, booking: b };
+}
+
 export function spendAcu(userId, amount, reason) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'unknown-user' };
@@ -1033,6 +1057,7 @@ function publicUser(u) {
     discountLabel: memberBeats ? (memberPlan.name.replace('Travel+ ', '')) : tier.name,
     discountSource: memberBeats ? 'member' : 'loyalty',
     acuBalance: u.acuBalance,
+    travelCreditGbp: round2(u.travelCreditGbp || 0), // members' Travel Credit toward the next trip
     membership: u.membership || null,
     coverImage: u.coverImage || null,
     travelProfile: u.travelProfile || {},
@@ -1502,8 +1527,23 @@ export function recordPayment(bookingId, payment) {
     // award points (and release fulfilment) while the plan is still owed.
     const paid = planPaid(b);
     if (totalLocal > 0 && paid + 0.01 >= totalLocal) {
+      // Points ledger kept for history (no discount effect now).
       const totalPts = Math.round((b.option?.totalUSD || 0) * POINTS_PER_USD);
-      if (totalPts > 0) { addPoints(b.userId, totalPts); b.pointsAwarded = true; }
+      if (totalPts > 0) { addPoints(b.userId, totalPts); }
+      // TRAVEL CREDIT — the member reward: earn a flat % of the booking value back
+      // as credit toward the next trip. MEMBERS ONLY, so it never bleeds margin on
+      // a non-member's thin flight booking. Granted once (pointsAwarded guard).
+      const u = db.users.get(b.userId);
+      if (u?.membership?.active && TRAVEL_CREDIT_RATE > 0) {
+        const earned = round2(totalLocal * TRAVEL_CREDIT_RATE);
+        if (earned > 0) {
+          u.travelCreditGbp = round2((u.travelCreditGbp || 0) + earned);
+          b.travelCreditEarned = earned;
+          recordAudit({ actor: 'system', role: 'system', action: 'travelcredit.earned', entity: 'user', entityId: u.id, summary: `+£${earned} Travel Credit on booking ${b.id}` });
+          try { pushNotification(u.id, { type: 'success', icon: '🎁', title: `You earned £${earned.toFixed(2)} Travel Credit`, body: `Thanks for booking with Travel+. Your £${earned.toFixed(2)} credit is ready to use towards your next trip.` }); } catch { /* best-effort */ }
+        }
+      }
+      b.pointsAwarded = true;
     }
   }
 
@@ -3864,21 +3904,21 @@ export function grantComplimentaryElite(adminId, targetEmail) {
   if (!target) return { ok: false, error: 'user-not-found', message: 'No account with that email — they must sign up first.' };
   if (target.membership?.complimentary) return { ok: false, error: 'already-granted', message: `${target.name} already holds complimentary Elite.` };
   if (compEliteCount() >= COMP_ELITE_LIMIT) return { ok: false, error: 'limit-reached', message: `All ${COMP_ELITE_LIMIT} complimentary Elite slots are taken.` };
-  const elite = MEMBERSHIP_TIERS.find((t) => t.key === 'elite');
+  const top = MEMBERSHIP_TIERS.find((t) => t.key === 'family') || MEMBERSHIP_TIERS[MEMBERSHIP_TIERS.length - 1];
   const now = Date.now();
   target.membership = {
-    tier: 'elite',
-    name: 'Travel+ Elite ×2 (complimentary)',
+    tier: top.key,
+    name: 'Travel+ Family ×2 (complimentary)',
     pricePerMonth: 0,
-    acuPerMonth: elite.acuPerMonth * 2, // 2× — 1,000 ACU/month
+    acuPerMonth: top.acuPerMonth * 2, // 2× ACU/month
     active: true,
     complimentary: true,
     grantedBy: admin.id,
     startedAt: new Date(now).toISOString(),
     renewsAt: new Date(now + 30 * 24 * 3600 * 1000).toISOString(),
   };
-  creditAcu(target.id, elite.acuPerMonth * 2, 'membership:elite-comp:initial');
-  pushNotification(target.id, { type: 'success', icon: '👑', title: 'Elite — on the house', body: `You've been granted Travel+ Elite ×2 free: 1,000 ACU/month, private aviation access, priority upgrade requests, 24/7 risk mitigation.` });
+  creditAcu(target.id, top.acuPerMonth * 2, 'membership:family-comp:initial');
+  pushNotification(target.id, { type: 'success', icon: '👑', title: 'Travel+ Family — on the house', body: `You've been granted Travel+ Family ×2 free: double the ACU allowance, member discount on packages, priority support and Travel Credit on every trip.` });
   recordAudit({ actor: admin.id, role: 'admin', action: 'membership.comp-elite.granted', entity: 'user', entityId: target.id, summary: `${target.email} · slot ${compEliteCount()}/${COMP_ELITE_LIMIT}` });
   return { ok: true, user: publicUser(target), slotsUsed: compEliteCount(), slotsLeft: COMP_ELITE_LIMIT - compEliteCount() };
 }

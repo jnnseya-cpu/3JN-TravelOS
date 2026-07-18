@@ -82,7 +82,39 @@ import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
-import { subscribeMembership, renewMembership, spendAcu, buyAcu } from '../src/store.js';
+import { subscribeMembership, renewMembership, spendAcu, buyAcu, redeemTravelCredit } from '../src/store.js';
+
+test('travel credit: members earn 3% on a fully-paid booking; non-members earn nothing', () => {
+  const flightOpt = () => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 } }, totalUSD: 1266, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] });
+  // Member earns 3% = £30.
+  const m = createUser({ name: 'Credit Member', email: `cred.m.${Date.now()}@x.co` });
+  subscribeMembership(m.id, 'plus');
+  const b1 = createBooking({ option: flightOpt(), userId: m.id });
+  recordPayment(b1.id, { type: 'full', amount: 1000, status: 'paid' });
+  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 30) < 0.01, 'member earns £30 credit (3%)');
+  // Non-member earns nothing.
+  const g = createUser({ name: 'Free User', email: `cred.g.${Date.now()}@x.co` });
+  const b2 = createBooking({ option: flightOpt(), userId: g.id });
+  recordPayment(b2.id, { type: 'full', amount: 1000, status: 'paid' });
+  assert.equal(getUserById(g.id).travelCreditGbp || 0, 0, 'non-members earn no Travel Credit');
+});
+
+test('travel credit: redemption is capped at the balance and the outstanding amount', () => {
+  const m = createUser({ name: 'Redeemer', email: `redeem.${Date.now()}@x.co` });
+  subscribeMembership(m.id, 'family');
+  // Earn credit on a first paid trip (£1000 → £30).
+  const paid = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 } }, totalUSD: 1266, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] }, userId: m.id });
+  recordPayment(paid.id, { type: 'full', amount: 1000, status: 'paid' });
+  const credit = getUserById(m.id).travelCreditGbp;
+  assert.ok(credit >= 29.9, 'has credit to spend');
+  // A second booking with an outstanding balance; apply the credit.
+  const next = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 500 } }, totalUSD: 633, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2028-02-01' } } }] }, userId: m.id });
+  const r = redeemTravelCredit(m.id, next.id, 1000); // ask for more than held
+  assert.ok(r.ok);
+  assert.ok(Math.abs(r.applied - credit) < 0.01, 'applies only what the member holds');
+  assert.equal(getUserById(m.id).travelCreditGbp, 0, 'balance spent');
+  assert.equal(redeemTravelCredit(m.id, next.id).ok, false, 'no credit left → rejected');
+});
 import { MEMBERSHIP_TIERS, ACU_PER_GBP } from '../../shared/constants.js';
 import { aiCostOptimization, MIN_AI_COST_SAVING } from '../src/ai-gateway.js';
 import { visaFramework, buildChecklist, assessApplication, validateApplicant, redactApplicant, requiredFieldsFor, CORE_DOCUMENTS } from '../src/visa-framework.js';
@@ -551,34 +583,33 @@ test('unresolved destination asks clarifying questions instead of crashing', () 
   assert.ok(result.questions.find((q) => q.id === 'destination'));
 });
 
-test('price breakdown funds loyalty discount from commission, never below supplier cost', () => {
-  // Voyager (3%) on a $1000 supplier-cost package.
-  const b = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 1200 });
-  assert.equal(b.lines.loyaltyDiscountUSD, 30);       // the member's rebate
+test('price breakdown: MEMBER discount funded from commission, never below supplier cost', () => {
+  // Travel+ member (5%) on a $1000 supplier-cost package.
+  const b = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, memberActive: true, membershipDiscount: 0.05, membershipName: 'Travel+' });
+  assert.equal(b.lines.loyaltyDiscountUSD, 50);       // the member's rebate
   assert.equal(b.lines.netSuppliersUSD, 1000);        // supplier cost ALWAYS collected in full
   assert.equal(b.lines.grossCommissionUSD, 100);      // the headline 10% on the receipt
-  assert.equal(b.lines.commissionUSD, 70);            // our real take = gross − rebate
-  assert.equal(b.lines.totalUSD, 1070);               // customer pays cost + our net take
-  // Receipt stays consistent: suppliers − loyalty + gross commission = total.
+  assert.equal(b.lines.commissionUSD, 50);            // our real take = gross − rebate
+  assert.equal(b.lines.totalUSD, 1050);               // customer pays cost + our net take
   assert.equal(b.lines.suppliersUSD - b.lines.loyaltyDiscountUSD + b.lines.grossCommissionUSD, b.lines.totalUSD);
   assert.ok(b.lines.savingsVsMarketUSD > 0);
 
-  // Elite (8%) keeps real transaction margin — the top tier is never break-even
-  // and never a loss: an 8% rebate out of a 10% commission leaves us 2%.
-  const elite = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 15000 });
-  assert.equal(elite.lines.loyaltyDiscountUSD, 80);   // 8% rebate to the member
-  assert.equal(elite.lines.grossCommissionUSD, 100);  // full 10% on the receipt
-  assert.equal(elite.lines.commissionUSD, 20);        // we keep 2% — real margin, never £0
-  assert.equal(elite.lines.totalUSD, 1020);
-  assert.ok(elite.lines.commissionUSD > 0, 'top tier still profitable on the transaction');
-  assert.ok(elite.lines.totalUSD >= elite.lines.netSuppliersUSD, 'never below supplier cost');
+  // Travel+ Family (7%) keeps real transaction margin — never a loss.
+  const fam = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, memberActive: true, membershipDiscount: 0.07, membershipName: 'Travel+ Family' });
+  assert.equal(fam.lines.loyaltyDiscountUSD, 70);
+  assert.equal(fam.lines.commissionUSD, 30);          // we keep 3% — real margin
+  assert.ok(fam.lines.totalUSD >= fam.lines.netSuppliersUSD, 'never below supplier cost');
+
+  // Loyalty POINTS alone (no membership) grant NO discount now — members only.
+  const noMember = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 15000 });
+  assert.equal(noMember.lines.loyaltyDiscountUSD, 0, 'points no longer discount — membership only');
+  assert.equal(noMember.lines.totalUSD, 1100);
 });
 
-test('loyalty tiers map points correctly', () => {
-  assert.equal(tierForPoints(0).name, 'Explorer');
-  assert.equal(tierForPoints(1200).name, 'Voyager');
-  assert.equal(tierForPoints(6000).name, 'Nomad');
-  assert.equal(tierForPoints(20000).name, 'Elite');
+test('loyalty ladder collapsed to a single neutral tier (discounts come from membership)', () => {
+  assert.equal(tierForPoints(0).name, 'Member');
+  assert.equal(tierForPoints(20000).name, 'Member');
+  assert.equal(tierForPoints(20000).discount, 0, 'no points-based discount any more');
 });
 
 test('cache-access fee: members pay a small ACU on cached results; others free; Full Access exempt', () => {
@@ -1020,16 +1051,16 @@ test('membership: 20% of the subscription auto-funds ACUs at £1 = 100 ACU', () 
   assert.equal(u.acuBalance, 50, 'new users get a 50 ACU starter to try searches');
   assert.equal(u.membership, null);
 
-  const sub = subscribeMembership(u.id, 'family'); // monthly £12.99 -> 260 ACU (20%)
+  const sub = subscribeMembership(u.id, 'family'); // monthly £11.99 -> 240 ACU (20%)
   assert.equal(sub.ok, true);
-  assert.equal(sub.acuCredited, 260);
-  assert.equal(sub.user.acuBalance, 310, '50 starter + 260 funded');
+  assert.equal(sub.acuCredited, 240);
+  assert.equal(sub.user.acuBalance, 290, '50 starter + 240 funded');
   assert.equal(sub.user.membership.active, true);
 
   // Each billing period re-funds the allocation.
   const ren = renewMembership(u.id);
-  assert.equal(ren.acuCredited, 260);
-  assert.equal(ren.user.acuBalance, 570);
+  assert.equal(ren.acuCredited, 240);
+  assert.equal(ren.user.acuBalance, 530);
 });
 
 test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU', () => {
@@ -2052,9 +2083,9 @@ test('comp elite: admin grants free Elite x2 (2,000 ACU/mo), capped at 5', () =>
     const r = grantComplimentaryElite(admin.id, friend.email);
     assert.equal(r.ok, true, `slot ${i}`);
     assert.equal(r.user.membership.pricePerMonth, 0, 'free');
-    assert.equal(r.user.membership.acuPerMonth, 2000, '2x Elite ACU (Elite now 1,000/mo at 20%)');
+    assert.equal(r.user.membership.acuPerMonth, 480, '2x Travel+ Family ACU (£11.99 → 240/mo at 20%)');
     assert.equal(r.user.membership.complimentary, true);
-    assert.ok(r.user.acuBalance >= 2000, 'first month credited');
+    assert.ok(r.user.acuBalance >= 480, 'first month credited');
   }
   assert.equal(compEliteCount(), 5);
   // The sixth grant is refused — hard cap.
@@ -2369,9 +2400,10 @@ test('spec §12: marketplace add-ons all carry a commission inside the 5%-30% ba
 });
 
 test('rev source 8 + §10: seven subscription plans; corporate SaaS earns 3 ways', () => {
-  assert.equal(SUBSCRIPTION_PLANS.length, 7);
+  // REDESIGNED: 4 membership tiers → 2, so five subscription plans in total.
+  assert.equal(SUBSCRIPTION_PLANS.length, 5);
   const names = SUBSCRIPTION_PLANS.map((p) => p.name);
-  for (const n of ['Free', 'Smart Traveller', 'Family Saver', 'Frequent Flyer', 'Business Travel', 'Concierge Elite', 'Enterprise']) {
+  for (const n of ['Free', 'Travel+', 'Family', 'Business Travel', 'Enterprise']) {
     assert.ok(names.includes(n), `${n} plan exists`);
   }
   assert.equal(TRAVEL_PLUS_BENEFITS.length, 7);
@@ -4486,7 +4518,7 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   // Active Travel+ member: flights are FREE of the 3JN service fee — a core
   // membership benefit (non-members pay the 2% / £4.99 min / £15 cap).
   const member = createUser({ name: 'Member Flyer', email: 'member.flyer@example.com' });
-  subscribeMembership(member.id, 'nomad');
+  subscribeMembership(member.id, 'plus');
   const r3 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: findUserByEmail('member.flyer@example.com'), searchTier: 'smart' });
   const opt3 = r3.packages.options[0];
   assert.equal(opt3.pricing.feeModel, 'flight-flat-member');

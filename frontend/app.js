@@ -263,14 +263,10 @@ const AGENTS = [
 ];
 
 const TIERS = [
-  { key: 'nomad', save: '£420/yr', name: 'Travel+ Smart Traveller', price: '£4.99', priceNum: 4.99, feature: false,
-    benefits: ['AI Negotiation Engine', 'Priority Savings Alerts', 'Flat flight fee — no % markup', 'Digital Visa Assistance'] },
-  { key: 'family', save: '£1,100/yr', name: 'Travel+ Family Saver', price: '£12.99', priceNum: 12.99, feature: true, badge: 'Most popular for families',
-    benefits: ['All Smart Traveller Features', 'Child Safety Intelligence', 'Family Lounge Access', 'Sync-Mesh Itinerary'] },
-  { key: 'executive', save: '£2,400/yr', name: 'Travel+ Frequent Flyer', price: '£24.99', priceNum: 24.99, feature: false,
-    benefits: ['All Family Saver Features', 'Fast-Track Security', 'Coworking Intelligence', 'Expense Integration'] },
-  { key: 'elite', save: '£5,000/yr+', name: 'Travel+ Concierge Elite', price: '£49.99', priceNum: 49.99, feature: false,
-    benefits: ['All Frequent Flyer Features', 'Private Aviation Access', 'Priority Upgrade Requests', '24/7 Risk Mitigation'] },
+  { key: 'plus', save: 'No flight fee + 5% off packages', name: 'Travel+', price: '£5.99', priceNum: 5.99, feature: true, badge: 'Best value',
+    benefits: ['No flight service fee (save the 2%)', '5% off every package', 'Earn 3% Travel Credit on every trip', 'Priority price monitoring & alerts', 'Priority support'] },
+  { key: 'family', save: 'Bigger savings for the whole family', name: 'Travel+ Family', price: '£11.99', priceNum: 11.99, feature: false, badge: 'For families',
+    benefits: ['Everything in Travel+', '7% off every package', 'Earn 3% Travel Credit on every trip', 'Family price monitoring across trips', 'Priority support for the whole party'] },
 ];
 // 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
 const ACU_PER_GBP = 100;
@@ -280,16 +276,15 @@ const STEPS = [
   ['01', 'AI ASSISTANT', 'Understands what you want', 'Type your trip in plain language — the assistant reads your destination, dates, travellers, budget and preferences and turns one sentence into a structured search.'],
   ['02', 'INVENTORY', 'Live fares + curated deals', 'We search live airline fares (via Duffel) alongside our curated, contracted deals, then package them with a single transparent service fee — no hidden retail markup. More live supplier connections are being added.'],
   ['03', 'TRUST', 'Verified & reliable', 'Live fares come straight from the airline; every option carries a supplier reliability score. Community hosts and vendors pass a risk review and admin approval before they can be booked.'],
-  ['04', 'REWARDS', 'Loyalty Discount Injection', 'The OS automatically checks your 3JN membership status (Explorer to Elite) and injects an additional member-only discount on top of the already reduced wholesale rate.'],
+  ['04', 'REWARDS', 'Travel Credit on every trip', 'Travel+ members save the flight service fee, get a member discount on packages, and earn 3% of every trip back as Travel Credit toward the next one — simple, no confusing tiers.'],
   ['05', 'LOGISTICS', 'Universal Console Sync', 'Once secured, your journey is instantly synchronised with your Universal Console, centralising your visas, transfers, and eSIMs into one high-tech management interface.'],
   ['06', 'GUARANTEED', 'Price Lock', 'The price you book is fixed in your booking terms and fully protected until you travel — no fare increases, no currency surcharges, no hidden add-ons. Pay monthly, interest-free, at the price you locked on day one.'],
 ];
 
 const LOYALTY = [
-  ['Explorer', '0 pts', '0% discount'],
-  ['Voyager', '1,000 pts', '3% discount'],
-  ['Nomad', '5,000 pts', '6% discount'],
-  ['Elite', '15,000 pts', '8% discount + priority verification'],
+  ['Free', 'Pay per use', 'Book flights (2% fee) & hotels · pay with ACUs for AI search'],
+  ['Travel+', '£5.99/yr', 'No flight fee · 5% off packages · 3% Travel Credit'],
+  ['Travel+ Family', '£11.99/yr', 'Everything in Travel+ · 7% off packages · family perks'],
 ];
 
 // Pricing model: pay-as-you-go is the headline (search costs 5-20 ACU; no
@@ -1874,8 +1869,8 @@ async function renderConsoleInner() {
         <span class="role-badge">${esc(u.role)}</span>${u.allAccess ? '<span class="role-badge" style="color:var(--green);border-color:rgba(70,211,154,0.4);background:rgba(70,211,154,0.08)">★ all access</span>' : ''}</div>
       </div>
       ${u.bio ? `<p class="muted" style="font-size:13px;margin:12px 0 0">${esc(u.bio)}</p>` : ''}
-      <div class="kv" style="margin-top:12px"><span>${u.discountSource === 'member' ? 'Membership' : 'Tier'}</span><span style="color:var(--gold)">${esc(u.discountLabel || u.tier)} (${((u.effectiveDiscount != null ? u.effectiveDiscount : u.tierDiscount) * 100).toFixed(0)}% off)</span></div>
-      <div class="kv"><span>Loyalty points</span><span>${u.points.toLocaleString()}</span></div>
+      <div class="kv" style="margin-top:12px"><span>Membership</span><span style="color:var(--gold)">${u.membership?.active ? esc(u.discountLabel || 'Travel+') + ` (${((u.effectiveDiscount != null ? u.effectiveDiscount : 0) * 100).toFixed(0)}% off)` : 'Free plan'}</span></div>
+      <div class="kv"><span>Travel Credit</span><span style="color:var(--gold)">£${Number(u.travelCreditGbp || 0).toFixed(2)}</span></div>
       <div class="kv"><span>ACU balance</span><span>${u.acuBalance.toLocaleString()} ACU</span></div>
       ${u.membership?.active
         ? `<div class="kv"><span>Membership</span><span style="color:var(--green)">${u.membership.name}</span></div>
@@ -1903,7 +1898,7 @@ async function renderConsoleInner() {
       <div id="intelOut"></div>
     </div>
     <div id="esimCard" class="card pad" style="margin-top:16px"></div>
-    ${u.allAccess || ['executive', 'business', 'admin'].includes(u.role) || u.tier === 'Elite' || u.tier === 'Nomad' ? '<div id="expenseCard" class="card pad" style="margin-top:16px"></div>' : ''}
+    ${u.allAccess || ['business', 'admin'].includes(u.role) || u.membership?.tier === 'family' ? '<div id="expenseCard" class="card pad" style="margin-top:16px"></div>' : ''}
     ${u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role) ? '<div id="merchantPortal" class="card pad" style="margin-top:16px"></div>' : ''}`;
 
   const quoteCards = quoteReqs.length ? `<div class="card pad" style="margin-bottom:16px"><span class="eyebrow">Exact-quote requests</span>${quoteReqs.map((q) => {
@@ -2210,31 +2205,30 @@ async function renderExpense() {
 
 // ---- Loyalty Hub ----------------------------------------------------------
 const LOYALTY_LADDER = [['Explorer', 0], ['Voyager', 1000], ['Nomad', 5000], ['Elite', 15000]];
+// TRAVEL CREDIT hub — the redesigned reward. Members earn a flat 3% of every trip
+// back as credit toward the next one (no tiers). Non-members see the invitation.
 function loyaltyHub(u) {
-  const idx = LOYALTY_LADDER.findIndex(([n]) => n === u.tier);
-  const next = LOYALTY_LADDER[idx + 1];
-  const floor = LOYALTY_LADDER[idx][1];
-  const pct = next ? Math.min(100, Math.round(((u.points - floor) / (next[1] - floor)) * 100)) : 100;
-  const toNext = next ? `${(next[1] - u.points).toLocaleString()} pts to ${next[0]}` : 'Top tier reached 🏆';
   const shareUrl = `https://3jntravel.com/?ref=${u.referralCode}`;
-  // Show the discount the customer ACTUALLY gets — the better of their points
-  // tier and their paid membership — so an Elite member is never shown "0% off"
-  // next to their points tier while the account header says "8% off". The points
-  // ladder (Explorer→Voyager…) still tracks the points journey honestly.
-  const effDiscount = (u.effectiveDiscount != null ? u.effectiveDiscount : u.tierDiscount) || 0;
-  const discLine = u.discountSource === 'member'
-    ? `${(effDiscount * 100).toFixed(0)}% off · ${esc(u.discountLabel || 'membership')}`
-    : `${(effDiscount * 100).toFixed(0)}% off`;
+  const isMember = !!u.membership?.active;
+  const credit = Number(u.travelCreditGbp || 0);
+  const effDiscount = (u.effectiveDiscount != null ? u.effectiveDiscount : 0) || 0;
+  const memberLine = isMember
+    ? `<span class="muted" style="font-size:12.5px">${esc(u.discountLabel || 'Travel+')} · ${(effDiscount * 100).toFixed(0)}% off packages</span>`
+    : `<span class="muted" style="font-size:12.5px">Free plan</span>`;
   return `
     <div class="card pad" style="margin-top:16px">
-      <span class="eyebrow">Loyalty Hub</span>
+      <span class="eyebrow">Travel Credit</span>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-        <strong style="font-family:'Space Grotesk';font-size:18px;color:var(--gold)">${esc(u.tier)} <span class="muted" style="font-size:11px;font-weight:400">· points tier</span></strong>
-        <span class="muted" style="font-size:12.5px">${u.points.toLocaleString()} pts · ${discLine}</span>
+        <strong style="font-size:24px;color:var(--gold)">£${credit.toFixed(2)}</strong>
+        ${memberLine}
       </div>
-      <div class="rel-bar" style="margin:10px 0 6px"><i style="width:${pct}%"></i></div>
-      <div class="muted" style="font-size:12px">${toNext}</div>
-      <div class="kv" style="margin-top:12px"><span>Refer &amp; earn</span><span>+100 you · +50 friend</span></div>
+      <div class="muted" style="font-size:12.5px;margin-top:6px">
+        ${isMember
+          ? (credit > 0 ? 'Ready to use towards your next trip — apply it at checkout or from any booking with a balance.' : 'Earn 3% of every trip back as credit. Book a trip and watch it grow.')
+          : 'Join Travel+ to earn 3% of every trip back as Travel Credit, skip the flight fee, and save on packages.'}
+      </div>
+      ${!isMember ? `<button class="btn btn-gold btn-sm btn-block" style="margin-top:10px" onclick="nav('membership')">See Travel+</button>` : ''}
+      <div class="kv" style="margin-top:12px"><span>Refer &amp; earn</span><span>+100 ACU you · +50 friend</span></div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <input class="in" id="refLink" value="${shareUrl}" readonly style="flex:1;font-size:12px">
         <button class="btn btn-ghost btn-sm" onclick="copyRef()">Copy</button>
@@ -2242,6 +2236,14 @@ function loyaltyHub(u) {
       </div>
     </div>`;
 }
+// Apply the member's Travel Credit to a booking's outstanding balance.
+window.applyCredit = async (bookingId) => {
+  let d; try { d = await api(`/api/book/${bookingId}/apply-credit`, { method: 'POST', body: JSON.stringify({}) }); }
+  catch (e) { toast(e?.message || 'Could not apply your credit.'); return; }
+  toast(d.message || 'Travel Credit applied.', 6000);
+  try { const a = await api(`/api/account/${state.user.id}`); if (a.user) state.user = a.user; } catch {}
+  renderConsole();
+};
 window.copyRef = () => { const i = $('#refLink'); i.select(); try { navigator.clipboard.writeText(i.value); } catch {} toast('✓ Referral link copied.'); };
 window.shareRef = async (url) => {
   if (navigator.share) { try { await navigator.share({ title: '3JN Travel OS', text: 'Plan smarter, travel cheaper with 3JN.', url }); return; } catch {} }
@@ -2565,6 +2567,7 @@ function bookingCard(b) {
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
+        ${(totalLocal > paidTotal + 0.01 && Number(state.user?.travelCreditGbp || 0) > 0) ? `<button class="btn btn-ghost btn-sm" style="color:var(--gold)" onclick="applyCredit('${b.id}')">🎁 Use £${Number(state.user.travelCreditGbp).toFixed(2)} credit</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="openReviewForm('${b.id}')">💬 Share your story</button>
         ${String(b.status || '').startsWith('cancelled') ? '<span class="muted" style="font-size:11.5px;align-self:center">Cancelled</span>' : `<button class="btn btn-ghost btn-sm" onclick="openCancel('${b.id}')" style="color:#ff8a8a">✕ Cancel booking</button>`}
       </div>
@@ -3472,10 +3475,8 @@ window.sendTestEmail = async () => {
 // Admin: grant ACU + set membership level for any user (run the business; test tiers).
 const MEMBERSHIP_OPTIONS = [
   ['none', 'No membership (free)'],
-  ['nomad', 'Smart Traveller (£4.99)'],
-  ['family', 'Family Saver (£12.99)'],
-  ['executive', 'Frequent Flyer (£24.99)'],
-  ['elite', 'Concierge Elite (£49.99)'],
+  ['plus', 'Travel+ (£5.99)'],
+  ['family', 'Travel+ Family (£11.99)'],
 ];
 window.manageUser = () => {
   modal(`

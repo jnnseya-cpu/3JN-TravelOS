@@ -13,7 +13,7 @@ import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
 import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
-  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund,
+  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund, redeemTravelCredit,
   adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
@@ -135,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-module-toggles-wa-header-v136';
+const BUILD_TAG = '2026-07-18-membership-2tier-travelcredit-v137';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1338,7 +1338,7 @@ function fullyLoadDemoAccounts() {
   // Business — corporate demo.
   const b = byEmail('business@3jntravel.com');
   if (b && listBookings(b.id).length === 0) {
-    step('business: Frequent Flyer membership', () => subscribeMembership(b.id, 'executive'));
+    step('business: Travel+ membership', () => subscribeMembership(b.id, 'plus'));
     step('business: 5,000 ACU float', () => creditAcu(b.id, 5000, 'corporate-demo-float'));
     step('business: Paris team booking', () => bookFor(b.id, 'Flights and hotel to Paris from London for 3 adults, 2 nights', 'smart'));
   }
@@ -1388,7 +1388,7 @@ function fullyLoadDemoAccounts() {
   // Admin — funded and comped.
   const a = byEmail('admin@3jntravel.com');
   if (a && (getUser(a.id)?.acuBalance || 0) < 1000) {
-    step('admin: 10,000 ACU + Concierge Elite', () => { creditAcu(a.id, 10000, 'admin-demo-float'); subscribeMembership(a.id, 'elite'); });
+    step('admin: 10,000 ACU + Travel+ Family', () => { creditAcu(a.id, 10000, 'admin-demo-float'); subscribeMembership(a.id, 'family'); });
   }
   return loaded;
 }
@@ -2980,6 +2980,23 @@ app.post('/api/book/:id/cancel', safe(async (req, res) => {
   } catch { /* booking is still cancelled */ }
   if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '↩️', title: 'Booking cancelled', body: outcome.refund > 0 ? `Your booking is cancelled. A refund of ${sym}${outcome.refund.toFixed(2)} is being processed${outcome.adminFee ? ` (after the ${sym}${outcome.adminFee.toFixed(2)} admin fee)` : ''}${autoRefunded > 0 ? ` — ${sym}${autoRefunded.toFixed(2)} already back on your card` : ''}.` : `Your booking is cancelled. As per the terms, no refund is due at this stage.` });
   res.json({ ok: true, cancelled: true, outcome, autoRefunded, remainder, symbol: sym });
+}));
+
+// Apply a member's Travel Credit to an outstanding booking balance. If the credit
+// settles the booking in full, fulfilment fires (ticket / room) just like a cash
+// payment would.
+app.post('/api/book/:id/apply-credit', safe(async (req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'sign-in-required' });
+  if (booking.userId && booking.userId !== user.id && !user.allAccess && user.role !== 'admin') return res.status(403).json({ error: 'not-your-booking' });
+  const result = redeemTravelCredit(user.id, booking.id, req.body?.amount != null ? req.body.amount : null);
+  if (!result.ok) return res.status(400).json(result);
+  const sym = booking.option?.pricing?.symbol || '£';
+  try { await autoTicketFlight(booking); } catch (e) { console.error('[credit-ticket]', e?.message || e); }
+  try { await autoBookStays(booking); } catch (e) { console.error('[credit-stays]', e?.message || e); }
+  res.json({ ok: true, applied: result.applied, remainingCredit: result.remainingCredit, symbol: sym, message: `${sym}${result.applied.toFixed(2)} Travel Credit applied.` });
 }));
 
 // Console → booking → 📄 Documents: the structured document vault — the SAME
