@@ -13,7 +13,7 @@ import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
 import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
-  getBooking, listBookings, recordPayment, revenueSnapshot, addPoints,
+  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints,
   adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
@@ -71,6 +71,7 @@ import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, m
 import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
+import { applyLockMargin, flightSecuringPlan, portfolioExposure, bookingExposure, lockMarginPct, autoFrontCapGbp } from './pricelock.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS, cachedSearchAcu } from './revenue.js';
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
@@ -132,7 +133,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-honest-price-lock-v121';
+const BUILD_TAG = '2026-07-18-guaranteed-holiday-lock-v122';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -655,27 +656,33 @@ async function autoTicketFlight(booking) {
       if (booking.userId) pushNotification(booking.userId, { type: 'warning', icon: '💳', title: 'Pay in full to ticket this fare', body: 'This airline requires this fare to be paid in full to issue the ticket — it cannot be held on instalments. Pay the remaining balance in your Console and your e-ticket issues immediately.' });
       return;
     }
-    const hold = await createDuffelHoldOrder({ offerId: flight.details.offerId, passengers, idempotencyKey: `hold:${booking.id}`, services: bagServices });
-    if (!hold.ok) {
-      // "already booked" = this single-use offer was ALREADY ticketed by us on a
-      // prior (racing) reconcile — the order EXISTS. Never refund or mark failed;
-      // keep it as issued so a good ticket is never clobbered by a duplicate call.
-      if (offerAlreadyBooked(hold.error)) { ful(); if (booking.fulfilment.ticketing !== 'issued') { booking.fulfilment.ticketing = 'issued'; booking.fulfilment.ticketSyncPending = !booking.fulfilment.pnr; } return; }
-      ful().ticketing = 'hold-failed'; booking.fulfilment.reason = hold.error; return;
+    // GUARANTEED HOLIDAY LOCK — decide how to SECURE the flight, honestly:
+    //  • ticket-now: the paid deposit already covers the fare (within the front
+    //    cap) → buy the ticket immediately (price locked because it's bought; the
+    //    deposit funds it, 3JN fronts nothing). Fall through to the issue block.
+    //  • lock-scheduled: it doesn't → LOCK the price and secure the flight closer
+    //    to departure. NO months-long airline hold (that expired before the
+    //    instalments finished — the bug you found); 3JN never fronts beyond the cap.
+    const rate = booking.option?.pricing?.rateFromUSD || 0.79;
+    const sym = booking.option?.pricing?.symbol || '£';
+    const plan = flightSecuringPlan(booking, { rateFromUSD: rate });
+    if (plan.action !== 'ticket-now') {
+      const firstLock = booking.fulfilment?.ticketing !== 'lock-scheduled';
+      ful().ticketing = 'lock-scheduled';
+      booking.fulfilment.lockScheduled = { netGbp: plan.netGbp, paidGbp: plan.paidGbp, gapGbp: plan.gapGbp, at: new Date().toISOString() };
+      // Raise the ops "secure the flight" work-order ONCE (a later instalment
+      // re-enters this path; don't stack duplicate tickets).
+      if (firstLock) try {
+        createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-secure-flight',
+          message: `SECURE FLIGHT before departure — booking ${booking.id}. Price is LOCKED for the customer at their booked rate. Net fare ≈ ${sym}${plan.netGbp}, paid so far ${sym}${plan.paidGbp}, shortfall ${sym}${plan.gapGbp}. Auto-ticket at deposit isn't possible (deposit < fare; front cap ${sym}${autoFrontCapGbp()}). Secure via consolidator/allocation, or once payments cover the fare — re-price within the lock margin (${Math.round(lockMarginPct() * 100)}%). Do NOT exceed the locked customer price.`,
+          reason: 'guaranteed-lock: flight to be secured before departure' });
+      } catch { /* still confirm the booking */ }
+      if (firstLock && booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🔒', title: 'Booking confirmed — price locked', body: `Your trip is confirmed and your price is locked at ${sym}${Number(booking.option?.pricing?.local?.total || 0).toFixed(2)}. Pay monthly, interest-free — no increases before you travel. Your e-ticket is secured ahead of departure and emailed to you.` });
+      if (firstLock) recordAudit({ actor: 'system', role: 'system', action: 'ticketing.lock-scheduled', entity: 'booking', entityId: booking.id, summary: `price locked · fare ${sym}${plan.netGbp} secured before departure · paid ${sym}${plan.paidGbp}` });
+      return;
     }
-    ful();
-    booking.fulfilment.ticketing = 'held';
-    booking.fulfilment.holdOrderId = hold.order.id;
-    booking.fulfilment.pnr = hold.order.bookingReference;
-    booking.fulfilment.paymentRequiredBy = hold.order.paymentRequiredBy;
-    // The held order's total already includes any held bags — pay exactly this at
-    // ticketing (never the bare fare, which would underpay a bagged order).
-    booking.fulfilment.holdTotalAmount = hold.order.totalAmount || null;
-    booking.fulfilment.holdTotalCurrency = hold.order.totalCurrency || null;
-    booking.fulfilment.heldAt = new Date().toISOString();
-    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.held', entity: 'booking', entityId: booking.id, summary: `held ${hold.order.bookingReference} · pay by ${hold.order.paymentRequiredBy || 'n/a'}` });
-    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Seats held — pay monthly', body: `Your fare is reserved (ref ${hold.order.bookingReference}). Your e-ticket is issued automatically once your instalments are paid.` });
-    return;
+    // ticket-now → fall through to the issue block (buy & ticket the fare the
+    // deposit already covers).
   }
 
   // --- FULLY PAID: issue the ticket ----------------------------------------
@@ -696,6 +703,19 @@ async function autoTicketFlight(booking) {
   } else {
     const check = await validateDuffelOffer(flight.details.offerId);
     if (check.ok && (check.expired || check.live === false)) {
+      // A LOCK-SCHEDULED booking's original offer always expires before departure —
+      // that's expected. NEVER refund a price-locked (often fully-paid) customer;
+      // the ops desk secures the fare live (consolidator / fresh booking) and issues
+      // the ticket. Keep it in the secure-flight queue with the payment status.
+      const wasLocked = booking.fulfilment?.ticketing === 'lock-scheduled' || booking.fulfilment?.lockScheduled;
+      if (wasLocked) {
+        ful().ticketing = 'lock-scheduled';
+        booking.fulfilment.readyToSecure = bookingFullyPaid(booking);
+        try { for (const t of listSupportTickets('open')) if (t.intent === 'ops-secure-flight' && t.bookingId === booking.id) { /* keep the existing work-order */ } } catch {}
+        if (booking.userId && bookingFullyPaid(booking)) pushNotification(booking.userId, { type: 'info', icon: '🔒', title: 'Paid in full — securing your ticket', body: 'Your balance is paid and your price is locked. Our team is securing your e-ticket now — it will be emailed to you shortly.' });
+        recordAudit({ actor: 'system', role: 'system', action: 'ticketing.secure-pending', entity: 'booking', entityId: booking.id, summary: `price-locked · ${bookingFullyPaid(booking) ? 'PAID IN FULL — secure now' : 'awaiting balance'}` });
+        return;
+      }
       await failTicketingWithRefund(booking, 'offer-expired-before-ticketing');
       return;
     }
@@ -3557,6 +3577,50 @@ app.post('/api/admin/book/:id/complete-reissue', safe(async (req, res) => {
   try { r.booking.confirmationEmailSent = false; await emailBookingConfirmation(r.booking); } catch (e) { console.error('[reissue-email]', e?.message || e); }
   if (ticketId) { try { resolveSupportTicket(ticketId, { note: `Reissued — PNR ${pnr || 'n/a'}, £${r.collected} ${collectedOffline ? 'collected offline' : 'charged to card'}`, agent: user?.name || 'admin' }); } catch { /* best-effort */ } }
   res.json(r);
+}));
+
+// ---- Guaranteed Holiday Lock — exposure + secure-flight completion ---------
+// Portfolio exposure: what capital 3JN has at risk across instalment bookings, so
+// the operator MANAGES exposure honestly (never magic). Read-only, admin-only.
+app.get('/api/admin/exposure', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  if (IS_SERVERLESS && isEnabled()) { try { const snap = await load(); if (snap) hydrate(snap); } catch { /* serve from memory */ } }
+  const all = allBookings();
+  const summary = portfolioExposure(all);
+  // The individual price-locked flights waiting to be secured (the work list).
+  const pending = all
+    .filter((b) => b.fulfilment?.ticketing === 'lock-scheduled')
+    .map((b) => ({ ...bookingExposure(b), readyToSecure: !!b.fulfilment?.readyToSecure, symbol: b.option?.pricing?.symbol || '£', departDate: (b.option?.components || []).map((c) => c.details?.outbound?.date).find(Boolean) || null }));
+  res.json({ summary, pending });
+}));
+
+// OPS: issue the e-ticket for a PRICE-LOCKED flight after securing it live
+// (consolidator / fresh airline booking). Enter the airline PNR + e-ticket
+// number(s); this stamps the ticket 'issued', emails the customer, and resolves
+// the secure-flight work-order. No customer charge here — they already paid (or
+// are paying) the locked price; this only records the fulfilment.
+app.post('/api/admin/book/:id/issue-secured', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const user = currentUser(req);
+  const { pnr, ticketNumbers, ticketId } = req.body || {};
+  const b = getBooking(req.params.id);
+  if (!b) return res.status(404).json({ ok: false, error: 'not-found' });
+  const ful = (b.fulfilment = b.fulfilment || {});
+  if (ful.ticketing === 'issued') return res.json({ ok: true, already: true, message: 'This booking is already ticketed.' });
+  if (ful.ticketing !== 'lock-scheduled') return res.status(400).json({ ok: false, error: 'not-lock-scheduled', message: 'This booking is not awaiting flight securing.' });
+  const cleanPnr = pnr ? String(pnr).trim().toUpperCase().slice(0, 12) : null;
+  if (!cleanPnr) return res.status(400).json({ ok: false, error: 'pnr-required', message: 'Enter the airline PNR from the secured booking.' });
+  const nums = (Array.isArray(ticketNumbers) ? ticketNumbers : String(ticketNumbers || '').split(/[,\s]+/)).map((t) => String(t).trim()).filter(Boolean).slice(0, 20);
+  ful.pnr = cleanPnr;
+  if (nums.length) ful.ticketNumbers = nums;
+  ful.ticketing = 'issued';
+  ful.issuedAt = new Date().toISOString();
+  ful.securedBy = user?.name || 'admin';
+  recordAudit({ actor: user?.name || 'admin', role: 'admin', action: 'booking.secured-issued', entity: 'booking', entityId: b.id, summary: `price-locked flight secured · PNR ${cleanPnr} · ${nums.length} e-ticket(s)` });
+  if (b.userId) pushNotification(b.userId, { type: 'success', icon: '🎫', title: 'Your ticket is issued', body: `Your flight is ticketed at your locked price — airline reference ${cleanPnr}. Your e-ticket is in your Console and on its way by email.` });
+  try { b.confirmationEmailSent = false; await emailBookingConfirmation(b); } catch (e) { console.error('[secure-email]', e?.message || e); }
+  try { const tid = ticketId || (listSupportTickets('open').find((t) => t.intent === 'ops-secure-flight' && t.bookingId === b.id)?.id); if (tid) resolveSupportTicket(tid, { note: `Flight secured & ticketed — PNR ${cleanPnr}`, agent: user?.name || 'admin' }); } catch { /* best-effort */ }
+  res.json({ ok: true, booking: b });
 }));
 
 // ---- Visa Centre + Risk Intelligence Feed ---------------------------------

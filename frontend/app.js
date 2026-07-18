@@ -2744,7 +2744,7 @@ window.openDocs = async (bookingId) => {
   const issued = d.ticketing === 'issued';
   // A change awaiting airline reissue is NOT a failure — show it in gold, not red.
   const reissuing = d.ticketing === 'reissue-pending';
-  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: 'e-ticket issued', held: 'fare held', reissued: 'reissued' };
+  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: 'e-ticket issued', held: 'fare held', reissued: 'reissued', 'lock-scheduled': 'price locked · ticket securing' };
   const explain = !issued && !reissuing && d.ticketing !== 'confirmed' && d.ticketing !== 'pending'
     ? `<div class="card pad" style="border-color:rgba(255,107,107,.4);margin-top:10px">
          <strong style="color:#ff8f8f">Ticket not issued — ${esc(d.ticketing)}</strong>
@@ -2947,6 +2947,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" onclick="openPlacements()">💰 Sponsored placements</button>
       <button class="btn btn-ghost btn-sm" onclick="manageUser()">👤 Manage user (ACU / membership)</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openOpsQueue()">🎫 Ops queue</button>
+      <button class="btn btn-sm btn-ghost" onclick="openExposure()">🔒 Lock exposure</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
     </div>
     <div id="selfTestOut"></div>
@@ -3092,11 +3093,41 @@ async function renderAdmin() {
 // them (previously there was no UI, so ops-reissue tickets were invisible).
 const OPS_INTENT = {
   'ops-reissue': ['🔄 Airline reissue', 'var(--gold)'],
+  'ops-secure-flight': ['🔒 Secure locked flight', 'var(--gold)'],
   'ops-reroute': ['🛫 Airport change (re-route)', 'var(--gold)'],
   'ops-refund': ['💸 Refund', '#ff8a8a'],
   'ops-manifest': ['🧑‍✈️ Manifest', 'var(--gold)'],
   'ops-hotel': ['🏨 Hotel booking', 'var(--blue-bright)'],
   'contact-form': ['✉️ Contact form', 'var(--muted)'],
+};
+// Guaranteed Holiday Lock — the operator's exposure dashboard. Shows capital at
+// risk (fronted / fare-movement), deposits cushioning it, and the price-locked
+// flights waiting to be secured. Honest risk management, not magic.
+window.openExposure = async () => {
+  let d;
+  try { d = await api('/api/admin/exposure'); } catch { toast('Admin only.'); return; }
+  const s = d.summary || {};
+  const gbp = (n) => '£' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const stat = (label, val, hint, danger) => `
+    <div class="card pad" style="flex:1 1 150px;border-color:${danger && val > 0 ? 'rgba(255,138,138,.4)' : 'rgba(216,180,106,.3)'}">
+      <div style="font-size:22px;font-weight:700;color:${danger && val > 0 ? '#ff8a8a' : 'var(--gold)'}">${gbp(val)}</div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">${label}</div>
+      ${hint ? `<div class="muted" style="font-size:10px;margin-top:2px">${hint}</div>` : ''}
+    </div>`;
+  const pend = (d.pending || []).length
+    ? (d.pending).map((p) => `<div class="kv" style="font-size:12px"><span>${esc(p.bookingId)}${p.readyToSecure ? ' <strong style="color:#ff8a8a">· PAID — secure now</strong>' : ''}</span><span>${p.symbol}${Number(p.netCostGbp).toFixed(2)} fare · ${p.symbol}${Number(p.paidGbp).toFixed(2)} paid${p.departDate ? ' · ' + esc(p.departDate) : ''}</span></div>`).join('')
+    : '<p class="muted" style="font-size:12.5px">No price-locked flights waiting to be secured.</p>';
+  modal(`<span class="eyebrow">🔒 Guaranteed Holiday Lock — exposure</span>
+    <h3 style="margin:6px 0 4px">Capital at risk</h3>
+    <p class="muted" style="font-size:12px;margin:0 0 12px">Across ${s.bookings || 0} instalment booking(s). Front cap ${gbp(s.frontCapGbp)} · lock margin ${Math.round((s.lockMarginPct || 0) * 100)}%.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      ${stat('Fronted (3JN cash ahead of payment)', s.frontedGbp, 'Should be £0 at a £0 front cap', true)}
+      ${stat('Fare-movement risk (locked flights)', s.fareRiskGbp, 'Bounded by the lock margin')}
+      ${stat('Deposits held (cushion)', s.depositsHeldGbp, 'Non-refundable on default')}
+      ${stat('Net at risk after deposits', s.netAtRiskGbp, 'The number that matters', true)}
+    </div>
+    <span class="eyebrow">Price-locked flights to secure</span>
+    <div style="margin-top:8px">${pend}</div>`);
 };
 window.openOpsQueue = async () => {
   let d;
@@ -3108,7 +3139,17 @@ window.openOpsQueue = async () => {
     // (and any airline fare difference) → it stamps the ticket, collects the
     // deferred fee, emails the customer the new e-ticket, and closes the ticket.
     const isReissue = t.intent === 'ops-reissue' && t.bookingId;
-    const action = isReissue
+    const isSecure = t.intent === 'ops-secure-flight' && t.bookingId;
+    const action = isSecure
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
+           <div class="muted" style="font-size:11px;margin-bottom:6px">The customer's price is <strong>locked</strong>. Secure the flight live (consolidator / fresh airline booking) at or below the locked price, then enter the airline PNR + e-ticket to issue it. No customer charge here — they've paid (or are paying) the locked price.</div>
+           <div style="display:flex;gap:6px;flex-wrap:wrap">
+             <input class="in" id="sf_pnr_${esc(t.id)}" placeholder="Airline PNR" style="flex:1;min-width:120px;font-size:12px">
+             <input class="in" id="sf_tkt_${esc(t.id)}" placeholder="E-ticket number(s), comma-separated" style="flex:2;min-width:160px;font-size:12px">
+           </div>
+           <button class="btn btn-gold btn-sm btn-block" style="margin-top:8px" onclick="issueSecuredOps('${esc(t.bookingId)}','${esc(t.id)}')">🎫 Issue e-ticket (price locked)</button>
+         </div>`
+      : isReissue
       ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
            ${t.reissueChannel ? `<div style="font-size:11.5px;margin-bottom:6px;padding:6px 8px;background:rgba(216,180,106,.1);border-radius:6px;line-height:1.5">${esc(t.reissueChannel)}</div>` : ''}
            <div class="muted" style="font-size:11px;margin-bottom:6px">Reissue with the airline/supplier first (above). The new PNR + e-ticket come from <strong>them, not the customer</strong> — then enter what the airline gave you. If the reissue kept the same PNR, leave it as-is.</div>
@@ -3170,6 +3211,18 @@ window.completeReissueOps = async (bookingId, tid) => {
   // from the queue rather than erroring.
   if (res?.alreadyReissued) toast('✓ ' + (res.message || 'Already reissued — stale ticket cleared.'), 6000);
   else toast(`🎫 Reissue complete — £${Number(res?.collected || 0).toFixed(2)} ${collectedOffline ? 'recorded (offline)' : 'charged to card'}, ticket issued, customer emailed.`, 7000);
+  openOpsQueue();
+};
+// Issue the e-ticket for a PRICE-LOCKED flight after securing it live. No customer
+// charge — they already paid (or are paying) the locked price; this records the
+// fulfilment, stamps the ticket, emails the customer, and clears the work-order.
+window.issueSecuredOps = async (bookingId, tid) => {
+  const pnr = document.getElementById(`sf_pnr_${tid}`)?.value.trim() || '';
+  const ticketNumbers = document.getElementById(`sf_tkt_${tid}`)?.value.trim() || '';
+  if (!pnr) { toast('Enter the airline PNR from the secured booking.'); return; }
+  try { await api(`/api/admin/book/${bookingId}/issue-secured`, { method: 'POST', body: JSON.stringify({ pnr, ticketNumbers, ticketId: tid }) }); }
+  catch (e) { return; }
+  toast('🎫 Ticket issued at the locked price — customer emailed.', 6000);
   openOpsQueue();
 };
 

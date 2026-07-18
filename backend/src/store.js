@@ -2273,6 +2273,8 @@ export function adminUsers() {
   return [...db.users.values()].map(publicUser);
 }
 
+// All raw booking objects — for the exposure roll-up (needs fulfilment/payments).
+export function allBookings() { return [...db.bookings.values()]; }
 export function adminBookings() {
   return [...db.bookings.values()].map((b) => ({
     id: b.id,

@@ -3304,6 +3304,49 @@ test('ops completeReissue: issues the ticket, collects the deferred fee + fare d
   assert.equal(completeReissue(b.id, { pnr: 'X' }).ok, false, 'a second complete-reissue is refused');
 });
 
+import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginPct, autoFrontCapGbp } from '../src/pricelock.js';
+
+const flightOpt = (amount) => ({ pricing: { code: 'GBP', symbol: '£' }, components: [{ type: 'flight', details: { liveAmount: amount, liveCurrency: 'GBP', outbound: { date: '2027-10-03' } } }] });
+
+test('Guaranteed Holiday Lock: deposit COVERS the fare → ticket-now (zero fronting)', () => {
+  const b = { id: 'bk1', option: flightOpt(300), payments: [{ type: 'deposit', amount: 320, status: 'paid' }], fulfilment: {} };
+  assert.equal(flightNetCostGbp(b), 300);
+  const plan = flightSecuringPlan(b);
+  assert.equal(plan.action, 'ticket-now', 'deposit ≥ fare → buy the ticket now');
+  assert.equal(plan.gapGbp, 0);
+});
+
+test('Guaranteed Holiday Lock: deposit does NOT cover the fare → lock-scheduled (never front beyond cap)', () => {
+  const b = { id: 'bk2', option: flightOpt(600), payments: [{ type: 'deposit', amount: 120, status: 'paid' }], fulfilment: {} };
+  const plan = flightSecuringPlan(b);
+  // Default AUTO_FRONT_CAP_GBP = 0 → any shortfall means we do NOT front.
+  assert.equal(autoFrontCapGbp(), 0);
+  assert.equal(plan.action, 'lock-scheduled', 'deposit < fare and no front budget → lock the price, secure later');
+  assert.equal(plan.gapGbp, 480, 'the shortfall 3JN would have had to front');
+});
+
+test('Guaranteed Holiday Lock: exposure counts fare-movement risk on a locked flight, cushioned by the deposit', () => {
+  const locked = { id: 'bk3', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
+  const exp = bookingExposure(locked);
+  // With lock margin 0 by default, fare-risk is 0 — the customer's payments buy the
+  // ticket; 3JN fronts nothing. atRisk is never the whole fare.
+  assert.ok(exp.atRiskGbp <= exp.netCostGbp, 'exposure is never more than the fare');
+  assert.equal(exp.frontedGbp, 0, 'a lock-scheduled (unticketed) booking fronts nothing');
+  const roll = portfolioExposure([locked]);
+  assert.equal(roll.bookings, 1);
+  assert.equal(roll.frontedGbp, 0, 'zero fronting across the portfolio at the £0 cap');
+});
+
+test('Guaranteed Holiday Lock: applyLockMargin only touches instalment bookings and is idempotent', () => {
+  const opt = () => ({ totalUSD: 1000, pricing: { local: { total: 790 } } });
+  const noInst = applyLockMargin(opt(), { hasInstalments: false });
+  assert.equal(noInst.pricing.local.total, 790, 'pay-in-full price is untouched');
+  // Default margin is 0 (off) so even an instalment price is unchanged until configured.
+  assert.equal(lockMarginPct(), 0);
+  const inst = applyLockMargin(opt(), { hasInstalments: true });
+  assert.equal(inst.pricing.local.total, 790, 'no margin applied while LOCK_MARGIN_PCT is 0');
+});
+
 test('completeReissue records the change charge as backed by a REAL payment (ref + status), never a false paid', () => {
   const u = createUser({ email: 'chg.pay@x.co', name: 'Change Pay' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 900 } }, totalUSD: 1140, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2027-10-03' } } }] }, userId: u.id });
