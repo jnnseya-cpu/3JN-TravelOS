@@ -3325,54 +3325,59 @@ test('Guaranteed Holiday Lock: deposit does NOT cover the fare → lock-schedule
   assert.equal(plan.gapGbp, 480, 'the shortfall 3JN would have had to front');
 });
 
-test('Guaranteed Holiday Lock: exposure quantifies the UNFUNDED fare-rise risk on a locked flight', () => {
-  const locked = { id: 'bk3', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
-  const exp = bookingExposure(locked);
-  // A locked flight is NOT ticketed, so nothing is fronted...
-  assert.equal(exp.frontedGbp, 0, 'a lock-scheduled (unticketed) booking fronts nothing');
-  // ...but with LOCK_MARGIN_PCT=0 the price guarantee is UNFUNDED: the fare could
-  // rise ~8% (default assumption) with no margin to absorb it → real exposure.
-  // net 500 × 8% assumed rise − 0 margin buffer = £40 at risk (NOT zero).
-  assert.ok(Math.abs(exp.assumedRiseGbp - 40) < 0.01, 'assumed rise = 8% of the £500 fare');
-  assert.equal(exp.marginBufferGbp, 0, 'no margin collected at LOCK_MARGIN_PCT=0');
-  assert.ok(Math.abs(exp.fareRiskGbp - 40) < 0.01, 'unfunded rise risk = assumed rise − margin buffer');
-  assert.ok(exp.atRiskGbp <= exp.netCostGbp, 'exposure is never more than the fare');
-  const roll = portfolioExposure([locked]);
-  assert.equal(roll.bookings, 1);
-  assert.equal(roll.frontedGbp, 0, 'zero fronting across the portfolio at the £0 cap');
-  assert.equal(roll.guaranteeFunded, false, 'at 0 margin the guarantee is NOT funded');
-  assert.ok(Math.abs(roll.fareRiskGbp - 40) < 0.01, 'portfolio rolls up the unfunded rise risk');
-});
-
-test('Guaranteed Holiday Lock: a lock margin ≥ the assumed rise FUNDS the guarantee (fareRisk→0)', () => {
+test('Guaranteed Holiday Lock: exposure quantifies the UNFUNDED fare-rise risk when margin is turned OFF', () => {
   const prev = process.env.LOCK_MARGIN_PCT;
-  process.env.LOCK_MARGIN_PCT = '0.10'; // 10% margin > 8% assumed rise → fully funded
+  process.env.LOCK_MARGIN_PCT = '0'; // explicitly OFF (default is now 0.08)
   try {
-    const locked = { id: 'bk3b', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
+    const locked = { id: 'bk3', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
     const exp = bookingExposure(locked);
-    assert.ok(exp.marginBufferGbp >= exp.assumedRiseGbp, 'margin buffer covers the assumed rise');
-    assert.equal(exp.fareRiskGbp, 0, 'a funded guarantee shows zero unfunded rise risk');
-    assert.equal(portfolioExposure([locked]).guaranteeFunded, true, 'guarantee is funded');
+    // A locked flight is NOT ticketed, so nothing is fronted...
+    assert.equal(exp.frontedGbp, 0, 'a lock-scheduled (unticketed) booking fronts nothing');
+    // ...but with the margin OFF the price guarantee is UNFUNDED: the fare could
+    // rise ~8% (default assumption) with no margin to absorb it → real exposure.
+    // net 500 × 8% assumed rise − 0 margin buffer = £40 at risk (NOT zero).
+    assert.ok(Math.abs(exp.assumedRiseGbp - 40) < 0.01, 'assumed rise = 8% of the £500 fare');
+    assert.equal(exp.marginBufferGbp, 0, 'no margin collected at LOCK_MARGIN_PCT=0');
+    assert.ok(Math.abs(exp.fareRiskGbp - 40) < 0.01, 'unfunded rise risk = assumed rise − margin buffer');
+    assert.ok(exp.atRiskGbp <= exp.netCostGbp, 'exposure is never more than the fare');
+    const roll = portfolioExposure([locked]);
+    assert.equal(roll.bookings, 1);
+    assert.equal(roll.frontedGbp, 0, 'zero fronting across the portfolio at the £0 cap');
+    assert.equal(roll.guaranteeFunded, false, 'at 0 margin the guarantee is NOT funded');
+    assert.ok(Math.abs(roll.fareRiskGbp - 40) < 0.01, 'portfolio rolls up the unfunded rise risk');
   } finally {
     if (prev === undefined) delete process.env.LOCK_MARGIN_PCT; else process.env.LOCK_MARGIN_PCT = prev;
   }
 });
 
-test('Price-lock margin: lockMarginOn is a no-op at 0% and lockMarginOn≡applyLockMargin at a set rate', () => {
-  // Default 0% → the locked total equals the cash total; nothing added.
-  const off = lockMarginOn(1000);
-  assert.equal(off.pct, 0);
-  assert.equal(off.margin, 0);
-  assert.equal(off.lockedTotal, 1000, 'no margin at LOCK_MARGIN_PCT=0 → cash === locked');
+test('Guaranteed Holiday Lock: the DEFAULT 8% margin funds the guarantee out of the box (fareRisk→0)', () => {
+  // No env override — the code default (0.08) must match the assumed rise (0.08)
+  // so a launched booking is FUNDED with no configuration.
+  assert.ok(Math.abs(lockMarginPct() - 0.08) < 1e-9, 'default lock margin is 8%');
+  const locked = { id: 'bk3d', instalment: {}, status: 'confirmed', option: flightOpt(500), payments: [{ type: 'deposit', amount: 150, status: 'paid' }], fulfilment: { ticketing: 'lock-scheduled' } };
+  const exp = bookingExposure(locked);
+  assert.ok(exp.marginBufferGbp >= exp.assumedRiseGbp - 0.01, 'the 8% margin covers the 8% assumed rise');
+  assert.equal(exp.fareRiskGbp, 0, 'the guarantee is funded by default → zero unfunded rise risk');
+  assert.equal(portfolioExposure([locked]).guaranteeFunded, true, 'guarantee is funded at launch');
+});
 
+test('Price-lock margin: lockMarginOn is a no-op when OFF and lockMarginOn≡applyLockMargin at a set rate', () => {
   const prev = process.env.LOCK_MARGIN_PCT;
-  process.env.LOCK_MARGIN_PCT = '0.08';
   try {
+    // Explicitly OFF → the locked total equals the cash total; nothing added.
+    process.env.LOCK_MARGIN_PCT = '0';
+    const off = lockMarginOn(1000);
+    assert.equal(off.pct, 0);
+    assert.equal(off.margin, 0);
+    assert.equal(off.lockedTotal, 1000, 'no margin at LOCK_MARGIN_PCT=0 → cash === locked');
+
+    // At a set rate, lockMarginOn (display) and applyLockMargin (booking) MUST
+    // produce the SAME locked total so the monthly plan and the booked option
+    // never diverge by a rounding step.
+    process.env.LOCK_MARGIN_PCT = '0.08';
     const on = lockMarginOn(1000);
     assert.ok(Math.abs(on.margin - 80) < 0.01, '8% of £1000 = £80');
     assert.ok(Math.abs(on.lockedTotal - 1080) < 0.01, 'locked total = £1080');
-    // applyLockMargin must produce the SAME locked total on an option, so the
-    // displayed monthly plan and the booked option never diverge by a rounding step.
     const opt = { totalUSD: 1266, pricing: { local: { total: 1000 } } };
     applyLockMargin(opt, { hasInstalments: true });
     assert.ok(Math.abs(opt.pricing.local.total - on.lockedTotal) < 0.01, 'applyLockMargin === lockMarginOn.lockedTotal');
@@ -3382,13 +3387,17 @@ test('Price-lock margin: lockMarginOn is a no-op at 0% and lockMarginOn≡applyL
 });
 
 test('Guaranteed Holiday Lock: applyLockMargin only touches instalment bookings and is idempotent', () => {
+  // Default margin is now 8% — a pay-in-full option is untouched, an instalment
+  // option gets the margin ONCE (idempotent via option.pricing.lockMargin).
+  assert.ok(Math.abs(lockMarginPct() - 0.08) < 1e-9, 'default lock margin is 8%');
   const opt = () => ({ totalUSD: 1000, pricing: { local: { total: 790 } } });
   const noInst = applyLockMargin(opt(), { hasInstalments: false });
   assert.equal(noInst.pricing.local.total, 790, 'pay-in-full price is untouched');
-  // Default margin is 0 (off) so even an instalment price is unchanged until configured.
-  assert.equal(lockMarginPct(), 0);
   const inst = applyLockMargin(opt(), { hasInstalments: true });
-  assert.equal(inst.pricing.local.total, 790, 'no margin applied while LOCK_MARGIN_PCT is 0');
+  assert.ok(Math.abs(inst.pricing.local.total - 853.2) < 0.01, 'instalment price carries the 8% margin (790 → 853.20)');
+  // Idempotent: applying again does NOT double-charge.
+  applyLockMargin(inst, { hasInstalments: true });
+  assert.ok(Math.abs(inst.pricing.local.total - 853.2) < 0.01, 'margin applied once, not twice');
 });
 
 test('completeReissue records the change charge as backed by a REAL payment (ref + status), never a false paid', () => {

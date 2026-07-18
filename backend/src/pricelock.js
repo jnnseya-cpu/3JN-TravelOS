@@ -22,13 +22,13 @@ const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 
 // The lock margin (fraction) folded into an INSTALMENT sell price to fund the
-// price guarantee (fare-risk buffer + financing cost). Configurable; a modest
-// default keeps the price competitive while funding the guarantee.
-// Default 0 (OFF) so launch prices stay competitive for a like-for-like market
-// comparison and there is never a surprise jump at checkout. Set LOCK_MARGIN_PCT
-// (e.g. 0.06) to fund the guarantee once you decide the pricing — ideally also
-// reflected in the search/quote price so the displayed price is what's booked.
-export function lockMarginPct() { return Math.max(0, Math.min(0.25, num(env.LOCK_MARGIN_PCT, 0))); }
+// price guarantee (fare-risk buffer + financing cost). Applies ONLY to the
+// monthly/locked plan — never the pay-now cash headline (that stays the
+// competitive number) and never a pay-in-full / instant fare.
+// Default 0.08 (8%) so the guarantee is FUNDED from launch: it matches the
+// assumed fare-rise (fareRiseAssumptionPct) so a locked fare that moves is
+// absorbed by the margin, not 3JN cash. Override with LOCK_MARGIN_PCT.
+export function lockMarginPct() { return Math.max(0, Math.min(0.25, num(env.LOCK_MARGIN_PCT, 0.08))); }
 
 // Ceiling on 3JN's OWN capital committed ahead of the customer paying for it.
 // £0 (default) = never front — the safe launch posture with no credit facility.
