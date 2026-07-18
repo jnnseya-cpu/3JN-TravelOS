@@ -1423,7 +1423,7 @@ function priceZoneHTML(quote) {
         ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
         pay any amount early, any time, no penalty.
       </div>
-      <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels and the deposit is forfeited; any balance beyond the deposit follows the supplier refund policy.</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels. Deposits are non-refundable. If you've paid <strong>over 50%</strong> and no ticket has been issued, you're refunded less a <strong>£100 admin fee per passenger</strong>; once a ticket is issued the airline's rules govern the flight.</div>
       ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}
     </div>` : '';
   // INSTANT-PAYMENT-ONLY FARE: the airline won't hold this fare, so instalments
@@ -2522,6 +2522,7 @@ function bookingCard(b) {
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>
+        ${String(b.status || '').startsWith('cancelled') ? '<span class="muted" style="font-size:11.5px;align-self:center">Cancelled</span>' : `<button class="btn btn-ghost btn-sm" onclick="openCancel('${b.id}')" style="color:#ff8a8a">✕ Cancel booking</button>`}
       </div>
       ${pgEvents ? `<div style="margin-top:10px"><span class="eyebrow">Price Lock</span>${pgEvents}</div>` : ''}
     </div>`;
@@ -2850,6 +2851,40 @@ window.runGuard = async (id) => {
     const data = await api(`/api/book/${id}/price-guard`, { method: 'POST', body: JSON.stringify({}) });
     toast(data.event.message);
   } catch { return; }
+  refreshNotifications();
+  renderConsole();
+};
+
+// Cancel a booking — PREVIEW the refund first (deposit non-refundable; >50% & no
+// ticket → refund less £100/pax admin; ticket issued → airline rules), then
+// confirm. The customer always sees exactly what comes back before committing.
+window.openCancel = async (bookingId) => {
+  let d;
+  try { d = await api(`/api/book/${bookingId}/cancel`, { method: 'POST', body: JSON.stringify({}) }); }
+  catch (e) { toast(e?.message || 'Could not load cancellation details.'); return; }
+  const o = d.outcome || {}; const sym = d.symbol || '£';
+  const m2 = (n) => sym + Number(n || 0).toFixed(2);
+  modal(`<span class="eyebrow" style="color:#ff8a8a">Cancel booking</span>
+    <h3 style="margin:6px 0 4px">Here's your refund</h3>
+    <p class="muted" style="font-size:13px;margin:0 0 12px">${esc(d.message || '')}</p>
+    <div class="card pad" style="margin-bottom:12px">
+      <div class="kv"><span>Paid to date</span><span>${m2(o.paid)}</span></div>
+      ${o.adminFee ? `<div class="kv"><span>Admin fee (${o.passengers} passenger${o.passengers > 1 ? 's' : ''} × ${m2(o.adminFee / o.passengers)})</span><span>−${m2(o.adminFee)}</span></div>` : ''}
+      ${!o.adminFee && o.retained > 0 ? `<div class="kv"><span>Non-refundable (deposit / supplier)</span><span>−${m2(o.retained)}</span></div>` : ''}
+      <div class="kv" style="font-weight:700;border-top:1px solid rgba(255,255,255,.1);padding-top:6px;margin-top:4px"><span>Refund to you</span><span style="color:var(--gold)">${m2(o.refund)}</span></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">Keep my booking</button>
+      <button class="btn btn-sm" style="background:#c0392b;color:#fff" onclick="confirmCancel('${bookingId}')">Confirm cancellation</button>
+    </div>`);
+};
+window.confirmCancel = async (bookingId) => {
+  let d;
+  try { d = await api(`/api/book/${bookingId}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: true }) }); }
+  catch (e) { toast(e?.message || 'Cancellation failed — please contact support.'); return; }
+  const sym = d.symbol || '£';
+  closeModal();
+  toast(d.outcome?.refund > 0 ? `Booking cancelled — ${sym}${Number(d.outcome.refund).toFixed(2)} refund is being processed.` : 'Booking cancelled.', 7000);
   refreshNotifications();
   renderConsole();
 };
@@ -5280,11 +5315,12 @@ const CONTENT = {
     title: '💷 Refund &amp; Cancellation Policy',
     body: `<p class="muted">Your booked price is locked and protected from fare increases and currency movement until you travel. Refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules.</p>
       <ul class="comp-list">
+        <li><span class="cs">Deposits</span><span class="cp">non-refundable</span></li>
+        <li><span class="cs">Paid over 50%, no ticket issued</span><span class="cp">refund less £100 admin / passenger</span></li>
+        <li><span class="cs">Ticket issued</span><span class="cp">airline rules govern the flight</span></li>
         <li><span class="cs">Free-cancellation rates</span><span class="cp">full refund in window</span></li>
-        <li><span class="cs">Instalment deposits</span><span class="cp">per plan terms</span></li>
-        <li><span class="cs">Price-drop difference</span><span class="cp">auto-refunded</span></li>
       </ul>
-      <p class="muted" style="font-size:12px">Requests: <strong>info@3jntravel.com</strong>. ATOL/ABTA financial protection applies to eligible UK package bookings.</p>`,
+      <p class="muted" style="font-size:12px">Once a ticket is issued the flight follows the airline's own (usually non-refundable) rules; unused, refundable components are returned per the supplier policy. Requests: <strong>info@3jntravel.com</strong>. ATOL/ABTA financial protection applies to eligible UK package bookings.</p>`,
   },
   acceptable: {
     title: '✅ Acceptable Use Policy',

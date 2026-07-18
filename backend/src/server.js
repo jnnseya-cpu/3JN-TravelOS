@@ -10,10 +10,10 @@ import { destinationsCatalog, findDestination, resolveOrigin, originForCountry }
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
-  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints,
+  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund,
   adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
@@ -133,7 +133,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-margin-8pct-default-v130';
+const BUILD_TAG = '2026-07-18-refund-policy-50pct-admin-v131';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2775,6 +2775,68 @@ app.get('/api/book/:id', safe((req, res) => {
     return res.status(403).json({ error: 'not-your-booking' });
   }
   res.json({ booking });
+}));
+
+// CANCEL a booking (customer or admin) under the 3JN refund policy:
+//   • deposit is non-refundable;
+//   • paid > 50% and NO ticket issued → refund paid − £admin/passenger;
+//   • ticket issued → the flight is non-refundable (airline), unused refundable
+//     components returned per supplier policy.
+// Two-step: without { confirm: true } it returns a PREVIEW (what you'd get back)
+// so the customer sees the number before committing. With confirm, it cancels,
+// reverses partner/vendor commission, best-effort auto-refunds via Stripe, and
+// queues ops for any remainder.
+app.post('/api/book/:id/cancel', safe(async (req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking) return res.status(404).json({ error: 'not-found' });
+  if (ownerlessBookingBlocked(req, res, booking)) return;
+  const user = currentUser(req);
+  const isOwner = booking.userId && user && (booking.userId === user.id || user.allAccess || user.role === 'admin');
+  if (booking.userId && !isOwner) return res.status(403).json({ error: 'not-your-booking' });
+  if (String(booking.status || '').startsWith('cancelled')) return res.status(409).json({ error: 'already-cancelled', message: 'This booking is already cancelled.' });
+
+  const sym = booking.instalment?.symbol || booking.option?.pricing?.symbol || '£';
+  const preview = refundOutcome(booking);
+  // PREVIEW (default): show the refund breakdown, don't cancel.
+  if (!(req.body && req.body.confirm === true)) {
+    return res.json({
+      preview: true,
+      policy: { adminFeePerPax: CANCEL_ADMIN_FEE_PER_PAX_GBP, thresholdPct: CANCEL_REFUND_THRESHOLD_PCT },
+      outcome: preview, symbol: sym,
+      message: preview.basis === 'over-threshold-no-ticket'
+        ? `You'd be refunded ${sym}${preview.refund.toFixed(2)} — your payments of ${sym}${preview.paid.toFixed(2)} less a ${sym}${preview.adminFee.toFixed(2)} admin fee (${sym}${CANCEL_ADMIN_FEE_PER_PAX_GBP.toFixed(2)} per passenger). No ticket has been issued.`
+        : preview.basis === 'ticket-issued'
+          ? `Your ticket is already issued, so the flight is non-refundable per the airline. ${preview.refund > 0 ? `${sym}${preview.refund.toFixed(2)} of unused, refundable components would be returned per supplier policy.` : 'No refundable balance remains.'}`
+          : `Your deposit is non-refundable. ${preview.refund > 0 ? `${sym}${preview.refund.toFixed(2)} beyond the deposit would be returned per supplier policy.` : 'No refund is due at this stage.'} Once you've paid over 50% (and before any ticket is issued), a cancellation is refunded less a ${sym}${CANCEL_ADMIN_FEE_PER_PAX_GBP.toFixed(2)}/passenger admin fee.`,
+    });
+  }
+
+  // CONFIRMED: cancel + reverse commission (store-side), then handle the money.
+  const result = cancelBookingWithRefund(booking.id, { actor: user?.role === 'admin' ? 'admin' : 'customer', reason: (req.body?.reason || 'customer-cancellation') });
+  if (!result.ok) return res.status(409).json({ error: result.error });
+  const outcome = result.outcome;
+
+  // Best-effort automatic refund on the primary (deposit) payment intent, for up
+  // to the refundable amount. Instalments captured on other intents are settled
+  // by ops from the queued refund ticket — never silently dropped.
+  let autoRefunded = 0;
+  if (outcome.refund > 0 && stripeEnabled() && booking.stripePaymentIntent) {
+    const r = await createRefund({ paymentIntentId: booking.stripePaymentIntent, amountMinor: Math.round(outcome.refund * 100) }).catch(() => ({ ok: false }));
+    if (r.ok) {
+      autoRefunded = (r.amount || 0) / 100;
+      booking.cancellation.stripeRefundId = r.refundId || r.id || null;
+      booking.cancellation.autoRefunded = autoRefunded;
+      try { recordPayment(booking.id, { type: 'refund', amount: -autoRefunded, gateway: 'stripe', reference: `refund:${booking.cancellation.stripeRefundId}` }); } catch {}
+    }
+  }
+  const remainder = Math.round((outcome.refund - autoRefunded) * 100) / 100;
+  try {
+    createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-refund',
+      message: `Cancellation refund for booking ${booking.id} (${outcome.basis}). Paid ${sym}${outcome.paid}, refund DUE ${sym}${outcome.refund} (retained ${sym}${outcome.retained}${outcome.adminFee ? `, admin fee ${sym}${outcome.adminFee}` : ''}). ${autoRefunded > 0 ? `Auto-refunded ${sym}${autoRefunded} to the deposit card.` : 'No auto-refund fired.'} ${remainder > 0.01 ? `Process the remaining ${sym}${remainder} to the customer's instalment payment method(s).` : 'Nothing further to process.'}`,
+      reason: 'cancellation-refund' });
+  } catch { /* booking is still cancelled */ }
+  if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '↩️', title: 'Booking cancelled', body: outcome.refund > 0 ? `Your booking is cancelled. A refund of ${sym}${outcome.refund.toFixed(2)} is being processed${outcome.adminFee ? ` (after the ${sym}${outcome.adminFee.toFixed(2)} admin fee)` : ''}${autoRefunded > 0 ? ` — ${sym}${autoRefunded.toFixed(2)} already back on your card` : ''}.` : `Your booking is cancelled. As per the terms, no refund is due at this stage.` });
+  res.json({ ok: true, cancelled: true, outcome, autoRefunded, remainder, symbol: sym });
 }));
 
 // Console → booking → 📄 Documents: the structured document vault — the SAME

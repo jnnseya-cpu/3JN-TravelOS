@@ -294,6 +294,8 @@ export function buildRefundPolicy(option, travelDate = null) {
     supplierPolicies,
     supplierPolicy: flex ? 'Flexible — supplier free-cancellation windows apply' : 'Restricted — supplier fees apply from booking',
     nonRefundable: flex ? ['Visa fees', 'Insurance premium once cover starts'] : ['Deposit', 'Visa fees', 'Insurance premium'],
+    // 3JN cancellation floor (independent of the supplier schedule below):
+    depositPolicy: 'Deposits are non-refundable. If you have paid more than 50% of the total and NO ticket has been issued, cancellation is refunded in full less a £100 admin fee per passenger. Once a ticket is issued the airline’s own (non-refundable) rules govern the flight; unused, refundable components are returned per the supplier policy.',
     // 2) Platform FALLBACK schedule — only for components with no supplier rule.
     platformFallback: {
       appliesWhen: 'Only for components whose supplier states no cancellation rule',

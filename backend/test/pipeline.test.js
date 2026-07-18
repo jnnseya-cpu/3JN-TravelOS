@@ -4134,7 +4134,47 @@ test('a paid LCC booking routes to the ops desk with the customer told honestly'
 });
 
 // ---- AI Smart Instalment Payment Engine --------------------------------------
-import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil } from '../src/instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil, refundOutcome, CANCEL_ADMIN_FEE_PER_PAX_GBP } from '../src/instalments.js';
+
+// Build a minimal instalment booking: total 1000 (deposit + schedule), `paid`
+// funded via one deposit payment, N passengers, optional issued ticket.
+const refundBooking = ({ paid, passengers = 1, ticketing = null }) => ({
+  travellers: Array.from({ length: passengers }, (_, i) => ({ fullName: `Pax ${i + 1}` })),
+  instalment: { deposit: 100, schedule: [{ amount: 400, status: 'scheduled' }, { amount: 500, status: 'scheduled' }], symbol: '£' },
+  payments: [{ type: 'deposit', amount: paid, status: 'paid' }],
+  fulfilment: ticketing ? { ticketing } : {},
+});
+
+test('refund policy: deposit-only cancellation forfeits the deposit (≤50%, no ticket)', () => {
+  const o = refundOutcome(refundBooking({ paid: 100 })); // 10% paid
+  assert.equal(o.basis, 'deposit-forfeit');
+  assert.equal(o.forfeitedDeposit, 100);
+  assert.equal(o.refund, 0, 'deposit is non-refundable, nothing beyond it paid');
+});
+
+test('refund policy: paid OVER 50% with no ticket → refund less £100 admin per passenger', () => {
+  const o = refundOutcome(refundBooking({ paid: 600 })); // 60% paid, 1 pax
+  assert.equal(o.basis, 'over-threshold-no-ticket');
+  assert.equal(o.adminFee, CANCEL_ADMIN_FEE_PER_PAX_GBP, '£100 admin fee for one passenger');
+  assert.equal(o.refund, 500, '600 paid − 100 admin = 500 refunded');
+  assert.equal(o.forfeitedDeposit, 0, 'the deposit comes back at >50% (only the admin fee is retained)');
+  // Two passengers → £200 admin fee.
+  const o2 = refundOutcome(refundBooking({ paid: 700, passengers: 2 }));
+  assert.equal(o2.adminFee, 200, '£100 × 2 passengers');
+  assert.equal(o2.refund, 500, '700 paid − 200 admin = 500');
+});
+
+test('refund policy: exactly 50% is NOT over the threshold (deposit-forfeit rule holds)', () => {
+  const o = refundOutcome(refundBooking({ paid: 500 })); // exactly 50%
+  assert.equal(o.basis, 'deposit-forfeit', '50% is not OVER 50%');
+});
+
+test('refund policy: ticket issued → flight non-refundable regardless of amount paid', () => {
+  const o = refundOutcome(refundBooking({ paid: 900, ticketing: 'issued' }));
+  assert.equal(o.basis, 'ticket-issued');
+  assert.equal(o.adminFee, 0);
+  assert.equal(o.forfeitedDeposit, 100, 'deposit retained; airline rules govern the flight');
+});
 
 test('smart instalments: every tier sums to exactly 100% and ends 7 days out', () => {
   for (const t of INSTALMENT_TIERS) {

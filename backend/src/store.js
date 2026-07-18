@@ -15,7 +15,7 @@ import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceC
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { benchmarkVerdict } from './benchmark.js';
-import { instalmentState, defaultOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
+import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
 import { PLACEMENT_SECTIONS } from './partners.js';
@@ -1880,6 +1880,26 @@ export function operatorQuoteCancel(bookingId) {
 export function operatorHasPending(bookingId) {
   return !!db.bookings.get(bookingId)?.pendingAction;
 }
+
+// VOLUNTARY CANCELLATION (customer or admin), store-side. Computes the refund per
+// the 3JN policy (deposit non-refundable; >50% paid & no ticket → refund less the
+// per-passenger admin fee; ticket issued → airline rules), reverses partner/
+// vendor commission so a cancelled trip never pays out, and stamps the booking.
+// The Stripe refund + notifications are handled by the API layer.
+export function cancelBookingWithRefund(bookingId, { actor = 'customer', reason = 'customer-cancellation' } = {}) {
+  const b = db.bookings.get(bookingId);
+  if (!b) return { ok: false, error: 'not-found' };
+  if (String(b.status || '').startsWith('cancelled')) return { ok: false, error: 'already-cancelled' };
+  const outcome = refundOutcome(b);
+  b.status = 'cancelled-user';
+  b.cancellation = { at: nowISO(), by: actor, reason, ...outcome };
+  // A cancelled booking must NOT pay partner/vendor commission — reverse the
+  // revshare row(s) and kill any not-yet-paid vendor sale (same as a default).
+  for (const r of db.revshareLedger) if (r.bookingId === b.id) r.reversed = true;
+  for (const s of db.vendorSales) if (s.bookingId === b.id && !s.paidOut) s.refunded = true;
+  recordAudit({ actor, role: actor === 'customer' ? 'consumer' : 'admin', action: 'booking.cancelled', entity: 'booking', entityId: b.id, summary: `${outcome.basis} · paid ${b.instalment?.symbol || '£'}${outcome.paid} · refund ${b.instalment?.symbol || '£'}${outcome.refund} (retained ${b.instalment?.symbol || '£'}${outcome.retained})` });
+  return { ok: true, booking: b, outcome };
+}
 // Execute the confirmed pending action. Returns the outcome + updated booking.
 export function operatorConfirm(bookingId) {
   const b = db.bookings.get(bookingId);
@@ -2900,8 +2920,14 @@ export function enforceInstalments(todayISO) {
       for (const s of db.vendorSales) if (s.bookingId === b.id && !s.paidOut) s.refunded = true;
       results.defaulted += 1;
       results.actions.push({ bookingId: b.id, action: 'auto-cancelled', ...outcome });
-      recordAudit({ actor: 'system', role: 'system', action: 'instalment.defaulted', entity: 'booking', entityId: b.id, summary: `missed ${state.missedDue}; deposit ${b.instalment.symbol}${outcome.forfeitedDeposit} forfeited; refundable ${b.instalment.symbol}${outcome.refundableBalance}` });
-      if (b.userId) pushNotification(b.userId, { type: 'warning', icon: '❌', title: 'Booking cancelled — instalment unpaid', body: `The grace period passed without payment, so the booking was cancelled per the plan terms. The deposit (${b.instalment.symbol}${outcome.forfeitedDeposit}) is non-refundable; ${outcome.refundableBalance > 0 ? `${b.instalment.symbol}${outcome.refundableBalance} is being refunded per supplier policy.` : 'no further balance was held.'}` });
+      recordAudit({ actor: 'system', role: 'system', action: 'instalment.defaulted', entity: 'booking', entityId: b.id, summary: `missed ${state.missedDue}; ${outcome.basis}; refund ${b.instalment.symbol}${outcome.refund} (retained ${b.instalment.symbol}${outcome.retained})` });
+      if (b.userId) {
+        const sym = b.instalment.symbol;
+        const body = outcome.basis === 'over-threshold-no-ticket'
+          ? `The grace period passed without payment, so the booking was cancelled. As you'd paid over 50% and no ticket was issued, ${sym}${outcome.refund} is being refunded — less a ${sym}${outcome.adminFee} admin fee (${sym}${(outcome.adminFee / outcome.passengers).toFixed(2)} per passenger), per the plan terms.`
+          : `The grace period passed without payment, so the booking was cancelled per the plan terms. The deposit (${sym}${outcome.forfeitedDeposit}) is non-refundable; ${outcome.refundableBalance > 0 ? `${sym}${outcome.refundableBalance} is being refunded per supplier policy.` : 'no further balance was held.'}`;
+        pushNotification(b.userId, { type: 'warning', icon: '❌', title: 'Booking cancelled — instalment unpaid', body });
+      }
     }
   }
   return results;

@@ -265,16 +265,76 @@ export function instalmentState(booking, todayISO) {
   };
 }
 
-// Refund maths on default/cancellation: the deposit is forfeited by rule; the
-// balance beyond the deposit is refundable per supplier cancellation policy
-// (the booking's structured refundPolicy governs what actually returns).
-export function defaultOutcome(booking) {
+// ---- Cancellation refund policy (3JN) -----------------------------------------
+// Deposits are NON-REFUNDABLE. But once a customer has paid MORE than this share
+// of the booking total AND no ticket has been issued, the booking is refunded in
+// full LESS a per-passenger admin fee — 3JN committed no supplier ticket, so it's
+// fair to return the majority rather than forfeit it. Once a ticket IS issued the
+// airline's own (non-refundable) rules govern the flight.
+const _env = (typeof process !== 'undefined' && process.env) ? process.env : {};
+export const CANCEL_REFUND_THRESHOLD_PCT = 0.5;
+export const CANCEL_ADMIN_FEE_PER_PAX_GBP = Math.max(0, Number(_env.CANCEL_ADMIN_FEE_PER_PAX_GBP) || 100);
+
+function paxOf(booking) {
+  const n = (Array.isArray(booking?.travellers) && booking.travellers.length)
+    ? booking.travellers.length
+    : (booking?.option?.travellers?.total || booking?.option?.components?.[0]?.details?.offerPassengers?.length || 1);
+  return Math.max(1, Math.round(Number(n) || 1));
+}
+function ticketIssuedOf(booking) {
+  const t = booking?.fulfilment?.ticketing;
+  return t === 'issued' || t === 'reissued' || !!booking?.fulfilment?.duffelOrderId || !!booking?.fulfilment?.pnr;
+}
+
+// Refund maths on cancellation/default. Returns the retained/refund split PLUS
+// backward-compatible { forfeitedDeposit, refundableBalance }.
+//   • ticket issued        → flight non-refundable (airline); deposit retained,
+//                            unused refundable components per supplier policy.
+//   • no ticket, paid >50% → refund paid − (£admin × passengers).
+//   • no ticket, paid ≤50% → deposit forfeited; balance beyond it per supplier.
+export function refundOutcome(booking, opts = {}) {
   const inst = booking?.instalment;
   const paid = planPaid(booking);
   const deposit = inst?.deposit || 0;
+  const total = inst
+    ? round2((inst.deposit || 0) + (inst.schedule || []).reduce((s, x) => s + (Number(x.amount) || 0), 0))
+    : round2(paid);
+  const ticketIssued = opts.ticketIssued != null ? !!opts.ticketIssued : ticketIssuedOf(booking);
+  const passengers = Math.max(1, Math.round(Number(opts.passengers) || paxOf(booking)));
+  const thresholdPct = opts.thresholdPct != null ? opts.thresholdPct : CANCEL_REFUND_THRESHOLD_PCT;
+  const adminFeePerPax = opts.adminFeePerPax != null ? opts.adminFeePerPax : CANCEL_ADMIN_FEE_PER_PAX_GBP;
+  const paidPct = total > 0 ? paid / total : 0;
+
+  if (ticketIssued) {
+    const refund = round2(Math.max(0, paid - deposit));
+    return {
+      basis: 'ticket-issued', paid, total, passengers, adminFee: 0,
+      forfeitedDeposit: round2(Math.min(paid, deposit)), refundableBalance: refund,
+      refund, retained: round2(paid - refund),
+      rule: 'Ticket issued — the flight is non-refundable per the airline. The deposit is non-refundable; any unused, refundable components are returned per the supplier policy.',
+    };
+  }
+  if (paidPct > thresholdPct + 1e-9) {
+    const adminFee = round2(adminFeePerPax * passengers);
+    const refund = round2(Math.max(0, paid - adminFee));
+    return {
+      basis: 'over-threshold-no-ticket', paid, total, passengers, adminFee,
+      forfeitedDeposit: 0, refundableBalance: refund,
+      refund, retained: round2(paid - refund),
+      rule: `Paid over ${Math.round(thresholdPct * 100)}% and no ticket issued — refunded in full less a £${adminFee.toFixed(2)} admin fee (£${adminFeePerPax.toFixed(2)} per passenger).`,
+    };
+  }
+  const refund = round2(Math.max(0, paid - deposit));
   return {
-    forfeitedDeposit: round2(Math.min(paid, deposit)),
-    refundableBalance: round2(Math.max(0, paid - deposit)),
+    basis: 'deposit-forfeit', paid, total, passengers, adminFee: 0,
+    forfeitedDeposit: round2(Math.min(paid, deposit)), refundableBalance: refund,
+    refund, retained: round2(Math.min(paid, deposit)),
     rule: 'Deposit is non-refundable; the remaining balance follows the supplier cancellation policy on this booking.',
   };
+}
+
+// Back-compat wrapper (missed-payment default sweep) — now honours the >50%
+// no-ticket refund floor and the ticket-issued rule automatically.
+export function defaultOutcome(booking) {
+  return refundOutcome(booking);
 }
