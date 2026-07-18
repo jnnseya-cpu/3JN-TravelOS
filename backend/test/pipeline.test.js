@@ -84,24 +84,24 @@ import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 import { subscribeMembership, renewMembership, spendAcu, buyAcu, redeemTravelCredit } from '../src/store.js';
 
-// A PACKAGE option (flight + hotel) with a real retained margin, so Travel Credit
-// (packages-only, capped at margin) can be earned.
-const pkgOpt = (total = 1000, commissionUSD = 100) => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total }, lines: { commissionUSD } }, totalUSD: total, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }, { type: 'hotel', supplier: 'H', details: {} }] });
-const flightOnlyOpt = () => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 }, lines: { commissionUSD: 12 } }, totalUSD: 1000, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] });
+// A PACKAGE option (flight + hotel) carrying a member perk budget (25% of gross) +
+// any discount already drawn, so Travel Credit (budget-shared, capped) can be earned.
+const pkgOpt = (total = 1000, perkBudget = 40, discount = 0) => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total }, lines: { commissionUSD: 100, memberPerkBudgetUSD: perkBudget, loyaltyDiscountUSD: discount } }, totalUSD: total, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }, { type: 'hotel', supplier: 'H', details: {} }] });
+const flightOnlyOpt = () => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 }, lines: { commissionUSD: 5, memberPerkBudgetUSD: 0 } }, totalUSD: 1000, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] });
 
-test('travel credit: members earn 3% on a PACKAGE; nothing on flight-only or for non-members', () => {
-  // Member on a package earns 3% = £30 (well within the £100 margin).
+test('travel credit: members earn up to 3% on a PACKAGE; nothing on flight-only or for non-members', () => {
+  // Member on a package with room in the budget (£40) earns the full 3% = £30.
   const m = createUser({ name: 'Credit Member', email: `cred.m.${Date.now()}@x.co` });
   subscribeMembership(m.id, 'plus');
-  const b1 = createBooking({ option: pkgOpt(), userId: m.id });
+  const b1 = createBooking({ option: pkgOpt(1000, 40, 0), userId: m.id });
   recordPayment(b1.id, { type: 'full', amount: 1000, status: 'paid' });
-  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 30) < 0.01, 'member earns £30 credit (3% of a package)');
-  // Same member, a FLIGHT-ONLY booking → NO credit (flights are the free hook).
+  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 30) < 0.01, 'earns the full 3% when the perk budget allows');
+  // Flight-only → NO credit (flights are the free hook).
   const m2 = createUser({ name: 'Flight Member', email: `cred.f.${Date.now()}@x.co` });
   subscribeMembership(m2.id, 'plus');
   const bf = createBooking({ option: flightOnlyOpt(), userId: m2.id });
   recordPayment(bf.id, { type: 'full', amount: 1000, status: 'paid' });
-  assert.equal(getUserById(m2.id).travelCreditGbp || 0, 0, 'no credit on a flight-only booking — never a loss');
+  assert.equal(getUserById(m2.id).travelCreditGbp || 0, 0, 'no credit on flight-only — never a loss');
   // Non-member earns nothing even on a package.
   const g = createUser({ name: 'Free User', email: `cred.g.${Date.now()}@x.co` });
   const b2 = createBooking({ option: pkgOpt(), userId: g.id });
@@ -109,13 +109,13 @@ test('travel credit: members earn 3% on a PACKAGE; nothing on flight-only or for
   assert.equal(getUserById(g.id).travelCreditGbp || 0, 0, 'non-members earn no Travel Credit');
 });
 
-test('travel credit: never exceeds 3JN\'s retained margin on the booking', () => {
-  // A thin package where 3JN only kept £10 — credit is capped at £10, not 3% (£30).
-  const m = createUser({ name: 'Thin Margin', email: `cred.t.${Date.now()}@x.co` });
+test('GOLDEN RULE: credit shares the 25% perk budget with the discount (never exceeds it)', () => {
+  // Budget £25, of which £20 already went to the member discount → credit ≤ £5.
+  const m = createUser({ name: 'Budget Share', email: `cred.b.${Date.now()}@x.co` });
   subscribeMembership(m.id, 'plus');
-  const b = createBooking({ option: pkgOpt(1000, 10), userId: m.id });
+  const b = createBooking({ option: pkgOpt(1000, 25, 20), userId: m.id });
   recordPayment(b.id, { type: 'full', amount: 1000, status: 'paid' });
-  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 10) < 0.01, 'credit capped at the £10 margin — paid from profit, never out of pocket');
+  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 5) < 0.01, 'credit = budget £25 − discount £20 = £5');
 });
 
 test('travel credit: redemption is capped at the balance and the outstanding amount', () => {
@@ -602,26 +602,24 @@ test('unresolved destination asks clarifying questions instead of crashing', () 
   assert.ok(result.questions.find((q) => q.id === 'destination'));
 });
 
-test('price breakdown: MEMBER discount funded from commission, never below supplier cost', () => {
-  // Travel+ member (5%) on a $1000 supplier-cost package.
+test('GOLDEN RULE: member discount is capped at 25% of gross margin → 3JN keeps ≥ 3×', () => {
+  // Travel+ member (5%) on a $1000 package, gross margin $100.
   const b = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, memberActive: true, membershipDiscount: 0.05, membershipName: 'Travel+' });
-  assert.equal(b.lines.loyaltyDiscountUSD, 50);       // the member's rebate
-  assert.equal(b.lines.netSuppliersUSD, 1000);        // supplier cost ALWAYS collected in full
-  assert.equal(b.lines.grossCommissionUSD, 100);      // the headline 10% on the receipt
-  assert.equal(b.lines.commissionUSD, 50);            // our real take = gross − rebate
-  assert.equal(b.lines.totalUSD, 1050);               // customer pays cost + our net take
+  assert.equal(b.lines.grossCommissionUSD, 100);          // full 10% on the receipt
+  assert.equal(b.lines.memberPerkBudgetUSD, 25);          // 25% of gross = the perk ceiling
+  assert.equal(b.lines.loyaltyDiscountUSD, 25, 'the 5% ask is capped to the 25%-of-margin budget');
+  assert.equal(b.lines.commissionUSD, 75, '3JN keeps £75 on a £25 perk = 3:1');
+  assert.ok(b.lines.commissionUSD >= 3 * b.lines.loyaltyDiscountUSD, 'GOLDEN RULE: net ≥ 3× perk');
   assert.equal(b.lines.suppliersUSD - b.lines.loyaltyDiscountUSD + b.lines.grossCommissionUSD, b.lines.totalUSD);
-  assert.ok(b.lines.savingsVsMarketUSD > 0);
 
-  // Travel+ Family (7%) keeps real transaction margin — never a loss.
+  // Family (7%) hits the same cap — the rule holds regardless of the headline %.
   const fam = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, memberActive: true, membershipDiscount: 0.07, membershipName: 'Travel+ Family' });
-  assert.equal(fam.lines.loyaltyDiscountUSD, 70);
-  assert.equal(fam.lines.commissionUSD, 30);          // we keep 3% — real margin
-  assert.ok(fam.lines.totalUSD >= fam.lines.netSuppliersUSD, 'never below supplier cost');
+  assert.equal(fam.lines.loyaltyDiscountUSD, 25, 'capped at 25% of margin');
+  assert.ok(fam.lines.commissionUSD >= 3 * fam.lines.loyaltyDiscountUSD, 'still 3:1');
 
-  // Loyalty POINTS alone (no membership) grant NO discount now — members only.
+  // Points alone (no membership) grant NO discount.
   const noMember = priceBreakdown({ componentsUSD: 1000, marketRefUSD: 1300, currency: GB.currency, loyaltyPoints: 15000 });
-  assert.equal(noMember.lines.loyaltyDiscountUSD, 0, 'points no longer discount — membership only');
+  assert.equal(noMember.lines.loyaltyDiscountUSD, 0, 'members only');
   assert.equal(noMember.lines.totalUSD, 1100);
 });
 
@@ -4555,8 +4553,8 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   const r3 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: findUserByEmail('member.flyer@example.com'), searchTier: 'smart' });
   const opt3 = r3.packages.options[0];
   assert.equal(opt3.pricing.feeModel, 'flight-flat-member');
-  assert.ok(Math.abs(opt3.pricing.lines.commissionUSD) < 0.02, 'Travel+ members pay NO flight service fee (free)');
-  assert.ok(opt3.pricing.lines.commissionUSD < feeUSD, 'member fee is below the non-member fee');
+  assert.ok(Math.abs(opt3.pricing.lines.commissionUSD - 4.99 / 0.79) < 0.05, 'Travel+ members pay the flat £4.99 flight fee (never £0)');
+  assert.ok(opt3.pricing.lines.commissionUSD <= feeUSD + 0.02, 'member flat fee never above the non-member fee (saves on fares over the floor)');
 });
 
 test('tiered take-rate: partners earn a share of the flight take + lifetime attribution', async () => {
@@ -5261,9 +5259,11 @@ test('flights-only fee: 2% of fare, floored at £4.99, capped at £15', () => {
   assert.ok(Math.abs(feeGbp(450) - 9) < 0.05, 'mid-haul → 2% (£9 on £450)');
   assert.equal(feeGbp(750), 15, 'exactly at the cap');
   assert.equal(feeGbp(1500), 15, 'long-haul stays capped at £15 (1%, competitive)');
-  // Travel+ members pay NO flight service fee — flights are free of the 3JN fee.
+  // GOLDEN RULE: Travel+ members pay a small FLAT £4.99 flight fee (no % markup) —
+  // cheaper than the non-member 2% on a big fare, but never £0/a loss to 3JN.
   const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
-  assert.ok(Math.abs(memberFee) < 0.02, 'Travel+ members pay no flight service fee (free)');
+  assert.ok(Math.abs(memberFee - 4.99) < 0.05, 'member pays the flat £4.99 flight fee');
+  assert.ok(memberFee < feeGbp(900), 'still cheaper than the non-member 2% on a £900 fare');
 });
 
 // ---- WAVE 6: deep-clean critical-fix regressions ----------------------------

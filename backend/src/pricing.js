@@ -8,7 +8,7 @@
 import {
   COMMISSION_RATE, SAVINGS_SHARE_RATE, SAVINGS_SHARE_MIN_USD, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS,
   FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP, FLIGHT_ONLY_MEMBER_FREE, FLIGHT_ONLY_MEMBER_FEE_GBP,
-  HOTEL_MARGIN_RATE,
+  HOTEL_MARGIN_RATE, MEMBER_PERK_MARGIN_SHARE,
 } from '../../shared/constants.js';
 
 export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP };
@@ -104,7 +104,12 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // still reporting a positive "commission".) The membership fee funds the
   // giveaway. Flights-only takes no fare discount — a member pays a small FLAT
   // booking fee (never £0), and there is no 10% margin to give back on a flat fee.
-  const loyaltyDiscountUSD = flightsOnly ? 0 : Math.min(componentsUSD * tier.discount, grossCommissionUSD);
+  // GOLDEN-RULE CAP: the member discount is funded from commission AND may never
+  // exceed the member perk budget = MEMBER_PERK_MARGIN_SHARE (25%) of the gross
+  // margin — so 3JN always keeps ≥3× what it gives. The headline % is delivered in
+  // full only when the margin is fat enough (packages with bedbank net rates).
+  const memberPerkBudgetUSD = flightsOnly ? 0 : grossCommissionUSD * MEMBER_PERK_MARGIN_SHARE;
+  const loyaltyDiscountUSD = flightsOnly ? 0 : Math.min(componentsUSD * tier.discount, memberPerkBudgetUSD);
   const commissionUSD = grossCommissionUSD - loyaltyDiscountUSD; // what 3JN actually keeps
   const netComponentsUSD = componentsUSD; // supplier cost is always collected in full
 
@@ -155,6 +160,7 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
       // commission = total, and commission is what we actually keep.
       grossCommissionUSD: round2(grossCommissionUSD),
       commissionUSD: round2(commissionUSD),
+      memberPerkBudgetUSD: round2(memberPerkBudgetUSD), // 25% of gross — the 3:1 perk ceiling
       bedbankNetUSD: round2(bedbank),           // wholesale hotel cost in this basket
       bedbankMarginUSD: round2(bedbankMarginUSD), // 3JN margin on the net rate (the profit engine)
       duffelFeeUSD: round2(duffelFeeUSD),

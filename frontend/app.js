@@ -263,10 +263,10 @@ const AGENTS = [
 ];
 
 const TIERS = [
-  { key: 'plus', save: 'No flight fee + 5% off packages', name: 'Travel+', price: '£5.99', priceNum: 5.99, feature: true, badge: 'Best value',
-    benefits: ['No flight service fee (save the 2%)', '5% off every package', 'Earn 3% Travel Credit on packages', 'Priority price monitoring & alerts', 'Priority support'] },
+  { key: 'plus', save: 'Flat flight fee + savings on packages', name: 'Travel+', price: '£5.99', priceNum: 5.99, feature: true, badge: 'Best value',
+    benefits: ['Flat £4.99 flight fee — no % markup', 'Up to 5% off packages', 'Up to 3% Travel Credit back on packages', 'Priority price monitoring & alerts', 'Priority support'] },
   { key: 'family', save: 'Bigger savings for the whole family', name: 'Travel+ Family', price: '£11.99', priceNum: 11.99, feature: false, badge: 'For families',
-    benefits: ['Everything in Travel+', '7% off every package', 'Earn 3% Travel Credit on packages', 'Family price monitoring across trips', 'Priority support for the whole party'] },
+    benefits: ['Everything in Travel+', 'Up to 7% off packages', 'Up to 3% Travel Credit back on packages', 'Family price monitoring across trips', 'Priority support for the whole party'] },
 ];
 // 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
 const ACU_PER_GBP = 100;
@@ -283,8 +283,8 @@ const STEPS = [
 
 const LOYALTY = [
   ['Free', 'Pay per use', 'Book flights (2% fee) & hotels · pay with ACUs for AI search'],
-  ['Travel+', '£5.99/yr', 'No flight fee · 5% off packages · 3% Travel Credit'],
-  ['Travel+ Family', '£11.99/yr', 'Everything in Travel+ · 7% off packages · family perks'],
+  ['Travel+', '£5.99/yr', 'Flat £4.99 flight fee · up to 5% off packages · up to 3% back'],
+  ['Travel+ Family', '£11.99/yr', 'Everything in Travel+ · up to 7% off · family perks'],
 ];
 
 // Pricing model: pay-as-you-go is the headline (search costs 5-20 ACU; no
@@ -5587,18 +5587,26 @@ function mountWhatsApp() {
 function mountTrustpilot() {
   const tp = state.context?.trustpilot;
   const slot = document.getElementById('trustpilotSlot');
-  if (!tp || !tp.businessUnitId || !slot) return;
-  slot.innerHTML = `<div class="trustpilot-widget" data-locale="en-GB" data-template-id="${esc(tp.templateId || '5419b6a8b0d04a076446a9ad')}" data-businessunit-id="${esc(tp.businessUnitId)}" data-style-height="52px" data-style-width="100%" data-theme="dark">
-    <a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener">Trustpilot</a></div>`;
-  slot.style.display = '';
-  if (!document.getElementById('tpScript')) {
-    const s = document.createElement('script');
-    s.id = 'tpScript'; s.async = true;
-    s.src = '//widget.trustpilot.com/bootstrap/v5/tp.widget.bootstrap.min.js';
-    document.head.appendChild(s);
-  } else if (window.Trustpilot) {
-    window.Trustpilot.loadFromElement(slot.querySelector('.trustpilot-widget'), true);
+  if (!tp || !slot || !tp.reviewUrl) return;
+  // With a business-unit id → the LIVE star widget. Without it (id not found yet)
+  // → a clean Trustpilot LINK badge that works with just the domain.
+  if (tp.businessUnitId) {
+    slot.innerHTML = `<div class="trustpilot-widget" data-locale="en-GB" data-template-id="${esc(tp.templateId || '5419b6a8b0d04a076446a9ad')}" data-businessunit-id="${esc(tp.businessUnitId)}" data-style-height="52px" data-style-width="100%" data-theme="dark">
+      <a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener">Trustpilot</a></div>`;
+    if (!document.getElementById('tpScript')) {
+      const s = document.createElement('script');
+      s.id = 'tpScript'; s.async = true;
+      s.src = '//widget.trustpilot.com/bootstrap/v5/tp.widget.bootstrap.min.js';
+      document.head.appendChild(s);
+    } else if (window.Trustpilot) {
+      window.Trustpilot.loadFromElement(slot.querySelector('.trustpilot-widget'), true);
+    }
+  } else {
+    slot.innerHTML = `<a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;background:#1b1f23;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:9px 14px">
+      <span style="color:#00b67a;font-size:16px;letter-spacing:1px">★★★★★</span>
+      <span style="color:#eef2fb;font-size:12.5px">Reviews on <strong>Trustpilot</strong></span></a>`;
   }
+  slot.style.display = '';
 }
 
 // Reassurance at the moment of hesitation (checkout): secure-payment note + a

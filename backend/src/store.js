@@ -1545,8 +1545,14 @@ export function recordPayment(bookingId, payment) {
       if (u?.membership?.active && TRAVEL_CREDIT_RATE > 0 && !isFlightOnly) {
         const usd = b.option?.totalUSD || 0;
         const fx = usd > 0 ? totalLocal / usd : 1;
-        const marginLocal = round2((b.option?.pricing?.lines?.commissionUSD || 0) * fx); // what 3JN kept
-        const earned = round2(Math.min(totalLocal * TRAVEL_CREDIT_RATE, Math.max(0, marginLocal)));
+        const lines = b.option?.pricing?.lines || {};
+        // GOLDEN RULE: discount + credit together must stay within the 25%-of-gross
+        // perk budget, so 3JN always keeps ≥3× the total perk. The discount was
+        // already drawn at booking; credit gets only the REMAINDER of the budget.
+        const budgetLocal = round2((lines.memberPerkBudgetUSD || 0) * fx);
+        const discountLocal = round2((lines.loyaltyDiscountUSD || 0) * fx);
+        const creditCap = Math.max(0, round2(budgetLocal - discountLocal));
+        const earned = round2(Math.min(totalLocal * TRAVEL_CREDIT_RATE, creditCap));
         if (earned > 0) {
           u.travelCreditGbp = round2((u.travelCreditGbp || 0) + earned);
           b.travelCreditEarned = earned;

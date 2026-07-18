@@ -25,11 +25,18 @@ export const HOTEL_MARGIN_RATE = 0.20;
 export const FLIGHT_ONLY_FEE_RATE = 0.02;   // 2% of the flight value (non-members)
 export const FLIGHT_ONLY_FEE_GBP = 4.99;    // floor — never below supplier/booking cost
 export const FLIGHT_ONLY_FEE_CAP_GBP = 15;  // cap — stays competitive on long-haul
-// COMMERCIAL MODEL: members never fly at £0 — every booking must earn. A member's
-// Travel+ members pay NO flight service fee — flights are FREE of the 3JN fee for
-// members (a core membership benefit). Non-members pay the 2% (£4.99 min / £15 cap).
-export const FLIGHT_ONLY_MEMBER_FEE_GBP = 0;
-export const FLIGHT_ONLY_MEMBER_FREE = true; // members: no flights-only service fee
+// GOLDEN RULE — every booking must EARN; 3JN never funds a membership. Members pay
+// a small FLAT flight fee (no % markup), so a member flight is always profitable —
+// cheaper than the non-member 2% on anything above the floor, but never £0/a loss.
+export const FLIGHT_ONLY_MEMBER_FEE_GBP = 4.99;
+export const FLIGHT_ONLY_MEMBER_FREE = false;
+// GOLDEN-RULE PERK CAP: for every £1 of member perk 3JN gives (package discount +
+// Travel Credit), it must keep at least £3 → perks may never exceed 25% of the
+// gross margin on a booking (£4 gross − £1 perk = £3 kept = 3:1). This is a HARD
+// cap enforced in pricing + credit, so the membership is structurally self-funding
+// on every single booking, whatever the mix. Perks scale with margin: thin trips
+// give little, fat-margin packages (bedbank) give the full headline savings.
+export const MEMBER_PERK_MARGIN_SHARE = 0.25;
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never
 // of booking value) — plus lifetime attribution on the customer they brought.

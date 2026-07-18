@@ -135,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-selffunding-credit-trust-defaults-v140';
+const BUILD_TAG = '2026-07-18-golden-rule-3to1-membership-v141';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -821,7 +821,7 @@ function publicContact() {
     whatsappDisplay: waRaw,
     phone: clean(e.CONTACT_PHONE) || '+44 7493216101',
     hours: clean(e.CONTACT_HOURS) || 'Mon–Sat 9am–7pm GMT',
-    address: clean(e.CONTACT_ADDRESS),
+    address: clean(e.CONTACT_ADDRESS) || 'One Great George Street, Westminster, London SW1P 3AA',
     company: { name: clean(e.COMPANY_NAME) || 'JNN Global Ltd', number: clean(e.COMPANY_NUMBER) || '15405437', vat: clean(e.COMPANY_VAT) },
     about: {
       founderName: clean(e.ABOUT_FOUNDER_NAME),
@@ -852,7 +852,9 @@ function trustpilotAfsEmail() {
   return /@invite\.trustpilot\.com$/i.test(e) ? e : null;
 }
 function trustpilotConfig() {
-  const domain = String(process.env.TRUSTPILOT_DOMAIN || '').trim();
+  // Default the domain to the business's own so the review link + badge work with
+  // zero setup; a live star widget still needs the business-unit id (env).
+  const domain = String(process.env.TRUSTPILOT_DOMAIN || '3jntravel.com').trim();
   const afs = trustpilotAfsEmail();
   if (!domain && !afs) return null; // nothing configured → no widget, no invites
   return {
