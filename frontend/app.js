@@ -264,9 +264,9 @@ const AGENTS = [
 
 const TIERS = [
   { key: 'plus', save: 'No flight fee + 5% off packages', name: 'Travel+', price: '£5.99', priceNum: 5.99, feature: true, badge: 'Best value',
-    benefits: ['No flight service fee (save the 2%)', '5% off every package', 'Earn 3% Travel Credit on every trip', 'Priority price monitoring & alerts', 'Priority support'] },
+    benefits: ['No flight service fee (save the 2%)', '5% off every package', 'Earn 3% Travel Credit on packages', 'Priority price monitoring & alerts', 'Priority support'] },
   { key: 'family', save: 'Bigger savings for the whole family', name: 'Travel+ Family', price: '£11.99', priceNum: 11.99, feature: false, badge: 'For families',
-    benefits: ['Everything in Travel+', '7% off every package', 'Earn 3% Travel Credit on every trip', 'Family price monitoring across trips', 'Priority support for the whole party'] },
+    benefits: ['Everything in Travel+', '7% off every package', 'Earn 3% Travel Credit on packages', 'Family price monitoring across trips', 'Priority support for the whole party'] },
 ];
 // 10% of each subscription auto-funds ACUs at £1 = 100 ACU.
 const ACU_PER_GBP = 100;
@@ -276,7 +276,7 @@ const STEPS = [
   ['01', 'AI ASSISTANT', 'Understands what you want', 'Type your trip in plain language — the assistant reads your destination, dates, travellers, budget and preferences and turns one sentence into a structured search.'],
   ['02', 'INVENTORY', 'Live fares + curated deals', 'We search live airline fares (via Duffel) alongside our curated, contracted deals, then package them with a single transparent service fee — no hidden retail markup. More live supplier connections are being added.'],
   ['03', 'TRUST', 'Verified & reliable', 'Live fares come straight from the airline; every option carries a supplier reliability score. Community hosts and vendors pass a risk review and admin approval before they can be booked.'],
-  ['04', 'REWARDS', 'Travel Credit on every trip', 'Travel+ members save the flight service fee, get a member discount on packages, and earn 3% of every trip back as Travel Credit toward the next one — simple, no confusing tiers.'],
+  ['04', 'REWARDS', 'Travel Credit on every trip', 'Travel+ members save the flight service fee, get a member discount on packages, and earn 3% back on holiday packages toward the next one — simple, no confusing tiers.'],
   ['05', 'LOGISTICS', 'Universal Console Sync', 'Once secured, your journey is instantly synchronised with your Universal Console, centralising your visas, transfers, and eSIMs into one high-tech management interface.'],
   ['06', 'GUARANTEED', 'Price Lock', 'The price you book is fixed in your booking terms and fully protected until you travel — no fare increases, no currency surcharges, no hidden add-ons. Pay monthly, interest-free, at the price you locked on day one.'],
 ];
@@ -2224,8 +2224,8 @@ function loyaltyHub(u) {
       </div>
       <div class="muted" style="font-size:12.5px;margin-top:6px">
         ${isMember
-          ? (credit > 0 ? 'Ready to use towards your next trip — apply it at checkout or from any booking with a balance.' : 'Earn 3% of every trip back as credit. Book a trip and watch it grow.')
-          : 'Join Travel+ to earn 3% of every trip back as Travel Credit, skip the flight fee, and save on packages.'}
+          ? (credit > 0 ? 'Ready to use towards your next trip — apply it at checkout or from any booking with a balance.' : 'Earn 3% back on every holiday package as credit. Book a package and watch it grow.')
+          : 'Join Travel+ to earn 3% back on holiday packages, skip the flight fee, and save on packages.'}
       </div>
       ${!isMember ? `<button class="btn btn-gold btn-sm btn-block" style="margin-top:10px" onclick="nav('membership')">See Travel+</button>` : ''}
       <div class="kv" style="margin-top:12px"><span>Refer &amp; earn</span><span>+100 ACU you · +50 friend</span></div>
@@ -5605,8 +5605,11 @@ function mountTrustpilot() {
 // WhatsApp button so a nervous buyer can talk to a human before paying.
 function checkoutHelpHTML() {
   const c = state.context?.contact || {};
+  const mp = state.context?.moneyProtection;
   const wa = c.whatsapp ? `<a class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;color:#25D366;border-color:rgba(37,211,102,.4)" href="https://wa.me/${esc(c.whatsapp)}?text=${encodeURIComponent('Hi 3JN, I have a question before I book')}" target="_blank" rel="noopener">💬 Questions? Message us on WhatsApp</a>` : '';
-  return `<div class="muted" style="font-size:11.5px;text-align:center;margin-top:10px">🔒 ${state.stripeReady ? 'Payments secured by Stripe — we never see or store your card details.' : 'Secure checkout. We never store your card details.'}</div>${wa}`;
+  // Financial-protection line — appears ONLY when a real scheme is configured.
+  const prot = mp ? `<div class="muted" style="font-size:11.5px;text-align:center;margin-top:4px;color:#7fe0a5">🛡 Your money is protected by ${esc(mp.scheme)}${mp.number ? ` (${esc(mp.number)})` : ''}.</div>` : '';
+  return `<div class="muted" style="font-size:11.5px;text-align:center;margin-top:10px">🔒 ${state.stripeReady ? 'Payments secured by Stripe — we never see or store your card details.' : 'Secure checkout. We never store your card details.'}</div>${prot}${wa}`;
 }
 
 // ---- First-party testimonials (seed proof) --------------------------------

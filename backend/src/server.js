@@ -135,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-trustpilot-afs-verified-invites-v139';
+const BUILD_TAG = '2026-07-18-selffunding-credit-trust-defaults-v140';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -812,21 +812,35 @@ async function autoBookStays(booking) {
 function publicContact() {
   const e = process.env;
   const clean = (v) => { const s = String(v || '').trim(); return s || null; };
-  const waRaw = clean(e.CONTACT_WHATSAPP);
+  // Real business defaults (public info) so the trust layer shows without any env
+  // setup; a Vercel env var still overrides each one.
+  const waRaw = clean(e.CONTACT_WHATSAPP) || '+44 7493216101';
   return {
-    email: clean(e.CONTACT_EMAIL) || MAIN_CONTACT || null,
+    email: clean(e.CONTACT_EMAIL) || MAIN_CONTACT || 'info@3jntravel.com',
     whatsapp: waRaw ? waRaw.replace(/[^\d]/g, '') : null, // digits for wa.me/<n>
     whatsappDisplay: waRaw,
-    phone: clean(e.CONTACT_PHONE),
-    hours: clean(e.CONTACT_HOURS),
+    phone: clean(e.CONTACT_PHONE) || '+44 7493216101',
+    hours: clean(e.CONTACT_HOURS) || 'Mon–Sat 9am–7pm GMT',
     address: clean(e.CONTACT_ADDRESS),
-    company: { name: clean(e.COMPANY_NAME), number: clean(e.COMPANY_NUMBER), vat: clean(e.COMPANY_VAT) },
+    company: { name: clean(e.COMPANY_NAME) || 'JNN Global Ltd', number: clean(e.COMPANY_NUMBER) || '15405437', vat: clean(e.COMPANY_VAT) },
     about: {
       founderName: clean(e.ABOUT_FOUNDER_NAME),
       founderRole: clean(e.ABOUT_FOUNDER_ROLE),
       founderPhoto: clean(e.ABOUT_FOUNDER_PHOTO),
       story: clean(e.ABOUT_STORY),
     },
+  };
+}
+// Financial-protection scheme (ATOL / TTA / trust account) — shown ONLY when
+// really held. Until CONFIG is set, NO protection claim appears anywhere (never
+// claim cover you don't have). Set MONEY_PROTECTION_SCHEME (+ optional number/url).
+function moneyProtection() {
+  const scheme = String(process.env.MONEY_PROTECTION_SCHEME || '').trim();
+  if (!scheme) return null;
+  return {
+    scheme,
+    number: String(process.env.MONEY_PROTECTION_NUMBER || '').trim() || null,
+    url: String(process.env.MONEY_PROTECTION_URL || '').trim() || null,
   };
 }
 // The Trustpilot Automatic Feedback Service (AFS) BCC address — BCC it on a
@@ -856,6 +870,7 @@ app.get('/api/context', safe((req, res) => {
     context: detectContext(req),
     contact: publicContact(),
     trustpilot: trustpilotConfig(),
+    moneyProtection: moneyProtection(), // null until a real ATOL/TTA/trust scheme is set
     modules: getModuleFlags(), // VisaOS / Corporate / Embassy on-off (else "Coming Soon")
     currencies: listCurrencies(),
     searchTiers: SEARCH_TIERS,

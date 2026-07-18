@@ -1530,12 +1530,23 @@ export function recordPayment(bookingId, payment) {
       // Points ledger kept for history (no discount effect now).
       const totalPts = Math.round((b.option?.totalUSD || 0) * POINTS_PER_USD);
       if (totalPts > 0) { addPoints(b.userId, totalPts); }
-      // TRAVEL CREDIT — the member reward: earn a flat % of the booking value back
-      // as credit toward the next trip. MEMBERS ONLY, so it never bleeds margin on
-      // a non-member's thin flight booking. Granted once (pointsAwarded guard).
+      // TRAVEL CREDIT — the member reward, designed to FUND ITSELF so it can never
+      // lose money:
+      //   • MEMBERS ONLY (recurring-revenue payers).
+      //   • PACKAGES ONLY — never a flight-only booking. Flights are the near-free
+      //     hook (members already pay no flight fee); paying 3% credit on top of a
+      //     £0-fee flight is a straight loss. Packages carry the 10% + bedbank margin
+      //     that pays for the reward.
+      //   • CAPPED at 3JN's actual retained margin on the booking — so the credit is
+      //     always paid out of real profit, never out of pocket.
       const u = db.users.get(b.userId);
-      if (u?.membership?.active && TRAVEL_CREDIT_RATE > 0) {
-        const earned = round2(totalLocal * TRAVEL_CREDIT_RATE);
+      const comps = b.option?.components || [];
+      const isFlightOnly = comps.length > 0 && comps.every((c) => c.type === 'flight');
+      if (u?.membership?.active && TRAVEL_CREDIT_RATE > 0 && !isFlightOnly) {
+        const usd = b.option?.totalUSD || 0;
+        const fx = usd > 0 ? totalLocal / usd : 1;
+        const marginLocal = round2((b.option?.pricing?.lines?.commissionUSD || 0) * fx); // what 3JN kept
+        const earned = round2(Math.min(totalLocal * TRAVEL_CREDIT_RATE, Math.max(0, marginLocal)));
         if (earned > 0) {
           u.travelCreditGbp = round2((u.travelCreditGbp || 0) + earned);
           b.travelCreditEarned = earned;

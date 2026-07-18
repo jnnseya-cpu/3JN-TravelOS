@@ -84,26 +84,45 @@ import { assessVisa, approvalProbability } from '../src/visaos.js';
 import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 import { subscribeMembership, renewMembership, spendAcu, buyAcu, redeemTravelCredit } from '../src/store.js';
 
-test('travel credit: members earn 3% on a fully-paid booking; non-members earn nothing', () => {
-  const flightOpt = () => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 } }, totalUSD: 1266, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] });
-  // Member earns 3% = £30.
+// A PACKAGE option (flight + hotel) with a real retained margin, so Travel Credit
+// (packages-only, capped at margin) can be earned.
+const pkgOpt = (total = 1000, commissionUSD = 100) => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total }, lines: { commissionUSD } }, totalUSD: total, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }, { type: 'hotel', supplier: 'H', details: {} }] });
+const flightOnlyOpt = () => ({ tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 }, lines: { commissionUSD: 12 } }, totalUSD: 1000, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] });
+
+test('travel credit: members earn 3% on a PACKAGE; nothing on flight-only or for non-members', () => {
+  // Member on a package earns 3% = £30 (well within the £100 margin).
   const m = createUser({ name: 'Credit Member', email: `cred.m.${Date.now()}@x.co` });
   subscribeMembership(m.id, 'plus');
-  const b1 = createBooking({ option: flightOpt(), userId: m.id });
+  const b1 = createBooking({ option: pkgOpt(), userId: m.id });
   recordPayment(b1.id, { type: 'full', amount: 1000, status: 'paid' });
-  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 30) < 0.01, 'member earns £30 credit (3%)');
-  // Non-member earns nothing.
+  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 30) < 0.01, 'member earns £30 credit (3% of a package)');
+  // Same member, a FLIGHT-ONLY booking → NO credit (flights are the free hook).
+  const m2 = createUser({ name: 'Flight Member', email: `cred.f.${Date.now()}@x.co` });
+  subscribeMembership(m2.id, 'plus');
+  const bf = createBooking({ option: flightOnlyOpt(), userId: m2.id });
+  recordPayment(bf.id, { type: 'full', amount: 1000, status: 'paid' });
+  assert.equal(getUserById(m2.id).travelCreditGbp || 0, 0, 'no credit on a flight-only booking — never a loss');
+  // Non-member earns nothing even on a package.
   const g = createUser({ name: 'Free User', email: `cred.g.${Date.now()}@x.co` });
-  const b2 = createBooking({ option: flightOpt(), userId: g.id });
+  const b2 = createBooking({ option: pkgOpt(), userId: g.id });
   recordPayment(b2.id, { type: 'full', amount: 1000, status: 'paid' });
   assert.equal(getUserById(g.id).travelCreditGbp || 0, 0, 'non-members earn no Travel Credit');
+});
+
+test('travel credit: never exceeds 3JN\'s retained margin on the booking', () => {
+  // A thin package where 3JN only kept £10 — credit is capped at £10, not 3% (£30).
+  const m = createUser({ name: 'Thin Margin', email: `cred.t.${Date.now()}@x.co` });
+  subscribeMembership(m.id, 'plus');
+  const b = createBooking({ option: pkgOpt(1000, 10), userId: m.id });
+  recordPayment(b.id, { type: 'full', amount: 1000, status: 'paid' });
+  assert.ok(Math.abs((getUserById(m.id).travelCreditGbp || 0) - 10) < 0.01, 'credit capped at the £10 margin — paid from profit, never out of pocket');
 });
 
 test('travel credit: redemption is capped at the balance and the outstanding amount', () => {
   const m = createUser({ name: 'Redeemer', email: `redeem.${Date.now()}@x.co` });
   subscribeMembership(m.id, 'family');
-  // Earn credit on a first paid trip (£1000 → £30).
-  const paid = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 1000 } }, totalUSD: 1266, travellers: { total: 1 }, components: [{ type: 'flight', live: false, details: { outbound: { from: 'LHR', to: 'JFK', date: '2027-10-03' } } }] }, userId: m.id });
+  // Earn credit on a first paid PACKAGE (£1000, £100 margin → £30 credit).
+  const paid = createBooking({ option: pkgOpt(1000, 100), userId: m.id });
   recordPayment(paid.id, { type: 'full', amount: 1000, status: 'paid' });
   const credit = getUserById(m.id).travelCreditGbp;
   assert.ok(credit >= 29.9, 'has credit to spend');
