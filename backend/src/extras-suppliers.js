@@ -108,6 +108,8 @@ export function supplierDoors() {
     { channel: 'flights', provider: 'Duffel', envVar: 'DUFFEL_TOKEN', signup: 'https://duffel.com', covers: 'Network carriers + easyJet/Vueling LCC — live booking + auto e-ticket', fallback: 'estimator' },
     { channel: 'flights-lcc', provider: 'Travelfusion / Kiwi partner', envVar: 'TEQUILA_API_KEY', signup: 'https://www.travelfusion.com (sales) · Ryanair approved-OTA programme', covers: 'Ryanair/Jet2 bookable content', fallback: 'ops desk books on airline site' },
     { channel: 'flights-market', provider: 'Travelpayouts (Aviasales)', envVar: 'TRAVELPAYOUTS_TOKEN', signup: 'https://www.travelpayouts.com — self-serve, token instant', covers: 'Real market prices incl. Ryanair/Jet2 (calibration + benchmark)', fallback: 'synthetic estimates' },
+    { channel: 'hotels-tbo', provider: 'TBO Holidays (bedbank — NET rates)', envVar: 'TBO_HOTEL_USERNAME + TBO_HOTEL_PASSWORD', signup: 'https://www.tbotechnology.in — B2B agent signup (credit check, then API certification)', covers: 'Global hotels at contracted NET rates + free-cancellation — funds the instalment price-lock margin', fallback: 'estimator + ops desk' },
+    { channel: 'hotels-ratehawk', provider: 'RateHawk (Emerging Travel Group)', envVar: 'RATEHAWK_KEY_ID + RATEHAWK_API_KEY', signup: 'https://www.ratehawk.com/partners — B2B agent signup', covers: 'Global hotels at net rates (alternative/second bedbank)', fallback: 'estimator + ops desk' },
     { channel: 'hotels', provider: 'Amadeus', envVar: 'AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET', signup: 'https://developers.amadeus.com — self-serve', covers: 'Live hotel rates + booking', fallback: 'estimator + ops desk' },
     { channel: 'esim', provider: 'Airalo Partners (or eSIM Access)', envVar: 'AIRALO_CLIENT_ID + AIRALO_CLIENT_SECRET (or ESIMACCESS_API_KEY)', signup: 'https://partners.airalo.com — OAuth2, self-serve; optional AIRALO_BRAND_SETTINGS_NAME for branded eSIMs Cloud', covers: 'Instant eSIM: real ICCID + LPA activation + QR + Apple direct-install + eSIMs Cloud share link, straight into the travel documents', fallback: 'auto-provisioned in-OS, ops verifies' },
     { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission, merchant books via cart/hold+book', fallback: 'Rayna agent portal (18 countries) / ops desk' },
@@ -124,6 +126,8 @@ export function supplierDoors() {
       : d.channel === 'flights-lcc' ? !!env.TEQUILA_API_KEY
       : d.channel === 'flights-market' ? !!env.TRAVELPAYOUTS_TOKEN
       : d.channel === 'hotels' ? !!(env.AMADEUS_CLIENT_ID && env.AMADEUS_CLIENT_SECRET)
+      : d.channel === 'hotels-tbo' ? !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD)
+      : d.channel === 'hotels-ratehawk' ? !!(env.RATEHAWK_KEY_ID && env.RATEHAWK_API_KEY)
       : d.channel === 'esim' ? (airaloEnabled() || esimApiEnabled())
       : d.channel === 'activities' ? viatorEnabled()
       : d.channel === 'transfers' ? mozioEnabled()

@@ -80,7 +80,7 @@ export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabl
 // moment flights work, with NO extra credentials. Amadeus stays as a fallback.
 // Set DUFFEL_STAYS=false to disable the Stays path (e.g. to force Amadeus).
 export function duffelStaysEnabled() { return duffelEnabled() && env.DUFFEL_STAYS !== 'false'; }
-export function liveHotelsEnabled() { return (duffelStaysEnabled() || !!(AMADEUS_ID && AMADEUS_SECRET)) && typeof fetch === 'function'; }
+export function liveHotelsEnabled() { return (duffelStaysEnabled() || !!(AMADEUS_ID && AMADEUS_SECRET) || !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD)) && typeof fetch === 'function'; }
 export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
 export function liveSuppliersConfigured() { return liveFlightsEnabled() || liveHotelsEnabled() || oagScheduleEnabled(); }
 
@@ -1152,11 +1152,88 @@ export async function bookDuffelStay({ searchResultId, guests = [], email, phone
 
 // Fetch live hotels. Duffel Stays first (same token as flights, no extra creds),
 // then Amadeus as a fallback. Returns normalised offers or null.
+// ===========================================================================
+// TBO HOLIDAYS — global bedbank (contracted NET hotel rates, free-cancellation)
+// ===========================================================================
+// Env-gated door: set TBO_HOTEL_USERNAME + TBO_HOTEL_PASSWORD and this lane goes
+// live with no code change. The exact request/response field names + the
+// city→HotelCodes lookup MUST be verified against TBO's HotelAPI docs at
+// onboarding (their schema evolves); until then, and on ANY error, this returns
+// null so the Amadeus/Duffel-Stays/estimator fallback always stands. Net rates
+// are flagged so the Guaranteed Holiday Lock margin can be funded from the spread.
+const TBO_USER = env.TBO_HOTEL_USERNAME || '';
+const TBO_PASS = env.TBO_HOTEL_PASSWORD || '';
+const TBO_BASE = env.TBO_HOTEL_BASE || 'https://api.tbotechnology.in/TBOHolidays_HotelAPI';
+export function tboHotelsEnabled() { return !!(TBO_USER && TBO_PASS) && typeof fetch === 'function'; }
+function tboAuthHeader() { return 'Basic ' + Buffer.from(`${TBO_USER}:${TBO_PASS}`).toString('base64'); }
+
+export function normalizeTboHotel(h, priceUSD, nights, rooms) {
+  const stars = Number(h.StarRating || h.HotelRating) || 0;
+  const nightlyUSD = nights ? Math.round((priceUSD / nights) * 100) / 100 : priceUSD;
+  return {
+    type: 'hotel', supplier: h.HotelName || 'Hotel', verified: true,
+    reliabilityScore: stars >= 4 ? 90 : 82, stars, live: true,
+    sourcedVia: 'TBO Holidays (live)', sourcedType: 'bedbank',
+    details: {
+      nights, rooms: rooms || 1, nightlyUSD,
+      board: h.MealType || h.Inclusion || 'Room only',
+      freeCancellation: !!(h.IsRefundable || h.Refundable),
+      roomType: h.RoomType || h.RoomTypeName || h.Name || 'Standard Room',
+      area: h.Address || h.CityName || '',
+      hotelId: h.HotelCode || h.HotelId || null,
+      netRate: true, // contracted net rate — the spread funds the price-lock margin
+    },
+    priceUSD,
+  };
+}
+
+export async function fetchTboHotels(intent, dest) {
+  if (!tboHotelsEnabled()) return null;
+  if (!intent?.dates?.checkIn || !intent?.dates?.checkOut) return null;
+  try {
+    const rooms = Math.max(1, Math.ceil((intent.travellers?.total || 2) / 2));
+    const adultsPer = Math.max(1, Math.ceil((intent.travellers?.adults || 2) / rooms));
+    const body = {
+      CheckIn: intent.dates.checkIn,
+      CheckOut: intent.dates.checkOut,
+      CityCode: dest?.tboCityCode || dest?.code || '',
+      HotelCodes: dest?.tboHotelCodes || '',
+      GuestNationality: intent.nationality || 'GB',
+      PaxRooms: Array.from({ length: rooms }, () => ({ Adults: adultsPer, Children: 0, ChildrenAges: [] })),
+      ResponseTime: 20, IsDetailedResponse: true,
+      Filters: { Refundable: false, NoOfRooms: rooms },
+    };
+    const res = await httpJSON(`${TBO_BASE}/Search`, {
+      method: 'POST',
+      headers: { Authorization: tboAuthHeader(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const results = res?.HotelResult || res?.HotelSearchResult || res?.Hotels || [];
+    if (!Array.isArray(results) || !results.length) return null;
+    const out = [];
+    for (const h of results.slice(0, 20)) {
+      const room0 = (h.Rooms && h.Rooms[0]) || {};
+      const price = Number(room0.TotalFare ?? h.TotalFare ?? h.Price ?? h.MinRate ?? 0);
+      const cur = room0.Currency || h.Currency || 'USD';
+      if (!price) continue;
+      const usd = await toUSD(price, cur);
+      if (usd == null) continue;
+      out.push(normalizeTboHotel({ ...h, ...room0 }, usd, intent.nights, rooms));
+    }
+    return out.length ? out : null;
+  } catch { return null; }
+}
+
 export async function fetchLiveHotels(intent, dest) {
   if (!liveHotelsEnabled()) return null;
   if (duffelStaysEnabled()) {
     const stays = await fetchDuffelStays(intent, dest).catch(() => null);
     if (stays && stays.length) return stays;
+  }
+  // Bedbank net rates next (the model that funds instalment price-locks).
+  if (tboHotelsEnabled()) {
+    const tbo = await fetchTboHotels(intent, dest).catch(() => null);
+    if (tbo && tbo.length) return tbo;
   }
   if (!(AMADEUS_ID && AMADEUS_SECRET)) return null;
   const cityCode = dest?.code;

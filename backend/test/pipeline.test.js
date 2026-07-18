@@ -4389,6 +4389,23 @@ test('supplier doors report every acquisition target; insurance stays closed wit
   const vendors = doors.find((d) => d.channel === 'local-services');
   assert.equal(vendors.open, true, 'vendor marketplace is our own supply');
   assert.equal(insuranceSaleEnabled(), false, 'insurance sales fail CLOSED without key + INSURANCE_AUTHORISED=true (FCA)');
+  // Bedbank doors are listed and CLOSED until their keys land (env-gated).
+  const tbo = doors.find((d) => d.channel === 'hotels-tbo');
+  assert.ok(tbo && /TBO/.test(tbo.provider), 'TBO Holidays bedbank door listed');
+  assert.equal(tbo.open, false, 'TBO door is closed until TBO_HOTEL_USERNAME/PASSWORD land');
+  assert.ok(doors.some((d) => d.channel === 'hotels-ratehawk'), 'RateHawk bedbank door listed');
+});
+
+test('TBO Holidays bedbank adapter: gated off without keys, and normalizes a NET-rate hotel', async () => {
+  const { fetchTboHotels, tboHotelsEnabled, normalizeTboHotel } = await import('../src/live-suppliers.js');
+  assert.equal(tboHotelsEnabled(), false, 'disabled without TBO credentials');
+  assert.equal(await fetchTboHotels({ dates: { checkIn: '2027-10-03', checkOut: '2027-10-10' }, travellers: { total: 2, adults: 2 }, nights: 7 }, { code: 'DXB' }), null, 'returns null (fallback stands) when not configured');
+  const h = normalizeTboHotel({ HotelName: 'Test Grand', StarRating: 4, MealType: 'Breakfast', IsRefundable: true, RoomType: 'Deluxe', HotelCode: 'TB123' }, 700, 7, 1);
+  assert.equal(h.type, 'hotel');
+  assert.equal(h.sourcedVia, 'TBO Holidays (live)');
+  assert.equal(h.sourcedType, 'bedbank');
+  assert.equal(h.details.netRate, true, 'net-rate flagged so the price-lock margin can be funded');
+  assert.equal(h.details.nightlyUSD, 100, '700 / 7 nights');
 });
 
 // ---- Vendor service marketplace: list → compete → job → 90/10 payout ---------
