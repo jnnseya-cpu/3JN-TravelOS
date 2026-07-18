@@ -1202,8 +1202,39 @@ window.showComponentInfo = (tier, idx) => {
           <div class="muted" style="flex:1;text-align:center;font-size:12px">✈ ${esc(l.durationLabel)}<div class="rel-bar" style="margin:6px 12px"><i style="width:100%"></i></div>${l.stops ? esc(`${l.stops} stop${l.stops > 1 ? 's' : ''}`) : 'Direct'}</div>
           <div style="text-align:center"><div style="font-family:'Space Grotesk';font-weight:700;font-size:20px">${esc(l.arrive)}${l.arriveNextDay ? ' <span class="muted" style="font-size:11px">+1</span>' : ''}</div><div class="muted" style="font-size:12px">${esc(l.to)}${l.toCity ? ' · ' + esc(l.toCity) : ''}</div></div>
         </div>${connectionHTML(l)}</div>` : '';
+    // RICH JOURNEY DETAILS — airline, times, fare brand, terminals, aircraft,
+    // flight number and baggage per leg (like the airline's own itinerary), plus
+    // the real change policy (carrier penalty + 3JN fee + fare difference).
+    const _WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const _MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const fullDT = (iso, time) => { if (!iso) return time || ''; const dt = new Date(iso + 'T00:00:00Z'); return isNaN(dt) ? (time || '') : `${_WD[dt.getUTCDay()]}, ${dt.getUTCDate()} ${_MO[dt.getUTCMonth()]} ${dt.getUTCFullYear()}${time ? ', ' + time : ''}`; };
+    const bags = (n, kind) => `${n} ${kind} bag${n === 1 ? '' : 's'}`;
+    const jSeg = (s, l, single) => {
+      const plus = (s.arriveDate && s.date && s.arriveDate !== s.date) || s.arriveNextDay ? '<span class="muted" style="font-size:11px">+1</span>' : '';
+      const cabin = s.cabin || l.cabin || d.cabin || 'Economy';
+      const brand = l.fareBrand || d.fareBrand || cabin;
+      return `<div style="padding:10px 0;border-top:1px solid rgba(223,229,238,.08)">
+        <div style="font-weight:700;color:var(--gold)">${esc(s.carrier || l.carrier || c.supplier)}</div>
+        <div style="font-family:'Space Grotesk';font-weight:700;font-size:18px;margin:2px 0">${esc(s.depart)} – ${esc(s.arrive)} ${plus}</div>
+        <div class="muted" style="font-size:12px">${esc(brand)} · ${esc(s.carrier || l.carrier || c.supplier)}</div>
+        <div class="muted" style="font-size:12px">${esc(s.durationLabel || l.durationLabel || '')} · ${esc(s.from)} – ${esc(s.to)} · ${single ? 'Non-stop' : 'Connection'}</div>
+        <div style="margin-top:8px;font-size:12.5px"><strong>${esc(fullDT(s.date, s.depart))}</strong><div class="muted">Depart from ${esc(s.fromName || s.fromCity || s.from)} (${esc(s.from)})${s.fromTerminal ? ', Terminal ' + esc(s.fromTerminal) : ''}</div></div>
+        <div class="muted" style="font-size:12px;margin:4px 0">Flight duration: ${esc(s.durationLabel || l.durationLabel || '')}</div>
+        <div style="font-size:12.5px"><strong>${esc(fullDT(s.arriveDate || s.date, s.arrive))}</strong><div class="muted">Arrive at ${esc(s.toName || s.toCity || s.to)} (${esc(s.to)})${s.toTerminal ? ', Terminal ' + esc(s.toTerminal) : ''}</div></div>
+        <div class="muted" style="font-size:12px;margin-top:8px;line-height:1.7">${esc(cabin)}<br>${esc(s.carrier || l.carrier || c.supplier)}${s.aircraft ? '<br>' + esc(s.aircraft) : ''}${s.flightNumber ? '<br>' + esc(s.flightNumber) : ''}<br>${bags(s.carryOn != null ? s.carryOn : (l.carryOn || 0), 'carry-on')}<br>${bags(s.checked != null ? s.checked : (l.checked || 0), 'checked')}</div>
+      </div>`;
+    };
+    const jLeg = (l, title) => { if (!l) return ''; const segs = (l.segments && l.segments.length) ? l.segments : [l]; const single = segs.length === 1;
+      return `<div class="card pad" style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:baseline"><strong>${title}</strong><span class="muted" style="font-size:12px">${esc(ukDate(l.date))} · ${esc(l.stopLabel || (single ? 'Non-stop' : ''))} · ${esc(l.durationLabel || '')}</span></div>${segs.map((s) => jSeg(s, l, single)).join('')}</div>`; };
+    const _cur = (code) => ({ GBP: '£', USD: '$', EUR: '€' }[String(code || '').toUpperCase()] || (code ? code + ' ' : '£'));
+    const cc = d.changeConditions;
+    const penaltyTxt = cc && cc.allowed === false ? 'this fare cannot be changed after booking'
+      : cc && cc.penaltyAmount != null ? `a change penalty of ${_cur(cc.penaltyCurrency)}${Number(cc.penaltyAmount).toFixed(2)} will apply`
+      : 'the airline\'s change rules apply';
+    const changePolicy = `<div class="card pad" style="margin-top:10px"><strong>Flight change policy</strong>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">Make changes to this flight up until the departure date (${penaltyTxt})${cc && cc.allowed === false ? '.' : ', plus a 3JN Travel change fee (£45) and any airline fare difference.'}</div></div>`;
     const direct = (d.outbound?.stops || 0) === 0 && (d.inbound?.stops || 0) === 0;
-    modal(`<span class="eyebrow">Flight details · ${esc(c.supplier)}</span>
+    modal(`<span class="eyebrow">Journey details · ${esc(c.supplier)}</span>
       <h3 style="margin:6px 0 2px">${esc(d.outbound?.fromCity || d.outbound?.from)} → ${esc(d.outbound?.toCity || d.outbound?.to)}</h3>
       <div style="margin:6px 0">${direct
         ? '<span class="verified-tag" style="color:var(--green);border-color:rgba(70,211,154,0.35);background:rgba(70,211,154,0.1)">⭐ Direct flight — privilege selection</span>'
@@ -1212,7 +1243,7 @@ window.showComponentInfo = (tier, idx) => {
           : '<span class="verified-tag">↺ Connecting flight (no non-stop or short-stopover option on this route)</span>'}</div>
       <div class="muted" style="font-size:12.5px">${d.passengers} passenger${d.passengers > 1 ? 's' : ''} · ${esc(d.cabin || 'Economy')} · ${esc(d.baggage || '')}${d.flightNumber ? ` · flight ${esc(d.flightNumber)}` : ''}${d.aircraft ? ` · ${esc(d.aircraft)}` : ''}</div>
       ${c.scheduleLive ? '<div class="muted" style="font-size:11.5px;margin-top:4px">🟢 Real operated schedule (OAG) — fare is indicative</div>' : ''}
-      ${legHTML(d.outbound, 'Outbound')}${legHTML(d.inbound, 'Return')}
+      ${jLeg(d.outbound, 'Departure')}${jLeg(d.inbound, 'Return')}${changePolicy}
       ${fareSplitHTML(d, toLocal)}
       <div class="kv" style="margin-top:10px;font-weight:700"><span>Total (${d.passengers} pax)</span><span style="color:var(--gold)">${toLocal(c.priceUSD)}</span></div>
       <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="closeModal();openBooking('${tier}')">Select this package</button>`);

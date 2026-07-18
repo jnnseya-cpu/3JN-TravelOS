@@ -183,16 +183,24 @@ function sliceToLeg(slice) {
   const stops = segs.length - 1;
   // Per-segment detail — a connecting itinerary must tell the traveller WHICH
   // flights they are on, WHERE they change planes and HOW LONG each wait is.
-  const segments = segs.map((s) => ({
-    carrier: s.marketing_carrier?.name || s.operating_carrier?.name || '',
-    flightNumber: `${s.marketing_carrier?.iata_code || s.operating_carrier?.iata_code || ''}${s.marketing_carrier_flight_number || s.operating_carrier_flight_number || ''}`,
-    operatedBy: s.operating_carrier?.name && s.operating_carrier.name !== s.marketing_carrier?.name ? s.operating_carrier.name : null,
-    from: s.origin?.iata_code || '', fromCity: s.origin?.city_name || s.origin?.name || '',
-    to: s.destination?.iata_code || '', toCity: s.destination?.city_name || s.destination?.name || '',
-    date: dateOf(s.departing_at), depart: hhmm(s.departing_at), arrive: hhmm(s.arriving_at),
-    durationLabel: durationLabel(s.duration),
-    aircraft: s.aircraft?.name || null,
-  }));
+  const bagCount = (pax, kind) => (pax?.baggages || []).filter((b) => b.type === kind).reduce((n, b) => n + (Number(b.quantity) || 0), 0);
+  const segments = segs.map((s) => {
+    const pax0 = s.passengers?.[0] || {};
+    return {
+      carrier: s.marketing_carrier?.name || s.operating_carrier?.name || '',
+      carrierCode: s.marketing_carrier?.iata_code || s.operating_carrier?.iata_code || '',
+      flightNumber: `${s.marketing_carrier?.iata_code || s.operating_carrier?.iata_code || ''}${s.marketing_carrier_flight_number || s.operating_carrier_flight_number || ''}`,
+      operatedBy: s.operating_carrier?.name && s.operating_carrier.name !== s.marketing_carrier?.name ? s.operating_carrier.name : null,
+      from: s.origin?.iata_code || '', fromCity: s.origin?.city_name || s.origin?.name || '', fromName: s.origin?.name || '', fromTerminal: s.origin_terminal || null,
+      to: s.destination?.iata_code || '', toCity: s.destination?.city_name || s.destination?.name || '', toName: s.destination?.name || '', toTerminal: s.destination_terminal || null,
+      date: dateOf(s.departing_at), depart: hhmm(s.departing_at), arrive: hhmm(s.arriving_at),
+      arriveDate: dateOf(s.arriving_at),
+      durationLabel: durationLabel(s.duration),
+      aircraft: s.aircraft?.name || null,
+      cabin: pax0.cabin_class_marketing_name || pax0.cabin_class || null,
+      carryOn: bagCount(pax0, 'carry_on'), checked: bagCount(pax0, 'checked'),
+    };
+  });
   // Layover between consecutive segments. Duffel timestamps are LOCAL to the
   // airport, and both sides of a layover are the SAME airport, so a plain
   // difference is the true wait time.
@@ -211,14 +219,19 @@ function sliceToLeg(slice) {
   const viaLabel = layovers.length
     ? ` · via ${layovers.map((l) => `${l.city || l.airport} (${l.airport})${l.durationLabel ? ' ' + l.durationLabel + ' wait' : ''}`).join(', ')}`
     : '';
+  const s0 = segments[0] || {};
   return {
-    from: first.origin?.iata_code || '', fromCity: first.origin?.city_name || first.origin?.name || '',
-    to: last.destination?.iata_code || '', toCity: last.destination?.city_name || last.destination?.name || '',
+    from: first.origin?.iata_code || '', fromCity: first.origin?.city_name || first.origin?.name || '', fromName: first.origin?.name || '', fromTerminal: first.origin_terminal || null,
+    to: last.destination?.iata_code || '', toCity: last.destination?.city_name || last.destination?.name || '', toName: last.destination?.name || '', toTerminal: last.destination_terminal || null,
     date: dateOf(first.departing_at),
     depart: hhmm(first.departing_at), arrive: hhmm(last.arriving_at),
     arriveNextDay: dateOf(last.arriving_at) !== dateOf(first.departing_at),
     durationLabel: durationLabel(slice.duration),
-    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${stops > 1 ? 's' : ''}${viaLabel}`,
+    stops, stopLabel: stops === 0 ? 'Non-stop' : `${stops} stop${stops > 1 ? 's' : ''}${viaLabel}`,
+    // Journey-details fields (representative of the leg — first segment).
+    carrier: s0.carrier || '', flightNumber: s0.flightNumber || '', aircraft: s0.aircraft || null,
+    cabin: s0.cabin || null, fareBrand: slice.fare_brand_name || null,
+    carryOn: s0.carryOn || 0, checked: s0.checked || 0,
     segments, layovers,
   };
 }
@@ -276,6 +289,20 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       // would create a PNR that can never be paid later), so this flag forces a
       // pay-in-full plan at booking. Absent/false → holdable → instalments allowed.
       requiresInstantPayment: offer.payment_requirements?.requires_instant_payment === true,
+      // Fare brand ("Basic", "Economy Flex") + the airline's own change/refund
+      // conditions, so the journey-details view shows the REAL change penalty the
+      // carrier charges (on top of the 3JN change fee + any fare difference).
+      fareBrand: offer.slices?.[0]?.fare_brand_name || null,
+      changeConditions: (function () {
+        const c = offer.conditions?.change_before_departure;
+        if (!c) return null;
+        return { allowed: !!c.allowed, penaltyAmount: c.penalty_amount != null ? Number(c.penalty_amount) : null, penaltyCurrency: c.penalty_currency || null };
+      })(),
+      refundConditions: (function () {
+        const c = offer.conditions?.refund_before_departure;
+        if (!c) return null;
+        return { allowed: !!c.allowed, penaltyAmount: c.penalty_amount != null ? Number(c.penalty_amount) : null, penaltyCurrency: c.penalty_currency || null };
+      })(),
       offerPassengers: (offer.passengers || []).map((p) => ({ id: p.id, type: p.type, age: p.age })),
       // Per-band fare split (adults / 2–11 children / under-2 lap infants) so a lap
       // infant is SHOWN in the breakdown, not hidden in the total — mirrors the
