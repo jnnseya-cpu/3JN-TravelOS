@@ -2837,7 +2837,8 @@ window.openDocs = async (bookingId) => {
   const issued = d.ticketing === 'issued';
   // A change awaiting airline reissue is NOT a failure — show it in gold, not red.
   const reissuing = d.ticketing === 'reissue-pending';
-  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: 'e-ticket issued', held: 'fare held', reissued: 'reissued', 'lock-scheduled': 'price locked · e-ticket at £0 balance' };
+  const hasRef = !!(d.pnr || (d.ticketNumbers || []).length);
+  const TICKET_LABEL = { 'reissue-pending': 'change being reissued', issued: (hasRef ? 'e-ticket issued' : 'confirmed · e-ticket finalising'), held: 'fare held', reissued: 'reissued', 'lock-scheduled': 'price locked · e-ticket at £0 balance' };
   const explain = !issued && !reissuing && d.ticketing !== 'confirmed' && d.ticketing !== 'pending'
     ? `<div class="card pad" style="border-color:rgba(255,107,107,.4);margin-top:10px">
          <strong style="color:#ff8f8f">Ticket not issued — ${esc(d.ticketing)}</strong>

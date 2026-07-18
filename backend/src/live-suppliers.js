@@ -424,11 +424,24 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
   const o = res.data;
   const ticketNumbers = [];
   for (const d of (o.documents || [])) if (d.type === 'electronic_ticket' && d.unique_identifier) ticketNumbers.push(d.unique_identifier);
+  let bookingReference = o.booking_reference || null;
+  // Duffel issues the PNR + e-ticket documents ASYNCHRONOUSLY — the create
+  // response often returns before they're populated. Re-fetch the order once so
+  // the customer's booking captures the real airline reference & e-ticket numbers
+  // (the "it's in Duffel but not on the customer" bug). If still pending, the
+  // caller flags ticketSyncPending and a later read re-syncs.
+  if (!bookingReference || !ticketNumbers.length) {
+    const synced = (await getDuffelOrder(o.id).catch(() => null))?.order;
+    if (synced) {
+      if (!bookingReference) bookingReference = synced.bookingReference;
+      if (!ticketNumbers.length && (synced.ticketNumbers || []).length) ticketNumbers.push(...synced.ticketNumbers);
+    }
+  }
   return {
     ok: true,
     order: {
       id: o.id,
-      bookingReference: o.booking_reference || null,
+      bookingReference,
       ticketNumbers,
       passengers: (o.passengers || []).map((p) => ({ name: `${p.given_name || ''} ${p.family_name || ''}`.trim() })),
       totalAmount: o.total_amount, totalCurrency: o.total_currency,
@@ -487,7 +500,10 @@ export async function getDuffelOrder(orderId) {
     cabin: s.segments?.[0]?.passengers?.[0]?.cabin_class || 'economy',
     departureDate: dateOf(s.segments?.[0]?.departing_at),
   }));
-  return { ok: true, order: { id: o.id, bookingReference: o.booking_reference || null, slices, totalAmount: o.total_amount, totalCurrency: o.total_currency } };
+  // The real e-ticket numbers Duffel issues (asynchronously) live in documents.
+  const ticketNumbers = [];
+  for (const d of (o.documents || [])) if (d.type === 'electronic_ticket' && d.unique_identifier) ticketNumbers.push(d.unique_identifier);
+  return { ok: true, order: { id: o.id, bookingReference: o.booking_reference || null, ticketNumbers, slices, totalAmount: o.total_amount, totalCurrency: o.total_currency } };
 }
 
 // Ask the AIRLINE for the real cost of moving the trip to new dates. Returns the

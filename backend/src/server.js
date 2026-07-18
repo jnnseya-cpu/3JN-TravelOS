@@ -69,7 +69,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage, duffelOrderChangeQuote, duffelOrderChangeCommit } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
@@ -135,7 +135,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-honest-sandbox-bag-price-v144';
+const BUILD_TAG = '2026-07-18-eticket-sync-membership-migrate-v145';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -744,11 +744,31 @@ async function autoTicketFlight(booking) {
   booking.fulfilment.pnr = order.order.bookingReference;
   booking.fulfilment.ticketNumbers = order.order.ticketNumbers;
   booking.fulfilment.issuedAt = new Date().toISOString();
+  // Duffel may still be populating the PNR / e-ticket documents — flag it so a
+  // later booking read re-syncs them onto the customer's record.
+  booking.fulfilment.ticketSyncPending = !(order.order.bookingReference && (order.order.ticketNumbers || []).length);
   recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference} · ${(order.order.ticketNumbers || []).length} e-ticket(s)` });
   if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${order.order.bookingReference}. E-tickets are in your Console and on their way by email.` });
   if (booking.lead?.email) {
     try { await sendMail({ to: booking.lead.email, subject: `Your ticket is confirmed — ${order.order.bookingReference}`, text: `Your flight is ticketed. Airline booking reference: ${order.order.bookingReference}. E-ticket(s): ${(order.order.ticketNumbers || []).join(', ')}.`, html: `<p>Your flight is ticketed.</p><p><strong>Airline booking reference:</strong> ${order.order.bookingReference}</p>` }); } catch {}
   }
+}
+
+// Re-sync a Duffel order's PNR + e-ticket numbers onto the booking. Duffel issues
+// them ASYNCHRONOUSLY, so an instant order can be created before they exist — the
+// data is "in Duffel but not on the customer". Called on a booking read while
+// ticketSyncPending. Best-effort; never throws.
+async function syncDuffelTicket(booking) {
+  const ful = booking?.fulfilment;
+  if (!ful || !ful.ticketSyncPending || !ful.duffelOrderId || !liveFlightsEnabled()) return false;
+  const synced = (await getDuffelOrder(ful.duffelOrderId).catch(() => null))?.order;
+  if (!synced) return false;
+  let changed = false;
+  if (synced.bookingReference && !ful.pnr) { ful.pnr = synced.bookingReference; changed = true; }
+  if (synced.ticketNumbers?.length && !(ful.ticketNumbers || []).length) { ful.ticketNumbers = synced.ticketNumbers; changed = true; }
+  if (ful.pnr && (ful.ticketNumbers || []).length) { ful.ticketSyncPending = false; changed = true; }
+  if (changed) recordAudit({ actor: 'system', role: 'system', action: 'ticketing.synced', entity: 'booking', entityId: booking.id, summary: `PNR ${ful.pnr || '—'} · ${(ful.ticketNumbers || []).length} e-ticket(s)` });
+  return changed;
 }
 
 // AUTO-BOOK the hotel via Duffel Stays once payment is captured — the hotel
@@ -2936,13 +2956,14 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
     // pays in full but no e-ticket ever issues. Await so the ticket (and stays +
     // confirmation email) actually complete before we respond.
     await autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
+    await syncDuffelTicket(booking).catch(() => {}); // pull the PNR/e-ticket if Duffel has issued it by now
     await autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
     await emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
   res.json({ booking });
 }));
 
-app.get('/api/book/:id', safe((req, res) => {
+app.get('/api/book/:id', safe(async (req, res) => {
   const booking = getBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: 'not-found' });
   // OWNERSHIP: bookings carry passport + passenger PII — owner or admin only.
@@ -2951,6 +2972,12 @@ app.get('/api/book/:id', safe((req, res) => {
   if (booking.userId && (!user || (booking.userId !== user.id && !user.allAccess && user.role !== 'admin'))) {
     return res.status(403).json({ error: 'not-your-booking' });
   }
+  // Opportunistically pull the real PNR + e-ticket numbers Duffel issued after the
+  // order was created (it populates them asynchronously). A GET doesn't auto-persist
+  // on serverless, so persist the synced reference explicitly.
+  try {
+    if (await syncDuffelTicket(booking) && IS_SERVERLESS && isEnabled()) { await saveMerge({ [`bookings/${booking.id}`]: booking }); }
+  } catch (e) { console.error('[ticket-sync]', e?.message || e); }
   res.json({ booking });
 }));
 

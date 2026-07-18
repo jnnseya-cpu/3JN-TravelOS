@@ -85,19 +85,21 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
   // real payment is ever styled as reserved/confirmed. This is what stops a
   // deposit-less estimate from printing "CONFIRMED — DEPOSIT PAID".
   const payable = booking.priceBasis === 'live' || booking.priceBasis === 'confirmed';
-  const status = ful.ticketing === 'issued' ? 'E-TICKET ISSUED'
+  // A REAL airline locator only — never the 3JN booking id dressed up as a "PNR".
+  const pnr = ful.pnr || ful.duffelOrderId || null;
+  const tickets = (ful.ticketNumbers || []).filter(Boolean);
+  // A ticket is only "issued" once a REAL reference exists (airline PNR / Duffel
+  // order / e-ticket number). Some paths flag ticketing='issued' before the
+  // reference syncs (e.g. an already-booked single-use offer, or a sandbox order
+  // that returns no locator) — never print "E-TICKET ISSUED" against a blank PNR.
+  const hasRealTicket = !!(pnr || tickets.length);
+  const status = (ful.ticketing === 'issued' && hasRealTicket) ? 'E-TICKET ISSUED'
+    : ful.ticketing === 'issued' ? 'CONFIRMED — E-TICKET FINALISING'
     : ful.ticketing === 'held' ? 'FARE HELD — TICKET ON FINAL PAYMENT'
     : fullyPaid ? 'CONFIRMED — PAID'
     : paidAnything ? 'RESERVED — DEPOSIT PAID'
     : !payable ? 'INDICATIVE QUOTE — NOT YET BOOKED'
     : 'RESERVED — AWAITING PAYMENT';
-  // A REAL airline locator only — never the 3JN booking id dressed up as a "PNR".
-  const pnr = ful.pnr || ful.duffelOrderId || null;
-  // The airline e-ticket number is ALWAYS stated: real Duffel ticket numbers
-  // when issued; the ticketed record from fulfilment otherwise; and if the fare
-  // is HELD (instalments), the document says exactly when the number arrives —
-  // a traveller must never board-plan around a blank field.
-  const tickets = (ful.ticketNumbers || []).filter(Boolean);
   const ticketLine = tickets.length ? tickets.join(', ')
     : ful.ticketing === 'held' ? 'Issued automatically on final instalment — this document updates'
     : ful.eTicketNumber || null;
@@ -255,14 +257,16 @@ export function bookingPdf(booking, { user, currencySymbol } = {}) {
   const fullyPaid = total > 0 && paidTotal + 0.01 >= total;
   const paidAnything = paidTotal > 0.01;
   const payable = booking.priceBasis === 'live' || booking.priceBasis === 'confirmed';
-  const status = ful.ticketing === 'issued' ? 'E-TICKET ISSUED'
+  const pnr = ful.pnr || ful.duffelOrderId || null;
+  const tickets = (ful.ticketNumbers || []).filter(Boolean);
+  const hasRealTicket = !!(pnr || tickets.length);
+  const status = (ful.ticketing === 'issued' && hasRealTicket) ? 'E-TICKET ISSUED'
+    : ful.ticketing === 'issued' ? 'CONFIRMED — E-TICKET FINALISING'
     : ful.ticketing === 'held' ? 'FARE HELD — TICKET ON FINAL PAYMENT'
     : fullyPaid ? 'CONFIRMED — PAID'
     : paidAnything ? 'RESERVED — DEPOSIT PAID'
     : !payable ? 'INDICATIVE QUOTE — NOT YET BOOKED'
     : 'RESERVED — AWAITING PAYMENT';
-  const pnr = ful.pnr || ful.duffelOrderId || null;
-  const tickets = (ful.ticketNumbers || []).filter(Boolean);
   const ticketLine = tickets.length ? tickets.join(', ')
     : ful.ticketing === 'held' ? 'Issued automatically on final instalment'
     : ful.eTicketNumber || null;

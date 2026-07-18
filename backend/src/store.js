@@ -1029,7 +1029,28 @@ export function adminSetMembership(userId, tierKey) {
   return { ok: true, user: publicUser(u) };
 }
 
+// Old 4-tier membership keys → the new 2-tier scheme, so members who joined under
+// the old system aren't shown a defunct name or silently lose their discount.
+const OLD_MEMBERSHIP_MAP = { nomad: 'plus', executive: 'plus', elite: 'family', premium: 'plus' };
+function normaliseMembership(u) {
+  const m = u?.membership;
+  if (!m || !m.active) return;
+  const key = OLD_MEMBERSHIP_MAP[m.tier] || m.tier;
+  const plan = MEMBERSHIP_TIERS.find((t) => t.key === key);
+  if (!plan) return;
+  // Refresh to the current tier's identity so the label, discount and ACU all match
+  // the live scheme (keep a complimentary grant's custom name).
+  if (m.tier !== plan.key) m.tier = plan.key;
+  if (!m.complimentary && m.name !== plan.name) {
+    m.name = plan.name;
+    m.pricePerMonth = plan.pricePerMonth;
+    m.pricePerYear = plan.pricePerYear;
+    m.acuPerMonth = plan.acuPerMonth;
+  }
+}
+
 function publicUser(u) {
+  normaliseMembership(u); // self-heal legacy tier keys before deriving the label
   const tier = tierForPoints(u.points);
   // A paid membership grants a discount that can beat the points tier. Expose the
   // EFFECTIVE discount + a label so every screen (account, chip, receipt) shows
