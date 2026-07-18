@@ -132,7 +132,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-17-sticky-booking-confirm-v117';
+const BUILD_TAG = '2026-07-17-no-stale-whole-store-flush-v118';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4093,24 +4093,28 @@ if (process.env.NODE_ENV !== 'test') {
       if (snap && hydrate(snap)) console.log('[persist] restored store from Firebase RTDB');
     }).catch((e) => console.error('[persist] load failed:', e?.message || e))
       .finally(() => { storeReady = true; });
-    // Belt-and-braces periodic flush (covers long-lived Cloud Run instances).
-    // GATE on storeReady: before hydrate() lands, the in-memory store is EMPTY,
-    // and snapshotting it would overwrite the real saved data with nothing. Never
-    // flush (periodic OR on shutdown) until the load has settled.
-    // CRITICAL: use saveMerge (per-record MERGE), NEVER save() (whole-store
-    // overwrite). With multiple instances, a whole-store set from THIS instance's
-    // possibly-stale memory silently wipes accounts/bookings/profile edits another
-    // instance just wrote — the root cause of "my name/profile change didn't
-    // stick" and "my account vanished". A merge only ever writes THIS instance's
-    // records over their own keys and leaves everyone else's intact.
-    const flushEvery = setInterval(() => { if (storeReady) saveMerge(flatSnapshot()); }, 15000);
-    if (flushEvery.unref) flushEvery.unref();
-    const flush = () => {
-      if (!storeReady) { process.exit(0); return; } // load never finished — save nothing over good data
-      saveMerge(flatSnapshot()).finally(() => process.exit(0));
-    };
-    process.on('SIGTERM', flush);
-    process.on('SIGINT', flush);
+    // Belt-and-braces periodic + shutdown flush — for LONG-LIVED hosts (Cloud Run)
+    // ONLY. On SERVERLESS it is a CLOBBER: a warm instance holds a snapshot of the
+    // store from its cold start, so when its 15s timer (or a recycle) fires it
+    // writes its now-STALE copy of EVERY record — including an old profile — over
+    // the fresher record another instance just saved. Even though saveMerge is
+    // per-record, it still overwrites the SAME key (users/<id>) with stale data.
+    // That is the intermittent "my name/photo/cover didn't stick after reload" bug
+    // (it stuck when no stale flush raced it, reverted when one did). Serverless
+    // persistence is fully handled per-request — hydrate the latest store, mutate,
+    // then merge ONLY the records this request changed — so the blanket flush is
+    // both unnecessary and harmful there. Skip it entirely on serverless.
+    // GATE on storeReady so an empty pre-hydrate store never overwrites good data.
+    if (!IS_SERVERLESS) {
+      const flushEvery = setInterval(() => { if (storeReady) saveMerge(flatSnapshot()); }, 15000);
+      if (flushEvery.unref) flushEvery.unref();
+      const flush = () => {
+        if (!storeReady) { process.exit(0); return; } // load never finished — save nothing over good data
+        saveMerge(flatSnapshot()).finally(() => process.exit(0));
+      };
+      process.on('SIGTERM', flush);
+      process.on('SIGINT', flush);
+    }
   } else {
     storeReady = true; // no persistence configured → nothing to load, ready now
   }
