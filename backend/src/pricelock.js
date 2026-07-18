@@ -44,6 +44,17 @@ export function fareRiseAssumptionPct() { return Math.max(0, Math.min(0.5, num(e
 
 const gbp2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Pure margin breakdown for a base (cash) total — no mutation. Used to build the
+// instalment (locked) figures for DISPLAY without touching the pay-now cash price:
+//   { pct, cashTotal, margin, lockedTotal }
+// At LOCK_MARGIN_PCT=0 this is a no-op: margin 0, lockedTotal === cashTotal.
+export function lockMarginOn(baseLocal) {
+  const pct = lockMarginPct();
+  const cashTotal = gbp2(baseLocal);
+  const margin = gbp2(cashTotal * pct);
+  return { pct, cashTotal, margin, lockedTotal: gbp2(cashTotal + margin) };
+}
+
 // Apply the lock margin to an option's sell price IN PLACE (total, USD, and a
 // visible line) so the deposit, instalments, full-payment amount and document all
 // reflect the guaranteed price. Only for instalment bookings — a pay-in-full

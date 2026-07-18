@@ -1403,6 +1403,16 @@ function priceZoneHTML(quote) {
   const inst = quote.instalment;
   const sym = option.pricing.symbol;
   const rows = inst.schedule.map((s, i) => `<div class="kv"><span>Instalment ${i + 1} · due ${ukDate(s.due)}${s.final ? ' <span class="muted" style="font-size:11px">(final — 7 days before departure)</span>' : ''}</span><span>${money2(s.amount, sym)}</span></div>`).join('');
+  // PRICE-LOCK MARGIN disclosure — shown ONLY when it applies (0% → invisible).
+  // The pay-now cash price is the headline; the monthly/locked plan adds a small,
+  // openly-shown Guaranteed Holiday Lock fee that funds the fixed price + interest-
+  // free instalments. Full transparency: the customer sees exactly what they lock.
+  const lm = inst.lockMargin;
+  const locksAtPremium = !!(lm && lm.applies && lm.margin > 0.005);
+  const lockedTotalLine = locksAtPremium ? `
+      <div class="kv" style="font-size:11.5px;color:var(--muted);margin-top:2px"><span>🔒 Guaranteed Holiday Lock (fixes your price, funds interest-free instalments)</span><span>+${money2(lm.margin, sym)}</span></div>
+      <div class="kv" style="font-weight:700;font-size:12.5px"><span>Price-locked total</span><span style="color:var(--gold)">${money2(lm.lockedTotal, sym)}</span></div>
+      <div class="muted" style="font-size:11px;margin-top:2px">Pay in full instead and you skip the lock fee — ${money2(option.pricing.local.total, sym)} today, no guarantee needed.</div>` : '';
   const smart = inst.engine === 'ai-smart' ? `
     <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.35)">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
@@ -1445,7 +1455,7 @@ function priceZoneHTML(quote) {
     </div>
     <div id="depositSchedule">
       <div class="kv" style="font-weight:700"><span>Deposit today ${inst.engine === 'ai-smart' ? '<span class="muted" style="font-size:11px">(non-refundable)</span>' : ''}</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
-      ${rows}
+      ${rows}${lockedTotalLine}
     </div>
     <div id="fullSchedule" style="display:none">
       <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>

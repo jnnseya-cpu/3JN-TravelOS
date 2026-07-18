@@ -3304,7 +3304,7 @@ test('ops completeReissue: issues the ticket, collects the deferred fee + fare d
   assert.equal(completeReissue(b.id, { pnr: 'X' }).ok, false, 'a second complete-reissue is refused');
 });
 
-import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginPct, autoFrontCapGbp } from '../src/pricelock.js';
+import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginOn, lockMarginPct, autoFrontCapGbp } from '../src/pricelock.js';
 
 const flightOpt = (amount) => ({ pricing: { code: 'GBP', symbol: '£' }, components: [{ type: 'flight', details: { liveAmount: amount, liveCurrency: 'GBP', outbound: { date: '2027-10-03' } } }] });
 
@@ -3353,6 +3353,29 @@ test('Guaranteed Holiday Lock: a lock margin ≥ the assumed rise FUNDS the guar
     assert.ok(exp.marginBufferGbp >= exp.assumedRiseGbp, 'margin buffer covers the assumed rise');
     assert.equal(exp.fareRiskGbp, 0, 'a funded guarantee shows zero unfunded rise risk');
     assert.equal(portfolioExposure([locked]).guaranteeFunded, true, 'guarantee is funded');
+  } finally {
+    if (prev === undefined) delete process.env.LOCK_MARGIN_PCT; else process.env.LOCK_MARGIN_PCT = prev;
+  }
+});
+
+test('Price-lock margin: lockMarginOn is a no-op at 0% and lockMarginOn≡applyLockMargin at a set rate', () => {
+  // Default 0% → the locked total equals the cash total; nothing added.
+  const off = lockMarginOn(1000);
+  assert.equal(off.pct, 0);
+  assert.equal(off.margin, 0);
+  assert.equal(off.lockedTotal, 1000, 'no margin at LOCK_MARGIN_PCT=0 → cash === locked');
+
+  const prev = process.env.LOCK_MARGIN_PCT;
+  process.env.LOCK_MARGIN_PCT = '0.08';
+  try {
+    const on = lockMarginOn(1000);
+    assert.ok(Math.abs(on.margin - 80) < 0.01, '8% of £1000 = £80');
+    assert.ok(Math.abs(on.lockedTotal - 1080) < 0.01, 'locked total = £1080');
+    // applyLockMargin must produce the SAME locked total on an option, so the
+    // displayed monthly plan and the booked option never diverge by a rounding step.
+    const opt = { totalUSD: 1266, pricing: { local: { total: 1000 } } };
+    applyLockMargin(opt, { hasInstalments: true });
+    assert.ok(Math.abs(opt.pricing.local.total - on.lockedTotal) < 0.01, 'applyLockMargin === lockMarginOn.lockedTotal');
   } finally {
     if (prev === undefined) delete process.env.LOCK_MARGIN_PCT; else process.env.LOCK_MARGIN_PCT = prev;
   }
