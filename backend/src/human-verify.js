@@ -74,21 +74,43 @@ export function verifyLightHuman(check = {}) {
 }
 
 // Best-effort per-IP rate limiting (per warm instance).
-const attempts = new Map(); // ip -> { count, windowStart }
+//
+// SCOPE (honest): this is an in-memory, PER-INSTANCE limiter. On serverless it
+// resets on cold start and is not shared across concurrent instances, so it is
+// a real speed-bump against casual brute-force / supplier-spend abuse but NOT a
+// hard perimeter — put a shared/edge rate limit (e.g. the platform firewall) in
+// front for scale/attack conditions. Limits are env-tunable so you can tighten
+// them without a deploy.
 const WINDOW_MS = 60 * 1000;
-export const MAX_ATTEMPTS_PER_MINUTE = 10;
-export function rateLimitAuth(ip, now = Date.now()) {
-  const key = ip || 'unknown';
-  const cur = attempts.get(key);
+// EVICTION: previously these Maps only ever grew — an entry per distinct IP was
+// created and never removed, so a spray of unique source IPs on a long-lived
+// warm instance was an unbounded-memory (slow-DoS) vector. We now sweep expired
+// entries so memory stays bounded to the active window.
+const MAX_TRACKED_IPS = 50000;
+function bump(map, key, max, now) {
+  key = key || 'unknown';
+  // Opportunistic sweep of expired windows (cheap; keeps the Map bounded).
+  if (map.size > 256) {
+    for (const [k, v] of map) { if (now - v.windowStart > WINDOW_MS) map.delete(k); }
+  }
+  // Hard cap as a backstop against a pathological unique-IP flood.
+  if (map.size > MAX_TRACKED_IPS && !map.has(key)) {
+    return { ok: false, error: 'rate-limited', message: 'Service is busy — please try again shortly.' };
+  }
+  const cur = map.get(key);
   if (!cur || now - cur.windowStart > WINDOW_MS) {
-    attempts.set(key, { count: 1, windowStart: now });
-    return { ok: true, remaining: MAX_ATTEMPTS_PER_MINUTE - 1 };
+    map.set(key, { count: 1, windowStart: now });
+    return { ok: true, remaining: max - 1 };
   }
   cur.count += 1;
-  if (cur.count > MAX_ATTEMPTS_PER_MINUTE) {
-    return { ok: false, error: 'rate-limited', message: 'Too many attempts — wait a minute and try again.' };
-  }
-  return { ok: true, remaining: MAX_ATTEMPTS_PER_MINUTE - cur.count };
+  if (cur.count > max) return { ok: false, error: 'rate-limited', message: 'Too many attempts — wait a minute and try again.' };
+  return { ok: true, remaining: max - cur.count };
+}
+
+const attempts = new Map(); // ip -> { count, windowStart }
+export const MAX_ATTEMPTS_PER_MINUTE = Math.max(1, Number(process.env.RATE_LIMIT_AUTH_PER_MIN) || 10);
+export function rateLimitAuth(ip, now = Date.now()) {
+  return bump(attempts, ip, MAX_ATTEMPTS_PER_MINUTE, now);
 }
 
 // Per-IP throttle for the EXPENSIVE live-supplier overlay on /api/plan. Each
@@ -97,17 +119,9 @@ export function rateLimitAuth(ip, now = Date.now()) {
 // real user clicking through options stays well under this; a bot burning our
 // supplier spend is stopped. Separate window/map from the auth limiter.
 const liveSearches = new Map(); // ip -> { count, windowStart }
-export const MAX_LIVE_SEARCHES_PER_MINUTE = 20;
+export const MAX_LIVE_SEARCHES_PER_MINUTE = Math.max(1, Number(process.env.RATE_LIMIT_LIVE_SEARCH_PER_MIN) || 20);
 export function rateLimitLiveSearch(ip, now = Date.now()) {
-  const key = ip || 'unknown';
-  const cur = liveSearches.get(key);
-  if (!cur || now - cur.windowStart > WINDOW_MS) {
-    liveSearches.set(key, { count: 1, windowStart: now });
-    return { ok: true, remaining: MAX_LIVE_SEARCHES_PER_MINUTE - 1 };
-  }
-  cur.count += 1;
-  if (cur.count > MAX_LIVE_SEARCHES_PER_MINUTE) {
-    return { ok: false, error: 'rate-limited', message: 'Too many live searches — please wait a minute.' };
-  }
-  return { ok: true, remaining: MAX_LIVE_SEARCHES_PER_MINUTE - cur.count };
+  const r = bump(liveSearches, ip, MAX_LIVE_SEARCHES_PER_MINUTE, now);
+  if (!r.ok && r.message?.startsWith('Too many attempts')) r.message = 'Too many live searches — please wait a minute.';
+  return r;
 }

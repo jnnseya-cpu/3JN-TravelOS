@@ -748,6 +748,28 @@ test('SEC-5: oversized / wrong-type API input is rejected, not crashed', async (
   assert.equal(res.status, 400, 'invalid option shape → 400 invalid-option');
 });
 
+test('SEC-6: CSP is served in report-only mode by default (never breaks the app)', async () => {
+  const res = await fetch(`${base}/api/health`);
+  const ro = res.headers.get('content-security-policy-report-only');
+  const enforced = res.headers.get('content-security-policy');
+  assert.ok(ro && /default-src 'self'/.test(ro), 'CSP present (report-only)');
+  assert.ok(!enforced, 'not enforcing by default — flip CSP_ENFORCE=true after a clean console');
+  assert.match(ro, /object-src 'none'/, 'object injection locked');
+  assert.match(ro, /frame-ancestors 'self'/, 'clickjacking locked');
+  assert.match(ro, /connect-src[^;]*firebasedatabase\.app/, 'Firebase RTDB allowed (login/data works)');
+});
+
+test('SEC-7: rate limiter blocks past threshold and stays memory-bounded under an IP flood', async () => {
+  const { rateLimitAuth, MAX_ATTEMPTS_PER_MINUTE } = await import('../src/human-verify.js');
+  const ip = `unit-ip-${Date.now()}`;
+  let blocked = false;
+  for (let i = 0; i < MAX_ATTEMPTS_PER_MINUTE + 3; i++) { if (!rateLimitAuth(ip).ok) blocked = true; }
+  assert.ok(blocked, 'blocks after the per-minute threshold');
+  // Flood 600 distinct IPs → the old code grew the Map forever; now it sweeps.
+  for (let i = 0; i < 600; i++) rateLimitAuth(`flood-${i}-${Date.now()}`);
+  assert.ok(rateLimitAuth(`fresh-${Date.now()}`).ok, 'still functions after a unique-IP flood (bounded, no throw)');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

@@ -115,12 +115,39 @@ app.use(express.json({
 // deliberately NOT set here — it must be authored and tested against the actual
 // frontend (inline scripts + Firebase/Stripe origins) before enabling, or it
 // breaks the live app. Tracked as a pre-full-launch action.
+// App-aware Content-Security-Policy. Allows exactly what the frontend loads —
+// Firebase (gstatic SDK + googleapis/RTDB + cloud functions), Google Fonts, GTM
+// and the Facebook pixel — while hard-locking the highest-risk vectors
+// (object-src none, base-uri self, frame-ancestors self, form-action self).
+// 'unsafe-inline'/'unsafe-eval' are permitted for scripts/styles because the app
+// uses inline scripts and Firebase; the value here is closing injection SINKS,
+// not eliminating inline. DEFAULTS TO REPORT-ONLY so it can never break the live
+// app — set CSP_ENFORCE=true to switch to blocking once the browser console is
+// confirmed clean of violations.
+const CSP_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'self'",
+  "form-action 'self' https://checkout.stripe.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://www.googletagmanager.com https://connect.facebook.net https://apis.google.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: https:",
+  "connect-src 'self' https://*.googleapis.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.cloudfunctions.net https://*.google-analytics.com https://www.googletagmanager.com https://connect.facebook.net https://www.facebook.com https://api.3jntravel.com",
+  "frame-src 'self' https://www.googletagmanager.com https://td.doubleclick.net https://checkout.stripe.com",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+].join('; ');
+const CSP_ENFORCE = process.env.CSP_ENFORCE === 'true';
+
 app.use((req, res, next) => {
   res.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   res.header('X-Content-Type-Options', 'nosniff');
   res.header('X-Frame-Options', 'SAMEORIGIN');
   res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.header('Permissions-Policy', 'browsing-topics=(), interest-cohort=()');
+  res.header(CSP_ENFORCE ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CSP_POLICY);
   next();
 });
 
@@ -158,7 +185,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-launch-hardening-headers-cors-nodemailer-v149';
+const BUILD_TAG = '2026-07-18-csp-reportonly-ratelimit-evict-v150';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
