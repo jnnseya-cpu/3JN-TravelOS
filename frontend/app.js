@@ -2381,11 +2381,17 @@ window.saveProfile = async () => {
   catch (e) { toast('⚠ Profile not saved — ' + (e?.message || 'please try again.'), 8000); return; }
   setUser(data.user);
   closeModal();
-  // The server tells us whether the edit was written to durable storage. If it
-  // wasn't (durable store unreachable), say so honestly rather than showing a
-  // success that will vanish on reload.
-  if (data.persisted === false) toast('⚠ Saved on screen, but the change didn\'t reach storage — please try again in a moment.', 9000);
-  else toast('✓ Profile updated.');
+  // Tell the user the REAL outcome instead of a blanket "saved":
+  //  • an image over the size cap was rejected (ask for a smaller one);
+  //  • durable storage didn't accept the write (it would vanish on reload).
+  if (Array.isArray(data.imageWarnings) && data.imageWarnings.length) {
+    const which = data.imageWarnings.map((w) => (w === 'cover' ? 'cover picture' : 'profile photo')).join(' and ');
+    toast(`⚠ Your ${which} was too large to save — pick a smaller image and try again. Other changes saved.`, 9000);
+  } else if (data.persisted === false) {
+    toast('⚠ Saved on screen, but the change didn\'t reach durable storage, so it may revert on reload. Storage may not be configured — please tell support.', 10000);
+  } else {
+    toast('✓ Profile updated.');
+  }
   renderConsole();
 };
 

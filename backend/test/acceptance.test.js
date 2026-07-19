@@ -770,6 +770,30 @@ test('SEC-7: rate limiter blocks past threshold and stays memory-bounded under a
   assert.ok(rateLimitAuth(`fresh-${Date.now()}`).ok, 'still functions after a unique-IP flood (bounded, no throw)');
 });
 
+test('PROFILE-1: name + avatar + cover persist through PATCH → GET', async () => {
+  const u = mkUser({ name: 'Before' });
+  const avatar = 'data:image/jpeg;base64,' + 'B'.repeat(40000);      // ~40KB, within cap
+  const cover = 'data:image/jpeg;base64,' + 'C'.repeat(120000);     // ~120KB, within cap
+  const patch = await api('PATCH', `/api/account/${u.id}`, { userId: u.id, body: { name: 'After Name', avatar, coverImage: cover } });
+  assert.equal(patch.status, 200);
+  assert.equal(patch.json.user.name, 'After Name', 'name saved');
+  assert.ok(patch.json.user.avatar && patch.json.user.avatar.length > 1000, 'avatar saved');
+  assert.ok(patch.json.user.coverImage && patch.json.user.coverImage.length > 1000, 'cover saved');
+  // Fresh read returns the same (round-trip persists in-process).
+  const get = await api('GET', `/api/account/${u.id}`, { userId: u.id });
+  assert.equal(get.json.user.name, 'After Name');
+  assert.ok(get.json.user.avatar && get.json.user.coverImage, 'both images survive a fresh read');
+});
+
+test('PROFILE-2: an oversized image is reported, never silently dropped', async () => {
+  const u = mkUser({ name: 'Keep' });
+  const huge = 'data:image/jpeg;base64,' + 'A'.repeat(700000);       // ~700KB, over the 600KB avatar cap
+  const patch = await api('PATCH', `/api/account/${u.id}`, { userId: u.id, body: { name: 'Kept Name', avatar: huge } });
+  assert.equal(patch.status, 200);
+  assert.ok(Array.isArray(patch.json.imageWarnings) && patch.json.imageWarnings.includes('avatar'), 'client is told the avatar was too large');
+  assert.equal(patch.json.user.name, 'Kept Name', 'non-image fields still saved');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

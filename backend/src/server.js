@@ -185,7 +185,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-csp-reportonly-ratelimit-evict-v150';
+const BUILD_TAG = '2026-07-18-profile-persist-honesty-v151';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1379,6 +1379,13 @@ app.patch('/api/account/:id', safe(async (req, res) => {
   // Self-edits can NEVER change privilege — strip role AND allAccess (leaving
   // allAccess was a privilege-escalation hole: {allAccess:true} = instant admin).
   if (!caller.allAccess && caller.role !== 'admin') { delete body.role; delete body.allAccess; }
+  // IMAGE SIZE: a photo over the store's cap was previously dropped SILENTLY —
+  // updateUser just skipped it, so the client showed "saved" while the picture
+  // never changed. Detect it here, strip it, and tell the client which image was
+  // too big so it can ask for a smaller one instead of failing invisibly.
+  const imageWarnings = [];
+  if (typeof body.avatar === 'string' && body.avatar.length > 600000) { imageWarnings.push('avatar'); delete body.avatar; }
+  if (typeof body.coverImage === 'string' && body.coverImage.length > 900000) { imageWarnings.push('cover'); delete body.coverImage; }
   // Nobody may set their email to an ADMIN_EMAILS owner address via a profile
   // edit — that would forge an owner-email account and (with the PIN) reach the
   // admin overlay. Owner emails only ever enter through the Firebase bridge.
@@ -1394,13 +1401,24 @@ app.patch('/api/account/:id', safe(async (req, res) => {
   // answer, so name/photo/cover can never silently revert on the next reload. If
   // the durable store is unreachable we tell the client instead of pretending.
   let persisted = true;
-  if (IS_SERVERLESS && isEnabled()) {
-    try {
-      const leaf = flatSnapshot()[`users/${req.params.id}`];
-      persisted = leaf ? await saveMerge({ [`users/${req.params.id}`]: leaf }) : false;
-    } catch (e) { console.error('[profile-persist]', e?.message || e); persisted = false; }
+  if (IS_SERVERLESS) {
+    if (!isEnabled()) {
+      // DURABLE STORAGE NOT CONFIGURED on a serverless deploy → this edit lives
+      // ONLY in the memory of the instance that served the request and WILL be
+      // lost on the next cold start or when another instance serves the reload.
+      // Report it honestly (persisted:false) so the client never shows a false
+      // success — this was the "my name/photo/cover didn't stick" symptom when
+      // Firebase creds are missing in production. Fix: set FIREBASE_SERVICE_ACCOUNT
+      // (+ RTDB URL). Verify at /api/health (persistence:true) or /api/persistence-test.
+      persisted = false;
+    } else {
+      try {
+        const leaf = flatSnapshot()[`users/${req.params.id}`];
+        persisted = leaf ? await saveMerge({ [`users/${req.params.id}`]: leaf }) : false;
+      } catch (e) { console.error('[profile-persist]', e?.message || e); persisted = false; }
+    }
   }
-  res.json({ user, persisted });
+  res.json({ user, persisted, ...(imageWarnings.length ? { imageWarnings } : {}) });
 }));
 
 // Provision one account per role (consumer/business/merchant/partner/admin).
