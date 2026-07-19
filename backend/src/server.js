@@ -108,12 +108,35 @@ app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf; },
 }));
 
-// CORS — allows the Vercel-hosted frontend to call this API directly (or via a
-// rewrite proxy). Lock CORS_ORIGIN to your domain in production.
+// Security headers — applied to EVERY response (API JSON and the HTML the API
+// serves, e.g. booking documents). Safe, non-breaking hardening: HSTS (the site
+// is HTTPS-only on Vercel), nosniff, clickjacking protection, a tight referrer
+// policy, and a modest permissions policy. A blocking Content-Security-Policy is
+// deliberately NOT set here — it must be authored and tested against the actual
+// frontend (inline scripts + Firebase/Stripe origins) before enabling, or it
+// breaks the live app. Tracked as a pre-full-launch action.
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-country, x-partner-key');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'SAMEORIGIN');
+  res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.header('Permissions-Policy', 'browsing-topics=(), interest-cohort=()');
+  next();
+});
+
+// CORS — the frontend is served from the SAME origin as this API (Vercel rewrites
+// /api/* to the function on the same domain), so no cross-origin grant is needed
+// for the app to work. We therefore emit Access-Control-Allow-Origin ONLY when
+// CORS_ORIGIN is explicitly set to a trusted origin — never a wildcard default,
+// which would let any website read authenticated API responses if an id leaked.
+app.use((req, res, next) => {
+  const allowed = process.env.CORS_ORIGIN;
+  if (allowed) {
+    res.header('Access-Control-Allow-Origin', allowed);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-country, x-partner-key, x-staff-pin');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -135,7 +158,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-paid-exact-quote-books-earns-credit-v148';
+const BUILD_TAG = '2026-07-18-launch-hardening-headers-cors-nodemailer-v149';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,

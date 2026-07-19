@@ -69,6 +69,18 @@ check('Live flights are flowing', H.liveFlights === true,
 check('Live hotels are flowing', H.liveHotels === true,
   H.liveHotels ? 'hotels live' : 'hotels are estimates only', 'Enable Duffel Stays / a bedbank (TBO/RateHawk) — or launch flights-first and keep hotels as clearly-labelled estimates.');
 
+// ---- 1b. Security headers actually served in production --------------------
+try {
+  const hres = await fetch(`${BASE}/api/health`);
+  const hget = (k) => hres.headers.get(k);
+  check('Security headers are served', hget('x-content-type-options') === 'nosniff' && !!hget('strict-transport-security') && !!hget('x-frame-options'),
+    `nosniff=${hget('x-content-type-options')} hsts=${hget('strict-transport-security') ? 'yes' : 'no'} frame=${hget('x-frame-options')}`,
+    'Deploy the vercel.json + app security headers (HSTS, nosniff, X-Frame-Options, Referrer-Policy).');
+  const acao = hget('access-control-allow-origin');
+  check('CORS is not a wildcard', acao !== '*',
+    `access-control-allow-origin = ${acao || '(absent)'}`, 'Set CORS_ORIGIN to your exact domain — never leave it as "*".');
+} catch { /* health already validated above */ }
+
 // ---- 2. Config diagnostics (supplier + Stripe truth) -----------------------
 try {
   ctx = await getJson('/api/context');
@@ -81,6 +93,8 @@ if (ctx?.json?.suppliers) {
     `stripe = ${S.stripe}`, 'Set STRIPE_SECRET_KEY to your sk_live_… key. A test key takes no real money.');
   check('Stripe webhook secret is set', S.stripeWebhook === true,
     S.stripeWebhook ? 'webhook configured' : 'NO webhook secret', 'Set STRIPE_WEBHOOK_SECRET — without it a payment captures but the ticket never issues and no PDF sends. This is the #1 silent launch killer.');
+  check('LIVE_MODE is ON (no demo/free-AI affordances)', ctx.json.liveMode === true,
+    `liveMode = ${ctx.json.liveMode}`, 'Set LIVE_MODE=true for public launch — it removes demo accounts and forces ACU-funded AI. Must pair with a LIVE Duffel token.');
   const warn = ctx.json.configWarning;
   check('App self-diagnosis is clean', !warn,
     warn ? `${warn.severity}: ${warn.message}` : 'no config warnings', warn ? warn.message : '');

@@ -702,6 +702,52 @@ test('ABUSE-7: membership economics — annual = 2× monthly; ACU fund ≤ 10% o
   assert.ok(MEMBERSHIP_ACU_FUND_RATE <= 0.10 + 1e-9, 'ACU fund rate ≤ 10% of the membership fee (self-funding)');
 });
 
+// ===========================================================================
+// LAUNCH HARDENING — regression tests for the production-audit fixes
+// ===========================================================================
+
+test('SEC-1: security headers are present on every response', async () => {
+  const res = await fetch(`${base}/api/health`);
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff', 'nosniff (no MIME sniffing)');
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN', 'clickjacking protection');
+  assert.ok(/max-age=\d+/.test(res.headers.get('strict-transport-security') || ''), 'HSTS set');
+  assert.ok(res.headers.get('referrer-policy'), 'referrer policy set');
+  assert.ok(res.headers.get('permissions-policy'), 'permissions policy set');
+});
+
+test('SEC-2: CORS is NOT a wildcard unless CORS_ORIGIN is explicitly set', async () => {
+  // In this test env CORS_ORIGIN is unset → no Access-Control-Allow-Origin at all
+  // (same-origin only). A "*" here would let any site read authenticated responses.
+  const res = await fetch(`${base}/api/health`, { headers: { origin: 'https://evil.example' } });
+  const acao = res.headers.get('access-control-allow-origin');
+  assert.notEqual(acao, '*', 'never a wildcard ACAO by default');
+});
+
+test('SEC-3: a forged Stripe webhook is rejected (signature verified)', async () => {
+  const res = await fetch(`${base}/api/pay/stripe/webhook`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'checkout.session.completed', data: { object: { metadata: { bookingId: 'bkg_forged' }, amount_total: 999999 } } }),
+  });
+  assert.ok(res.status === 400 || res.status === 401, `forged webhook rejected (got ${res.status})`);
+});
+
+test('SEC-4: malformed JSON returns a clean error, never a stack trace', async () => {
+  const res = await fetch(`${base}/api/book`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{bad json' });
+  const text = await res.text();
+  assert.ok(!/\bat\s+\/|\.js:\d+:\d+|node_modules|Traceback/i.test(text), 'no stack trace / internal paths leaked');
+  assert.ok(res.status >= 400, 'malformed input is a 4xx/5xx, not a success');
+});
+
+test('SEC-5: oversized / wrong-type API input is rejected, not crashed', async () => {
+  const u = mkUser();
+  // Wrong types where an option is expected → clean 400, no 500 crash.
+  const res = await fetch(`${base}/api/quote`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': u.id },
+    body: JSON.stringify({ option: 12345, intent: 'not-an-object' }),
+  });
+  assert.equal(res.status, 400, 'invalid option shape → 400 invalid-option');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });
