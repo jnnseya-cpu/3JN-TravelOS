@@ -116,11 +116,19 @@ function isStaff() {
   const u = state.user;
   return !!(state.staffPin || (u && (u.allAccess || ['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate'].includes(u.role))));
 }
-// Commercial storefront: when LIVE_MODE is on, CUSTOMERS get the curated Deals
-// catalogue as the storefront — the AI estimator planner + destination
-// marketplace are hidden and any button that pointed at them routes to Deals,
-// so no fabricated trip is ever shown. Staff are unaffected.
-function dealsOnly() { return !!state.liveMode && !isStaff(); }
+// Is a LIVE supplier (Duffel) connected? When it is, every search result is a
+// REAL, bookable fare — not a fabricated estimate — so search is safe to show.
+function liveSearchReady() {
+  const s = state.context?.suppliers || {};
+  return !!(s.flightsLive || s.hotelsLive || s.duffelMode === 'live');
+}
+// Commercial storefront: LIVE_MODE was originally meant to HIDE the AI estimator
+// planner for customers so no fabricated trip is ever shown — but that only makes
+// sense with NO live inventory. Once a live supplier (Duffel) is connected, search
+// returns real bookable fares, so customers get the full search AND the Deals
+// catalogue. Deals-only now applies only when live inventory isn't connected.
+// Staff always keep full access.
+function dealsOnly() { return !!state.liveMode && !isStaff() && !liveSearchReady(); }
 // Persistent, dismissible banner that tells the operator — in plain English —
 // why the OS is (or isn't) able to take payments. A blocker (e.g. LIVE_MODE on
 // with a test Duffel token) turns every trip into an unpayable estimate, so it
