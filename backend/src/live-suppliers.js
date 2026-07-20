@@ -1010,6 +1010,47 @@ export async function duffelDiagnostic() {
   }
 }
 
+// Live Duffel STAYS probe — a real /stays/search for a known-good city (London,
+// fixed coords so it needs no geocode) with future dates, so an operator can see
+// EXACTLY why hotels fall back to estimates: the token may lack Stays permission
+// (Air and Stays are SEPARATE Duffel products — a live flight token does NOT
+// automatically include Stays), Stays may be reachable-but-empty, or unreachable.
+export async function duffelStaysDiagnostic() {
+  const mode = duffelMode();
+  if (!DUFFEL_TOKEN) return { ok: false, mode, reason: 'not-configured', message: 'No DUFFEL_TOKEN set — hotels fall back to estimates.' };
+  if (env.DUFFEL_STAYS === 'false') return { ok: false, mode, reason: 'disabled', message: 'DUFFEL_STAYS is set to "false" — the Duffel Stays lane is switched off. Unset it to enable live hotels.' };
+  if (typeof fetch !== 'function') return { ok: false, mode, reason: 'no-fetch', message: 'This runtime has no fetch() — cannot reach Duffel Stays.' };
+  const checkIn = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const checkOut = new Date(Date.now() + 33 * 86400000).toISOString().slice(0, 10);
+  const body = { data: { rooms: 1, location: { radius: 10, geographic_coordinates: { longitude: -0.1278, latitude: 51.5074 } }, check_in_date: checkIn, check_out_date: checkOut, guests: [{ type: 'adult' }] } };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const r = await fetch(`${DUFFEL_BASE}/stays/search`, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const latencyMs = Date.now() - startedAt;
+    let payload = null; try { payload = await r.json(); } catch {}
+    if (r.status === 401 || r.status === 403) {
+      return { ok: false, mode, reason: 'stays-not-enabled', status: r.status, latencyMs, message: `Duffel rejected the Stays request (HTTP ${r.status}). Your token works for flights but does NOT have Duffel Stays enabled — request Stays access in the Duffel dashboard (it is a separate product from Flights). Until then, hotels stay as confirm-before-you-pay estimates.` };
+    }
+    if (!r.ok) {
+      const detail = payload?.errors?.[0]?.message || payload?.errors?.[0]?.title || `HTTP ${r.status}`;
+      return { ok: false, mode, reason: 'provider-error', status: r.status, latencyMs, message: `Duffel Stays returned an error: ${detail}` };
+    }
+    const results = payload?.data?.results;
+    const count = Array.isArray(results) ? results.length : 0;
+    if (!count) return { ok: false, mode, reason: 'no-results', status: r.status, latencyMs, message: 'Duffel Stays is reachable and the token is authorised, but the London probe returned 0 properties. Stays inventory is thinner than flights — live hotels appear where Duffel has coverage; elsewhere the confirm-before-you-pay estimate stands.' };
+    return { ok: true, mode, reason: 'ok', status: r.status, latencyMs, probeProperties: count, message: `Duffel Stays is LIVE — ${count} real properties on the London probe in ${latencyMs}ms. Live hotels are working; a specific search that still shows an estimate had no Stays inventory for that exact place/dates.` };
+  } catch (e) {
+    const aborted = e?.name === 'AbortError';
+    return { ok: false, mode, reason: aborted ? 'timeout' : 'unreachable', message: aborted ? `Duffel Stays did not respond within ${TIMEOUT_MS}ms (network/egress).` : `Could not reach Duffel Stays (${e?.message || 'network error'}).` };
+  } finally { clearTimeout(t); }
+}
+
 // ===========================================================================
 // HOTELS — Amadeus (OAuth2 client-credentials → hotels-by-city → offers)
 // ===========================================================================

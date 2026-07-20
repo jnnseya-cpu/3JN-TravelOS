@@ -69,7 +69,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
@@ -185,7 +185,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-search-always-visible-acu-gated-v153';
+const BUILD_TAG = '2026-07-18-duffel-stays-diagnostic-v154';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1684,7 +1684,11 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
   // Live probe (opt-out with ?probe=0) tells us the REAL reason flights show
   // estimated: no token, test token, network can't reach Duffel, auth rejected,
   // or simply no offers on the probe route.
-  const diag = req.query.probe === '0' ? null : await duffelDiagnostic();
+  const probe = req.query.probe !== '0';
+  const [diag, staysDiag] = await Promise.all([
+    probe ? duffelDiagnostic() : Promise.resolve(null),
+    probe ? duffelStaysDiagnostic().catch((e) => ({ ok: false, reason: 'exception', message: e?.message || 'stays probe failed' })) : Promise.resolve(null),
+  ]);
   res.json({
     flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode(), diagnostic: diag },
     lccFlights: {
@@ -1699,7 +1703,16 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
         ? 'Market-data door OPEN — real cached fares (incl. Ryanair/Jet2) calibrate estimates and auto-fill the Market Benchmark.'
         : 'SELF-SERVE and free: sign up at travelpayouts.com, copy the API token (Tools → API), set TRAVELPAYOUTS_TOKEN. Gives real market prices incl. Ryanair/Jet2 for estimate calibration and automatic benchmark quotes (cached market data — never charged as live).',
     },
-    hotels: { provider: 'Amadeus', enabled: liveHotelsEnabled() },
+    hotels: {
+      provider: duffelStaysEnabled() ? 'Duffel Stays' : 'Amadeus',
+      enabled: liveHotelsEnabled(),
+      diagnostic: staysDiag,
+      note: staysDiag?.ok
+        ? 'Duffel Stays LIVE — live hotels flow where Duffel has coverage; a search still showing an estimate had no Stays inventory for that exact place/dates.'
+        : staysDiag?.reason === 'stays-not-enabled'
+          ? 'Your Duffel token works for FLIGHTS but not STAYS — Stays is a separate Duffel product. Request Stays access in the Duffel dashboard; until then hotels stay as confirm-before-you-pay estimates.'
+          : (staysDiag?.message || 'Hotels fall back to confirm-before-you-pay estimates.'),
+    },
     schedules: { provider: 'OAG', enabled: oagScheduleEnabled() },
     note: duffelMode() === 'test'
       ? (LIVE_MODE()
