@@ -116,19 +116,12 @@ function isStaff() {
   const u = state.user;
   return !!(state.staffPin || (u && (u.allAccess || ['admin', 'business', 'merchant', 'partner', 'embassy', 'consulate'].includes(u.role))));
 }
-// Is a LIVE supplier (Duffel) connected? When it is, every search result is a
-// REAL, bookable fare — not a fabricated estimate — so search is safe to show.
-function liveSearchReady() {
-  const s = state.context?.suppliers || {};
-  return !!(s.flightsLive || s.hotelsLive || s.duffelMode === 'live');
-}
-// Commercial storefront: LIVE_MODE was originally meant to HIDE the AI estimator
-// planner for customers so no fabricated trip is ever shown — but that only makes
-// sense with NO live inventory. Once a live supplier (Duffel) is connected, search
-// returns real bookable fares, so customers get the full search AND the Deals
-// catalogue. Deals-only now applies only when live inventory isn't connected.
-// Staff always keep full access.
-function dealsOnly() { return !!state.liveMode && !isStaff() && !liveSearchReady(); }
+// Commercial storefront: when LIVE_MODE is on, customers get the curated Deals
+// catalogue as the LANDING storefront (the destination marketplace is deals-first).
+// This NO LONGER hides search — search is always available to everyone and is
+// gated only by ACUs on execution (see applyStorefrontMode / the server's
+// stage:'topup-required'). Staff always keep full access.
+function dealsOnly() { return !!state.liveMode && !isStaff(); }
 // Persistent, dismissible banner that tells the operator — in plain English —
 // why the OS is (or isn't) able to take payments. A blocker (e.g. LIVE_MODE on
 // with a test Duffel token) turns every trip into an unpayable estimate, so it
@@ -151,7 +144,12 @@ function showConfigWarning(w) {
 function applyStorefrontMode() {
   const on = dealsOnly();
   document.body.dataset.storefront = on ? 'deals' : 'full';
-  document.querySelectorAll('[data-nav="planner"],[data-nav="marketplace"]').forEach((el) => {
+  // SEARCH IS ALWAYS AVAILABLE TO EVERYONE. It is never hidden or redirected —
+  // running a search is gated by ACUs (membership allowance, top-up, or a search
+  // deposit/budget requirement), enforced server-side (stage:'topup-required').
+  // The commercial "deals-first" storefront therefore only affects the destination
+  // MARKETPLACE, never the planner/search.
+  document.querySelectorAll('[data-nav="marketplace"]').forEach((el) => {
     const inNav = el.closest('.nav-links');
     if (on) {
       if (inNav) { el.style.display = 'none'; return; }
@@ -198,8 +196,9 @@ function renderComingSoon(meta) {
   </div>`;
 }
 function nav(view) {
-  // Commercial mode: customers never reach the estimator — send them to Deals.
-  if (dealsOnly() && (view === 'planner' || view === 'marketplace')) view = 'deals';
+  // Search is always reachable for everyone (ACU-gated on execution). Only the
+  // destination MARKETPLACE follows the deals-first storefront.
+  if (dealsOnly() && view === 'marketplace') view = 'deals';
   // Module flags: a switched-off module shows "Coming Soon" instead of the real view.
   const gate = moduleGate(view);
   if (gate) { renderComingSoon(gate); view = 'coming'; }
