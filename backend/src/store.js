@@ -49,6 +49,7 @@ const db = {
   hostListings: [], // 3JN Host Marketplace properties (community-hosted, 3JN-verified)
   travelPots: [], // group contribution pots (finance)
   searchCache: new Map(), // popular routes/packages served before any paid AI call
+  freeSearchIps: new Map(), // guest free-search lifetime counter, keyed by hashed IP { count, first, last }
   behaviour: [], // behavioural-learning event stream (searches, views, books…)
   commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
   aiRequestCosts: [], // ai_request_costs ledger — estimated vs actual AI spend per request
@@ -2537,6 +2538,50 @@ function nowISO() {
 function round2(n) { return Math.round(n * 100) / 100; }
 function round4(n) { return Math.round(n * 10000) / 10000; }
 
+// ---- Free-search funnel (2 free as a guest → 2 free after signup → membership) --
+// Policy: an UNKNOWN (guest) user gets FREE_SEARCHES_GUEST free STANDARD searches
+// for life; after signing up they get FREE_SEARCHES_SIGNUP more; then they need a
+// membership (and later a top-up). Counts are LIFETIME (persisted), not per session.
+export const FREE_SEARCHES_GUEST = Math.max(0, Number(process.env.FREE_SEARCHES_GUEST) || 2);
+export const FREE_SEARCHES_SIGNUP = Math.max(0, Number(process.env.FREE_SEARCHES_SIGNUP) || 2);
+
+// Guest allowance, counted per IP (hashed → never store a raw IP) and PERSISTED so
+// it is a real lifetime cap across instances, not per warm instance. Best-effort:
+// a determined abuser can rotate IPs (VPN/proxy) — that is unavoidable for a truly
+// anonymous user. The HARD wall is the next step: to get 2 more free searches they
+// must create an account, and account creation is human-checked AND IP-capped
+// (the anti-farming starter cap), so "rotate an IP → infinite free searches" is
+// blocked at the point it would actually cost us money (a signed-in ACU wallet).
+export function useGuestFreeSearch(ip, max = FREE_SEARCHES_GUEST) {
+  const key = createHash('sha256').update(String(ip || 'unknown')).digest('hex').slice(0, 24);
+  const rec = db.freeSearchIps.get(key) || { count: 0, first: nowISO() };
+  if (rec.count >= max) return { allowed: false, used: rec.count, remaining: 0, max };
+  rec.count += 1; rec.last = nowISO();
+  db.freeSearchIps.set(key, rec);
+  // Bound memory: if the map grows huge (unique-IP flood), drop the oldest ~10%.
+  if (db.freeSearchIps.size > 200000) {
+    const drop = Math.ceil(db.freeSearchIps.size * 0.1);
+    let i = 0; for (const k of db.freeSearchIps.keys()) { if (i++ >= drop) break; db.freeSearchIps.delete(k); }
+  }
+  return { allowed: true, used: rec.count, remaining: Math.max(0, max - rec.count), max };
+}
+export function guestFreeSearchStatus(ip, max = FREE_SEARCHES_GUEST) {
+  const key = createHash('sha256').update(String(ip || 'unknown')).digest('hex').slice(0, 24);
+  const used = db.freeSearchIps.get(key)?.count || 0;
+  return { used, remaining: Math.max(0, max - used), max };
+}
+
+// Signed-in user's post-signup free-search allowance (lifetime), stored on the
+// user record so it persists per-record.
+export function useMemberFreeSearch(userId, max = FREE_SEARCHES_SIGNUP) {
+  const u = db.users.get(userId);
+  if (!u) return { allowed: false, used: 0, remaining: 0, max };
+  const used = u.freeSearchesUsed || 0;
+  if (used >= max) return { allowed: false, used, remaining: 0, max };
+  u.freeSearchesUsed = used + 1;
+  return { allowed: true, used: u.freeSearchesUsed, remaining: Math.max(0, max - u.freeSearchesUsed), max };
+}
+
 // ---- Request Exact Quote (real revenue capture before live suppliers) --------
 // An estimated flight/hotel option cannot take real money (legal-safety gate).
 // Instead the customer requests the EXACT quote: we capture the lead + a
@@ -2745,7 +2790,7 @@ export function sponsoredPlacementRevenueGBP() {
 // (its stale copy re-uploaded by another), and new tickets vanished under a stale
 // array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
 // resolve on any instance sticks and a new ticket can't be overwritten by a peer.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings', 'freeSearchIps'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
 // A previously-persisted supportTickets node may be an ARRAY (old whole-array

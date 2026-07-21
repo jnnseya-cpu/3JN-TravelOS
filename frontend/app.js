@@ -659,6 +659,8 @@ async function runPlan(overrides = {}) {
     else toast('Search cancelled — no ACU charged. Cached results remain free.');
     return;
   }
+  if (data.stage === 'signup-required') { renderSignupWall(data); return; }
+  if (data.stage === 'membership-required') { renderMembershipWall(data); return; }
   if (data.stage === 'topup-required') { renderTopup(data); return; }
   if (data.stage === 'concierge-requires-commitment') { renderConciergeCommitment(data); return; }
   if (data.stage === 'inspiration') { renderInspiration(data); return; }
@@ -690,6 +692,35 @@ function renderTopup(data) {
   </div>`;
 }
 window.runFreeSearch = () => { const sel = $('#tierSelect'); if (sel) sel.value = 'free'; runPlan(); };
+
+// Free-search funnel walls. Guest used their 2 free searches → invite to sign up
+// for 2 more. Signed-in member used their 2 free → invite to join Travel+.
+function renderSignupWall(data) {
+  const out = $('#plannerOut');
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+    <div style="font-size:34px">🔍</div>
+    <h3 style="margin:10px 0 6px">You've used your free searches</h3>
+    <p class="muted" style="font-size:14px">${esc(data.message || 'Create a free account to keep searching.')}</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px">
+      <button class="btn btn-gold" onclick="openAuth('signup')">Create a free account — ${(data.freeMax != null ? '2' : '')} more free searches</button>
+      <button class="btn btn-ghost" onclick="runFreeSearch()">See cached results (free)</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">After that, a Travel+ membership funds your standard searches.</p>
+  </div>`;
+}
+function renderMembershipWall(data) {
+  const out = $('#plannerOut');
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+    <div style="font-size:34px">⭐</div>
+    <h3 style="margin:10px 0 6px">Join Travel+ to keep searching</h3>
+    <p class="muted" style="font-size:14px">${esc(data.message || "You've used your free searches. A Travel+ membership funds your standard searches.")}</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px">
+      <button class="btn btn-gold" data-nav="membership">See Travel+ plans</button>
+      <button class="btn btn-ghost" onclick="runFreeSearch()">See cached results (free)</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">Members' searches are funded by their plan — top up only if you run out.</p>
+  </div>`;
+}
 
 // Tier 4 Concierge pairs AI agents with a human travel expert — it needs a
 // commitment first: a refundable £20 deposit, a subscription, or a premium plan.

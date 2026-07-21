@@ -35,6 +35,7 @@ import {
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest, claimStripeEvent,
+  useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP,
   searchToBookStats,
   earnAcu, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
@@ -97,7 +98,18 @@ const app = express();
 app.set('trust proxy', 1);
 // The real client IP for rate-limiting / anti-farming. req.ip honours the single
 // trusted proxy hop above; never read X-Forwarded-For directly (spoofable).
-const clientIp = (req) => req.ip || req.socket?.remoteAddress || null;
+// The REAL client IP. On Vercel (and most proxies) the app sees the proxy's
+// address in req.ip, with the true client in x-forwarded-for (first entry). Using
+// req.ip alone would make every visitor share ONE IP — collapsing per-IP rate
+// limits and the guest free-search counter into a single global bucket (everyone
+// throttled/walled after one user's activity). Prefer the forwarded client IP,
+// fall back to the socket. (Spoofing XFF only rotates the free-search IP — the
+// same residual as a VPN — and the real wall is the human-checked signup step.)
+const clientIp = (req) => {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) { const first = String(xff).split(',')[0].trim(); if (first) return first; }
+  return req.headers['x-real-ip'] || req.ip || req.socket?.remoteAddress || null;
+};
 // Payload limit: host property photos travel as compressed data URLs in JSON
 // (10–100 images ≈ 100–150KB each after client-side compression), so the body
 // cap is generous. Individual photos are size-capped again server-side.
@@ -185,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-duffel-stays-diagnostic-v154';
+const BUILD_TAG = '2026-07-18-free-search-funnel-2guest-2signup-v155';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2350,12 +2362,16 @@ app.get('/api/expense', safe((req, res) => {
 
 // ---- Plan: the core pipeline ---------------------------------------------
 app.post('/api/plan', safe(async (req, res) => {
-  const { text, searchTier, overrides, country, currencyCountry, preferences } = req.body || {};
+  const { text, searchTier: reqTierKey, overrides, country, currencyCountry, preferences } = req.body || {};
   // A non-string `text` (a client posting a number/array/object) must be a clean
   // 400, not a 500 from `text.trim()` deep in the parser.
   if (text != null && typeof text !== 'string') return res.status(400).json({ error: 'text-must-be-string' });
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
+  // POLICY: every CUSTOMER search runs the STANDARD tier (the 'smart' tier — depth
+  // 'standard'). Only staff/all-access may pick deep/concierge for internal use.
+  const isStaffPlan = !!(user && (user.allAccess || PRIVILEGED_ROLES.has(user.role)));
+  const searchTier = isStaffPlan ? (reqTierKey || 'smart') : 'smart';
   let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, usage: usageStats(user?.id) });
 
   // Live provider pricing overlay: when flight/hotel provider keys are present
@@ -2373,14 +2389,23 @@ app.post('/api/plan', safe(async (req, res) => {
   // response as `liveOverlay`.
   const liveOverlay = { attempted: false, applied: false, reason: null, flightsFound: 0, hotelsFound: 0, duffelMode: duffelMode() };
   const liveBudget = rateLimitLiveSearch(clientIp(req));
+  // SPEND GUARD: a NON-FUNDED user who has already used their free searches gets no
+  // live-supplier call — we're going to send them to sign up / join anyway, so
+  // never burn paid Duffel/AI quota on an over-limit user (read-only checks, no
+  // allowance consumed). Members (funded) always get the live overlay.
+  const guestExhausted = !user && guestFreeSearchStatus(clientIp(req)).remaining <= 0;
+  const memberExhausted = user && !user.membership?.active && (user.freeSearchesUsed || 0) >= FREE_SEARCHES_SIGNUP;
+  const overLimitFree = !isStaffPlan && (guestExhausted || memberExhausted);
   if (result.stage !== 'options') {
     liveOverlay.reason = 'not-options-stage';
+  } else if (overLimitFree) {
+    liveOverlay.reason = 'free-search-exhausted';
   } else if (!liveSuppliersConfigured()) {
     liveOverlay.reason = 'no-supplier-keys';
   } else if (!liveBudget.ok) {
     liveOverlay.reason = 'live-search-rate-limited';
   }
-  if (result.stage === 'options' && liveSuppliersConfigured() && liveBudget.ok) {
+  if (result.stage === 'options' && !overLimitFree && liveSuppliersConfigured() && liveBudget.ok) {
     liveOverlay.attempted = true;
     try {
       const intent = result.intent;
@@ -2462,20 +2487,46 @@ app.post('/api/plan', safe(async (req, res) => {
     } catch { /* market reference is best-effort */ }
   }
 
-  // LIVE MODE (go-live switch, LIVE_MODE=true): NO free AI, full stop. Guests
-  // get cached results only; any fresh AI-computed search requires a signed-in
-  // account whose ACUs fund it (the enforcement below). Staff allAccess demo
-  // accounts are exempt so internal testing still works.
-  if (LIVE_MODE() && result.stage === 'options' && !result.cached && !user) {
-    return res.json({
-      stage: 'topup-required',
-      reason: 'account-required',
-      tierName: (SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart).name,
-      acuNeeded: (SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart).acu || 0,
-      balance: 0,
-      isMember: false,
-      message: 'AI searches are funded by ACUs. Create a free account and top up (£5 = 500 ACU) to run live AI searches — cached results stay free.',
-    });
+  // FREE-SEARCH FUNNEL (customer policy): an unknown user gets 2 free STANDARD
+  // searches for life → after signing up, 2 more → then a membership funds their
+  // searches (top-up later if needed). Staff/all-access are exempt. Cached results
+  // are always free and never consume a free-search allowance.
+  let freeGranted = false;
+  if (result.stage === 'options' && !result.cached && !isStaffPlan) {
+    // "Funded" = an ACTIVE MEMBERSHIP. The funnel is guest(2 free) → signup(2 free)
+    // → membership → top-up, so a NON-member always spends their 2 free searches
+    // first (starter ACU does not skip the funnel); only a member's searches are
+    // funded from their allowance (and they top up when it runs out).
+    const funded = user && user.membership?.active;
+    if (!funded) {
+      if (!user) {
+        // UNKNOWN USER — 2 free lifetime, counted per IP (abuse-hardened: the real
+        // wall is the human-checked, IP-capped signup that grants the next 2).
+        const gate = useGuestFreeSearch(clientIp(req), FREE_SEARCHES_GUEST);
+        if (!gate.allowed) {
+          return res.json({
+            stage: 'signup-required', reason: 'guest-free-exhausted',
+            freeUsed: gate.used, freeMax: gate.max, freeRemaining: 0,
+            message: `You've used your ${gate.max} free searches. Create a free account to get ${FREE_SEARCHES_SIGNUP} more — then a Travel+ membership funds your standard searches.`,
+          });
+        }
+        freeGranted = true;
+        result.freeSearch = { scope: 'guest', used: gate.used, remaining: gate.remaining, max: gate.max };
+      } else {
+        // SIGNED-IN, no membership, no ACU — 2 free lifetime, then membership.
+        const gate = useMemberFreeSearch(user.id, FREE_SEARCHES_SIGNUP);
+        if (!gate.allowed) {
+          return res.json({
+            stage: 'membership-required', reason: 'signup-free-exhausted',
+            freeUsed: gate.used, freeMax: gate.max, freeRemaining: 0, isMember: false,
+            message: `You've used your ${gate.max} free searches. Join Travel+ — your membership funds your standard searches (top up only if you run out).`,
+          });
+        }
+        freeGranted = true;
+        result.freeSearch = { scope: 'member', used: gate.used, remaining: gate.remaining, max: gate.max };
+      }
+      result.acuCharged = 0;
+    }
   }
 
   // ACU enforcement: paid search tiers are funded by ACUs. A signed-in account
@@ -2503,7 +2554,7 @@ app.post('/api/plan', safe(async (req, res) => {
     } else {
       result.acuCharged = 0;
     }
-  } else if (result.stage === 'options' && user && !user.allAccess) {
+  } else if (result.stage === 'options' && user && !user.allAccess && !freeGranted) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     // MEMBERS pay the AT-COST rate (their subscription is the margin); NON-MEMBERS
     // (top-up only) pay the full 3–10× commercial rate.

@@ -3949,10 +3949,17 @@ test('LIVE_MODE: no free AI for guests; demo accounts fail closed', async () => 
     const base = `http://127.0.0.1:${server.address().port}`;
     const post = (p, body, h = {}) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: JSON.stringify(body) });
     try {
-      // Guest fresh search → must be told to create an account + fund ACUs.
-      const r = await (await post('/api/plan', { text: `2 adults to Rome for 4 nights in October ${Date.now()}, flights hotel` })).json();
-      assert.equal(r.stage, 'topup-required', 'guests get no free AI in live mode');
-      assert.equal(r.reason, 'account-required');
+      // NEW POLICY: an unknown user gets 2 free STANDARD searches, THEN a signup
+      // wall (not zero free). Use a dedicated client IP so the count is isolated.
+      const ip = { 'x-forwarded-for': `203.0.113.${(Date.now() % 200) + 1}` };
+      let sawFree = false, sawWall = false;
+      for (let i = 0; i < 6; i++) {
+        const r = await (await post('/api/plan', { text: `2 adults to Rome for 4 nights Oct ${Date.now()}-${i}, flights hotel` }, ip)).json();
+        if (r.stage === 'options') { sawFree = true; assert.equal(r.freeSearch?.scope, 'guest', 'granted guest search reports its free allowance'); }
+        else if (r.stage === 'signup-required') { sawWall = true; assert.equal(r.reason, 'guest-free-exhausted'); break; }
+      }
+      assert.ok(sawFree, 'a guest gets at least one free standard search');
+      assert.ok(sawWall, 'a guest hits the signup wall after the free allowance');
       // Demo seeding fails closed (no STAFF_ACCESS_PIN configured); the
       // full-access demo endpoint is permanently disabled (410) for the launch.
       assert.equal((await post('/api/accounts/seed-roles', {})).status, 403);

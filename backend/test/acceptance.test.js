@@ -794,6 +794,40 @@ test('PROFILE-2: an oversized image is reported, never silently dropped', async 
   assert.equal(patch.json.user.name, 'Kept Name', 'non-image fields still saved');
 });
 
+test('FUNNEL-1: guest gets exactly 2 free standard searches, then a signup wall', async () => {
+  const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
+  const search = (i) => api('POST', '/api/plan', { headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, trip ${ip}-${i}` } });
+  const stages = [];
+  for (let i = 0; i < 4; i++) { const r = await search(i); stages.push(r.json.stage); }
+  const frees = stages.filter((s) => s === 'options').length;
+  assert.equal(frees, 2, `exactly 2 free guest searches (got ${frees}: ${stages.join(',')})`);
+  const walled = await search(99);
+  assert.equal(walled.json.stage, 'signup-required');
+  assert.equal(walled.json.reason, 'guest-free-exhausted');
+});
+
+test('FUNNEL-2: after signup a member gets 2 more free, then a membership wall', async () => {
+  const u = mkUser();
+  const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
+  const search = (i) => api('POST', '/api/plan', { userId: u.id, headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, member ${u.id}-${i}` } });
+  const stages = [];
+  for (let i = 0; i < 4; i++) { const r = await search(i); stages.push(r.json.stage); }
+  const frees = stages.filter((s) => s === 'options').length;
+  assert.equal(frees, 2, `exactly 2 free post-signup searches (got ${frees}: ${stages.join(',')})`);
+  const walled = await search(99);
+  assert.equal(walled.json.stage, 'membership-required');
+  assert.equal(walled.json.reason, 'signup-free-exhausted');
+});
+
+test('FUNNEL-3: every customer search is forced to the STANDARD tier (no deep/concierge)', async () => {
+  const u = mkUser();
+  const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
+  // Ask for concierge; a customer must still get a standard (free-granted) search.
+  const r = await api('POST', '/api/plan', { userId: u.id, headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, tier ${u.id}`, searchTier: 'concierge' } });
+  assert.equal(r.json.stage, 'options', 'customer gets a standard search, not a concierge gate');
+  assert.equal(r.json.freeSearch?.scope, 'member', 'served from the free-search allowance at standard tier');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });
