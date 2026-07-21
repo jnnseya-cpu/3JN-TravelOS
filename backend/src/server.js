@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-free-search-funnel-2guest-2signup-v155';
+const BUILD_TAG = '2026-07-18-members-any-tier-free-standard-v156';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2368,10 +2368,13 @@ app.post('/api/plan', safe(async (req, res) => {
   if (text != null && typeof text !== 'string') return res.status(400).json({ error: 'text-must-be-string' });
   const context = detectContext(req, { country, currencyCountry });
   const user = currentUser(req);
-  // POLICY: every CUSTOMER search runs the STANDARD tier (the 'smart' tier — depth
-  // 'standard'). Only staff/all-access may pick deep/concierge for internal use.
+  // POLICY: FREE searches (guests + signed-in NON-members) always run the STANDARD
+  // tier (the 'smart' tier — depth 'standard'). PAID MEMBERS (and staff) may choose
+  // ANY tier — Standard / Deep / Concierge — funded by their membership (at-cost,
+  // top up if needed). So the tier is only forced to standard for non-members.
   const isStaffPlan = !!(user && (user.allAccess || PRIVILEGED_ROLES.has(user.role)));
-  const searchTier = isStaffPlan ? (reqTierKey || 'smart') : 'smart';
+  const isMemberPlan = !!(user && user.membership?.active);
+  const searchTier = (isStaffPlan || isMemberPlan) ? (reqTierKey || 'smart') : 'smart';
   let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, usage: usageStats(user?.id) });
 
   // Live provider pricing overlay: when flight/hotel provider keys are present

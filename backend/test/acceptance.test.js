@@ -828,6 +828,18 @@ test('FUNNEL-3: every customer search is forced to the STANDARD tier (no deep/co
   assert.equal(r.json.freeSearch?.scope, 'member', 'served from the free-search allowance at standard tier');
 });
 
+test('FUNNEL-4: a paid member may choose any tier (not forced to standard)', async () => {
+  const m = mkUser();
+  subscribeMembership(m.id, 'plus');
+  const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
+  // A member requesting Deep must NOT be silently downgraded to standard, nor
+  // handed the non-member free-search grant — their membership funds the tier.
+  const r = await api('POST', '/api/plan', { userId: m.id, headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, memtier ${m.id}`, searchTier: 'deep' } });
+  // Not gated by the free funnel (members are funded), and not a signup/membership wall.
+  assert.ok(!['signup-required', 'membership-required'].includes(r.json.stage), `member is not funnel-walled (got ${r.json.stage})`);
+  assert.notEqual(r.json.freeSearch?.scope, 'guest', 'member is not on the guest free allowance');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });
