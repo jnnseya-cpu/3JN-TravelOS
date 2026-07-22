@@ -47,6 +47,28 @@ const VIATOR_BASE = env.VIATOR_BASE_URL || 'https://api.viator.com';
 // both, so search works the moment the key lands regardless of tier.
 const VIATOR_TIER = (env.VIATOR_PARTNER_TIER || 'affiliate').toLowerCase();
 export function viatorPartnerTier() { return VIATOR_TIER; }
+// AFFILIATE ATTRIBUTION: a Viator affiliate earns commission only when the
+// customer reaches the product page through a link carrying the partner's
+// tracking params. The API returns a clean productUrl — we append pid (your
+// partner id), mcid (media campaign id) and medium so the click attributes to
+// YOUR account. Without VIATOR_PARTNER_ID set, links still work but earn £0, so
+// this is the piece that actually "connects" the affiliate revenue.
+const VIATOR_PARTNER_ID = env.VIATOR_PARTNER_ID || '';      // pid — your Viator partner id (P00…)
+const VIATOR_MCID = env.VIATOR_MCID || '42383';            // Viator's API media-campaign id (override if told otherwise)
+const VIATOR_MEDIUM = env.VIATOR_MEDIUM || 'api';           // link medium
+export function viatorAffiliateReady() { return viatorEnabled() && VIATOR_TIER === 'affiliate' && !!VIATOR_PARTNER_ID; }
+// Append the affiliate tracking params to a Viator product URL (idempotent —
+// never double-adds; preserves any existing query string).
+export function viatorAffiliateUrl(productUrl) {
+  if (!productUrl || VIATOR_TIER !== 'affiliate' || !VIATOR_PARTNER_ID) return productUrl || null;
+  try {
+    const u = new URL(productUrl);
+    if (!u.searchParams.has('pid')) u.searchParams.set('pid', VIATOR_PARTNER_ID);
+    if (VIATOR_MCID && !u.searchParams.has('mcid')) u.searchParams.set('mcid', VIATOR_MCID);
+    if (VIATOR_MEDIUM && !u.searchParams.has('medium')) u.searchParams.set('medium', VIATOR_MEDIUM);
+    return u.toString();
+  } catch { return productUrl; }
+}
 const MOZIO_KEY = env.MOZIO_API_KEY || '';
 const MOZIO_BASE = env.MOZIO_BASE_URL || 'https://api.mozio.com';
 // CarTrawler Mobility (chauffeur/ride). Server-to-server: a Bearer partner
@@ -112,7 +134,7 @@ export function supplierDoors() {
     { channel: 'hotels-ratehawk', provider: 'RateHawk (Emerging Travel Group)', envVar: 'RATEHAWK_KEY_ID + RATEHAWK_API_KEY', signup: 'https://www.ratehawk.com/partners — B2B agent signup', covers: 'Global hotels at net rates (alternative/second bedbank)', fallback: 'estimator + ops desk' },
     { channel: 'hotels', provider: 'Amadeus', envVar: 'AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET', signup: 'https://developers.amadeus.com — self-serve', covers: 'Live hotel rates + booking', fallback: 'estimator + ops desk' },
     { channel: 'esim', provider: 'Airalo Partners (or eSIM Access)', envVar: 'AIRALO_CLIENT_ID + AIRALO_CLIENT_SECRET (or ESIMACCESS_API_KEY)', signup: 'https://partners.airalo.com — OAuth2, self-serve; optional AIRALO_BRAND_SETTINGS_NAME for branded eSIMs Cloud', covers: 'Instant eSIM: real ICCID + LPA activation + QR + Apple direct-install + eSIMs Cloud share link, straight into the travel documents', fallback: 'auto-provisioned in-OS, ops verifies' },
-    { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission, merchant books via cart/hold+book', fallback: 'Rayna agent portal (18 countries) / ops desk' },
+    { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_ID for affiliate commission, VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission, merchant books via cart/hold+book', fallback: 'Rayna agent portal (18 countries) / ops desk' },
     { channel: 'activities-rayna', provider: 'Rayna Tours (B2B agent — YOUR account)', envVar: 'RAYNA_PORTAL_URL (+ RAYNA_AGENT_ID)', signup: 'agreement in place — no API; portal operated by 3JN', covers: 'Activities + Dubai visa in Rayna’s 18-country footprint at net rates', fallback: 'AUTOMATED OPS DESK (this is the primary route)' },
     { channel: 'transfers', provider: 'Mozio / HolidayTaxis', envVar: 'MOZIO_API_KEY', signup: 'https://www.mozio.com/partners — application', covers: 'Airport transfers, thousands of local operators', fallback: 'ops desk / vendor marketplace' },
     { channel: 'insurance', provider: 'Cover Genius (XCover) / battleface', envVar: 'XCOVER_API_KEY + INSURANCE_AUTHORISED=true', signup: 'https://www.covergenius.com / https://battleface.com — B2B + FCA IAR REQUIRED', covers: 'Travel insurance at 30-40% commission', fallback: 'signpost only — NO sale until FCA authorisation confirmed' },
@@ -296,7 +318,7 @@ export async function searchViatorActivities({ destinationCity, date, pax = 2, c
       supplier: `${p.title || 'Tour'} · Viator`,
       title: p.title || 'Activity',
       productCode: p.productCode || p.code || null,
-      productUrl: p.productUrl || p.webURL || null,
+      productUrl: viatorAffiliateUrl(p.productUrl || p.webURL || null),
       priceGbp: priceGbp != null ? Math.round(Number(priceGbp) * 100) / 100 : null,
       rating,
       reviewCount: p.reviews?.totalReviews ?? null,

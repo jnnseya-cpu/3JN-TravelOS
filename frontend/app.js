@@ -1176,11 +1176,17 @@ function optionCard(o, sym, intent) {
     const modeTag = ['cruise', 'train', 'coach', 'ferry'].includes(c.type)
       ? `${c.details?.nights ? ` <span class="ch-chip">${c.details.nights} night${c.details.nights > 1 ? 's' : ''}</span>` : ''}${c.details?.cabin ? ` <span class="ch-chip">${esc(c.details.cabin.split('·')[0].trim())}</span>` : ''}${c.details?.travelClass ? ` <span class="ch-chip">${esc(c.details.travelClass)}</span>` : ''}`
       : (c.type === 'esim' && c.details?.planLabel ? ` <span class="ch-chip">${esc(c.details.planLabel)}</span>` : '');
+    // Viator AFFILIATE: a live tour carries a productUrl already stamped with our
+    // partner tracking — surface it as a click-through so the customer reserves on
+    // Viator and the commission attributes to us. rel="sponsored" is honest SEO.
+    const activityTag = c.type === 'activity' && /^https?:\/\//.test(c.details?.productUrl || '')
+      ? ` <a class="ch-chip" href="${encodeURI(c.details.productUrl)}" target="_blank" rel="noopener sponsored" style="color:var(--gold);border-color:rgba(216,180,106,0.4);text-decoration:none" onclick="event.stopPropagation()" title="Reserve this tour on Viator${c.details.rating ? ' · ★' + c.details.rating : ''}${c.details.reviews ? ' · ' + Number(c.details.reviews).toLocaleString() + ' reviews' : ''}">🎟 Book on Viator ↗</a>`
+      : '';
     // Flights carry the FULL itinerary on the card (dates, times, stops, via,
     // baggage, per-person fare); other components stay one-line summaries.
     const itin = c.type === 'flight' && c.details?.outbound ? flightItinBlock(c, o, sym, intent) : '';
     // With the itinerary block the stop/baggage chips are redundant noise.
-    const chips = itin ? `${legTag}${partyTag}` : `${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag}`;
+    const chips = itin ? `${legTag}${partyTag}` : `${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag}${activityTag}`;
     return `
     <li ${itin ? 'style="display:block"' : ''}><span class="cs" ${itin ? 'style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px"' : ''}>${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${chips} ${src}${more}${itin ? `<span class="cp">${money2(compLocal[i], sym)}</span>` : ''}</span>${itin || `<span class="cp">${money2(compLocal[i], sym)}</span>`}</li>`;
   }).join('');
