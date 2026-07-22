@@ -2716,6 +2716,9 @@ export function markQuoteRequestPaid(requestId, { amount, gateway = 'stripe', re
       });
       // Pay-in-full at the exact confirmed price → records revenue, clears the
       // plan, banks loyalty + Travel Credit, and hands the booking to ops.
+      // Forward the traveller's captured device (fraud signals) onto the booking
+      // so autoTicketFlight/autoBookStays send Duffel's x-duffel-device-* headers.
+      if (r.device) booking.device = r.device;
       recordPayment(booking.id, { type: 'full', amount: paidLocal, gateway, reference: reference || `qr:${r.id}`, status: 'paid' });
       r.bookingId = booking.id;
     }

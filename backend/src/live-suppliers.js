@@ -412,7 +412,25 @@ export async function getDuffelOfferBaggage(offerId) {
 // Called on payment success (money already captured). Duffel is paid from the
 // balance (mode 'balance') by default. Returns { ok, order:{...} } or
 // { ok:false, error } — the caller triggers a refund on failure.
-export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance', idempotencyKey = null, services = [] } = {}) {
+// Optional fraud-signal headers Duffel accepts on its booking/payment endpoints:
+// the END TRAVELLER's device IP + user agent (forwarded from our server, since the
+// API call is server-to-server). Duffel discards invalid values, so including them
+// can never fail a request — we pass them whenever we captured them at booking time.
+function deviceHeaders(device) {
+  const h = {};
+  const ip = device?.ip;
+  const ua = device?.userAgent;
+  // A sane IPv4/IPv6 shape only (Duffel drops bad ones anyway); strip an IPv6
+  // scope and the common "::ffff:" IPv4-mapped prefix so it validates.
+  if (ip) {
+    const clean = String(ip).replace(/^::ffff:/i, '').split('%')[0].trim();
+    if (/^[0-9.]+$/.test(clean) || /^[0-9a-fA-F:]+$/.test(clean)) h['x-duffel-device-ip'] = clean.slice(0, 45);
+  }
+  if (ua) h['x-duffel-device-user-agent'] = String(ua).slice(0, 512);
+  return h;
+}
+
+export async function createDuffelOrder({ offerId, passengers = [], paymentAmount, paymentCurrency, paymentType = 'balance', idempotencyKey = null, services = [], device = null } = {}) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const body = {
     data: {
@@ -437,6 +455,7 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
       // Idempotency-Key makes a redelivered webhook safe: Duffel returns the
       // SAME order instead of creating (and charging) a second one.
       ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
+      ...deviceHeaders(device),
     },
     body: JSON.stringify(body),
   });
@@ -473,11 +492,11 @@ export async function createDuffelOrder({ offerId, passengers = [], paymentAmoun
 // HOLD order — reserve the fare WITHOUT paying yet (for pay-monthly / instalments).
 // The airline holds the price until payment_required_by; we pay to ticket once
 // the customer has finished paying us. Only works on offers that allow holds.
-export async function createDuffelHoldOrder({ offerId, passengers = [], idempotencyKey = null, services = [] }) {
+export async function createDuffelHoldOrder({ offerId, passengers = [], idempotencyKey = null, services = [], device = null }) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/orders`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}), ...deviceHeaders(device) },
     // Selected checked bags are HELD with the fare so they issue when the balance
     // is paid; the held order's total_amount then already includes them.
     body: JSON.stringify({ data: { type: 'hold', selected_offers: [offerId], passengers, ...(Array.isArray(services) && services.length ? { services: services.map((s) => ({ id: s.id, quantity: Math.max(1, Number(s.quantity) || 1) })) } : {}) } }),
@@ -488,11 +507,11 @@ export async function createDuffelHoldOrder({ offerId, passengers = [], idempote
 }
 // Pay a held order from balance → ISSUES THE TICKET. Called when the customer
 // has finished paying us (final instalment) or immediately for pay-in-full.
-export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey = null }) {
+export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey = null, device = null }) {
   if (!duffelEnabled() || !orderId) return { ok: false, error: 'not-configured' };
   const res = await httpJSON(`${DUFFEL_BASE}/air/payments`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}), ...deviceHeaders(device) },
     body: JSON.stringify({ data: { order_id: orderId, payment: { type: 'balance', amount: String(amount), currency } } }),
   });
   if (res?.__error || !res?.data) return { ok: false, error: res?.__error?.errors?.[0]?.message || 'pay-failed', status: res?.__status };
@@ -558,7 +577,7 @@ export async function duffelOrderChangeQuote({ orderId, departISO, returnISO = n
 
 // Commit a chosen order-change offer: create the change, then confirm + pay it —
 // the AIRLINE reissues the ticket. Idempotency-Key makes a retried confirm safe.
-export async function duffelOrderChangeCommit({ offerId, amount, currency, paymentType = 'balance', idempotencyKey = null }) {
+export async function duffelOrderChangeCommit({ offerId, amount, currency, paymentType = 'balance', idempotencyKey = null, device = null }) {
   if (!duffelEnabled() || !offerId) return { ok: false, error: 'not-configured' };
   const hdr = { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' };
   const create = await httpJSON(`${DUFFEL_BASE}/air/order_changes`, {
@@ -568,7 +587,7 @@ export async function duffelOrderChangeCommit({ offerId, amount, currency, payme
   const ocId = create.data.id;
   const confirm = await httpJSON(`${DUFFEL_BASE}/air/order_changes/${encodeURIComponent(ocId)}/actions/confirm`, {
     method: 'POST',
-    headers: { ...hdr, ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}) },
+    headers: { ...hdr, ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}), ...deviceHeaders(device) },
     body: JSON.stringify({ data: { payment: { type: paymentType, amount: String(amount), currency } } }),
   });
   if (confirm?.__error || !confirm?.data) return { ok: false, error: confirm?.__error?.errors?.[0]?.message || 'order-change-confirm-failed', status: confirm?.__status };
@@ -1197,7 +1216,7 @@ export async function fetchDuffelStays(intent, dest) {
 function staysHeaders() {
   return { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' };
 }
-export async function bookDuffelStay({ searchResultId, guests = [], email, phone, maxAmountUSD = null } = {}) {
+export async function bookDuffelStay({ searchResultId, guests = [], email, phone, maxAmountUSD = null, device = null } = {}) {
   if (!duffelStaysEnabled() || !searchResultId) return { ok: false, error: 'not-configured' };
   // 1) FRESH rates for the stored search result (rates/search results expire —
   //    this re-prices right before we book, like the flight fresh-fare check).
@@ -1221,7 +1240,7 @@ export async function bookDuffelStay({ searchResultId, guests = [], email, phone
   // 3) Book — Duffel is the merchant of record (paid from the Duffel balance).
   const guestList = guests.length ? guests : [{ given_name: 'Guest', family_name: 'Traveller' }];
   const bres = await httpJSON(`${DUFFEL_BASE}/stays/bookings`, {
-    method: 'POST', headers: staysHeaders(),
+    method: 'POST', headers: { ...staysHeaders(), ...deviceHeaders(device) },
     body: JSON.stringify({ data: { quote_id: quote.id, guests: guestList, email: email || undefined, phone_number: phone || undefined } }),
   });
   const bk = bres?.data;

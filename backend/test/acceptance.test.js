@@ -858,6 +858,21 @@ test('DUFFEL-WEBHOOK: signature verify accepts a real HMAC and rejects a forgery
   assert.equal(verifyDuffelSignature(body, good, '').ok, false, 'no secret configured → not verified');
 });
 
+test('DEVICE: a booking captures the traveller device (IP + UA) for Duffel fraud signals', async () => {
+  const u = mkUser();
+  const r = plan({ text: 'Tokyo from London in September, flights and hotel for 2 adults, 6 nights', context: GB });
+  const option = r.packages.options[0];
+  const q = await api('POST', '/api/quote', { userId: u.id, body: { option, intent: r.intent } });
+  const b = await api('POST', '/api/book', {
+    userId: u.id,
+    headers: { 'user-agent': 'QA-Agent/1.0', 'x-forwarded-for': '203.0.113.7' },
+    body: { quoteId: q.json.quote.id, option, intent: r.intent, lead: { fullName: 'QA', email: u.email } },
+  });
+  assert.equal(b.status, 200);
+  assert.equal(b.json.booking.device?.userAgent, 'QA-Agent/1.0', 'user agent captured');
+  assert.equal(b.json.booking.device?.ip, '203.0.113.7', 'device IP captured (from x-forwarded-for)');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-duffel-webhook-stays-too-v158';
+const BUILD_TAG = '2026-07-18-duffel-device-fraud-signals-v159';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -775,7 +775,7 @@ async function autoTicketFlight(booking) {
     const holdAmount = booking.fulfilment.holdTotalAmount != null
       ? booking.fulfilment.holdTotalAmount
       : Math.round(((Number(flight.details.liveAmount) || 0) + bagOfferAmt) * 100) / 100;
-    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: holdAmount, currency: booking.fulfilment.holdTotalCurrency || flight.details.liveCurrency || 'GBP', idempotencyKey: `pay:${booking.id}` });
+    const pay = await payDuffelOrder({ orderId: booking.fulfilment.holdOrderId, amount: holdAmount, currency: booking.fulfilment.holdTotalCurrency || flight.details.liveCurrency || 'GBP', idempotencyKey: `pay:${booking.id}`, device: booking.device });
     order = pay.ok ? { ok: true, order: { id: booking.fulfilment.holdOrderId, bookingReference: pay.order.bookingReference || booking.fulfilment.pnr, ticketNumbers: pay.order.ticketNumbers } } : pay;
   } else {
     const check = await validateDuffelOffer(flight.details.offerId);
@@ -798,7 +798,7 @@ async function autoTicketFlight(booking) {
     }
     // Pay the fare + the ticketed bags (offer currency).
     const baseAmt = Number(check.amount != null ? check.amount : flight.details.liveAmount) || 0;
-    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: Math.round((baseAmt + bagOfferAmt) * 100) / 100, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}`, services: bagServices });
+    order = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: Math.round((baseAmt + bagOfferAmt) * 100) / 100, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}`, services: bagServices, device: booking.device });
   }
   if (!order.ok) {
     // Same guard on the issue path: an "already booked" offer means we already
@@ -884,6 +884,7 @@ async function autoBookStays(booking) {
     searchResultId: hotel.details.staysSearchResultId,
     guests, email: lead.email, phone: lead.phone,
     maxAmountUSD: hotel.priceUSD || null,
+    device: booking.device,
   }).catch((e) => ({ ok: false, error: e?.message || 'exception' }));
   if (r.ok) {
     ful.stayStatus = 'booked';
@@ -2038,6 +2039,9 @@ app.post('/api/quote-request/:id/pay', safe(async (req, res) => {
   if (qr.status !== 'priced' || !(qr.confirmedTotalLocal > 0)) {
     return res.status(409).json({ error: 'not-yet-priced', message: 'This quote has not been confirmed with an exact bookable price yet.' });
   }
+  // Capture the traveller's device now (payment is initiated from their browser);
+  // markQuoteRequestPaid copies it onto the booking for Duffel's fraud headers.
+  qr.device = { ip: clientIp(req), userAgent: String(req.headers['user-agent'] || '').slice(0, 512) };
   const origin = req.headers.origin || `https://${req.headers.host}`;
   const session = await createCheckoutSession({
     amountMinor: Math.round(qr.confirmedTotalLocal * 100),
@@ -2994,6 +2998,11 @@ app.post('/api/book', safe(async (req, res) => {
   if (instalment?.lockMargin?.applies || instalment?.instalmentFee?.applies) applyInstalmentPricing(quote.option, { hasInstalments: true });
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
+  // FRAUD SIGNALS: capture the END TRAVELLER's device (IP + user agent) at booking
+  // time and store it on the booking, so when we later call Duffel to create the
+  // order / take payment / book the stay (often on the webhook, server-to-server),
+  // we can forward Duffel's x-duffel-device-* headers for chargeback protection.
+  booking.device = { ip: clientIp(req), userAgent: String(req.headers['user-agent'] || '').slice(0, 512) };
   // Store the ticketed-baggage selection so autoTicketFlight adds the services to
   // the Duffel order and pays the airline for them (offer currency).
   if (bagApplied) {
@@ -3892,7 +3901,7 @@ async function attemptAutoReissue(booking) {
   const pay = await collectChangeCharge(booking, totalGbp, `Change reissue ${booking.id}`);
   if (!pay.ok && !pay.zero) return { ok: false, chargeFailed: true, reason: pay.reason || 'card declined' };
   // Paid → NOW reissue with the airline.
-  const commit = await duffelOrderChangeCommit({ offerId: sel.offerId, amount: sel.amountGbp, currency: sel.currency, idempotencyKey: `oc:${booking.id}` }).catch(() => ({ ok: false }));
+  const commit = await duffelOrderChangeCommit({ offerId: sel.offerId, amount: sel.amountGbp, currency: sel.currency, idempotencyKey: `oc:${booking.id}`, device: booking.device }).catch(() => ({ ok: false }));
   if (!commit.ok) {
     // We took the money but the airline reissue failed — refund at once so the
     // customer is NEVER charged without receiving the change.
