@@ -134,7 +134,7 @@ export function supplierDoors() {
     { channel: 'hotels-ratehawk', provider: 'RateHawk (Emerging Travel Group)', envVar: 'RATEHAWK_KEY_ID + RATEHAWK_API_KEY', signup: 'https://www.ratehawk.com/partners — B2B agent signup', covers: 'Global hotels at net rates (alternative/second bedbank)', fallback: 'estimator + ops desk' },
     { channel: 'hotels', provider: 'Amadeus', envVar: 'AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET', signup: 'https://developers.amadeus.com — self-serve', covers: 'Live hotel rates + booking', fallback: 'estimator + ops desk' },
     { channel: 'esim', provider: 'Airalo Partners (or eSIM Access)', envVar: 'AIRALO_CLIENT_ID + AIRALO_CLIENT_SECRET (or ESIMACCESS_API_KEY)', signup: 'https://partners.airalo.com — OAuth2, self-serve; optional AIRALO_BRAND_SETTINGS_NAME for branded eSIMs Cloud', covers: 'Instant eSIM: real ICCID + LPA activation + QR + Apple direct-install + eSIMs Cloud share link, straight into the travel documents', fallback: 'auto-provisioned in-OS, ops verifies' },
-    { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_ID for affiliate commission, VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission, merchant books via cart/hold+book', fallback: 'Rayna agent portal (18 countries) / ops desk' },
+    { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_ID for affiliate commission, VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission (live), merchant books via availability→book→voucher (built — set VIATOR_PARTNER_TIER=merchant + certify field names)', fallback: 'Rayna agent portal (18 countries) / ops desk' },
     { channel: 'activities-rayna', provider: 'Rayna Tours (B2B agent — YOUR account)', envVar: 'RAYNA_PORTAL_URL (+ RAYNA_AGENT_ID)', signup: 'agreement in place — no API; portal operated by 3JN', covers: 'Activities + Dubai visa in Rayna’s 18-country footprint at net rates', fallback: 'AUTOMATED OPS DESK (this is the primary route)' },
     { channel: 'transfers', provider: 'Mozio / HolidayTaxis', envVar: 'MOZIO_API_KEY', signup: 'https://www.mozio.com/partners — application', covers: 'Airport transfers, thousands of local operators', fallback: 'ops desk / vendor marketplace' },
     { channel: 'insurance', provider: 'Cover Genius (XCover) / battleface', envVar: 'XCOVER_API_KEY + INSURANCE_AUTHORISED=true', signup: 'https://www.covergenius.com / https://battleface.com — B2B + FCA IAR REQUIRED', covers: 'Travel insurance at 30-40% commission', fallback: 'signpost only — NO sale until FCA authorisation confirmed' },
@@ -340,10 +340,101 @@ export async function viatorActivitiesForScan({ destinationCity, date, pax = 2 }
     verified: true,
     reliabilityScore: t.rating ? Math.min(97, Math.round(t.rating * 19)) : 88, // 5.0★ → ~95
     priceUSD: Math.round((t.priceGbp / 0.79) * 100) / 100,
-    details: { unit: 'per person', viatorProductCode: t.productCode, productUrl: t.productUrl, rating: t.rating, reviews: t.reviewCount, durationMins: t.durationMins, live: true },
+    details: { unit: 'per person', viatorProductCode: t.productCode, viatorDate: date || null, productUrl: t.productUrl, rating: t.rating, reviews: t.reviewCount, durationMins: t.durationMins, live: true },
     sourcedVia: 'Viator (live)',
     sourcedType: 'activities-api',
   }));
+}
+
+// ===========================================================================
+// VIATOR MERCHANT booking (availability → book → voucher → cancel)
+// ===========================================================================
+// Merchant partners book at NET rates through the API: the customer pays 3JN, we
+// are merchant of record and settle with Viator. Content/search is shared with
+// affiliate — only this booking path is merchant-only, and it's gated on
+// VIATOR_PARTNER_TIER=merchant. Every request/response field below follows
+// Viator's Partner API v2; the EXACT field names MUST be re-verified against
+// Viator's docs at certification (their schema evolves — same rule as the TBO
+// bedbank lane). On ANY error we fail safe so the affiliate/ops fallback stands.
+export function viatorMerchantEnabled() { return viatorEnabled() && VIATOR_TIER === 'merchant'; }
+
+// Party size → Viator age-band pax mix (adults, plus children when ages given).
+function viatorPaxMix({ adults = 1, childAges = [] } = {}) {
+  const mix = [{ ageBand: 'ADULT', numberOfTravelers: Math.max(1, Number(adults) || 1) }];
+  const kids = (childAges || []).filter((a) => a != null);
+  if (kids.length) mix.push({ ageBand: 'CHILD', numberOfTravelers: kids.length });
+  return mix;
+}
+
+// 1) Real-time availability + price for a product on a date. Returns the bookable
+//    product option + total price, or { ok:false, error } when it can't be booked.
+export async function viatorAvailabilityCheck({ productCode, travelDate, currency = 'GBP', adults = 1, childAges = [] } = {}) {
+  if (!viatorMerchantEnabled()) return { ok: false, error: 'not-merchant' };
+  if (!productCode || !travelDate) return { ok: false, error: 'missing-input' };
+  const body = { productCode, travelDate, currency, paxMix: viatorPaxMix({ adults, childAges }) };
+  const res = await httpJSON(`${VIATOR_BASE}/partner/availability/check`, { method: 'POST', headers: VIATOR_HEADERS(), body: JSON.stringify(body) });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.message || `http-${res.__status}`, status: res.__status };
+  const opt = (res.bookableItems || res.productOptions || [])[0] || res;
+  const total = res.totalPrice?.price?.recommendedRetailPrice ?? res.totalPrice?.recommendedRetailPrice ?? opt?.totalPrice ?? null;
+  const available = res.available ?? opt?.available ?? (total != null);
+  if (!available) return { ok: false, error: 'unavailable' };
+  return { ok: true, productCode, productOptionCode: opt?.productOptionCode || opt?.code || null, startTime: opt?.startTime || null, totalPriceGbp: currency === 'GBP' && total != null ? Math.round(Number(total) * 100) / 100 : (total ?? null), currency };
+}
+
+// 2) Book the tour (merchant = net-rate settlement; the customer already paid us).
+//    Re-checks availability + price first, never books materially above what the
+//    customer paid, and returns { ok, bookingRef, voucherUrl, status }.
+export async function bookViatorTour({ productCode, travelDate, currency = 'GBP', adults = 1, childAges = [], booker = {}, maxPriceGbp = null } = {}) {
+  if (!viatorMerchantEnabled()) return { ok: false, error: 'not-merchant' };
+  if (!productCode || !travelDate) return { ok: false, error: 'missing-input' };
+  const avail = await viatorAvailabilityCheck({ productCode, travelDate, currency, adults, childAges });
+  if (!avail.ok) return { ok: false, error: `availability:${avail.error}` };
+  // Never book materially above what the customer was charged (2% tolerance).
+  if (maxPriceGbp != null && avail.totalPriceGbp != null && avail.totalPriceGbp > maxPriceGbp * 1.02) {
+    return { ok: false, error: 'price-changed', nowGbp: avail.totalPriceGbp, wasGbp: maxPriceGbp };
+  }
+  const names = String(booker.fullName || '').trim().split(/\s+/).filter(Boolean);
+  const first = names[0] || 'Guest';
+  const last = names.slice(1).join(' ') || 'Traveller';
+  const body = {
+    currency,
+    bookerInfo: { firstName: first, lastName: last },
+    communication: { email: booker.email || undefined, phone: booker.phone || undefined },
+    items: [{
+      productCode,
+      productOptionCode: avail.productOptionCode || undefined,
+      startTime: avail.startTime || undefined,
+      travelDate,
+      paxMix: viatorPaxMix({ adults, childAges }),
+      travelers: [{ bandId: 'ADULT', firstName: first, lastName: last }],
+    }],
+    // MERCHANT: booked on account at net rates (no customer card token to Viator).
+    // If Viator require a paymentDataToken for your account type, add it here at
+    // certification — the flow otherwise fails safe to the ops desk.
+  };
+  const res = await httpJSON(`${VIATOR_BASE}/partner/bookings/book`, { method: 'POST', headers: VIATOR_HEADERS(), body: JSON.stringify(body) });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.message || `http-${res.__status}`, status: res.__status };
+  const item = (res.items || res.bookings || [])[0] || res;
+  const ref = res.bookingRef || item?.bookingRef || item?.itineraryItemId || null;
+  if (!ref) return { ok: false, error: 'no-booking-ref' };
+  return { ok: true, bookingRef: ref, voucherUrl: item?.voucherUrl || res.voucherUrl || null, status: item?.status || res.status || 'CONFIRMED' };
+}
+
+// 3) Cancellation quote (refund amount) + cancel. Used by the customer-cancel /
+//    ops path so a Viator tour is cancelled through the API, not just on paper.
+export async function viatorCancellationQuote(bookingRef) {
+  if (!viatorMerchantEnabled() || !bookingRef) return { ok: false, error: 'not-configured' };
+  const res = await httpJSON(`${VIATOR_BASE}/partner/bookings/${encodeURIComponent(bookingRef)}/cancel-quote`, { method: 'POST', headers: VIATOR_HEADERS(), body: '{}' });
+  if (res == null || res.__error) return { ok: false, error: res?.__error?.message || 'quote-failed', status: res?.__status };
+  return { ok: true, refundGbp: res.refundDetails?.refundAmount ?? res.refundAmount ?? null, status: res.status || null };
+}
+export async function cancelViatorBooking(bookingRef, reasonCode = 'CUSTOMER_SERVICE_CANCELLED') {
+  if (!viatorMerchantEnabled() || !bookingRef) return { ok: false, error: 'not-configured' };
+  const res = await httpJSON(`${VIATOR_BASE}/partner/bookings/${encodeURIComponent(bookingRef)}/cancel`, { method: 'POST', headers: VIATOR_HEADERS(), body: JSON.stringify({ reason: reasonCode }) });
+  if (res == null || res.__error) return { ok: false, error: res?.__error?.message || 'cancel-failed', status: res?.__status };
+  return { ok: true, status: res.status || 'CANCELLED', refundGbp: res.refundDetails?.refundAmount ?? null };
 }
 
 // ---- Mozio (airport transfers) --------------------------------------------------

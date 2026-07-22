@@ -873,6 +873,19 @@ test('DEVICE: a booking captures the traveller device (IP + UA) for Duffel fraud
   assert.equal(b.json.booking.device?.ip, '203.0.113.7', 'device IP captured (from x-forwarded-for)');
 });
 
+test('VIATOR-MERCHANT: booking calls are gated on tier=merchant and fail safe when off', async () => {
+  const m = await import('../src/extras-suppliers.js');
+  // Offline (no key, tier defaults to affiliate) → merchant is OFF and every
+  // booking call returns a clean error, never throws.
+  assert.equal(m.viatorMerchantEnabled(), false, 'merchant off without a merchant key/tier');
+  assert.equal((await m.viatorAvailabilityCheck({ productCode: 'P1', travelDate: '2027-09-01' })).ok, false);
+  assert.equal((await m.bookViatorTour({ productCode: 'P1', travelDate: '2027-09-01' })).error, 'not-merchant');
+  assert.equal((await m.viatorCancellationQuote('BR-1')).ok, false);
+  assert.equal((await m.cancelViatorBooking('BR-1')).ok, false);
+  // The affiliate revenue path is unaffected (what we launch on).
+  assert.equal(typeof m.viatorAffiliateUrl, 'function');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

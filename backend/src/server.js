@@ -53,7 +53,7 @@ import {
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags,
 } from './store.js';
-import { supplierDoors, viatorEnabled, viatorActivitiesForScan, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
+import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-viator-affiliate-attribution-v160';
+const BUILD_TAG = '2026-07-18-viator-merchant-booking-v161';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -903,6 +903,59 @@ async function autoBookStays(booking) {
     recordAudit({ actor: 'system', role: 'system', action: 'stays.ops-fallback', entity: 'booking', entityId: booking.id, summary: `auto-book failed (${r.error}) → ops desk` });
     if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🏨', title: 'Hotel being confirmed', body: 'Your payment is secured — our team is finalising your hotel booking now and your confirmation will appear shortly.' });
   }
+}
+
+// AUTO-BOOK live Viator tours as a MERCHANT once payment is captured — the
+// activity equivalent of autoBookStays. Only runs when VIATOR_PARTNER_TIER=
+// merchant (affiliate never books here — the customer clicks through to Viator).
+// Idempotent per tour; on any failure it fails SAFE to the ops desk so a paid
+// activity is never left unbooked. Books each tour, stores the voucher on the
+// component (which the documents renderer surfaces), and tells the customer.
+async function autoBookActivities(booking) {
+  if (!viatorMerchantEnabled()) return;
+  const activities = (booking.option?.components || []).filter((c) => c.type === 'activity' && c.details?.viatorProductCode);
+  if (!activities.length) return;
+  const ful = (booking.fulfilment = booking.fulfilment || {});
+  // Deposit / instalment: don't commit tours on a part-payment — reserve only;
+  // the final instalment re-fires this with bookingFullyPaid === true.
+  if (!bookingFullyPaid(booking)) {
+    if (ful.activityStatus !== 'reserved') {
+      ful.activityStatus = 'reserved';
+      recordAudit({ actor: 'system', role: 'system', action: 'activities.deposit-hold', entity: 'booking', entityId: booking.id, summary: `${activities.length} tour(s) reserved on deposit, book on full payment` });
+    }
+    return;
+  }
+  const lead = booking.leadTraveller || booking.lead || {};
+  const t = booking.option?.travellers || {};
+  const adults = Math.max(1, Number(t.adults) || Number(t.total) || 1);
+  const childAges = Array.isArray(t.childAges) ? t.childAges : [];
+  const currency = booking.option?.pricing?.code || 'GBP';
+  let anyFail = false;
+  for (const act of activities) {
+    if (act.details.confirmation) continue; // idempotent — already booked
+    const r = await bookViatorTour({
+      productCode: act.details.viatorProductCode,
+      travelDate: act.details.viatorDate || booking.option?.dates?.checkIn || null,
+      currency, adults, childAges,
+      booker: { fullName: lead.fullName, email: lead.email, phone: lead.phone },
+      maxPriceGbp: act.priceUSD ? Math.round(act.priceUSD * 0.79 * 100) / 100 : null,
+    }).catch((e) => ({ ok: false, error: e?.message || 'exception' }));
+    if (r.ok) {
+      act.details.confirmation = r.bookingRef;
+      act.details.voucherUrl = r.voucherUrl || null;
+      act.details.fulfilledVia = 'auto:viator-merchant';
+      recordAudit({ actor: 'system', role: 'system', action: 'activities.booked', entity: 'booking', entityId: booking.id, summary: `Viator ${r.bookingRef} · ${act.supplier}` });
+    } else {
+      anyFail = true;
+      act.details.fulfilmentError = r.error;
+      try { createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-activity', message: `Book Viator tour ${act.details.viatorProductCode} for booking ${booking.id} — merchant auto-book failed (${r.error}). Complete it on the Viator partner dashboard.`, reason: 'viator-auto-book-failed' }); } catch { /* still record status */ }
+      recordAudit({ actor: 'system', role: 'system', action: 'activities.ops-fallback', entity: 'booking', entityId: booking.id, summary: `auto-book failed (${r.error}) → ops desk` });
+    }
+  }
+  ful.activityStatus = anyFail ? 'ops-fallback' : 'booked';
+  if (booking.userId) pushNotification(booking.userId, anyFail
+    ? { type: 'info', icon: '🎟️', title: 'Activities being confirmed', body: 'Your payment is secured — our team is finalising your tour booking(s) now; your vouchers will appear shortly.' }
+    : { type: 'success', icon: '🎟️', title: 'Tours confirmed', body: 'Your activities are booked — vouchers are in your Console.' });
 }
 
 // ---- Context / config -----------------------------------------------------
@@ -3129,6 +3182,7 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
     await autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
     await syncDuffelTicket(booking).catch(() => {}); // pull the PNR/e-ticket if Duffel has issued it by now
     await autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+    await autoBookActivities(booking).catch((e) => console.error('[activities]', e?.message || e));
     await emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
   res.json({ booking });
@@ -3196,6 +3250,19 @@ app.post('/api/book/:id/cancel', safe(async (req, res) => {
   if (!result.ok) return res.status(409).json({ error: result.error });
   const outcome = result.outcome;
 
+  // Cancel any live Viator tours booked as MERCHANT through the API (best-effort;
+  // the customer's refund follows the booking policy above regardless). A failed
+  // API cancel drops to the ops desk so a tour is never left live after a cancel.
+  try {
+    for (const c of (booking.option?.components || [])) {
+      if (c.type === 'activity' && c.details?.confirmation && c.details?.fulfilledVia === 'auto:viator-merchant' && !c.details.cancelled) {
+        const cr = await cancelViatorBooking(c.details.confirmation).catch(() => ({ ok: false, error: 'exception' }));
+        if (cr.ok) { c.details.cancelled = true; recordAudit({ actor: user?.id || 'system', role: 'system', action: 'activities.cancelled', entity: 'booking', entityId: booking.id, summary: `Viator ${c.details.confirmation} cancelled` }); }
+        else { try { createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-activity', message: `Cancel Viator tour ${c.details.confirmation} for cancelled booking ${booking.id} — API cancel failed (${cr.error}). Cancel it on the Viator partner dashboard.`, reason: 'viator-cancel-failed' }); } catch { /* best-effort */ } }
+      }
+    }
+  } catch (e) { console.error('[viator-cancel]', e?.message || e); }
+
   // Best-effort automatic refund on the primary (deposit) payment intent, for up
   // to the refundable amount. Instalments captured on other intents are settled
   // by ops from the queued refund ticket — never silently dropped.
@@ -3233,6 +3300,7 @@ app.post('/api/book/:id/apply-credit', safe(async (req, res) => {
   const sym = booking.option?.pricing?.symbol || '£';
   try { await autoTicketFlight(booking); } catch (e) { console.error('[credit-ticket]', e?.message || e); }
   try { await autoBookStays(booking); } catch (e) { console.error('[credit-stays]', e?.message || e); }
+  try { await autoBookActivities(booking); } catch (e) { console.error('[credit-activities]', e?.message || e); }
   res.json({ ok: true, applied: result.applied, remainingCredit: result.remainingCredit, symbol: sym, message: `${sym}${result.applied.toFixed(2)} Travel Credit applied.` });
 }));
 
@@ -3526,6 +3594,7 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
     // (fulfilment, ticketing status) are captured by the synchronous store flush.
     try { await autoTicketFlight(updated); } catch (e) { console.error('[ticketing]', e?.message || e); }
     try { await autoBookStays(updated); } catch (e) { console.error('[stays]', e?.message || e); }
+    try { await autoBookActivities(updated); } catch (e) { console.error('[activities]', e?.message || e); }
     try { await emailBookingConfirmation(updated); } catch (e) { console.error('[confirm-email]', e?.message || e); }
   }
   let paidPct = 0;
@@ -3664,7 +3733,7 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       if (booking && wbNewlyRecorded) { try { await autoTicketFlight(booking); } catch (e) { console.error('[ticketing]', e?.message || e); } }
       // AUTO-BOOK the hotel too (Duffel Stays: rates → quote → book). Failure
       // hands off to the ops desk, never a paid-but-unbooked room.
-      if (booking && wbNewlyRecorded) { try { await autoBookStays(booking); } catch (e) { console.error('[stays]', e?.message || e); } }
+      if (booking && wbNewlyRecorded) { try { await autoBookStays(booking); } catch (e) { console.error('[stays]', e?.message || e); } try { await autoBookActivities(booking); } catch (e) { console.error('[activities]', e?.message || e); } }
       // Paid in full via Stripe → email the full booking document (PDF-ready),
       // on top of the Console copy. Idempotent + fires only when fully paid.
       if (booking && wbNewlyRecorded) { try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); } }
