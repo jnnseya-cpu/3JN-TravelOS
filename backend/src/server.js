@@ -70,7 +70,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-members-any-tier-free-standard-v156';
+const BUILD_TAG = '2026-07-18-duffel-webhook-endpoint-v157';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3528,6 +3528,48 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   res.json({ booking: updated || booking, reconciled: !!updated, recordedAmount: amount, paidPct });
 }));
 // Webhook: signature-verified; a forged event can never mark a booking paid.
+// ---- Duffel webhook (order updates: airline-initiated schedule changes /
+// cancellations, and the ping Duffel sends when you create the webhook). --------
+// URL to register in the Duffel dashboard: https://<your-domain>/api/webhooks/duffel
+// Recommended events: order.updated, order.airline_initiated_change_detected.
+// Signature-verified (X-Duffel-Signature) when DUFFEL_WEBHOOK_SECRET is set, so a
+// forged event can never raise a false airline-change ticket or alert a customer.
+app.post('/api/webhooks/duffel', safe(async (req, res) => {
+  const sig = req.headers['x-duffel-signature'];
+  if (duffelWebhookConfigured()) {
+    const check = verifyDuffelSignature(req.rawBody, sig);
+    if (!check.ok) return res.status(400).json({ ok: false, error: 'invalid-signature', reason: check.reason });
+  }
+  const event = req.body || {};
+  const type = String(event.type || event.data?.type || '');
+  // Duffel sends a ping when the webhook is created/tested — acknowledge it so the
+  // dashboard accepts the endpoint.
+  if (/ping/i.test(type) || !type) return res.json({ ok: true, pong: true });
+  try {
+    // The order id lives under a few shapes across Duffel event payloads.
+    const obj = event.data?.object || event.data || {};
+    const orderId = obj.order_id || obj.id || event.order_id || null;
+    if (orderId) {
+      const booking = allBookings().find((b) => b?.fulfilment && (b.fulfilment.duffelOrderId === orderId || b.fulfilment.holdOrderId === orderId));
+      if (booking) {
+        booking.fulfilment = booking.fulfilment || {};
+        booking.fulfilment.airlineChange = { type, at: new Date().toISOString(), orderId };
+        recordAudit({ actor: 'duffel', role: 'system', action: 'airline.change', entity: 'booking', entityId: booking.id, summary: `${type} on order ${orderId}` });
+        try {
+          createSupportTicket({
+            userId: booking.userId, bookingId: booking.id, intent: 'ops-airline-change',
+            message: `Airline-initiated change on booking ${booking.id} (Duffel order ${orderId}, event ${type}). Review the change in the Duffel dashboard, accept/reject as needed, then contact the customer.`,
+            reason: 'airline-initiated-change',
+          });
+        } catch { /* still ack the webhook */ }
+        if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '✈️', title: 'Update on your flight', body: 'Your airline has made a change to your booking. Our team is reviewing it and will be in touch with your options shortly.' });
+        if (IS_SERVERLESS && isEnabled()) { try { await saveMerge({ [`bookings/${booking.id}`]: booking }); } catch { /* retry next read */ } }
+      }
+    }
+  } catch (e) { console.error('[duffel-webhook]', e?.message || e); }
+  res.json({ ok: true });
+}));
+
 app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
   const sig = req.headers['stripe-signature'];
   const check = verifyStripeSignature(req.rawBody, sig);

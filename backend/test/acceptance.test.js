@@ -840,6 +840,24 @@ test('FUNNEL-4: a paid member may choose any tier (not forced to standard)', asy
   assert.notEqual(r.json.freeSearch?.scope, 'guest', 'member is not on the guest free allowance');
 });
 
+test('DUFFEL-WEBHOOK: ping is acknowledged so Duffel accepts the endpoint', async () => {
+  const r = await api('POST', '/api/webhooks/duffel', { body: { type: 'ping.triggered' } });
+  assert.equal(r.status, 200);
+  assert.ok(r.json.pong, 'responds pong to the Duffel ping');
+});
+
+test('DUFFEL-WEBHOOK: signature verify accepts a real HMAC and rejects a forgery', async () => {
+  const { verifyDuffelSignature } = await import('../src/live-suppliers.js');
+  const crypto = await import('node:crypto');
+  const secret = 'whsec_duffel_unit';
+  const body = Buffer.from(JSON.stringify({ type: 'order.updated', data: { object: { order_id: 'ord_1' } } }));
+  const good = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  assert.equal(verifyDuffelSignature(body, good, secret).ok, true, 'valid HMAC accepted');
+  assert.equal(verifyDuffelSignature(body, `t=123,v1=${good}`, secret).ok, true, 'timestamped format accepted');
+  assert.equal(verifyDuffelSignature(body, 'deadbeef', secret).ok, false, 'forgery rejected');
+  assert.equal(verifyDuffelSignature(body, good, '').ok, false, 'no secret configured → not verified');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

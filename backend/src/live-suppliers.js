@@ -15,6 +15,7 @@
 // numbers from "estimated" to "live". Nothing here fabricates a price: if a
 // provider doesn't answer, we return null rather than a made-up "live" figure.
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { fxRate, geocode } from './live-data.js';
 import { estimateFlightFares } from './suppliers.js';
 import { routeFareBaseUSD, nearbyAirports } from './airports.js';
@@ -80,6 +81,27 @@ export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabl
 // moment flights work, with NO extra credentials. Amadeus stays as a fallback.
 // Set DUFFEL_STAYS=false to disable the Stays path (e.g. to force Amadeus).
 export function duffelStaysEnabled() { return duffelEnabled() && env.DUFFEL_STAYS !== 'false'; }
+
+// ---- Duffel webhook signature verification --------------------------------
+// Duffel signs each webhook delivery with HMAC-SHA256 over the RAW request body
+// using the webhook's secret, in the `X-Duffel-Signature` header. We verify it so
+// a forged event can never raise a false airline-change ticket / customer alert.
+const DUFFEL_WEBHOOK_SECRET = env.DUFFEL_WEBHOOK_SECRET || '';
+export function duffelWebhookConfigured() { return !!DUFFEL_WEBHOOK_SECRET; }
+export function verifyDuffelSignature(rawBody, header, secret = DUFFEL_WEBHOOK_SECRET) {
+  if (!secret) return { ok: false, reason: 'no-secret' };
+  if (!rawBody || !header) return { ok: false, reason: 'missing' };
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody));
+  const expectedHex = createHmac('sha256', secret).update(body).digest('hex');
+  const exp = Buffer.from(expectedHex, 'hex');
+  // The header may be a bare hex digest, or comma-separated k=v pairs (e.g.
+  // "t=...,v1=<hex>"). Compare (timing-safe) against every candidate value.
+  const candidates = String(header).split(',').map((s) => (s.includes('=') ? s.split('=').pop() : s).trim());
+  for (const c of candidates) {
+    try { const got = Buffer.from(c, 'hex'); if (got.length === exp.length && timingSafeEqual(got, exp)) return { ok: true }; } catch { /* not hex — skip */ }
+  }
+  return { ok: false, reason: 'bad-signature' };
+}
 export function liveHotelsEnabled() { return (duffelStaysEnabled() || !!(AMADEUS_ID && AMADEUS_SECRET) || !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD)) && typeof fetch === 'function'; }
 export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
 export function liveSuppliersConfigured() { return liveFlightsEnabled() || liveHotelsEnabled() || oagScheduleEnabled(); }
