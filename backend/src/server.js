@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-duffel-webhook-endpoint-v157';
+const BUILD_TAG = '2026-07-18-duffel-webhook-stays-too-v158';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3546,23 +3546,32 @@ app.post('/api/webhooks/duffel', safe(async (req, res) => {
   // dashboard accepts the endpoint.
   if (/ping/i.test(type) || !type) return res.json({ ok: true, pong: true });
   try {
-    // The order id lives under a few shapes across Duffel event payloads.
+    // The reference id lives under a few shapes across Duffel event payloads
+    // (flight order id, stays booking id, etc.).
     const obj = event.data?.object || event.data || {};
-    const orderId = obj.order_id || obj.id || event.order_id || null;
-    if (orderId) {
-      const booking = allBookings().find((b) => b?.fulfilment && (b.fulfilment.duffelOrderId === orderId || b.fulfilment.holdOrderId === orderId));
+    const refId = obj.order_id || obj.booking_id || obj.id || event.order_id || null;
+    if (refId) {
+      // Match a flight ORDER (order id / hold order) OR a Duffel STAYS booking
+      // (stay booking id / reference) — so airline AND hotel supplier changes both
+      // reach the customer + ops.
+      const booking = allBookings().find((b) => b?.fulfilment && (
+        b.fulfilment.duffelOrderId === refId || b.fulfilment.holdOrderId === refId ||
+        b.fulfilment.stayBookingId === refId || b.fulfilment.stayReference === refId
+      ));
       if (booking) {
+        const isStay = booking.fulfilment.stayBookingId === refId || booking.fulfilment.stayReference === refId;
+        const kind = isStay ? 'hotel' : 'flight';
         booking.fulfilment = booking.fulfilment || {};
-        booking.fulfilment.airlineChange = { type, at: new Date().toISOString(), orderId };
-        recordAudit({ actor: 'duffel', role: 'system', action: 'airline.change', entity: 'booking', entityId: booking.id, summary: `${type} on order ${orderId}` });
+        booking.fulfilment.supplierChange = { type, kind, at: new Date().toISOString(), refId };
+        recordAudit({ actor: 'duffel', role: 'system', action: 'supplier.change', entity: 'booking', entityId: booking.id, summary: `${kind} ${type} on ${refId}` });
         try {
           createSupportTicket({
-            userId: booking.userId, bookingId: booking.id, intent: 'ops-airline-change',
-            message: `Airline-initiated change on booking ${booking.id} (Duffel order ${orderId}, event ${type}). Review the change in the Duffel dashboard, accept/reject as needed, then contact the customer.`,
-            reason: 'airline-initiated-change',
+            userId: booking.userId, bookingId: booking.id, intent: 'ops-supplier-change',
+            message: `Supplier-initiated ${kind} change on booking ${booking.id} (Duffel ref ${refId}, event ${type}). Review it in the Duffel dashboard, accept/reject as needed, then contact the customer.`,
+            reason: 'supplier-initiated-change',
           });
         } catch { /* still ack the webhook */ }
-        if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '✈️', title: 'Update on your flight', body: 'Your airline has made a change to your booking. Our team is reviewing it and will be in touch with your options shortly.' });
+        if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: isStay ? '🏨' : '✈️', title: `Update on your ${kind}`, body: `Your ${kind === 'hotel' ? 'hotel' : 'airline'} has made a change to your booking. Our team is reviewing it and will be in touch with your options shortly.` });
         if (IS_SERVERLESS && isEnabled()) { try { await saveMerge({ [`bookings/${booking.id}`]: booking }); } catch { /* retry next read */ } }
       }
     }
