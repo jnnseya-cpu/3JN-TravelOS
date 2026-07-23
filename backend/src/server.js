@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-23-corporate-ready-v164';
+const BUILD_TAG = '2026-07-23-build-badge-v165';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1023,6 +1023,7 @@ function trustpilotConfig() {
 
 app.get('/api/context', safe((req, res) => {
   res.json({
+    build: BUILD_TAG, // lets the client flag a stale cached app.js vs the live server
     context: detectContext(req),
     contact: publicContact(),
     trustpilot: trustpilotConfig(),

@@ -1,6 +1,11 @@
 // 3JN Travel OS — frontend controller.
 // Talks to the JSON API, drives view switching, and renders the full pipeline.
 
+// Client build tag. Shown in the admin console so you can instantly tell whether
+// your browser is running the freshest code or a stale cached copy. Bump this in
+// lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
+const APP_BUILD = 'v165';
+
 const state = {
   context: null,
   user: null,
@@ -3115,8 +3120,17 @@ async function renderAdmin() {
     ? data.activity.map((e) => `<div class="ln"><span class="ok">●</span> <span style="color:var(--muted-dim)">[${e.type}]</span> ${e.detail}</div>`).join('')
     : '<div class="muted" style="font-size:13px">no activity yet — make a booking to populate the feed</div>';
 
+  // Build badge — instantly reveals whether THIS browser is on the freshest app
+  // code or a stale cached copy (a mismatch means: hard-refresh to see new UI).
+  const serverBuild = String(state.context?.build || '');
+  const serverShort = (serverBuild.match(/v\d+$/) || [serverBuild])[0];
+  const fresh = !serverShort || serverShort === APP_BUILD;
+  const buildBadge = `<div style="width:100%;font-size:11.5px;margin:-4px 0 4px;color:${fresh ? 'var(--muted)' : '#ffb020'}">
+    ${fresh ? '🟢' : '⚠️'} App build <strong>${APP_BUILD}</strong>${serverShort && serverShort !== APP_BUILD ? ` · server is <strong>${serverShort}</strong> — your browser is on old code, hard-refresh (Ctrl/Cmd+Shift+R) or reopen the tab` : ' · up to date'}</div>`;
+
   out.innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      ${buildBadge}
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="runSelfTest()">🚦 Launch readiness check</button>
       <button class="btn btn-ghost btn-sm" onclick="sendTestEmail()">✉️ Send test email</button>
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
