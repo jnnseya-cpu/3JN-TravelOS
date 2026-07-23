@@ -51,7 +51,7 @@ import {
   createDeal, updateDeal, setDealActive, deleteDeal, getDeal, publicDeal,
   listDeals, listDealsAdmin, dealTotalGBP, buildDealOption, createDealFulfilment,
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
-  getModuleFlags, setModuleFlags,
+  getModuleFlags, setModuleFlags, wipeTransactionalData,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-airalo-live-esim-hub-v162';
+const BUILD_TAG = '2026-07-23-owner-reset-test-data-v163';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1327,6 +1327,26 @@ app.post('/api/admin/modules', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const modules = setModuleFlags(req.body || {}, currentUser(req)?.name || 'admin');
   res.json({ ok: true, modules });
+}));
+
+// DANGER — wipe all TEST / transactional data to a clean launch slate. Double
+// gated: an ADMIN_EMAILS OWNER only (not any admin), PLUS an explicit confirm
+// phrase. Keeps accounts (reset to fresh), curated Deals, settings, API keys;
+// clears every booking, quote, exact-quote request, ledger, audit line, activity
+// event, notification and eSIM. Optional { deleteUsers:true } also removes
+// non-owner accounts. Irreversible — persisted immediately so it can't rehydrate.
+app.post('/api/admin/reset', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const caller = currentUser(req);
+  if (!isOwnerEmail(caller?.email)) return res.status(403).json({ error: 'owner-only', message: 'Only an allowlisted owner (ADMIN_EMAILS) can reset platform data.' });
+  if ((req.body?.confirm) !== 'WIPE-TEST-DATA') return res.status(400).json({ error: 'confirm-required', message: 'Irreversible. Send { "confirm": "WIPE-TEST-DATA" } (and optionally { "deleteUsers": true }) to proceed.' });
+  const ownerEmails = String(process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim()).filter(Boolean);
+  const deleteUsers = req.body?.deleteUsers === true;
+  const wiped = wipeTransactionalData({ deleteNonOwnerUsers: deleteUsers, ownerEmails });
+  recordAudit({ actor: caller.id, role: 'admin', action: 'admin.reset', entity: 'platform', entityId: 'all', summary: `test data wiped${deleteUsers ? ' + non-owner users deleted' : ' (accounts reset)'}` });
+  let persisted = false;
+  if (isEnabled()) { try { persisted = await save(snapshot()); } catch (e) { console.error('[reset-persist]', e?.message || e); } }
+  res.json({ ok: true, wiped, persisted, deleteUsers, message: `Test data wiped. ${wiped.usersRemoved || 0} account(s) removed, ${wiped.usersReset || 0} reset.` });
 }));
 
 // ---- Account / loyalty / ACU ---------------------------------------------

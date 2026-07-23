@@ -3305,6 +3305,40 @@ export function recordBenchmarkMarket(runId, rowId, { source, priceGbp, selfTran
   return { ok: true, row };
 }
 
+// ADMIN RESET — wipe all TEST / transactional data to a clean launch slate.
+// KEEPS: user accounts (reset to fresh), curated Deals, settings (module flags),
+// API keys, blog, host listings, sponsored placements, embassy/vendor configs.
+// CLEARS: every booking, quote, exact-quote request, ledger, audit line, activity
+// event, notification, eSIM, review, referral, fulfilment order, benchmark, etc.
+// Optionally deletes non-owner user accounts too. Owner-gated + confirm-phrased at
+// the endpoint; irreversible.
+const RESET_KEEP_MAPS = new Set(['users', 'deals', 'settings', 'embassyConfigs', 'vendorProfiles', 'influencerProfiles']);
+const RESET_KEEP_ARRAYS = new Set(['apiKeys', 'contracts', 'blog', 'hostListings', 'sponsoredPlacements']);
+export function wipeTransactionalData({ deleteNonOwnerUsers = false, ownerEmails = [] } = {}) {
+  const owners = new Set((ownerEmails || []).map((e) => String(e).trim().toLowerCase()).filter(Boolean));
+  const counts = {};
+  for (const k of MAP_KEYS) {
+    if (RESET_KEEP_MAPS.has(k)) continue;
+    if (db[k] instanceof Map && db[k].size) { counts[k] = db[k].size; db[k].clear(); }
+  }
+  for (const k of ARRAY_KEYS) {
+    if (RESET_KEEP_ARRAYS.has(k)) continue;
+    if (Array.isArray(db[k]) && db[k].length) { counts[k] = db[k].length; db[k].length = 0; }
+  }
+  let removed = 0, reset = 0;
+  for (const [uid, u] of db.users) {
+    const isOwner = owners.has(String(u.email || '').toLowerCase());
+    if (deleteNonOwnerUsers && !isOwner) { db.users.delete(uid); removed++; continue; }
+    // Reset the account's test state to fresh (keep the login + travel profile).
+    u.acuBalance = 0; u.points = 0; u.travelCreditGbp = 0;
+    u.membership = null; u.freeSearchesUsed = 0; u.attributedVendor = null;
+    delete u.referralProcessed;
+    reset++;
+  }
+  counts.usersRemoved = removed; counts.usersReset = reset;
+  return counts;
+}
+
 export function snapshot() {
   const out = { counter };
   for (const k of MAP_KEYS) out[k] = Object.fromEntries(db[k]);

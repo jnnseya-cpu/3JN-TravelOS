@@ -3129,6 +3129,7 @@ async function renderAdmin() {
       <button class="btn btn-sm btn-ghost" onclick="openTestimonialModeration()">💬 Review testimonials</button>
       <button class="btn btn-sm btn-ghost" onclick="openModuleToggles()">🧩 Modules on / off</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
+      <button class="btn btn-sm btn-ghost" style="color:#ff8a8a;border-color:rgba(255,138,138,.4)" onclick="resetTestData()" title="Owner only. Wipes all test bookings, quotes, ledgers, activity and eSIMs to a clean launch slate.">🧨 Reset test data</button>
     </div>
     <div id="selfTestOut"></div>
     <div class="kpi-grid">${kpiCards}</div>
@@ -5761,6 +5762,20 @@ window.moderateTestimonial = async (id, status) => {
   catch (e) { toast(e?.message || 'Failed.'); return; }
   toast(`Review ${status}.`);
   window.openTestimonialModeration();
+};
+
+// ---- Admin: wipe test data to a clean launch slate (owner-only) ------------
+window.resetTestData = async () => {
+  const phrase = prompt('This WIPES all test bookings, quotes, ledgers, activity and eSIMs — irreversible.\n\nAccounts are kept and reset. To ALSO delete non-owner accounts, tick the next prompt.\n\nType WIPE-TEST-DATA to confirm:');
+  if (phrase !== 'WIPE-TEST-DATA') { if (phrase != null) toast('Cancelled — phrase did not match.'); return; }
+  const deleteUsers = confirm('Also DELETE the non-owner user accounts (jnnseya, etc.)?\n\nOK = delete them · Cancel = keep + reset them.');
+  try {
+    const r = await api('/api/admin/reset', { method: 'POST', body: JSON.stringify({ confirm: 'WIPE-TEST-DATA', deleteUsers }) });
+    toast(`✓ ${r.message || 'Test data wiped.'}${r.persisted ? '' : ' (⚠ not persisted — retry)'}`, 8000);
+    setTimeout(() => location.reload(), 1200);
+  } catch (e) {
+    toast('⚠ Reset failed — ' + (e?.message || 'are you signed in as an owner (ADMIN_EMAILS)?'), 9000);
+  }
 };
 
 // ---- Admin: Modules on / off (VisaOS · Corporate · Embassy) ----------------
