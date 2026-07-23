@@ -1057,6 +1057,33 @@ export function adminSetMembership(userId, tierKey) {
   return { ok: true, user: publicUser(u) };
 }
 
+// Onboard (or off-board) a company onto a paid Business Travel plan. This is the
+// operator's action for a sales-led corporate deal: it grants the 'business'
+// role (unlocking the Business Centre + compliant-fare contract logic) and
+// records the monthly fee that feeds corporateRevenue. { active:false } ends it.
+export function adminSetCorporatePlan(userId, { company, seats, monthlyGBP, active = true } = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'not-found', message: 'No user with that id.' };
+  if (active === false) {
+    u.corporatePlan = u.corporatePlan ? { ...u.corporatePlan, active: false, endedAt: nowISO() } : null;
+    recordAudit({ actor: 'admin', role: 'admin', action: 'corporate.admin-clear', entity: 'user', entityId: userId, summary: 'corporate plan deactivated' });
+    return { ok: true, user: publicUser(u) };
+  }
+  const price = Math.max(0, Math.round(Number(monthlyGBP) || 0));
+  const nSeats = Math.max(1, Math.round(Number(seats) || 1));
+  u.role = 'business'; // unlocks the Business Centre + treats trips as a corporate contract
+  u.corporatePlan = {
+    active: true,
+    company: String(company || u.name || 'Company').slice(0, 80),
+    seats: nSeats,
+    pricePerMonth: price,
+    since: u.corporatePlan?.since || nowISO(),
+    grantedByAdmin: true,
+  };
+  recordAudit({ actor: 'admin', role: 'admin', action: 'corporate.admin-set', entity: 'user', entityId: userId, summary: `${u.corporatePlan.company} · ${nSeats} seats · £${price}/mo` });
+  return { ok: true, user: publicUser(u) };
+}
+
 // Old 4-tier membership keys → the new 2-tier scheme, so members who joined under
 // the old system aren't shown a defunct name or silently lose their discount.
 const OLD_MEMBERSHIP_MAP = { nomad: 'plus', executive: 'plus', elite: 'family', premium: 'plus' };
@@ -1108,6 +1135,7 @@ function publicUser(u) {
     acuBalance: u.acuBalance,
     travelCreditGbp: round2(u.travelCreditGbp || 0), // members' Travel Credit toward the next trip
     membership: u.membership || null,
+    corporatePlan: u.corporatePlan || null,
     coverImage: u.coverImage || null,
     travelProfile: u.travelProfile || {},
     accessLevel: ACCESS_LEVELS[u.role] || ACCESS_LEVELS.consumer,

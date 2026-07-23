@@ -14,7 +14,7 @@ import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_T
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund, redeemTravelCredit,
-  adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership,
+  adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership, adminSetCorporatePlan,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
   adminAudit, saveDraft, getDraft,
@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-23-owner-reset-test-data-v163';
+const BUILD_TAG = '2026-07-23-corporate-ready-v164';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4624,6 +4624,15 @@ app.post('/api/admin/users/:id/acu', safe((req, res) => {
 app.post('/api/admin/users/:id/membership', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const r = adminSetMembership(req.params.id, (req.body || {}).tier);
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
+}));
+// Admin: onboard/off-board a company onto a paid Business Travel plan.
+// { company, seats, monthlyGBP } to set (grants the business role); { active:false } to end.
+app.post('/api/admin/users/:id/corporate', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const b = req.body || {};
+  const r = adminSetCorporatePlan(req.params.id, { company: b.company, seats: b.seats, monthlyGBP: b.monthlyGBP, active: b.active !== false });
   if (!r.ok) return res.status(400).json(r);
   res.json(r);
 }));

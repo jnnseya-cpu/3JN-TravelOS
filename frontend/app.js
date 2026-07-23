@@ -3566,6 +3566,17 @@ function muRenderUser(u) {
         <div style="display:flex;gap:8px"><input class="in" id="muAcu" type="number" placeholder="e.g. 5000" style="flex:1"><button class="btn btn-gold btn-sm" onclick="muAddAcu()">Add ACU</button></div></div>
       <div class="field" style="margin-top:12px"><label>Set membership level</label>
         <div style="display:flex;gap:8px"><select class="in" id="muTier" style="flex:1">${opts}</select><button class="btn btn-gold btn-sm" onclick="muSetTier()">Set</button></div></div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">
+        <label style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">🏢 Business Travel plan ${u.corporatePlan?.active ? `<span style="color:var(--green)">· ${esc(u.corporatePlan.company)} · ${u.corporatePlan.seats} seats · £${u.corporatePlan.pricePerMonth}/mo</span>` : '<span class="muted">· none</span>'}</label>
+        <p class="muted" style="font-size:11.5px;margin:6px 0">Onboards this account as a corporate client — grants the Business Centre (approvals, policy, contracts) and records the monthly fee.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="in" id="muCoName" placeholder="Company name" value="${esc(u.corporatePlan?.company || u.name || '')}" style="flex:2;min-width:140px">
+          <input class="in" id="muCoSeats" type="number" placeholder="Seats" value="${u.corporatePlan?.seats || 5}" style="width:80px">
+          <input class="in" id="muCoPrice" type="number" placeholder="£/mo" value="${u.corporatePlan?.pricePerMonth || 199}" style="width:90px">
+          <button class="btn btn-gold btn-sm" onclick="muSetCorporate(true)">${u.corporatePlan?.active ? 'Update' : 'Onboard'}</button>
+          ${u.corporatePlan?.active ? '<button class="btn btn-ghost btn-sm" style="color:#ff8a8a" onclick="muSetCorporate(false)">End plan</button>' : ''}
+        </div>
+      </div>
     </div>`;
 }
 window.muAddAcu = async () => {
@@ -3587,6 +3598,17 @@ window.muSetTier = async () => {
     const r = await api(`/api/admin/users/${u.id}/membership`, { method: 'POST', body: JSON.stringify({ tier }) });
     muRenderUser(r.user);
     toast(`✓ Membership set to ${r.user.membership?.name || 'none'}.`);
+  } catch (e) { toast('⚠ ' + (e.message || 'Failed')); }
+};
+window.muSetCorporate = async (active) => {
+  const u = window.__muUser; if (!u) return;
+  const body = active
+    ? { active: true, company: $('#muCoName')?.value?.trim() || u.name, seats: Number($('#muCoSeats')?.value || 5), monthlyGBP: Number($('#muCoPrice')?.value || 0) }
+    : { active: false };
+  try {
+    const r = await api(`/api/admin/users/${u.id}/corporate`, { method: 'POST', body: JSON.stringify(body) });
+    muRenderUser(r.user);
+    toast(active ? `✓ ${r.user.corporatePlan?.company || 'Company'} onboarded — Business Travel active.` : '✓ Business Travel plan ended.');
   } catch (e) { toast('⚠ ' + (e.message || 'Failed')); }
 };
 window.runBotSweep = async () => {

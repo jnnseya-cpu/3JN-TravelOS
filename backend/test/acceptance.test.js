@@ -897,6 +897,98 @@ test('ESIM: standalone hub order is honest offline — no fabricated ICCID', asy
   assert.equal(r.json.esim.esim?.live, false);
 });
 
+// ============================================================================
+// CORP — Business Travel (corporate) module, real end-to-end.
+// The module ships OFF for launch (focused go-live); these tests prove it is
+// fully functional the moment the operator flips it on, so it's never toggled
+// on untested. Every path runs against the real HTTP endpoints + store.
+// ============================================================================
+test('CORP-1: high-value booking (≥$4,000) auto-enters the approval queue; manager sees team trips', async () => {
+  const mgr = mkUser({ name: 'Travel Manager', role: 'business' });
+  const traveller = mkUser({ name: 'Team Member' });
+  const b = createBooking({ option: livePkgOption({ total: 5000 }), userId: traveller.id, lead: { fullName: 'Team Member', email: traveller.email } });
+  assert.ok(b.option.totalUSD >= 4000, 'booking is genuinely high-value');
+  const r = await api('GET', '/api/business/approvals', { userId: mgr.id });
+  assert.equal(r.status, 200);
+  const mine = (r.json.approvals || []).find((a) => a.bookingId === b.id);
+  assert.ok(mine, 'approval auto-created for the high-value booking');
+  assert.equal(mine.status, 'pending', 'starts pending');
+  assert.ok((r.json.bookings || []).some((x) => x.id === b.id), 'trip appears in the team itinerary');
+});
+
+test('CORP-2: manager approve/reject flips status AND notifies the traveller', async () => {
+  const mgr = mkUser({ name: 'Travel Manager', role: 'business' });
+  const t1 = mkUser(); const t2 = mkUser();
+  const b1 = createBooking({ option: livePkgOption({ total: 6000 }), userId: t1.id, lead: { fullName: 'T1', email: t1.email } });
+  const b2 = createBooking({ option: livePkgOption({ total: 6000 }), userId: t2.id, lead: { fullName: 'T2', email: t2.email } });
+  const list = await api('GET', '/api/business/approvals', { userId: mgr.id });
+  const a1 = list.json.approvals.find((a) => a.bookingId === b1.id);
+  const a2 = list.json.approvals.find((a) => a.bookingId === b2.id);
+  const ok = await api('POST', `/api/business/approvals/${a1.id}`, { userId: mgr.id, body: { decision: 'approve' } });
+  assert.equal(ok.json.approval.status, 'approved');
+  const no = await api('POST', `/api/business/approvals/${a2.id}`, { userId: mgr.id, body: { decision: 'reject' } });
+  assert.equal(no.json.approval.status, 'rejected');
+  // The traveller gets a real in-OS notification about the manager's decision.
+  const n1 = await api('GET', '/api/notifications', { userId: t1.id });
+  assert.ok((n1.json.notifications || []).some((n) => /approved/i.test(n.title)), 'approved traveller notified');
+  const n2 = await api('GET', '/api/notifications', { userId: t2.id });
+  assert.ok((n2.json.notifications || []).some((n) => /rejected/i.test(n.title)), 'rejected traveller notified');
+});
+
+test('CORP-3: supplier contract negotiation scales the discount with committed volume (and caps)', async () => {
+  const mgr = mkUser({ name: 'Travel Manager', role: 'business' });
+  const small = await api('POST', '/api/business/contracts', { userId: mgr.id, body: { supplier: 'Emirates', category: 'flights', annualVolumeUSD: 100000 } });
+  const big = await api('POST', '/api/business/contracts', { userId: mgr.id, body: { supplier: 'Emirates', category: 'flights', annualVolumeUSD: 1000000 } });
+  assert.equal(small.status, 200);
+  assert.ok(big.json.contract.discountPct > small.json.contract.discountPct, 'more committed volume → bigger discount');
+  assert.ok(big.json.contract.discountPct <= 0.06 + 1e-9, 'flights discount capped at 6%');
+  const listed = await api('GET', '/api/business/contracts', { userId: mgr.id });
+  assert.ok((listed.json.contracts || []).some((c) => c.supplier === 'Emirates'), 'contract persisted + listed back');
+});
+
+test('CORP-4: business endpoints are locked to business/admin — a consumer is refused', async () => {
+  const consumer = mkUser();
+  const checks = [['GET', '/api/business/approvals'], ['GET', '/api/business/contracts'], ['POST', '/api/business/contracts']];
+  for (const [m, p] of checks) {
+    const r = await api(m, p, { userId: consumer.id, ...(m === 'POST' ? { body: {} } : {}) });
+    assert.equal(r.status, 403, `${m} ${p} refused for a consumer`);
+  }
+  // And an admin (allAccess) is allowed everywhere.
+  const a = admin();
+  assert.equal((await api('GET', '/api/business/approvals', { userId: a.id })).status, 200);
+});
+
+test('CORP-6: admin onboards a company onto a paid Business Travel plan → business role + tracked revenue', async () => {
+  const a = admin();
+  const co = mkUser({ name: 'Acme Inc' });
+  assert.equal(getUser(co.id).role, 'consumer', 'starts as a plain consumer');
+  const on = await api('POST', `/api/admin/users/${co.id}/corporate`, { userId: a.id, body: { company: 'Acme Inc', seats: 12, monthlyGBP: 499 } });
+  assert.equal(on.status, 200);
+  assert.equal(on.json.user.corporatePlan.active, true);
+  assert.equal(on.json.user.corporatePlan.seats, 12);
+  assert.equal(on.json.user.role, 'business', 'granted the business role — Business Centre now unlocks');
+  // The account can now actually reach the Business Centre it was granted.
+  assert.equal((await api('GET', '/api/business/approvals', { userId: co.id })).status, 200);
+  // Ending the plan deactivates it cleanly.
+  const off = await api('POST', `/api/admin/users/${co.id}/corporate`, { userId: a.id, body: { active: false } });
+  assert.equal(off.json.user.corporatePlan.active, false);
+});
+
+test('CORP-7: corporate onboarding is admin-only — a consumer cannot self-provision', async () => {
+  const consumer = mkUser();
+  const victim = mkUser();
+  const r = await api('POST', `/api/admin/users/${victim.id}/corporate`, { userId: consumer.id, body: { company: 'Hax', monthlyGBP: 1 } });
+  assert.equal(r.status, 403, 'non-admin refused');
+  assert.equal(getUser(victim.id).role, 'consumer', 'victim untouched');
+});
+
+test('CORP-5: corporate module ships OFF by default and the operator toggle round-trips', async () => {
+  assert.equal(getModuleFlags().corporate, false, 'Business Travel is Coming Soon by default (focused launch)');
+  assert.equal(setModuleFlags({ corporate: true }).corporate, true, 'operator flips it ON');
+  assert.equal(getModuleFlags().corporate, true, 'ON state persists');
+  assert.equal(setModuleFlags({ corporate: false }).corporate, false, 'and back OFF cleanly');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });
