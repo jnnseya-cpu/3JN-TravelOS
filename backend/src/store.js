@@ -170,6 +170,33 @@ export function provisionEsim(userId, { destination = 'Dubai', dataGB = 5, days 
   if (userId) pushNotification(userId, { type: 'info', icon: '📶', title: 'eSIM ready', body: `${dataGB}GB for ${destination} — activate before departure.` });
   return rec;
 }
+// LIVE eSIM order (standalone hub): orders a REAL Airalo eSIM (genuine ICCID +
+// QR + LPA activation) when the Airalo/eSIM-Access door is open; otherwise it
+// records an honest "arrives on issue" eSIM with NO fabricated ICCID (a fake
+// technical identifier the customer would try to install must never be shown).
+// Async — the /api/esims endpoint awaits it.
+export async function provisionEsimLive(userId, { destination = '', countryCode = '', dataGB = 1, days = 7 } = {}) {
+  const cc = String(countryCode || '').slice(0, 2).toUpperCase();
+  let profile = null;
+  if (cc) profile = await provisionEsimViaAiralo({ countryCode: cc, minGB: Math.max(1, Number(dataGB) || 1), ourRef: `hub:${userId || 'guest'}` }).catch(() => null);
+  if (!profile) profile = await provisionEsimViaApi({ destinationCountry: cc || destination, dataGB: Number(dataGB) || 5, days: Number(days) || 9, ourRef: `hub:${userId || 'guest'}` }).catch(() => null);
+  const rec = {
+    id: id('esim'), userId: userId || null,
+    destination: destination || cc || 'Regional', provider: profile?.provider || 'Airalo',
+    dataGB, dataUsedGB: 0, days: profile?.validityDays || days,
+    coverage: ESIM_COVERAGE[destination] || 'Regional 4G/5G',
+    iccid: profile?.iccid || null,               // REAL iccid or null — never fabricated
+    esim: profile ? { ...profile } : { live: false },
+    status: profile?.live ? 'provisioned' : 'pending-issue',
+    activatedAt: null, createdAt: nowISO(),
+  };
+  db.esims.push(rec);
+  recordAudit({ actor: userId || 'guest', role: 'agent', action: 'esim.provisioned', entity: 'esim', entityId: rec.id, summary: `${dataGB}GB ${rec.destination} · ${profile?.live ? 'LIVE ' + rec.provider : 'pending-issue'}` });
+  if (userId) pushNotification(userId, profile?.live
+    ? { type: 'success', icon: '📶', title: 'eSIM ready', body: `${rec.provider} ${dataGB}GB for ${rec.destination} — install the QR from your Console before departure.` }
+    : { type: 'info', icon: '📶', title: 'eSIM on its way', body: `Your ${dataGB}GB eSIM for ${rec.destination} is being issued — the QR + activation code arrive shortly.` });
+  return rec;
+}
 export function listEsims(userId) {
   return db.esims.filter((e) => e.userId === userId).map((e) => ({ ...e }));
 }

@@ -886,6 +886,17 @@ test('VIATOR-MERCHANT: booking calls are gated on tier=merchant and fail safe wh
   assert.equal(typeof m.viatorAffiliateUrl, 'function');
 });
 
+test('ESIM: standalone hub order is honest offline — no fabricated ICCID', async () => {
+  const u = mkUser();
+  const r = await api('POST', '/api/esims', { userId: u.id, body: { destination: 'Dubai', countryCode: 'AE', dataGB: 5 } });
+  assert.equal(r.status, 200);
+  // With no Airalo keys, we must NOT invent an ICCID (a real identifier the
+  // customer would try to install) — it's marked pending-issue instead.
+  assert.equal(r.json.esim.iccid, null, 'no fabricated ICCID without a live eSIM');
+  assert.equal(r.json.esim.status, 'pending-issue');
+  assert.equal(r.json.esim.esim?.live, false);
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

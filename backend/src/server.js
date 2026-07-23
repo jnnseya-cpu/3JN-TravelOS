@@ -24,7 +24,7 @@ import {
   notifyHostsOfBooking, backfillProfileFromLead, syncHostReliabilityFromReviews, bumpOSLink, osIntegrationMap,
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
-  findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport,
+  findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
@@ -197,7 +197,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-18-viator-merchant-booking-v161';
+const BUILD_TAG = '2026-07-18-airalo-live-esim-hub-v162';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2399,10 +2399,12 @@ app.get('/api/esims', safe((req, res) => {
   if (!user) return res.status(401).json({ error: 'auth-required' });
   res.json({ esims: listEsims(user.id) });
 }));
-app.post('/api/esims', safe((req, res) => {
+app.post('/api/esims', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
-  res.json({ esim: provisionEsim(user.id, req.body || {}) });
+  // Order a REAL Airalo eSIM when the door is open (genuine ICCID/QR/LPA);
+  // otherwise an honest "arrives on issue" record with no fabricated identifier.
+  res.json({ esim: await provisionEsimLive(user.id, req.body || {}) });
 }));
 app.post('/api/esims/:id/activate', safe((req, res) => {
   const user = currentUser(req);
