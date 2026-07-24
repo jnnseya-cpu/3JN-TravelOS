@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v165';
+const APP_BUILD = 'v166';
 
 const state = {
   context: null,
@@ -1855,7 +1855,9 @@ window.confirmBooking = async () => {
     return;
   }
   const rail = paymentMethod === 'card' ? 'Stripe' : paymentMethod === 'bitripay' ? 'BitriPay Wallet' : 'BitriPay Mobile Money';
-  toast(`✓ Documents validated · booking confirmed — deposit paid via ${rail}.`);
+  toast(payInFull
+    ? `✓ Payment received via ${rail} — we're issuing your e-ticket and will email it once the airline confirms.`
+    : `✓ Reserved · deposit paid via ${rail} — your price is locked; the e-ticket is issued on final payment.`, 7000);
   nav('console');
 };
 
@@ -5459,7 +5461,7 @@ const CONTENT = {
         <li><span class="cs">Ticket issued</span><span class="cp">airline rules govern the flight</span></li>
         <li><span class="cs">Free-cancellation rates</span><span class="cp">full refund in window</span></li>
       </ul>
-      <p class="muted" style="font-size:12px">Once a ticket is issued the flight follows the airline's own (usually non-refundable) rules; unused, refundable components are returned per the supplier policy. Requests: <strong>info@3jntravel.com</strong>. ATOL/ABTA financial protection applies to eligible UK package bookings.</p>`,
+      <p class="muted" style="font-size:12px">Once a ticket is issued the flight follows the airline's own (usually non-refundable) rules; unused, refundable components are returned per the supplier policy. Requests: <strong>info@3jntravel.com</strong>. Financial protection (such as ATOL or ABTA) applies only where a scheme is in place for your booking; when it does, the cover and its terms are shown at checkout and on your confirmation.</p>`,
   },
   acceptable: {
     title: '✅ Acceptable Use Policy',
