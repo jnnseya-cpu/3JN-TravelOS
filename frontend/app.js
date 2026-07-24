@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v169';
+const APP_BUILD = 'v170';
 
 const state = {
   context: null,
@@ -176,6 +176,7 @@ const MODULE_META = {
   visaos: { label: '3JN VisaOS', blurb: 'AI-assisted visa eligibility, document checks and application support are on the way. In the meantime, visa support is included with our packages.' },
   corporate: { label: 'Business Travel', blurb: 'Corporate travel — policies, approvals, expense and team booking — is coming soon. Talk to us if you manage travel for a team.' },
   embassy: { label: 'Embassy Decision Command', blurb: 'The government/embassy visa-decision console is coming soon.' },
+  savewallet: { label: 'Save & Search', blurb: 'Save toward a future trip while our technology watches routes, dates and prices — and buy when your funds and flight are ready. Coming soon. (Saving is never a booking: no fare or seat is held until you buy.)' },
 };
 // Which module (if any) gates this view for this user → returns a meta object or null.
 function moduleGate(view) {
@@ -184,6 +185,7 @@ function moduleGate(view) {
     return moduleOn('visaos') ? null : MODULE_META.visaos;
   }
   if (view === 'business') return moduleOn('corporate') ? null : MODULE_META.corporate;
+  if (view === 'savewallet') return moduleOn('savewallet') ? null : MODULE_META.savewallet;
   return null;
 }
 function renderComingSoon(meta) {
@@ -5003,6 +5005,7 @@ function toggleAccountMenu() {
     ${item('🤝', 'Vendor Partner Programme', "closeAccountMenu();nav('vendors')")}
     ${item('🛂', 'VisaOS · Visa Centre', "closeAccountMenu();nav('visaos')")}
     ${item('🏠', 'Host Dashboard', 'closeAccountMenu();openHostDashboard()')}
+    ${item('💰', 'Save & Search', 'closeAccountMenu();openSaveWallet()')}
     ${can(['business', 'admin']) ? item('💼', 'Business Centre', "closeAccountMenu();nav('business')") : ''}
     ${can(['embassy', 'consulate', 'admin']) ? item('🏛', 'Consulate / VisaOS', "closeAccountMenu();nav('visaos')") : ''}
     ${can(['admin']) ? item('🛡', 'Admin Centre', "closeAccountMenu();nav('admin')") : ''}
@@ -5850,13 +5853,66 @@ window.resetTestData = async () => {
   }
 };
 
+// ---- Save & Search wallet (Product C) — customer view ----------------------
+// Save toward a future trip; convert to spendable Travel Credit when ready. When
+// the module is OFF the customer sees an honest "coming soon"; when ON they get
+// the full pot UI. Every screen states plainly: saving is not a booking.
+window.openSaveWallet = async () => {
+  if (!state.user) { toast('Sign in to use Save & Search.'); openAuth?.(); return; }
+  if (!moduleOn('savewallet')) { modal(`<span class="eyebrow">💰 Save & Search</span><h3 style="margin:6px 0 8px">Coming soon</h3><p class="muted" style="font-size:13.5px">${esc(MODULE_META.savewallet.blurb)}</p>`); return; }
+  let d; try { d = await api('/api/pots'); } catch { toast('Could not load your wallet.'); return; }
+  const pots = d.pots || [];
+  const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const rows = pots.length ? pots.map((p) => `
+    <div class="card pad" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:10px"><strong>${esc(p.name)}</strong><span class="muted" style="font-size:12px">${esc(p.goal || p.destination || '')}</span></div>
+      <div class="rel-bar" style="margin:8px 0 4px"><span style="display:block;height:100%;width:${p.progressPct}%;background:var(--gold);border-radius:4px"></span></div>
+      <div class="kv" style="font-size:12.5px"><span>${usd(p.balanceUSD)} saved of ${usd(p.targetUSD)}</span><span class="muted">${p.progressPct}%${p.remainingUSD > 0 ? ` · ${usd(p.remainingUSD)} to go` : ' · ready'}</span></div>
+      ${p.status === 'converted' ? '<div class="muted" style="font-size:12px;color:var(--green)">✓ converted to Travel Credit</div>' : `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <input class="in" id="pot-add-${esc(p.id)}" type="number" placeholder="Add (USD)" style="width:120px">
+        <button class="btn btn-ghost btn-sm" onclick="potContribute('${esc(p.id)}')">Add</button>
+        ${p.balanceUSD > 0 ? `<button class="btn btn-gold btn-sm" onclick="potConvert('${esc(p.id)}')">Convert to Travel Credit</button>` : ''}
+      </div>`}
+    </div>`).join('') : '<p class="muted" style="font-size:13px">No pots yet — start one below.</p>';
+  modal(`<span class="eyebrow">💰 Save & Search</span>
+    <div class="card pad" style="border-color:rgba(255,176,32,.4);margin:8px 0 14px">
+      <div style="font-size:12.5px">⚠ ${esc(d.disclosure || '')}</div>
+    </div>
+    ${rows}
+    <div class="card pad" style="margin-top:10px">
+      <span class="eyebrow">Start a new trip pot</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input class="in" id="pot-name" placeholder="e.g. Dubai 2027" style="flex:2;min-width:140px">
+        <input class="in" id="pot-target" type="number" placeholder="Target (USD)" style="width:130px">
+        <button class="btn btn-gold btn-sm" onclick="potCreate()">Create pot</button>
+      </div>
+    </div>`);
+};
+window.potCreate = async () => {
+  const name = $('#pot-name')?.value?.trim(); const targetUSD = Number($('#pot-target')?.value || 0);
+  if (!name || !(targetUSD > 0)) { toast('Name and a target amount, please.'); return; }
+  try { await api('/api/pots', { method: 'POST', body: JSON.stringify({ name, targetUSD }) }); } catch (e) { toast(e?.message || 'Failed.'); return; }
+  toast('✓ Pot created — saving is not a booking; nothing is held until you buy.', 6000); openSaveWallet();
+};
+window.potContribute = async (id) => {
+  const amountUSD = Number($(`#pot-add-${id}`)?.value || 0);
+  if (!(amountUSD > 0)) { toast('Enter an amount.'); return; }
+  try { await api(`/api/pots/${id}/contribute`, { method: 'POST', body: JSON.stringify({ amountUSD }) }); } catch (e) { toast(e?.message || 'Failed.'); return; }
+  toast('✓ Added to your pot.'); openSaveWallet();
+};
+window.potConvert = async (id) => {
+  if (!confirm('Convert this pot balance to Travel Credit you can spend at checkout?\n\nSaving is not a booking — no flight is held until you actually buy.')) return;
+  try { const r = await api(`/api/pots/${id}/convert`, { method: 'POST', body: '{}' }); if (r.user) setUser(r.user); toast(`✓ £${(r.creditGbp || 0).toFixed(2)} is now Travel Credit.`, 6000); } catch (e) { toast(e?.message || 'Failed.'); return; }
+  openSaveWallet();
+};
+
 // ---- Admin: Modules on / off (VisaOS · Corporate · Embassy) ----------------
 // Off → the app shows a "Coming Soon" placeholder for that module. Keeps a launch
 // focused on the core booking flow; flip on the moment a module is ready.
 window.openModuleToggles = async () => {
   let d; try { d = await api('/api/admin/modules'); } catch { toast('Admin only.'); return; }
   const m = d.modules || {};
-  const meta = { visaos: ['3JN VisaOS', 'AI visa eligibility & application support (applicant side)'], corporate: ['Business Travel', 'Corporate policies, approvals & team booking'], embassy: ['Embassy Decision Command', 'Government/embassy visa-decision console'] };
+  const meta = { visaos: ['3JN VisaOS', 'AI visa eligibility & application support (applicant side)'], corporate: ['Business Travel', 'Corporate policies, approvals & team booking'], embassy: ['Embassy Decision Command', 'Government/embassy visa-decision console'], savewallet: ['Save & Search', '⚠ Holds customer money before ticketing — turn ON only once a safeguarding/trust arrangement is in place'] };
   const row = (k) => {
     const on = m[k] !== false;
     return `<div class="card pad" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px">
@@ -5867,7 +5923,7 @@ window.openModuleToggles = async () => {
   modal(`<span class="eyebrow">🧩 Modules</span>
     <h3 style="margin:6px 0 4px">Turn modules on or off</h3>
     <p class="muted" style="font-size:12.5px;margin:0 0 12px">When a module is off, visitors see a <strong>Coming Soon</strong> page instead. Change takes effect on their next page load.</p>
-    ${['visaos', 'corporate', 'embassy'].map(row).join('')}`);
+    ${['visaos', 'corporate', 'embassy', 'savewallet'].map(row).join('')}`);
 };
 window.toggleModule = async (key, on) => {
   let d; try { d = await api('/api/admin/modules', { method: 'POST', body: JSON.stringify({ [key]: on }) }); } catch (e) { toast(e?.message || 'Failed.'); return; }

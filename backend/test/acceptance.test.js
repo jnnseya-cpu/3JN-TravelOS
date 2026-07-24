@@ -1073,6 +1073,49 @@ test('TTL-1: securing sweep escalates a near-departure price-locked flight once 
   assert.equal(notifs2.length, 1, 'no duplicate alert at the same band');
 });
 
+// ============================================================================
+// WALLET — Save & Search (Product C): gated OFF, money-holding routes refuse
+// while off; the honest "not a booking" disclosure is always attached.
+// ============================================================================
+test('WALLET-1: ships OFF by default; contribute/create refuse while off but reads stay honest', async () => {
+  assert.equal(getModuleFlags().savewallet, false, 'Save & Search is Coming Soon by default');
+  const u = mkUser();
+  // Creating/holding money is refused while the module is off.
+  const create = await api('POST', '/api/pots', { userId: u.id, body: { name: 'Dubai', targetUSD: 2000 } });
+  assert.equal(create.status, 403);
+  assert.equal(create.json.error, 'module-off');
+  // The read route still works and always carries the honest disclosure.
+  const list = await api('GET', '/api/pots', { userId: u.id });
+  assert.equal(list.status, 200);
+  assert.equal(list.json.enabled, false);
+  assert.match(list.json.disclosure, /not a booking/i);
+});
+
+test('WALLET-2: turned ON, a pot saves and converts to Travel Credit — still no flight held', async () => {
+  setModuleFlags({ savewallet: true });
+  try {
+    const u = mkUser();
+    const create = await api('POST', '/api/pots', { userId: u.id, body: { name: 'Lagos 2027', targetUSD: 1200 } });
+    assert.equal(create.status, 200);
+    const potId = create.json.pot.id;
+    assert.match(create.json.pot.disclosure, /not a booking/i);
+    const contrib = await api('POST', `/api/pots/${potId}/contribute`, { userId: u.id, body: { amountUSD: 500 } });
+    assert.equal(contrib.status, 200);
+    assert.ok(contrib.json.pot.balanceUSD > 0 && contrib.json.pot.balanceUSD < 500, '1.5% processing fee applied');
+    // Converting turns saved money into spendable Travel Credit for the SAME user.
+    const before = getUser(u.id).travelCreditGbp || 0;
+    const conv = await api('POST', `/api/pots/${potId}/convert`, { userId: u.id, body: {} });
+    assert.equal(conv.status, 200);
+    assert.ok(conv.json.creditGbp > 0, 'produced GBP credit');
+    assert.ok((getUser(u.id).travelCreditGbp || 0) > before, 'credit landed on the account');
+    // Another user cannot touch my pot.
+    const other = mkUser();
+    assert.equal((await api('POST', `/api/pots/${potId}/convert`, { userId: other.id, body: {} })).status, 400);
+  } finally {
+    setModuleFlags({ savewallet: false }); // leave it OFF, as it ships
+  }
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

@@ -34,7 +34,7 @@ import {
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, applyDepositCreditToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
   clientMoneyLedger, secureDeadlineSweep,
-  createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
+  createTravelPot, contributeToPot, listTravelPots, getTravelPot, convertPotToCredit, POT_DISCLOSURE, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest, claimStripeEvent,
   useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP,
   searchToBookStats,
@@ -198,7 +198,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-24-securing-deadline-sweep-v169';
+const BUILD_TAG = '2026-07-24-save-search-wallet-v170';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1329,6 +1329,52 @@ app.post('/api/admin/modules', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const modules = setModuleFlags(req.body || {}, currentUser(req)?.name || 'admin');
   res.json({ ok: true, modules });
+}));
+
+// ---- Save & Search wallet (Product C) — gated behind the 'savewallet' module --
+// Save toward a future trip; the platform monitors prices; convert the balance to
+// spendable Travel Credit when ready. HOLDS CUSTOMER MONEY, so the money-moving
+// routes are hard-gated on the module being ON (kept OFF until a safeguarding
+// arrangement is in place). Read routes are always honest about "not booked".
+const saveWalletOn = () => getModuleFlags().savewallet === true;
+function requireSaveWallet(req, res) {
+  if (saveWalletOn()) return true;
+  res.status(403).json({ error: 'module-off', message: 'Save & Search is coming soon.' });
+  return false;
+}
+app.get('/api/pots', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ enabled: saveWalletOn(), disclosure: POT_DISCLOSURE, pots: listTravelPots(user.id) });
+}));
+app.post('/api/pots', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (!requireSaveWallet(req, res)) return;
+  const r = createTravelPot(user.id, req.body || {});
+  if (!r.ok) return res.status(400).json(r);
+  res.json({ ok: true, pot: getTravelPot(r.pot.id), disclosure: POT_DISCLOSURE });
+}));
+app.post('/api/pots/:id/contribute', safe(async (req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (!requireSaveWallet(req, res)) return;
+  const pot = getTravelPot(req.params.id);
+  if (!pot) return res.status(404).json({ error: 'pot-not-found' });
+  if (pot.ownerId !== user.id && !user.allAccess) return res.status(403).json({ error: 'not-your-pot' });
+  const amountUSD = Number(req.body?.amountUSD);
+  if (!(amountUSD > 0)) return res.status(400).json({ error: 'invalid-amount' });
+  const r = contributeToPot(req.params.id, { name: user.name, amountUSD });
+  if (!r.ok) return res.status(400).json(r);
+  res.json({ ok: true, pot: getTravelPot(req.params.id), disclosure: POT_DISCLOSURE });
+}));
+app.post('/api/pots/:id/convert', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (!requireSaveWallet(req, res)) return;
+  const r = convertPotToCredit(req.params.id, user.id);
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
 }));
 
 // DANGER — wipe all TEST / transactional data to a clean launch slate. Double

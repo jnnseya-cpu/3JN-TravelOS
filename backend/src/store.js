@@ -1813,8 +1813,8 @@ export function publicTestimonials(limit = 24) {
 // ---- Module flags (operator turns modules on / off → "Coming Soon") -----------
 // Non-core modules default OFF so a launch stays focused; the admin flips them on
 // from the console. When a module is off the app shows a "Coming Soon" placeholder.
-const MODULE_KEYS = ['visaos', 'corporate', 'embassy'];
-const DEFAULT_MODULES = { visaos: false, corporate: false, embassy: false };
+const MODULE_KEYS = ['visaos', 'corporate', 'embassy', 'savewallet'];
+const DEFAULT_MODULES = { visaos: false, corporate: false, embassy: false, savewallet: false };
 export function getModuleFlags() {
   const saved = db.settings.get('modules') || {};
   const out = {};
@@ -4255,6 +4255,40 @@ export function contributeToPot(potId, { name, amountUSD }) {
   pot.contributions.push({ name: String(name || 'Anonymous').slice(0, 60), amountUSD: amt, feeUSD: fee, at: new Date().toISOString() });
   if (pot.balanceUSD >= pot.targetUSD) pushNotification(pot.ownerId, { type: 'success', icon: '🎯', title: 'Pot target reached!', body: `${pot.name} hit $${pot.targetUSD} — convert it to a booking credit in the planner.` });
   return { ok: true, pot };
+}
+// The honest, always-attached disclosure for a Save & Search pot: saving is NOT
+// a booking. No fare, flight or seat is held until the customer actually buys.
+export const POT_DISCLOSURE = 'Saving toward a trip is not a booking. No flight, fare or seat is held or guaranteed — availability and price are confirmed only when you convert your balance and buy. Your saved balance is held safely and refundable under the wallet terms.';
+export function potView(p) {
+  const remainingUSD = Math.max(0, round2((p.targetUSD || 0) - (p.balanceUSD || 0)));
+  const progressPct = p.targetUSD > 0 ? Math.min(100, Math.round(((p.balanceUSD || 0) / p.targetUSD) * 100)) : 0;
+  return { ...p, remainingUSD, progressPct, ready: (p.balanceUSD || 0) >= (p.targetUSD || 0), disclosure: POT_DISCLOSURE };
+}
+export function listTravelPots(userId) {
+  return db.travelPots.filter((p) => p.ownerId === userId).map(potView);
+}
+export function getTravelPot(potId) {
+  const p = db.travelPots.find((x) => x.id === potId);
+  return p ? potView(p) : null;
+}
+// Convert a matured (or partial) pot balance into redeemable Travel Credit the
+// customer can spend at checkout. This is the ONLY moment saved money becomes
+// spendable — and still no flight is held until they actually book.
+export function convertPotToCredit(potId, userId) {
+  const pot = db.travelPots.find((p) => p.id === potId);
+  if (!pot) return { ok: false, error: 'pot-not-found' };
+  if (pot.ownerId !== userId) return { ok: false, error: 'not-your-pot' };
+  if (pot.status === 'converted') return { ok: false, error: 'already-converted', message: 'This pot has already been converted.' };
+  const bal = pot.balanceUSD || 0;
+  if (!(bal > 0)) return { ok: false, error: 'empty-pot', message: 'There is nothing saved in this pot yet.' };
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'auth-required' };
+  const gbp = round2(bal * GBP_ANCHOR); // USD → GBP
+  u.travelCreditGbp = round2((u.travelCreditGbp || 0) + gbp);
+  pot.balanceUSD = 0; pot.status = 'converted'; pot.convertedAt = nowISO(); pot.convertedGbp = gbp;
+  recordAudit({ actor: userId, role: 'consumer', action: 'pot.converted', entity: 'pot', entityId: pot.id, summary: `£${gbp} → Travel Credit` });
+  pushNotification(userId, { type: 'success', icon: '🎟️', title: 'Savings ready to spend', body: `£${gbp.toFixed(2)} from "${pot.name}" is now Travel Credit toward your next booking. No flight is held until you book.` });
+  return { ok: true, pot: potView(pot), creditGbp: gbp, travelCreditGbp: u.travelCreditGbp };
 }
 
 // ---- Search cache: the database answers before paid AI ------------------------
