@@ -16,6 +16,7 @@
 
 import { scanFlights } from './suppliers.js';
 import { nearbyAirports } from './airports.js';
+import { findDestination, resolveOrigin } from './destinations.js';
 
 const round = (n) => Math.round(n);
 const floorOf = (offers = []) => {
@@ -303,6 +304,24 @@ export function routeFareRisk({ intent, prediction, daysToDeparture, directAvail
     critical: { label: 'Critical', action: 'Book and issue now — scarce seats / peak date; the fare can jump between searches.' },
   };
   return { agent: 'Route & Fare Risk Engine', score, band, ...ACTION[band], factors, disclaimer: 'A decision aid based on fare-movement and demand patterns — not a guarantee that prices will rise or fall.' };
+}
+
+// Cheapest live-scan fare (USD) for a Save & Search pot watch — reuses the same
+// multi-supplier scan + floor the planner uses, so a watched fare is the real
+// bookable floor, not a made-up number. Returns null if we can't resolve the
+// route or find a reliable fare.
+export function scanPotFareUSD({ origin, destination, departISO, returnISO, pax = 1 }) {
+  if (!departISO) return null;
+  const dest = findDestination(destination || '');
+  const org = resolveOrigin(origin || '');
+  if (!dest || !org) return null;
+  const n = Math.max(1, Math.min(9, Math.round(Number(pax) || 1)));
+  const intent = {
+    dates: { checkIn: departISO, checkOut: returnISO || null },
+    travellers: { adults: n, children: 0, infants: 0, total: n },
+    oneWay: !returnISO,
+  };
+  return floorOf(scanFlights(intent, dest, org));
 }
 
 export function farePrediction({ intent, dest, origin }) {

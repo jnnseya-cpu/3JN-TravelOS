@@ -4290,6 +4290,52 @@ export function convertPotToCredit(potId, userId) {
   pushNotification(userId, { type: 'success', icon: '🎟️', title: 'Savings ready to spend', body: `£${gbp.toFixed(2)} from "${pot.name}" is now Travel Credit toward your next booking. No flight is held until you book.` });
   return { ok: true, pot: potView(pot), creditGbp: gbp, travelCreditGbp: u.travelCreditGbp };
 }
+// ---- Save & Search: per-pot price monitoring --------------------------------
+// Attach a watched flight to a pot. The caller (server) prices the route live and
+// passes baselineUSD; we store the baseline + track movement over time. This is
+// the "Search" half — the platform watches the fare so the customer knows when
+// their savings are enough, WITHOUT holding a seat.
+export function setPotWatch(potId, userId, { origin, destination, departISO, returnISO = null, pax = 1, baselineUSD } = {}) {
+  const pot = db.travelPots.find((p) => p.id === potId);
+  if (!pot) return { ok: false, error: 'pot-not-found' };
+  if (pot.ownerId !== userId) return { ok: false, error: 'not-your-pot' };
+  if (!departISO) return { ok: false, error: 'depart-required' };
+  if (!(baselineUSD > 0)) return { ok: false, error: 'fare-unavailable', message: 'We could not price that route/date right now — try a nearby date or a major city.' };
+  const base = round2(baselineUSD);
+  pot.watch = {
+    origin: String(origin || '').slice(0, 60), destination: String(destination || '').slice(0, 60),
+    departISO, returnISO: returnISO || null, pax: Math.max(1, Math.min(9, Math.round(Number(pax) || 1))),
+    baselineUSD: base, baselineAt: nowISO(),
+    currentUSD: base, lowestSeenUSD: base, movementPct: 0,
+    lastCheckedAt: nowISO(), notifiedAffordable: false,
+  };
+  recordAudit({ actor: userId, role: 'consumer', action: 'pot.watch-set', entity: 'pot', entityId: pot.id, summary: `${origin}→${destination} ${departISO}` });
+  return { ok: true, pot: potView(pot) };
+}
+// Record a fresh live fare for a watched pot: update movement, remember the
+// lowest ever seen, and notify the customer the FIRST time their balance covers
+// the live fare (idempotent; re-arms only if the fare climbs back out of reach).
+export function recordPotFare(potId, currentUSD) {
+  const pot = db.travelPots.find((p) => p.id === potId);
+  if (!pot || !pot.watch || !(currentUSD > 0)) return { ok: false };
+  const w = pot.watch;
+  w.currentUSD = round2(currentUSD);
+  w.lowestSeenUSD = round2(Math.min(w.lowestSeenUSD || currentUSD, currentUSD));
+  w.movementPct = w.baselineUSD > 0 ? Math.round(((currentUSD - w.baselineUSD) / w.baselineUSD) * 1000) / 10 : 0;
+  w.lastCheckedAt = nowISO();
+  const affordableNow = (pot.balanceUSD || 0) >= currentUSD;
+  let notified = null;
+  if (affordableNow && !w.notifiedAffordable) {
+    w.notifiedAffordable = true; notified = 'affordable';
+    pushNotification(pot.ownerId, { type: 'success', icon: '🟢', title: 'Your savings now cover this flight', body: `"${pot.name}" now covers the live fare ($${Math.round(currentUSD)}). Convert your savings and book — remember, no seat is held until you buy.` });
+  } else if (!affordableNow && w.notifiedAffordable && (pot.balanceUSD || 0) < currentUSD * 0.98) {
+    w.notifiedAffordable = false; // fare climbed back out of reach — allow a future re-notify
+  }
+  return { ok: true, pot: potView(pot), affordableNow, notified };
+}
+export function potsWithWatches() {
+  return db.travelPots.filter((p) => p.watch && p.status !== 'converted');
+}
 
 // ---- Search cache: the database answers before paid AI ------------------------
 // Popular routes, destination packages, visa rules and previous AI answers are

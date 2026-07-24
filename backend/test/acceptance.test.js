@@ -29,7 +29,8 @@ import {
   getModuleFlags, setModuleFlags,
   clientMoneyLedger, normalizeFlexProfile, secureDeadlineSweep,
 } from '../src/store.js';
-import { routeFareRisk } from '../src/price-dive.js';
+import { routeFareRisk, scanPotFareUSD } from '../src/price-dive.js';
+import { setPotWatch, recordPotFare } from '../src/store.js';
 import { bookingDocument, bookingPdf } from '../src/documents.js';
 import { isBookingFullyPaid, refundOutcome, planPaid } from '../src/instalments.js';
 import { bookingExposure, portfolioExposure, flightSecuringPlan, lockMarginPct } from '../src/pricelock.js';
@@ -1114,6 +1115,53 @@ test('WALLET-2: turned ON, a pot saves and converts to Travel Credit — still n
   } finally {
     setModuleFlags({ savewallet: false }); // leave it OFF, as it ships
   }
+});
+
+// ============================================================================
+// WATCH — Save & Search per-pot price monitoring (the "Search" half).
+// ============================================================================
+test('WATCH-1: a pot fare is priced from the real scan engine, and monitoring notifies when savings cover it', async () => {
+  setModuleFlags({ savewallet: true });
+  try {
+    // The scanner prices a real route from the same engine the planner uses.
+    const fare = scanPotFareUSD({ origin: 'London', destination: 'Dubai', departISO: '2027-09-10', pax: 1 });
+    assert.ok(typeof fare === 'number' && fare > 0, 'a real bookable floor fare is returned');
+
+    const u = mkUser();
+    const pot = (await api('POST', '/api/pots', { userId: u.id, body: { name: 'Dubai fund', targetUSD: 5000 } })).json.pot;
+    // Set a watch via the HTTP route (server prices the baseline live).
+    const w = await api('POST', `/api/pots/${pot.id}/watch`, { userId: u.id, body: { origin: 'London', destination: 'Dubai', departISO: '2027-09-10' } });
+    assert.equal(w.status, 200);
+    assert.ok(w.json.pot.watch.baselineUSD > 0, 'baseline captured');
+    assert.equal(w.json.pot.watch.notifiedAffordable, false);
+
+    // Not yet affordable (empty pot) → no "you can afford it" alert.
+    let r = recordPotFare(pot.id, w.json.pot.watch.baselineUSD);
+    assert.equal(r.affordableNow, false);
+    // Simulate the fare dropping below what they've saved → alert fires once.
+    // (Fund the pot above a low fare, then record that low fare.)
+    await api('POST', `/api/pots/${pot.id}/contribute`, { userId: u.id, body: { amountUSD: 400 } });
+    r = recordPotFare(pot.id, 100); // fare now well under the ~$394 saved
+    assert.equal(r.affordableNow, true);
+    assert.equal(r.notified, 'affordable', 'alerted the first time savings cover the fare');
+    const notifs = (await api('GET', '/api/notifications', { userId: u.id })).json.notifications.filter((n) => /cover this flight/i.test(n.title || ''));
+    assert.equal(notifs.length, 1, 'exactly one affordability alert');
+    // Idempotent — a second identical reading does not re-alert.
+    const r2 = recordPotFare(pot.id, 100);
+    assert.equal(r2.notified, null);
+    assert.ok(r2.pot.watch.movementPct < 0, 'fare movement tracked as a drop from baseline');
+  } finally {
+    setModuleFlags({ savewallet: false });
+  }
+});
+
+test('WATCH-2: the watch route is gated OFF with the rest of the wallet', async () => {
+  assert.equal(getModuleFlags().savewallet, false);
+  const u = mkUser();
+  // Even with a (pre-made) pot id, the route refuses while the module is off.
+  const r = await api('POST', '/api/pots/anything/watch', { userId: u.id, body: { origin: 'London', destination: 'Dubai', departISO: '2027-09-10' } });
+  assert.equal(r.status, 403);
+  assert.equal(r.json.error, 'module-off');
 });
 
 test('shutdown: close server', async () => {

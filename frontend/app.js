@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v170';
+const APP_BUILD = 'v171';
 
 const state = {
   context: null,
@@ -5863,6 +5863,17 @@ window.openSaveWallet = async () => {
   let d; try { d = await api('/api/pots'); } catch { toast('Could not load your wallet.'); return; }
   const pots = d.pots || [];
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const watchHTML = (p) => {
+    const w = p.watch; if (!w) return '';
+    const affordable = (p.balanceUSD || 0) >= w.currentUSD;
+    const move = w.movementPct > 0 ? `<span style="color:#ff8a8a">▲ ${w.movementPct}%</span>` : w.movementPct < 0 ? `<span style="color:var(--green)">▼ ${Math.abs(w.movementPct)}%</span>` : '<span class="muted">flat</span>';
+    return `<div class="card pad" style="margin-top:8px;background:rgba(255,255,255,.02)">
+      <div class="kv" style="font-size:12.5px"><span>✈️ ${esc(w.origin)} → ${esc(w.destination)} <span class="muted">${esc(w.departISO)}${w.returnISO ? ' → ' + esc(w.returnISO) : ' · one-way'}</span></span><span>${usd(w.currentUSD)} ${move}</span></div>
+      <div class="kv" style="font-size:11.5px"><span class="muted">watched from ${usd(w.baselineUSD)} · lowest seen ${usd(w.lowestSeenUSD)}</span><span>${affordable ? '<strong style="color:var(--green)">🟢 you can afford this now</strong>' : `${usd(Math.max(0, w.currentUSD - p.balanceUSD))} more to go`}</span></div>
+      ${affordable && p.balanceUSD > 0 ? `<button class="btn btn-gold btn-sm" style="margin-top:8px" onclick="potConvert('${esc(p.id)}')">Convert & book now</button>` : ''}
+      <div class="muted" style="font-size:10.5px;margin-top:4px">Monitoring only — no fare or seat is held until you buy. <a onclick="potWatchForm('${esc(p.id)}')" style="cursor:pointer;text-decoration:underline">change</a></div>
+    </div>`;
+  };
   const rows = pots.length ? pots.map((p) => `
     <div class="card pad" style="margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;gap:10px"><strong>${esc(p.name)}</strong><span class="muted" style="font-size:12px">${esc(p.goal || p.destination || '')}</span></div>
@@ -5873,6 +5884,8 @@ window.openSaveWallet = async () => {
         <button class="btn btn-ghost btn-sm" onclick="potContribute('${esc(p.id)}')">Add</button>
         ${p.balanceUSD > 0 ? `<button class="btn btn-gold btn-sm" onclick="potConvert('${esc(p.id)}')">Convert to Travel Credit</button>` : ''}
       </div>`}
+      ${watchHTML(p)}
+      ${p.status !== 'converted' && !p.watch ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="potWatchForm('${esc(p.id)}')">✈️ Monitor a flight</button>` : ''}
     </div>`).join('') : '<p class="muted" style="font-size:13px">No pots yet — start one below.</p>';
   modal(`<span class="eyebrow">💰 Save & Search</span>
     <div class="card pad" style="border-color:rgba(255,176,32,.4);margin:8px 0 14px">
@@ -5904,6 +5917,27 @@ window.potConvert = async (id) => {
   if (!confirm('Convert this pot balance to Travel Credit you can spend at checkout?\n\nSaving is not a booking — no flight is held until you actually buy.')) return;
   try { const r = await api(`/api/pots/${id}/convert`, { method: 'POST', body: '{}' }); if (r.user) setUser(r.user); toast(`✓ £${(r.creditGbp || 0).toFixed(2)} is now Travel Credit.`, 6000); } catch (e) { toast(e?.message || 'Failed.'); return; }
   openSaveWallet();
+};
+window.potWatchForm = (id) => {
+  modal(`<span class="eyebrow">✈️ Monitor a flight</span>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 10px">We'll watch this route and tell you the moment your savings cover the live fare. Monitoring is <strong>not a booking</strong> — no seat or fare is held until you buy.</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input class="in" id="w-origin" placeholder="From (city, e.g. London)">
+      <input class="in" id="w-dest" placeholder="To (city, e.g. Kinshasa)">
+      <label class="muted" style="font-size:12px">Departure date</label>
+      <input class="in" id="w-depart" type="date">
+      <label class="muted" style="font-size:12px">Return date (optional — leave blank for one-way)</label>
+      <input class="in" id="w-return" type="date">
+      <button class="btn btn-gold btn-sm" onclick="potSetWatch('${esc(id)}')">Start monitoring</button>
+    </div>`);
+};
+window.potSetWatch = async (id) => {
+  const origin = $('#w-origin')?.value?.trim(), destination = $('#w-dest')?.value?.trim();
+  const departISO = $('#w-depart')?.value, returnISO = $('#w-return')?.value || null;
+  if (!origin || !destination || !departISO) { toast('From, to and a departure date, please.'); return; }
+  try { await api(`/api/pots/${id}/watch`, { method: 'POST', body: JSON.stringify({ origin, destination, departISO, returnISO }) }); }
+  catch (e) { toast(e?.message || 'Could not price that route — try a nearby date or a major city.'); return; }
+  toast("✓ Monitoring started — we'll alert you when your savings are enough.", 6000); openSaveWallet();
 };
 
 // ---- Admin: Modules on / off (VisaOS · Corporate · Embassy) ----------------

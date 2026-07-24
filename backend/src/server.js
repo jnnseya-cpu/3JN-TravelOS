@@ -34,7 +34,7 @@ import {
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, applyDepositCreditToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
   clientMoneyLedger, secureDeadlineSweep,
-  createTravelPot, contributeToPot, listTravelPots, getTravelPot, convertPotToCredit, POT_DISCLOSURE, reviewHostListing, adminUserHostOverview,
+  createTravelPot, contributeToPot, listTravelPots, getTravelPot, convertPotToCredit, POT_DISCLOSURE, setPotWatch, recordPotFare, potsWithWatches, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest, claimStripeEvent,
   useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP,
   searchToBookStats,
@@ -73,6 +73,7 @@ import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emi
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
+import { scanPotFareUSD } from './price-dive.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
 import { applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, flightSecuringPlan, portfolioExposure, bookingExposure, lockMarginPct, autoFrontCapGbp } from './pricelock.js';
@@ -198,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-24-save-search-wallet-v170';
+const BUILD_TAG = '2026-07-24-pot-price-monitoring-v171';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1373,6 +1374,21 @@ app.post('/api/pots/:id/convert', safe((req, res) => {
   if (!user) return res.status(401).json({ error: 'auth-required' });
   if (!requireSaveWallet(req, res)) return;
   const r = convertPotToCredit(req.params.id, user.id);
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
+}));
+// Attach a watched flight to a pot — the "Search" half. We price the route live
+// (same scan engine the planner uses) to set the baseline; a daily sweep then
+// tracks movement and tells the customer when their savings cover the fare.
+app.post('/api/pots/:id/watch', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  if (!requireSaveWallet(req, res)) return;
+  const { origin, destination, departISO, returnISO, pax } = req.body || {};
+  if (!origin || !destination || !departISO) return res.status(400).json({ error: 'route-required', message: 'Give a from city, a to city and a departure date.' });
+  const baselineUSD = scanPotFareUSD({ origin, destination, departISO, returnISO, pax });
+  if (!(baselineUSD > 0)) return res.status(422).json({ error: 'fare-unavailable', message: 'We could not price that route/date right now — try a nearby date or a major city.' });
+  const r = setPotWatch(req.params.id, user.id, { origin, destination, departISO, returnISO, pax, baselineUSD });
   if (!r.ok) return res.status(400).json(r);
   res.json(r);
 }));
@@ -3013,6 +3029,20 @@ async function sendReviewInvites(today) {
   }
   return { invited };
 }
+// Re-price every watched Save & Search pot from the live scan engine and let the
+// store record movement + notify when savings cover the fare. Pure local compute.
+function sweepPotWatches() {
+  const pots = potsWithWatches();
+  let refreshed = 0, affordable = 0;
+  for (const pot of pots) {
+    try {
+      const w = pot.watch;
+      const fare = scanPotFareUSD({ origin: w.origin, destination: w.destination, departISO: w.departISO, returnISO: w.returnISO, pax: w.pax });
+      if (fare > 0) { const r = recordPotFare(pot.id, fare); refreshed++; if (r.notified === 'affordable') affordable++; }
+    } catch { /* one bad route never breaks the sweep */ }
+  }
+  return { watched: pots.length, refreshed, affordable };
+}
 async function runInstalmentEnforcement(today) {
   const results = enforceInstalments(today);
   for (const a of results.actions || []) {
@@ -3039,6 +3069,9 @@ async function runInstalmentEnforcement(today) {
   // Securing-deadline sweep — escalate price-locked flights before they die
   // silently (Rule 4). Best-effort; never breaks the instalment sweep.
   try { results.securing = secureDeadlineSweep(today); } catch { /* best-effort */ }
+  // Save & Search price monitoring — re-price every watched pot and alert the
+  // customer the first time their savings cover the live fare. Best-effort.
+  try { results.potWatches = sweepPotWatches(); } catch { /* best-effort */ }
   return results;
 }
 // Enforcement sweep: reminders (14/7/3/1/0 days), the 3-day cancellation warning,
@@ -3054,7 +3087,7 @@ app.get('/api/cron/instalments', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   const results = await runInstalmentEnforcement();
-  res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing });
+  res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing, potWatches: results.potWatches });
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved
