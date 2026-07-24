@@ -2476,6 +2476,63 @@ export function revenueSnapshot() {
   };
 }
 
+// ---- Client-money safeguarding ledger (Product-C §13 + price-lock reserve) ----
+// Honest separation of CUSTOMER money we are holding (a liability — owed back or
+// to be applied to a ticket) from money 3JN has actually EARNED. Pre-ticket
+// booking payments and travel-pot balances are customer funds that must be
+// SAFEGUARDED (held in trust, not spent as operating cash); only issued-ticket
+// commission/fees are recognised as revenue. Amounts in USD to match the rest of
+// the money model; the frontend formats to the operator's currency.
+export function priceLockReserve() {
+  // Doctrine: 50% of every price-lock fee is ring-fenced to pay capped guarantee
+  // claims (a micro-insurance float). The price-lock PRODUCT is gated OFF until
+  // FCA/PTR counsel signs off, so until real locks are sold this is zero — the
+  // structure is ready to light up the moment lock fees start flowing.
+  const RESERVE_RATE = 0.5;
+  const locks = db.priceLocks || [];
+  const feesUSD = round2(locks.reduce((s, l) => s + (l.feeUSD || 0), 0));
+  const claimsPaidUSD = round2(locks.reduce((s, l) => s + (l.claimPaidUSD || 0), 0));
+  const requiredUSD = Math.max(0, round2(feesUSD * RESERVE_RATE - claimsPaidUSD));
+  return { reserveRate: RESERVE_RATE, lockFeesUSD: feesUSD, claimsPaidUSD, requiredUSD, heldUSD: requiredUSD };
+}
+export function clientMoneyLedger() {
+  const bookings = [...db.bookings.values()];
+  let paidHeldUSD = 0;    // paid on bookings NOT yet ticketed — restricted
+  let paidSettledUSD = 0; // paid on ticketed bookings — delivered to the airline
+  for (const b of bookings) {
+    const totalUSD = b.option?.totalUSD || 0;
+    const totalLocal = b.option?.pricing?.local?.total || 0;
+    const paidLocal = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    if (totalUSD <= 0 || totalLocal <= 0 || paidLocal <= 0) continue;
+    const paidUSD = round2(Math.min(totalUSD, totalUSD * (paidLocal / totalLocal)));
+    if (b.fulfilment?.ticketing === 'issued') paidSettledUSD += paidUSD; else paidHeldUSD += paidUSD;
+  }
+  paidHeldUSD = round2(paidHeldUSD); paidSettledUSD = round2(paidSettledUSD);
+  const potHeldUSD = round2(db.travelPots.reduce((s, p) => s + (p.balanceUSD || 0), 0));
+  const potFeesUSD = round2(db.travelPots.reduce((s, p) => s + (p.feesCollectedUSD || 0), 0));
+  const commissionUSD = round2(bookings.reduce((s, b) => s + (b.option?.pricing?.revenue?.commissionUSD || 0), 0));
+
+  const restrictedUSD = round2(paidHeldUSD + potHeldUSD); // customer money held pre-ticket — MUST be safeguarded
+  const earnedUSD = round2(commissionUSD + potFeesUSD);   // recognised 3JN revenue
+  const grossReceivedUSD = round2(paidHeldUSD + paidSettledUSD + potHeldUSD + potFeesUSD);
+  const reserve = priceLockReserve();
+  return {
+    grossReceivedUSD,     // total customer money that has flowed in
+    restrictedUSD,        // owed/held until a ticket issues — safeguard this, don't spend it
+    earnedUSD,            // 3JN's own money (commission + pot fees)
+    reserve,              // segregated price-lock claim float (0 until the product is live)
+    safeguarded: reserve.heldUSD + 1e-6 >= reserve.requiredUSD,
+    breakdown: {
+      preTicketBookingPaymentsUSD: paidHeldUSD,
+      travelPotBalancesUSD: potHeldUSD,
+      settledTicketedPaymentsUSD: paidSettledUSD,
+      commissionEarnedUSD: commissionUSD,
+      potFeesEarnedUSD: potFeesUSD,
+    },
+    note: 'Restricted funds are customer money owed until a ticket is issued; hold them in a safeguarded/trust arrangement, never as operating cash.',
+  };
+}
+
 // ---- Profitability Dashboard (spec §17) -------------------------------------
 // The admin's real-time money view: ACUs sold vs burned, AI costs, and every
 // revenue stream side by side — computed live from the actual ledgers, never

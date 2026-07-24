@@ -27,6 +27,7 @@ import {
   cancelBookingWithRefund, redeemTravelCredit,
   createTestimonial, listTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags,
+  clientMoneyLedger,
 } from '../src/store.js';
 import { bookingDocument, bookingPdf } from '../src/documents.js';
 import { isBookingFullyPaid, refundOutcome, planPaid } from '../src/instalments.js';
@@ -987,6 +988,38 @@ test('CORP-5: corporate module ships OFF by default and the operator toggle roun
   assert.equal(setModuleFlags({ corporate: true }).corporate, true, 'operator flips it ON');
   assert.equal(getModuleFlags().corporate, true, 'ON state persists');
   assert.equal(setModuleFlags({ corporate: false }).corporate, false, 'and back OFF cleanly');
+});
+
+// ============================================================================
+// SAFEGUARD — client-money ledger (§13): customer funds held (restricted) are
+// separated from earned 3JN revenue; a deposit on an un-ticketed booking is a
+// liability, not income.
+// ============================================================================
+test('SAFEGUARD-1: a deposit on an un-ticketed booking counts as restricted customer money, not revenue', async () => {
+  const before = clientMoneyLedger();
+  const u = mkUser();
+  // Deposit-only instalment booking, live basis, NOT ticketed.
+  const b = createBooking({ option: livePkgOption({ total: 1000 }), instalment: { engine: 'ai-smart', deposit: 200, schedule: [{ amount: 800, due: '2027-06-01', status: 'pending' }], departISO: '2027-09-10', symbol: '£' }, userId: u.id, lead: { fullName: 'QA', email: u.email } });
+  recordPayment(b.id, { type: 'deposit', amount: 200, method: 'card', reference: `dep_${b.id}` });
+  const after = clientMoneyLedger();
+  // The £200 deposit must raise RESTRICTED (held) money, not earned revenue.
+  assert.ok(after.restrictedUSD > before.restrictedUSD, 'deposit increased restricted customer funds');
+  assert.ok(after.grossReceivedUSD > before.grossReceivedUSD, 'gross received went up');
+  // The admin endpoint returns the same honest shape and is admin-gated.
+  const a = admin();
+  const r = await api('GET', '/api/admin/client-money', { userId: a.id });
+  assert.equal(r.status, 200);
+  assert.equal(typeof r.json.ledger.restrictedUSD, 'number');
+  assert.ok(r.json.ledger.note && /safeguard/i.test(r.json.ledger.note));
+  assert.equal((await api('GET', '/api/admin/client-money', { userId: u.id })).status, 403, 'consumer refused');
+});
+
+test('SAFEGUARD-2: price-lock reserve is zero until the product is live, and the ledger reports it safeguarded', async () => {
+  const l = clientMoneyLedger();
+  assert.equal(l.reserve.requiredUSD, 0, 'no lock fees yet → no reserve required');
+  assert.equal(l.reserve.heldUSD, 0);
+  assert.equal(l.safeguarded, true, 'a £0 requirement is trivially fully funded');
+  assert.equal(l.reserve.reserveRate, 0.5, 'doctrine: 50% of lock fees ring-fenced');
 });
 
 test('shutdown: close server', async () => {

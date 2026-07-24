@@ -33,6 +33,7 @@ import {
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, applyDepositCreditToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
+  clientMoneyLedger,
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest, claimStripeEvent,
   useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP,
@@ -197,7 +198,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-23-honesty-wording-v166';
+const BUILD_TAG = '2026-07-24-client-money-ledger-v167';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4586,6 +4587,13 @@ app.get('/api/white-label/payout', safe((req, res) => {
 app.get('/api/admin/revenue', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json({ snapshot: revenueSnapshot(), revenueStreams: REVENUE_STREAMS });
+}));
+
+// Client-money safeguarding view: customer funds held (restricted) vs earned
+// 3JN revenue vs the ring-fenced price-lock reserve. Honest §13 accounting.
+app.get('/api/admin/client-money', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ ledger: clientMoneyLedger() });
 }));
 
 app.get('/api/admin/overview', safe((req, res) => {

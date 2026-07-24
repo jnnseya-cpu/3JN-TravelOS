@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v166';
+const APP_BUILD = 'v167';
 
 const state = {
   context: null,
@@ -3142,6 +3142,7 @@ async function renderAdmin() {
       <button class="btn btn-ghost btn-sm" onclick="manageUser()">👤 Manage user (ACU / membership)</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openOpsQueue()">🎫 Ops queue</button>
       <button class="btn btn-sm btn-ghost" onclick="openExposure()">🔒 Lock exposure</button>
+      <button class="btn btn-sm btn-ghost" onclick="openClientMoney()" title="Customer money we're holding (must be safeguarded) vs 3JN's earned revenue vs the price-lock reserve.">💷 Client money</button>
       <button class="btn btn-sm btn-ghost" onclick="openTestimonialModeration()">💬 Review testimonials</button>
       <button class="btn btn-sm btn-ghost" onclick="openModuleToggles()">🧩 Modules on / off</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
@@ -3297,6 +3298,38 @@ const OPS_INTENT = {
   'ops-hotel': ['🏨 Hotel booking', 'var(--blue-bright)'],
   'contact-form': ['✉️ Contact form', 'var(--muted)'],
 };
+// Client-money safeguarding view (§13): customer funds we're HOLDING (must be
+// safeguarded, not spent) vs 3JN's EARNED revenue vs the ring-fenced price-lock
+// reserve. Keeps the operator honest about whose money is whose.
+window.openClientMoney = async () => {
+  let d;
+  try { d = await api('/api/admin/client-money'); } catch { toast('Admin only.'); return; }
+  const l = d.ledger || {};
+  const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const b = l.breakdown || {};
+  const r = l.reserve || {};
+  modal(`<span class="eyebrow">💷 Client money — safeguarding view</span>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 12px">${esc(l.note || '')}</p>
+    <div class="card pad" style="border-color:rgba(255,176,32,.4)">
+      <div class="kv"><span><strong>Restricted — customer funds held</strong> <span class="muted" style="font-size:11px">safeguard, don't spend</span></span><span style="color:#ffb020"><strong>${usd(l.restrictedUSD)}</strong></span></div>
+      <div class="kv" style="font-size:12px"><span class="muted">· pre-ticket booking payments</span><span class="muted">${usd(b.preTicketBookingPaymentsUSD)}</span></div>
+      <div class="kv" style="font-size:12px"><span class="muted">· travel-pot balances</span><span class="muted">${usd(b.travelPotBalancesUSD)}</span></div>
+    </div>
+    <div class="card pad" style="margin-top:10px">
+      <div class="kv"><span><strong>Earned 3JN revenue</strong> <span class="muted" style="font-size:11px">yours to keep</span></span><span style="color:var(--green)"><strong>${usd(l.earnedUSD)}</strong></span></div>
+      <div class="kv" style="font-size:12px"><span class="muted">· commission on issued tickets</span><span class="muted">${usd(b.commissionEarnedUSD)}</span></div>
+      <div class="kv" style="font-size:12px"><span class="muted">· travel-pot processing fees</span><span class="muted">${usd(b.potFeesEarnedUSD)}</span></div>
+    </div>
+    <div class="card pad" style="margin-top:10px">
+      <div class="kv"><span>Gross customer money received</span><span>${usd(l.grossReceivedUSD)}</span></div>
+      <div class="kv"><span>Settled (ticketed) payments</span><span>${usd(b.settledTicketedPaymentsUSD)}</span></div>
+    </div>
+    <div class="card pad" style="margin-top:10px">
+      <div class="kv"><span><strong>Price-lock reserve</strong> <span class="muted" style="font-size:11px">${(r.reserveRate || 0.5) * 100}% of lock fees, ring-fenced</span></span><span>${usd(r.heldUSD)} / ${usd(r.requiredUSD)}</span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">${l.safeguarded ? '🟢 reserve fully funded' : '⚠️ reserve underfunded'} · price-lock product is gated off until FCA/PTR counsel signs off, so this stays £0 until real locks are sold.</div>
+    </div>`);
+};
+
 // Guaranteed Holiday Lock — the operator's exposure dashboard. Shows capital at
 // risk (fronted / fare-movement), deposits cushioning it, and the price-locked
 // flights waiting to be secured. Honest risk management, not magic.
