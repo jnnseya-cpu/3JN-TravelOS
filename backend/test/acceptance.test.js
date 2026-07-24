@@ -27,8 +27,9 @@ import {
   cancelBookingWithRefund, redeemTravelCredit,
   createTestimonial, listTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags,
-  clientMoneyLedger,
+  clientMoneyLedger, normalizeFlexProfile,
 } from '../src/store.js';
+import { routeFareRisk } from '../src/price-dive.js';
 import { bookingDocument, bookingPdf } from '../src/documents.js';
 import { isBookingFullyPaid, refundOutcome, planPaid } from '../src/instalments.js';
 import { bookingExposure, portfolioExposure, flightSecuringPlan, lockMarginPct } from '../src/pricelock.js';
@@ -1020,6 +1021,34 @@ test('SAFEGUARD-2: price-lock reserve is zero until the product is live, and the
   assert.equal(l.reserve.heldUSD, 0);
   assert.equal(l.safeguarded, true, 'a £0 requirement is trivially fully funded');
   assert.equal(l.reserve.reserveRate, 0.5, 'doctrine: 50% of lock fees ring-fenced');
+});
+
+// ============================================================================
+// RISK — route/fare risk engine + acceptable-alternatives pre-authorisation.
+// ============================================================================
+test('RISK-1: route/fare risk scores higher for a soon+rising+peak departure than a far, stable one', async () => {
+  const soon = routeFareRisk({ intent: { dates: { checkIn: '2027-12-24' } }, prediction: { driftPct: 9 }, daysToDeparture: 5 });
+  const far = routeFareRisk({ intent: { dates: { checkIn: '2027-02-14' } }, prediction: { driftPct: 0 }, daysToDeparture: 200 });
+  assert.ok(soon.score > far.score, 'imminent peak rising fare is riskier');
+  assert.equal(soon.band, 'critical');
+  assert.ok(['low', 'medium'].includes(far.band));
+  assert.match(soon.disclaimer, /not a guarantee/i, 'never sold as a guarantee');
+  assert.ok(soon.factors.length >= 2, 'explains the drivers');
+});
+
+test('RISK-2: acceptable-alternatives profile is validated/clamped and stored on the booking', async () => {
+  // Out-of-range values are clamped; an empty profile stores nothing.
+  const p = normalizeFlexProfile({ dateFlexDays: 9, maxFareIncreasePct: 999, maxStops: 7, nearbyAirports: true, autoPurchaseWithinLimits: true });
+  assert.equal(p.dateFlexDays, 3, 'date flex capped at ±3');
+  assert.equal(p.maxFareIncreasePct, 25, 'fare-increase tolerance capped at 25%');
+  assert.equal(p.maxStops, 3);
+  assert.equal(normalizeFlexProfile({}), null, 'an empty profile is not stored');
+  assert.equal(normalizeFlexProfile(null), null);
+  // It rides through createBooking onto the booking record.
+  const u = mkUser();
+  const b = createBooking({ option: livePkgOption({ total: 1000 }), userId: u.id, lead: { fullName: 'QA', email: u.email }, flexProfile: { dateFlexDays: 2, nearbyAirports: true, maxFareIncreasePct: 10 } });
+  assert.equal(getBooking(b.id).flexProfile.dateFlexDays, 2);
+  assert.equal(getBooking(b.id).flexProfile.nearbyAirports, true);
 });
 
 test('shutdown: close server', async () => {

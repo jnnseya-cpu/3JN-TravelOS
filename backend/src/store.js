@@ -1370,7 +1370,28 @@ const GATEWAY = {
   airtel: 'bitripay-mobilemoney', orange: 'bitripay-mobilemoney', africell: 'bitripay-mobilemoney',
 };
 
-export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false, sourceDealId = null, confirmedPrice = false }) {
+// Acceptable-alternatives pre-authorisation (flight-security doctrine, Agent 6):
+// the boundaries within which 3JN may re-protect a customer onto a substitute
+// flight if the original changes/sells out before ticketing — WITHOUT a fresh
+// approval. Nothing is auto-purchased unless autoPurchaseWithinLimits is true.
+export function normalizeFlexProfile(input) {
+  if (!input || typeof input !== 'object') return null;
+  const clampInt = (v, lo, hi, d) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+  const p = {
+    dateFlexDays: clampInt(input.dateFlexDays, 0, 3, 0),                 // ±0..3 days
+    nearbyAirports: !!input.nearbyAirports,
+    maxFareIncreasePct: clampInt(input.maxFareIncreasePct, 0, 25, 0),    // accept up to X% higher
+    maxStops: clampInt(input.maxStops, 0, 3, 2),
+    directOnly: !!input.directOnly,
+    preferredAirlines: Array.isArray(input.preferredAirlines) ? input.preferredAirlines.slice(0, 8).map((a) => String(a).slice(0, 40)) : [],
+    autoPurchaseWithinLimits: !!input.autoPurchaseWithinLimits,          // explicit opt-in to auto-rebook within these limits
+    setAt: nowISO(),
+  };
+  // A meaningful profile must actually widen something; otherwise store nothing.
+  const meaningful = p.dateFlexDays > 0 || p.nearbyAirports || p.maxFareIncreasePct > 0 || p.directOnly || p.preferredAirlines.length > 0;
+  return meaningful ? p : null;
+}
+export function createBooking({ quoteId, option, instalment, userId, paymentMethod = 'card', lead = null, travellers = null, specialRequests = [], hotelRequests = [], payment = null, protection = null, vendorCode = null, stripeLive = false, sourceDealId = null, confirmedPrice = false, flexProfile = null }) {
   // Sanitise the full passenger manifest (every traveller's name/DOB/passport) —
   // Duffel needs each real name to ticket a group/family flight. Falls back to
   // just the lead when a manifest wasn't supplied.
@@ -1445,6 +1466,7 @@ export function createBooking({ quoteId, option, instalment, userId, paymentMeth
     status: 'confirmed',
     payments: [],
     priceGuard: { active: true, baselineUSD: option.totalUSD, events: [] },
+    flexProfile: normalizeFlexProfile(flexProfile), // pre-authorised reprotection boundaries (Agent 6)
     // AI Booking Protection™: the deposit reserves the booking with the
     // supplier and FREEZES the quoted price for the whole instalment period.
     priceLock: instalment?.engine === 'ai-smart'

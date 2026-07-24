@@ -261,6 +261,50 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false,
 // Pre-booking price-direction forecast: scans the fare curve around the chosen
 // departure (±5 days) and reads demand pressure into a book-now / wait signal.
 // Deterministic (seeded scans) — the same trip always predicts the same way.
+// Diaspora / holiday peak detector — these dates price higher and sell out first.
+function departurePeak(iso) {
+  if (!iso) return null;
+  const d = new Date(iso); if (isNaN(d)) return null;
+  const m = d.getUTCMonth() + 1, day = d.getUTCDate();
+  if ((m === 12 && day >= 10) || (m === 1 && day <= 6)) return 'Christmas/New Year';
+  if (m === 7 || m === 8) return 'summer holiday';
+  if ((m === 3 && day >= 20) || (m === 4 && day <= 20)) return 'Easter';
+  return null;
+}
+// Composite ROUTE & FARE RISK — an honest decision aid (never a guarantee) that
+// blends fare-movement direction, days-to-departure, seasonal demand peaks and
+// itinerary scarcity into a 0-100 score + a book-now-vs-wait action. Mirrors the
+// flight-security doctrine's risk levels (low → save / critical → issue now).
+export function routeFareRisk({ intent, prediction, daysToDeparture, directAvailable } = {}) {
+  const dep = intent?.dates?.checkIn;
+  let score = 20; const factors = [];
+  const drift = prediction?.driftPct;
+  if (typeof drift === 'number') {
+    if (drift > 6) { score += 30; factors.push(`fares trending +${drift}%`); }
+    else if (drift > 2) { score += 18; factors.push(`fares trending +${drift}%`); }
+    else if (drift < -2) { score -= 8; factors.push(`fares softening ${drift}%`); }
+  }
+  const d = Number(daysToDeparture);
+  if (Number.isFinite(d)) {
+    if (d <= 7) { score += 30; factors.push('under a week to departure'); }
+    else if (d <= 21) { score += 18; factors.push('under three weeks out'); }
+    else if (d <= 60) { score += 8; factors.push('under two months out'); }
+    else { score -= 5; }
+  }
+  const peak = departurePeak(dep);
+  if (peak) { score += 16; factors.push(`${peak} peak demand`); }
+  if (directAvailable === false) { score += 6; factors.push('connections only on this route'); }
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const band = score >= 80 ? 'critical' : score >= 60 ? 'high' : score >= 35 ? 'medium' : 'low';
+  const ACTION = {
+    low: { label: 'Low', action: 'Room to save toward this trip — the Price Guard keeps watching the fare after you book.' },
+    medium: { label: 'Medium', action: 'Ticket sooner rather than later — this fare is likelier to rise than fall.' },
+    high: { label: 'High', action: 'Fund and ticket soon — this route/date is moving; waiting risks a higher price.' },
+    critical: { label: 'Critical', action: 'Book and issue now — scarce seats / peak date; the fare can jump between searches.' },
+  };
+  return { agent: 'Route & Fare Risk Engine', score, band, ...ACTION[band], factors, disclaimer: 'A decision aid based on fare-movement and demand patterns — not a guarantee that prices will rise or fall.' };
+}
+
 export function farePrediction({ intent, dest, origin }) {
   if (!intent?.dates?.checkIn) return null;
   const base = floorOf(scanFlights(intent, dest, origin));

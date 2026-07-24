@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v167';
+const APP_BUILD = 'v168';
 
 const state = {
   context: null,
@@ -850,6 +850,7 @@ function renderOptions(data) {
         </div>
       </div>
       ${data.visa?.ok ? `<div class="pill" style="margin:14px 0 0;cursor:pointer" onclick="nav('visaos')"><span class="dot" style="background:${data.visa.approvalProbability >= 85 ? 'var(--green)' : 'var(--gold)'}"></span> 3JN VisaOS · approval probability <strong style="margin:0 4px">${data.visa.approvalProbability}%</strong> · ${data.visa.visaRequired ? 'visa required' : 'visa-free'} · decision in ~${data.visa.typicalDecisionMinutes} min</div>` : ''}
+      ${data.routeRisk ? `<div class="pill" style="margin:14px 0 0" title="${esc(data.routeRisk.disclaimer)}"><span class="dot" style="background:${({ low: 'var(--green)', medium: 'var(--gold)', high: '#ff9f45', critical: '#ff6b6b' })[data.routeRisk.band] || 'var(--gold)'}"></span> Fare risk · <strong style="margin:0 4px">${esc(data.routeRisk.label)}</strong> · ${esc(data.routeRisk.action)}${(data.routeRisk.factors || []).length ? ` <span class="muted" style="font-size:11px">(${data.routeRisk.factors.map(esc).join(' · ')})</span>` : ''}</div>` : ''}
     </div>`;
 
   const scanRows = Object.entries(data.scanSummary).map(([k, s]) =>

@@ -10,7 +10,7 @@ import { parseIntent } from './intent.js';
 import { findDestination, originForCountry, resolveOrigin, proposeDestinations } from './destinations.js';
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
-import { deepPriceDive, farePrediction } from './price-dive.js';
+import { deepPriceDive, farePrediction, routeFareRisk } from './price-dive.js';
 import { hostListingsForCity, hostExperiencesForCity, vendorServicesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
@@ -313,6 +313,13 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     ? farePrediction({ intent, dest: intent.destination, origin })
     : null;
 
+  // Route & Fare Risk — honest book-now-vs-wait score (see price-dive.js).
+  const depISO = intent?.dates?.checkIn;
+  const daysToDeparture = depISO ? Math.round((new Date(depISO) - new Date(new Date().toISOString().slice(0, 10))) / 86400000) : null;
+  const routeRiskOut = (gate.allowed && intent.components.includes('flights'))
+    ? routeFareRisk({ intent, prediction: farePredictionOut, daysToDeparture })
+    : null;
+
   // Travel Concierge Agent — a day-by-day itinerary from what was actually
   // packaged (arrival, activities spread across days, free days, departure).
   const itinerary = journey ? buildItinerary(intent, scan) : null;
@@ -401,6 +408,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     scanSummary: summariseScan(scan),
     priceDive,
     farePrediction: farePredictionOut,
+    routeRisk: routeRiskOut,
     itinerary,
     modeCompetition,
     // 3JN VisaOS: pre-booking visa approval probability — only for an actual

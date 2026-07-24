@@ -198,7 +198,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-24-client-money-ledger-v167';
+const BUILD_TAG = '2026-07-24-route-risk-flexprofile-v168';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3024,7 +3024,7 @@ app.post('/api/book/:id/autopay', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe(async (req, res) => {
-  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode, baggage } = req.body || {};
+  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode, baggage, flexProfile } = req.body || {};
   let quote = getQuote(quoteId);
   // SERVERLESS RESILIENCE: the quote may have been saved on a DIFFERENT instance
   // (or persistence isn't configured), so getQuote misses and the customer hits
@@ -3074,7 +3074,7 @@ app.post('/api/book', safe(async (req, res) => {
   // pay-now cash headline was shown at search; instalments pay the locked price.
   if (instalment?.lockMargin?.applies || instalment?.instalmentFee?.applies) applyInstalmentPricing(quote.option, { hasInstalments: true });
 
-  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled() });
+  const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled(), flexProfile });
   // FRAUD SIGNALS: capture the END TRAVELLER's device (IP + user agent) at booking
   // time and store it on the booking, so when we later call Duffel to create the
   // order / take payment / book the stay (often on the webhook, server-to-server),
