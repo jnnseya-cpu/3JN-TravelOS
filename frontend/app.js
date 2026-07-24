@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v171';
+const APP_BUILD = 'v172';
 
 const state = {
   context: null,
@@ -966,7 +966,22 @@ function renderOptions(data) {
       </div>`
     : '';
 
-  $('#plannerOut').innerHTML = gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
+  // STAFF-ONLY live diagnostic: when a search stays estimated, say exactly WHY
+  // (funding, keys, mode, no-offers) so "still seeing quote prices with live keys"
+  // is answerable at a glance. Never shown to customers.
+  const liveOv = data.liveOverlay || {};
+  const staffLiveDiag = (isStaff() && liveOv.reason && liveOv.reason !== 'live-applied') ? (() => {
+    const help = {
+      'free-search-exhausted': 'This search was NOT funded (free searches used up), so live fares were skipped by design. Sign in as staff/admin, or as a member with ACU, to pull live Duffel prices.',
+      'no-supplier-keys': `No live supplier detected — Duffel mode: ${liveOv.duffelMode}. Set DUFFEL_TOKEN to a LIVE token (duffel_live_…) in Vercel env.`,
+      'suppliers-returned-no-offers': `Duffel is connected (mode: ${liveOv.duffelMode}) but returned NO offers for this exact route/date, so prices stay estimated. If mode is 'test', the sandbox has thin inventory — switch to a live token. If 'live', try a mainstream route/date your carriers actually serve.`,
+      'live-search-rate-limited': 'Live search was rate-limited — wait a few seconds and search again.',
+      'live-fetch-error': `Live fetch error: ${liveOv.error || 'unknown'} (Duffel mode: ${liveOv.duffelMode}).`,
+    }[liveOv.reason] || `Live not applied: ${liveOv.reason} (Duffel mode: ${liveOv.duffelMode}).`;
+    return `<div class="card pad" style="margin-bottom:16px;border-color:rgba(255,176,32,.5)"><span class="eyebrow">⚙️ Staff diagnostic — why these prices are estimated</span><p class="muted" style="font-size:12.5px;margin:6px 0 0">${esc(help)}</p></div>`;
+  })() : '';
+
+  $('#plannerOut').innerHTML = staffLiveDiag + gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.</p></div>
     <div class="opt-grid">${opts}</div>` + sponsoredStrip + compareCard(data, sym);
