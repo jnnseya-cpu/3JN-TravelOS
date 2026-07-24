@@ -27,7 +27,7 @@ import {
   cancelBookingWithRefund, redeemTravelCredit,
   createTestimonial, listTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags,
-  clientMoneyLedger, normalizeFlexProfile,
+  clientMoneyLedger, normalizeFlexProfile, secureDeadlineSweep,
 } from '../src/store.js';
 import { routeFareRisk } from '../src/price-dive.js';
 import { bookingDocument, bookingPdf } from '../src/documents.js';
@@ -1049,6 +1049,28 @@ test('RISK-2: acceptable-alternatives profile is validated/clamped and stored on
   const b = createBooking({ option: livePkgOption({ total: 1000 }), userId: u.id, lead: { fullName: 'QA', email: u.email }, flexProfile: { dateFlexDays: 2, nearbyAirports: true, maxFareIncreasePct: 10 } });
   assert.equal(getBooking(b.id).flexProfile.dateFlexDays, 2);
   assert.equal(getBooking(b.id).flexProfile.nearbyAirports, true);
+});
+
+// ============================================================================
+// TTL — securing-deadline sweep (Rule 4): a price-locked flight nearing
+// departure escalates and alerts ops exactly once, never silently.
+// ============================================================================
+test('TTL-1: securing sweep escalates a near-departure price-locked flight once (idempotent)', async () => {
+  const adminU = admin();
+  const u = mkUser();
+  const dep = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10); // 2 days out
+  const b = createBooking({ option: livePkgOption({ total: 1000 }), instalment: { engine: 'ai-smart', deposit: 200, schedule: [{ amount: 800, due: dep, status: 'pending' }], departISO: dep, symbol: '£' }, userId: u.id, lead: { fullName: 'QA', email: u.email } });
+  getBooking(b.id).fulfilment = { ticketing: 'lock-scheduled' }; // simulate a locked, unticketed flight
+  const r1 = secureDeadlineSweep();
+  assert.ok(r1.bands.urgent >= 1, 'a 2-day-out lock is in the urgent band');
+  assert.equal(getBooking(b.id).fulfilment.secureEscalation.band, 'urgent');
+  assert.equal(getBooking(b.id).fulfilment.secureAlertedBand, 'urgent');
+  const notifs1 = (await api('GET', '/api/notifications', { userId: adminU.id })).json.notifications.filter((n) => (n.body || '').includes(b.id));
+  assert.equal(notifs1.length, 1, 'ops alerted exactly once');
+  // Second sweep at the same band must NOT re-alert.
+  secureDeadlineSweep();
+  const notifs2 = (await api('GET', '/api/notifications', { userId: adminU.id })).json.notifications.filter((n) => (n.body || '').includes(b.id));
+  assert.equal(notifs2.length, 1, 'no duplicate alert at the same band');
 });
 
 test('shutdown: close server', async () => {

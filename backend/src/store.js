@@ -2555,6 +2555,36 @@ export function clientMoneyLedger() {
   };
 }
 
+// Securing-deadline sweep (flight-security doctrine, Rule 4 — nothing dies
+// silently). For every price-locked flight still awaiting securing, work out how
+// close its securing deadline is and escalate: the FIRST time a booking crosses
+// into a tighter band (urgent/overdue) alert every admin ONCE (idempotent via
+// secureAlertedBand, and never downgraded). Stamps fulfilment.secureEscalation
+// so the exposure desk and the customer's console can show the live band.
+export function secureDeadlineSweep(todayISO) {
+  const today = todayISO || nowISO().slice(0, 10);
+  const bands = { normal: 0, watch: 0, urgent: 0, overdue: 0 };
+  const RANK = { normal: 0, watch: 1, urgent: 2, overdue: 3 };
+  let escalated = 0;
+  const admins = [...db.users.values()].filter((u) => u.role === 'admin' || u.allAccess);
+  for (const b of db.bookings.values()) {
+    if (b.fulfilment?.ticketing !== 'lock-scheduled') continue;
+    const departISO = b.instalment?.departISO || (b.option?.components || []).map((c) => c.details?.outbound?.date).find(Boolean) || b.option?.dates?.checkIn || null;
+    const dd = departISO ? daysUntil(departISO, today) : null;
+    let band = 'normal';
+    if (dd != null) { if (dd <= 1) band = 'overdue'; else if (dd <= 3) band = 'urgent'; else if (dd <= 7) band = 'watch'; }
+    bands[band]++;
+    const ful = (b.fulfilment = b.fulfilment || {});
+    ful.secureEscalation = { band, daysToDepart: dd, at: nowISO() };
+    if (RANK[band] >= RANK.urgent && RANK[band] > (RANK[ful.secureAlertedBand] || 0)) {
+      ful.secureAlertedBand = band;
+      escalated++;
+      for (const a of admins) pushNotification(a.id, { type: 'warning', icon: '⏰', title: `Secure flight — ${band}`, body: `Booking ${b.id} departs in ${dd} day(s) and is still price-locked (unticketed). Secure it now from the Lock exposure desk.` });
+    }
+  }
+  return { checked: bands.normal + bands.watch + bands.urgent + bands.overdue, bands, escalated };
+}
+
 // ---- Profitability Dashboard (spec §17) -------------------------------------
 // The admin's real-time money view: ACUs sold vs burned, AI costs, and every
 // revenue stream side by side — computed live from the actual ledgers, never

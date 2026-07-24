@@ -33,7 +33,7 @@ import {
   acuWallet, acuTransactions, aiCostReport, recordAiRequestCost,
   placeSearchDeposit, refundSearchDeposit, listSearchDeposits, convertDepositToBooking, applyDepositCreditToBooking, forfeitSearchDeposit, SEARCH_DEPOSIT_GBP,
   profitabilityDashboard, claimSavingsGuarantee, verifyVisaChain, visaChainBlocks,
-  clientMoneyLedger,
+  clientMoneyLedger, secureDeadlineSweep,
   createTravelPot, contributeToPot, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest, claimStripeEvent,
   useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP,
@@ -198,7 +198,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-24-route-risk-flexprofile-v168';
+const BUILD_TAG = '2026-07-24-securing-deadline-sweep-v169';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2990,6 +2990,9 @@ async function runInstalmentEnforcement(today) {
     } catch { /* email is best-effort — never break the sweep */ }
   }
   try { const r = await sendReviewInvites(today); results.reviewInvites = r.invited; } catch { /* invites are best-effort */ }
+  // Securing-deadline sweep — escalate price-locked flights before they die
+  // silently (Rule 4). Best-effort; never breaks the instalment sweep.
+  try { results.securing = secureDeadlineSweep(today); } catch { /* best-effort */ }
   return results;
 }
 // Enforcement sweep: reminders (14/7/3/1/0 days), the 3-day cancellation warning,
@@ -3005,7 +3008,7 @@ app.get('/api/cron/instalments', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   const results = await runInstalmentEnforcement();
-  res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted });
+  res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing });
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved
@@ -4229,7 +4232,9 @@ app.get('/api/admin/exposure', safe(async (req, res) => {
       const dueToSecure = !!b.fulfilment?.readyToSecure || paidInFull || (dd != null && dd <= SECURE_WINDOW_DAYS);
       // Overdue: departure is within a week (or past) and still not secured.
       const overdue = dd != null && dd <= 7;
-      return { ...ex, readyToSecure: !!b.fulfilment?.readyToSecure, symbol: b.option?.pricing?.symbol || '£', departDate: departISO, daysToDepart: dd, secureWindowDays: SECURE_WINDOW_DAYS, dueToSecure, overdue, paidInFull, gapGbp };
+      // Escalation band (Rule 4): overdue ≤1d · urgent ≤3d · watch ≤7d · normal.
+      const secureBand = dd == null ? 'normal' : dd <= 1 ? 'overdue' : dd <= 3 ? 'urgent' : dd <= 7 ? 'watch' : 'normal';
+      return { ...ex, readyToSecure: !!b.fulfilment?.readyToSecure, symbol: b.option?.pricing?.symbol || '£', departDate: departISO, daysToDepart: dd, secureWindowDays: SECURE_WINDOW_DAYS, dueToSecure, overdue, secureBand, paidInFull, gapGbp };
     })
     // Soonest departure first (unknown dates sink to the bottom).
     .sort((a, b) => (a.daysToDepart ?? 1e9) - (b.daysToDepart ?? 1e9));
