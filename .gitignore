@@ -17,3 +17,8 @@ ui-debug.log*
 serviceAccountKey*.json
 *service-account*.json
 *-firebase-adminsdk-*.json
+
+# Local E2E generated artifacts (harness scripts are committed; outputs are not)
+screenshots/
+e2e/ids.json
+e2e/results.json
