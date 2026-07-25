@@ -19,7 +19,9 @@
     "test": "NODE_ENV=test node --test backend/test/*.test.js",
     "serve": "firebase emulators:start --only functions,hosting",
     "deploy:firebase": "firebase deploy --only functions,hosting",
-    "deploy:functions": "firebase deploy --only functions"
+    "deploy:functions": "firebase deploy --only functions",
+    "e2e:serve": "node e2e-launch.mjs",
+    "e2e": "node e2e/run.mjs"
   },
   "keywords": [
     "travel",
@@ -37,5 +39,8 @@
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^5.1.1",
     "nodemailer": "^9.0.3"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.48.0"
   }
 }
