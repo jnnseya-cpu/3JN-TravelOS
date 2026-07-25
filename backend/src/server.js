@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-24-live-price-diagnostic-v172';
+const BUILD_TAG = '2026-07-25-stripe-webhook-parallel-fulfil-v173';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3766,7 +3766,13 @@ app.post('/api/webhooks/duffel', safe(async (req, res) => {
 app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
   const sig = req.headers['stripe-signature'];
   const check = verifyStripeSignature(req.rawBody, sig);
-  if (!check.ok) return res.status(400).json(check);
+  if (!check.ok) {
+    // Surface WHY in the logs + response so a misconfigured webhook is diagnosable:
+    // 'missing-signature-inputs' → STRIPE_WEBHOOK_SECRET not set (or no raw body);
+    // 'signature-mismatch' → the secret doesn't match THIS endpoint (test vs live).
+    console.warn('[stripe-webhook] rejected:', check.error, '· secretSet=', Boolean(process.env.STRIPE_WEBHOOK_SECRET), '· rawBodyBytes=', req.rawBody ? req.rawBody.length : 0);
+    return res.status(400).json(check);
+  }
   const event = req.body || {};
   if (event.type === 'checkout.session.completed') {
     const meta = event.data?.object?.metadata || {};
@@ -3832,17 +3838,22 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
           pushNotification(booking.userId, { type: 'info', icon: '🎟️', title: 'Deposit received — trip reserved', body: 'Your deposit is in and your package is reserved at the price you locked. We finalise your booking with the supplier as soon as the balance is paid in full.' });
         }
       }
-      // AUTO-TICKETING: money is captured — now issue the flight ticket by
-      // creating the Duffel order. Failure flags the booking for a refund rather
-      // than leaving the traveller paid-but-unticketed. AWAITED: on a serverless
-      // host a detached promise dies when the webhook response returns.
-      if (booking && wbNewlyRecorded) { try { await autoTicketFlight(booking); } catch (e) { console.error('[ticketing]', e?.message || e); } }
-      // AUTO-BOOK the hotel too (Duffel Stays: rates → quote → book). Failure
-      // hands off to the ops desk, never a paid-but-unbooked room.
-      if (booking && wbNewlyRecorded) { try { await autoBookStays(booking); } catch (e) { console.error('[stays]', e?.message || e); } try { await autoBookActivities(booking); } catch (e) { console.error('[activities]', e?.message || e); } }
-      // Paid in full via Stripe → email the full booking document (PDF-ready),
-      // on top of the Console copy. Idempotent + fires only when fully paid.
-      if (booking && wbNewlyRecorded) { try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); } }
+      // FULFILMENT: money is captured — issue the flight ticket (Duffel order),
+      // book the hotel (Duffel Stays) and any activities. These three are
+      // INDEPENDENT, so run them CONCURRENTLY: awaited before we ACK Stripe (a
+      // detached promise dies on a serverless host), but in parallel so their
+      // latencies don't SUM — a serial chain risked pushing the response past
+      // Stripe's ~20s webhook timeout ("other errors" + retries). Each failure
+      // is caught and routed to the ops desk / refund path, never left silent.
+      if (booking && wbNewlyRecorded) {
+        await Promise.allSettled([
+          autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e)),
+          autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e)),
+          autoBookActivities(booking).catch((e) => console.error('[activities]', e?.message || e)),
+        ]);
+        // Email last — it references the freshly-issued ticket/documents. Idempotent.
+        try { await emailBookingConfirmation(booking); } catch (e) { console.error('[confirm-email]', e?.message || e); }
+      }
     }
   }
   res.json({ received: true });
