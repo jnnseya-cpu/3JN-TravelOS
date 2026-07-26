@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v173';
+const APP_BUILD = 'v174';
 
 const state = {
   context: null,
@@ -3412,6 +3412,7 @@ window.openOpsQueue = async () => {
     // deferred fee, emails the customer the new e-ticket, and closes the ticket.
     const isReissue = t.intent === 'ops-reissue' && t.bookingId;
     const isSecure = t.intent === 'ops-secure-flight' && t.bookingId;
+    const isRefund = t.intent === 'ops-refund' && t.bookingId;
     const action = isSecure
       ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
            <div class="muted" style="font-size:11px;margin-bottom:6px">The customer's price is <strong>locked</strong>. Secure the flight live (consolidator / fresh airline booking) at or below the locked price, then enter the airline PNR + e-ticket to issue it. No customer charge here — they've paid (or are paying) the locked price.</div>
@@ -3435,6 +3436,15 @@ window.openOpsQueue = async () => {
            </label>
            <div class="muted" style="font-size:10.5px;margin-top:3px">On complete, 3JN auto-charges the customer's saved card for the £45 fee + fare difference, then issues the ticket. Tick above only if you've already taken payment another way.</div>
            <button class="btn btn-gold btn-sm btn-block" style="margin-top:8px" onclick="completeReissueOps('${esc(t.bookingId)}','${esc(t.id)}')">🎫 Charge card &amp; issue ticket</button>
+         </div>`
+      : isRefund
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
+           <div class="muted" style="font-size:11px;margin-bottom:6px">One-click refund the customer's card for this booking. Leave amount blank for a full refund, or enter a partial £ amount.</div>
+           <div style="display:flex;gap:6px;flex-wrap:wrap">
+             <input class="in" id="rf_amt_${esc(t.id)}" type="number" min="0" step="0.01" placeholder="Amount £ (blank = full)" style="width:180px;font-size:12px">
+             <button class="btn btn-sm" style="background:#ff8a8a;color:#1a1205;font-weight:700" onclick="refundBookingOps('${esc(t.bookingId)}','${esc(t.id)}')">💸 Refund now</button>
+             <button class="btn btn-ghost btn-sm" onclick="resolveOpsTicket('${esc(t.id)}')">Mark done (refunded elsewhere)</button>
+           </div>
          </div>`
       : `<div style="display:flex;gap:8px;margin-top:8px">
            <input class="in" id="opsNote_${esc(t.id)}" placeholder="Resolution note" style="flex:1;font-size:12px">
@@ -3460,6 +3470,17 @@ window.resolveOpsTicket = async (tid) => {
   try { await api(`/api/admin/support/tickets/${tid}/resolve`, { method: 'POST', body: JSON.stringify({ note }) }); }
   catch { toast('Could not resolve — try again.'); return; }
   toast('✓ Ticket resolved — customer notified.');
+  openOpsQueue();
+};
+window.refundBookingOps = async (bookingId, tid) => {
+  const raw = document.getElementById(`rf_amt_${tid}`)?.value?.trim();
+  const amountGBP = raw ? Number(raw) : null;
+  if (raw && !(amountGBP > 0)) { toast('Enter a valid amount, or leave blank for a full refund.'); return; }
+  if (!confirm(`Refund ${amountGBP ? '£' + amountGBP.toFixed(2) : 'the FULL amount'} to the customer's card now?`)) return;
+  try {
+    const r = await api('/api/admin/refund', { method: 'POST', body: JSON.stringify({ bookingId, amountGBP, ticketId: tid }) });
+    toast(`✓ Refunded £${Number(r.amountGBP || amountGBP || 0).toFixed(2)} — ${r.refundId}.`, 7000);
+  } catch (e) { toast('⚠ Refund failed — ' + (e?.message || 'check Stripe.'), 8000); return; }
   openOpsQueue();
 };
 // Finish a reissue: enter the airline's new PNR + e-ticket (+ any fare difference)

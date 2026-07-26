@@ -1164,6 +1164,22 @@ test('WATCH-2: the watch route is gated OFF with the rest of the wallet', async 
   assert.equal(r.json.error, 'module-off');
 });
 
+// ============================================================================
+// LAUNCH — money-safety hardening surfaced by the pre-launch audit.
+// ============================================================================
+test('LAUNCH-2: the admin one-click refund endpoint is admin-gated and needs a PaymentIntent', async () => {
+  const consumer = mkUser();
+  const a = admin();
+  const u = mkUser();
+  const b = createBooking({ option: livePkgOption({ total: 1000 }), userId: u.id, lead: { fullName: 'QA', email: u.email } });
+  // Consumer is refused.
+  assert.equal((await api('POST', '/api/admin/refund', { userId: consumer.id, body: { bookingId: b.id } })).status, 403);
+  // Admin, but the booking has no PaymentIntent (never paid via live Stripe) → clean 400, not a crash.
+  const r = await api('POST', '/api/admin/refund', { userId: a.id, body: { bookingId: b.id } });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error, 'no-payment-intent');
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

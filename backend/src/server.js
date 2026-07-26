@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-25-stripe-webhook-parallel-fulfil-v173';
+const BUILD_TAG = '2026-07-25-admin-refund-button-v174';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4250,6 +4250,29 @@ app.post('/api/admin/support/tickets/:id/resolve', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const user = currentUser(req);
   res.json(resolveSupportTicket(req.params.id, { note: req.body?.note, agent: user?.name || 'admin' }));
+}));
+// OPS: one-click refund a booking's card payment from the console (closes the
+// gap where a refund meant leaving the app for the Stripe dashboard). Refunds
+// the booking's PaymentIntent — full amount, or a partial { amountGBP } — records
+// the refund on the booking, and resolves the linked ops-refund ticket.
+app.post('/api/admin/refund', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const user = currentUser(req);
+  const { bookingId, amountGBP, ticketId } = req.body || {};
+  const booking = bookingId ? getBooking(bookingId) : null;
+  const paymentIntentId = booking?.stripePaymentIntent || req.body?.paymentIntentId;
+  if (!paymentIntentId) return res.status(400).json({ error: 'no-payment-intent', message: 'No Stripe PaymentIntent on this booking — refund manually in Stripe.' });
+  const amountMinor = amountGBP != null && Number(amountGBP) > 0 ? Math.round(Number(amountGBP) * 100) : null;
+  const r = await createRefund({ paymentIntentId, amountMinor });
+  if (!r.ok) return res.status(502).json({ ok: false, error: r.error || 'refund-failed', message: 'Stripe refund did not go through — check the PaymentIntent in Stripe.' });
+  if (booking) {
+    const sym = booking.option?.pricing?.symbol || '£';
+    recordPayment(booking.id, { type: 'refund', amount: -(r.amount ? r.amount / 100 : (amountGBP || 0)), gateway: 'stripe', reference: r.refundId });
+    const ful = (booking.fulfilment = booking.fulfilment || {}); ful.refundId = r.refundId; ful.needsRefund = false;
+    recordAudit({ actor: user?.id, role: 'admin', action: 'refund.issued', entity: 'booking', entityId: booking.id, summary: `${sym}${(r.amount ? r.amount / 100 : amountGBP) || ''} refunded (${r.refundId})` });
+  }
+  if (ticketId) { try { resolveSupportTicket(ticketId, { note: `Refunded via console (${r.refundId})`, agent: user?.name || 'admin' }); } catch {} }
+  res.json({ ok: true, refundId: r.refundId, status: r.status, amountGBP: r.amount ? r.amount / 100 : amountGBP });
 }));
 // OPS: complete an airline reissue — enter the NEW PNR + e-ticket number(s) (and
 // any airline fare difference) after reissuing with the carrier. This collects the
