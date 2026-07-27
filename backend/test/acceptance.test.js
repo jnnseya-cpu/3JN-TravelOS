@@ -28,6 +28,7 @@ import {
   createTestimonial, listTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags,
   clientMoneyLedger, normalizeFlexProfile, secureDeadlineSweep,
+  profitabilityDashboard,
 } from '../src/store.js';
 import { routeFareRisk, scanPotFareUSD } from '../src/price-dive.js';
 import { setPotWatch, recordPotFare } from '../src/store.js';
@@ -1178,6 +1179,21 @@ test('LAUNCH-2: the admin one-click refund endpoint is admin-gated and needs a P
   const r = await api('POST', '/api/admin/refund', { userId: a.id, body: { bookingId: b.id } });
   assert.equal(r.status, 400);
   assert.equal(r.json.error, 'no-payment-intent');
+});
+
+test('LAUNCH-3: profit is computed AFTER all costs (Stripe fees + infra + overhead), not just AI', async () => {
+  const u = mkUser();
+  const b = createBooking({ option: livePkgOption({ total: 1000 }), userId: u.id, lead: { fullName: 'QA', email: u.email } });
+  recordPayment(b.id, { type: 'stripe-checkout', amount: 1000, gateway: 'stripe', reference: `pay_${b.id}` });
+  const p = profitabilityDashboard();
+  assert.ok(p.allInCosts, 'all-in cost model present');
+  assert.ok(p.allInCosts.stripeFeesUSD > 0, 'Stripe fees are charged on the gross card volume');
+  assert.ok(p.allInCosts.grossCardVolumeUSD > 0, 'gross card volume tracked');
+  assert.ok(typeof p.netProfitUSD === 'number', 'true net profit computed');
+  // TRUE net profit must be LOWER than the old AI-only profit (extra costs subtracted).
+  assert.ok(p.netProfitUSD < p.profitUSD, 'net-of-all-costs is below AI-only profit');
+  assert.ok(p.allInCosts.totalCostUSD >= p.allInCosts.stripeFeesUSD + p.allInCosts.aiUSD, 'total cost includes stripe + ai');
+  assert.equal(typeof p.hitsTargetMargin, 'boolean');
 });
 
 test('shutdown: close server', async () => {

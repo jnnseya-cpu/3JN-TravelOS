@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v174';
+const APP_BUILD = 'v175';
 
 const state = {
   context: null,
@@ -3233,9 +3233,20 @@ async function renderAdmin() {
           return `<div class="card pad" style="margin-top:16px;border-color:rgba(216,180,106,0.35)"><span class="eyebrow">3JN income — every stream (our revenue only)</span>
             ${rows}
             <div class="kv" style="margin-top:8px"><span><strong>Total 3JN revenue</strong></span><span style="color:var(--gold)"><strong>$${Number(profit.revenueUSD || 0).toLocaleString()}</strong></span></div>
-            <div class="kv"><span>AI cost (actual)</span><span>−$${Number(profit.aiCosts?.actualUSD || 0).toLocaleString()}</span></div>
-            <div class="kv"><span><strong>Profit</strong></span><span style="color:var(--green)"><strong>$${Number(profit.profitUSD || 0).toLocaleString()}</strong></span></div>
-            <div class="muted" style="font-size:11.5px;margin-top:6px">Live from the ledgers — supplier gross (the 90% host share etc.) is excluded; this is 3JN's income only.</div>
+            ${(() => {
+              const c = profit.allInCosts || {}; const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+              const net = Number(profit.netProfitUSD || 0);
+              return `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.08)">
+                <div class="kv"><span>AI cost</span><span>−${usd(c.aiUSD)}</span></div>
+                <div class="kv"><span>Stripe fees <span class="muted" style="font-size:11px">${((c.rates?.stripePct || 0) * 100).toFixed(2)}% + $${(c.rates?.stripeFixedUSD || 0)} · on $${Number(c.grossCardVolumeUSD || 0).toLocaleString()} gross, ${c.chargeCount || 0} charges</span></span><span>−${usd(c.stripeFeesUSD)}</span></div>
+                <div class="kv"><span>Infrastructure <span class="muted" style="font-size:11px">Firebase + Vercel</span></span><span>−${usd(c.infraCostUSD)}</span></div>
+                <div class="kv"><span>Overhead</span><span>−${usd(c.overheadUSD)}</span></div>
+                <div class="kv"><span><strong>All-in cost</strong></span><span><strong>−${usd(c.totalCostUSD)}</strong></span></div>
+                <div class="kv" style="margin-top:4px"><span><strong>TRUE net profit</strong> <span class="muted" style="font-size:11px">after every cost</span></span><span style="color:${net >= 0 ? 'var(--green)' : '#ff6b6b'}"><strong>${usd(net)} · ${profit.netMarginPct}% margin</strong></span></div>
+                <div class="kv"><span>Target: ${profit.targetMarginPct}% margin needs revenue ≥</span><span>${usd(profit.targetRevenueForMarginUSD)} ${profit.hitsTargetMargin ? '🟢' : '⚠️'}</span></div>
+              </div>`;
+            })()}
+            <div class="muted" style="font-size:11px;margin-top:6px">TRUE net = revenue − AI − Stripe − infra − overhead. Stripe fees hit the WHOLE amount charged (the full ticket), not just our margin. Tune rates via env: STRIPE_FEE_PCT, INFRA_COST_PER_TXN_USD, INFRA_MONTHLY_USD, OVERHEAD_MONTHLY_USD, TARGET_MARGIN_PCT. Supplier gross (host 90% etc.) is excluded — this is 3JN's income only.</div>
           </div>`;
         })() : ''}
         ${profit?.acuEconomics ? (() => {

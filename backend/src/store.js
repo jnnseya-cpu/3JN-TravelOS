@@ -2613,12 +2613,58 @@ export function profitabilityDashboard() {
     apiRevenueUSD: round2(db.apiKeys.reduce((s, k) => s + (k.calls || 0), 0) * 0.05 * GBP_TO_USD),
   };
   const revenueUSD = round2(Object.values(streams).reduce((s, v) => s + v, 0));
+
+  // ---- ALL-IN COST MODEL: true net profit after EVERY cost, not just AI. ------
+  // Rates are env-tunable to your real invoices. Defaults: UK Stripe ~1.5% + 20p,
+  // a small per-money-event infra cost (Firebase writes + Vercel invocation), and
+  // optional fixed monthly infra/overhead baselines. Critically, Stripe fees are
+  // charged on the GROSS amount we charge the customer (the whole ticket), NOT on
+  // our commission — so a thin flights-only fee can be eaten by the card fee.
+  const STRIPE_PCT = Number(process.env.STRIPE_FEE_PCT || 0.015);
+  const STRIPE_FIXED_USD = Number(process.env.STRIPE_FEE_FIXED_USD || 0.25);
+  const INFRA_PER_TXN_USD = Number(process.env.INFRA_COST_PER_TXN_USD || 0.03);
+  const INFRA_MONTHLY_USD = Number(process.env.INFRA_MONTHLY_USD || 0);
+  const OVERHEAD_MONTHLY_USD = Number(process.env.OVERHEAD_MONTHLY_USD || 0);
+  const TARGET_MARGIN = Number(process.env.TARGET_MARGIN_PCT || 100) / 100; // 100% = revenue ≥ 2× cost
+
+  const bookingPaidUSD = bookings.reduce((s, b) => {
+    const tot = b.option?.totalUSD || 0, totL = b.option?.pricing?.local?.total || 0;
+    const paidL = (b.payments || []).filter((p) => (p.amount || 0) > 0).reduce((x, p) => x + p.amount, 0);
+    return s + (tot > 0 && totL > 0 ? Math.min(tot, tot * (paidL / totL)) : 0);
+  }, 0);
+  const bookingTxns = bookings.reduce((s, b) => s + (b.payments || []).filter((p) => (p.amount || 0) > 0).length, 0);
+  const acuGrossUSD = (db.acuTxns.filter((t) => t.type === 'PURCHASE').reduce((s, t) => s + t.amount, 0) / ACU_PER_GBP) * GBP_TO_USD;
+  const acuTxnCount = db.acuTxns.filter((t) => t.type === 'PURCHASE').length;
+  const memberGrossUSD = streams.subscriptionRevenueUSD + streams.corporateRevenueUSD;
+  const memberTxns = users.filter((u) => u.membership?.active).length + users.filter((u) => u.corporatePlan?.active).length;
+  const depositGrossUSD = round2(db.searchDeposits.reduce((s, d) => s + (d.amountGBP || 0), 0) * GBP_TO_USD);
+  const depositTxns = db.searchDeposits.length;
+
+  const grossCardVolumeUSD = round2(bookingPaidUSD + acuGrossUSD + memberGrossUSD + depositGrossUSD);
+  const chargeCount = bookingTxns + acuTxnCount + memberTxns + depositTxns;
+  const stripeFeesUSD = round2(grossCardVolumeUSD * STRIPE_PCT + chargeCount * STRIPE_FIXED_USD);
+  const infraCostUSD = round2(chargeCount * INFRA_PER_TXN_USD + INFRA_MONTHLY_USD);
+  const overheadUSD = round2(OVERHEAD_MONTHLY_USD);
+  const totalCostUSD = round2(aiCostActualUSD + stripeFeesUSD + infraCostUSD + overheadUSD);
+  const netProfitUSD = round2(revenueUSD - totalCostUSD);
+  const netMarginPct = revenueUSD > 0 ? Math.round((netProfitUSD / revenueUSD) * 1000) / 10 : 0;
+  const targetRevenueForMarginUSD = round2(totalCostUSD * (1 + TARGET_MARGIN));
+  const hitsTargetMargin = revenueUSD >= targetRevenueForMarginUSD;
+
   return {
     totalAcusSold: acusSold,
     totalAcusBurned: acusBurned,
     aiCosts: { estimatedUSD: aiCostEstimatedUSD, actualUSD: aiCostActualUSD, requests: db.aiRequestCosts.length },
     revenueUSD,
-    profitUSD: round2(revenueUSD - aiCostActualUSD),
+    profitUSD: round2(revenueUSD - aiCostActualUSD), // AI-only profit (kept for continuity)
+    // TRUE net profit after AI + Stripe fees + infra + overhead.
+    allInCosts: {
+      aiUSD: aiCostActualUSD, stripeFeesUSD, infraCostUSD, overheadUSD, totalCostUSD,
+      grossCardVolumeUSD, chargeCount,
+      rates: { stripePct: STRIPE_PCT, stripeFixedUSD: STRIPE_FIXED_USD, infraPerTxnUSD: INFRA_PER_TXN_USD, infraMonthlyUSD: INFRA_MONTHLY_USD, overheadMonthlyUSD: OVERHEAD_MONTHLY_USD },
+    },
+    netProfitUSD, netMarginPct,
+    targetMarginPct: Math.round(TARGET_MARGIN * 100), targetRevenueForMarginUSD, hitsTargetMargin,
     streams,
     bookings: bookings.length,
     payingMembers: users.filter((u) => u.membership?.active).length,
