@@ -13,6 +13,24 @@ import {
 
 export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP };
 
+// AUTO-MARGIN FLIGHT FEE — the smallest flights-only service fee (USD) that still
+// clears, after 100%(target) margin, the card fee charged on the WHOLE amount the
+// customer pays (ticket + fee), plus a per-booking AI+infra allowance. Because the
+// card fee is levied on (fare + fee), the fee appears on both sides — we solve for
+// it: F = m·(p·C + k + t) / (1 − m·p), where C=fare, p=card%, k=card fixed,
+// t=per-txn cost, m=(1+targetMargin). Falls back to 10% if the config is
+// pathological (m·p ≥ 1). All inputs are env-tunable to real invoices.
+export function autoMarginFlightFeeUSD(fareUSD) {
+  const C = Math.max(0, Number(fareUSD) || 0);
+  const p = Number(process.env.FLIGHT_FEE_STRIPE_PCT || process.env.STRIPE_FEE_PCT || 0.029); // worst-case card by default
+  const k = Number(process.env.STRIPE_FEE_FIXED_USD || 0.25);
+  const t = Number(process.env.FLIGHT_FEE_PERTXN_USD || 0.10); // AI + infra per booking
+  const m = 1 + Number(process.env.TARGET_MARGIN_PCT || 100) / 100; // 100% margin → 2×
+  const denom = 1 - m * p;
+  if (denom <= 0.05) return round2(C * 0.10); // config would never converge → safe 10%
+  return round2((m * (p * C + k + t)) / denom);
+}
+
 export function tierForPoints(points = 0) {
   let tier = LOYALTY_TIERS[0];
   for (const t of LOYALTY_TIERS) if (points >= t.minPoints) tier = t;
@@ -84,9 +102,15 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // small FLAT booking & servicing fee (no % markup) instead of the old £0 — still
   // far below the non-member 2% (£4.99 floor / £15 cap), so membership stays a real
   // saving, but every booking contributes.
+  // AUTO-MARGIN: the non-member flight fee is the GREATER of the 2% take-rate, the
+  // absolute £4.99 floor, and the fee that mathematically guarantees the target
+  // margin after the card fee on the whole ticket + AI + infra. NO upper cap — the
+  // old £15 cap could be smaller than the card fee on a big ticket, turning a
+  // flights-only booking into a loss. A member's flight keeps the flat member fee
+  // (the subsidy is funded by their membership; the net-margin dashboard reflects it).
   const flightFeeUSD = memberActive
     ? FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79
-    : Math.min(FLIGHT_ONLY_FEE_CAP_GBP / 0.79, Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE));
+    : Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE, autoMarginFlightFeeUSD(componentsUSD));
   // BEDBANK MARGIN: net-rate (wholesale) hotel cost is marked up at HOTEL_MARGIN_RATE
   // (the real profit) instead of the 10% — so the standard commission applies only
   // to the NON-bedbank remainder, and the bedbank spread is added on top. No-op when
@@ -117,9 +141,12 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // Show the rate + the floor/cap band so the fee reads as small and predictable.
   const atFloor = flightsOnly && !memberActive && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_GBP / 0.79) < 0.02;
   const atCap = flightsOnly && !memberActive && grossCommissionUSD > 0 && Math.abs(grossCommissionUSD - FLIGHT_ONLY_FEE_CAP_GBP / 0.79) < 0.02;
+  // The fee is auto-priced to guarantee margin, so show the EFFECTIVE rate the
+  // customer actually pays (not the nominal 2%), staying honest on big tickets.
+  const effFeePct = flightsOnly && !memberActive && componentsUSD > 0 ? (grossCommissionUSD / componentsUSD) * 100 : FLIGHT_ONLY_FEE_RATE * 100;
   const feeLabel = flightsOnly
     ? (memberActive ? (FLIGHT_ONLY_MEMBER_FEE_GBP > 0 ? `3JN member flight fee (£${FLIGHT_ONLY_MEMBER_FEE_GBP.toFixed(2)} flat · no % markup)` : 'No flight service fee — Travel+ member')
-      : `3JN flight service fee (${(FLIGHT_ONLY_FEE_RATE * 100).toFixed(0)}%${atFloor ? ` · £${FLIGHT_ONLY_FEE_GBP.toFixed(2)} min` : atCap ? ` · £${FLIGHT_ONLY_FEE_CAP_GBP} cap` : ''})`)
+      : `3JN flight service fee (${effFeePct.toFixed(1)}%${atFloor ? ` · £${FLIGHT_ONLY_FEE_GBP.toFixed(2)} min` : ''})`)
     : '3JN service fee (10%)';
   // Duffel pass-through — added ON TOP on a live Duffel order so our supplier
   // cost never erodes the margin. Zero on non-Duffel bookings. Customer price =

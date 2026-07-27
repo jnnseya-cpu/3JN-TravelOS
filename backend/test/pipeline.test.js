@@ -4572,13 +4572,14 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   const opt = r1.packages.options[0];
   assert.ok(opt.components.every((c) => c.type === 'flight'), 'flights-only basket');
   assert.equal(opt.pricing.feeModel, 'flight-service-fee');
-  assert.match(opt.pricing.feeLabel, /2%/);
-  // 2% of the fare, floored at £4.99 and capped at £15 (all in USD via the anchor).
+  assert.match(opt.pricing.feeLabel, /service fee/);
+  // Auto-priced: never below the £4.99 floor, and always ≥ 2× the worst-case card
+  // fee on the whole charge (the margin guarantee) — no £15 cap.
   const feeUSD = opt.pricing.lines.commissionUSD;
   const flightUSD = opt.pricing.lines.suppliersUSD; // flights-only → suppliers = the fare
-  const expected = Math.min(15 / 0.79, Math.max(4.99 / 0.79, flightUSD * 0.02));
-  assert.ok(Math.abs(feeUSD - expected) < 0.02, `2% service fee, floored/capped (got $${feeUSD})`);
-  assert.ok(feeUSD >= 4.99 / 0.79 - 0.02 && feeUSD <= 15 / 0.79 + 0.02, 'fee inside the £4.99–£15 band');
+  assert.ok(feeUSD >= 4.99 / 0.79 - 0.02, 'never below the £4.99 floor');
+  const cardFeeUSD = 0.029 * (flightUSD + feeUSD) + 0.25;
+  assert.ok(feeUSD >= 2 * cardFeeUSD - 0.6, `fee guarantees margin after the card fee (got $${feeUSD.toFixed(2)})`);
   // Same trip WITH a hotel: the classic 10% commission applies.
   const r2 = plan({ text: 'Flights and hotel to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
   const opt2 = r2.packages.options[0];
@@ -5288,20 +5289,27 @@ test('flights-only: an explicit "only" drops a loosely-triggered stay + keeps th
   assert.equal(r3.packages.options[0].pricing.feeModel, 'commission-10');
 });
 
-// ---- Flights-only service fee: 2% · £4.99 floor · £15 cap -------------------
-test('flights-only fee: 2% of fare, floored at £4.99, capped at £15', () => {
+// ---- Flights-only fee: AUTO-priced to guarantee margin after the card fee ----
+test('flights-only fee: auto-priced to guarantee margin after the card fee (no £15 cap)', () => {
   const cur = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
   const feeGbp = (fareGbp) => priceBreakdown({ componentsUSD: fareGbp / 0.79, marketRefUSD: fareGbp / 0.79 * 1.2, currency: cur, flightsOnly: true }).local.commission;
-  assert.equal(feeGbp(80), 4.99, 'cheap flight → £4.99 floor (never below cost)');
-  assert.equal(feeGbp(150), 4.99, 'still at the floor');
-  assert.ok(Math.abs(feeGbp(450) - 9) < 0.05, 'mid-haul → 2% (£9 on £450)');
-  assert.equal(feeGbp(750), 15, 'exactly at the cap');
-  assert.equal(feeGbp(1500), 15, 'long-haul stays capped at £15 (1%, competitive)');
-  // GOLDEN RULE: Travel+ members pay a small FLAT £4.99 flight fee (no % markup) —
-  // cheaper than the non-member 2% on a big fare, but never £0/a loss to 3JN.
+  // Never below the £4.99 floor.
+  assert.ok(feeGbp(80) >= 4.99 - 0.02, 'never below the £4.99 floor');
+  // Scales with the fare and is NOT capped — the old £15 cap is gone (it would
+  // have been a LOSS on a £1500 ticket once the card fee is on the whole amount).
+  assert.ok(feeGbp(1500) > feeGbp(450), 'no cap — the fee grows with the fare');
+  assert.ok(feeGbp(1500) > 15, 'the £15 cap is removed');
+  // MARGIN GUARANTEE: the fee is ≥ 2× (100% margin) the worst-case card fee on the
+  // WHOLE amount charged (fare + fee) — so a flights-only booking can never lose.
+  for (const fare of [80, 450, 1500, 3000]) {
+    const fee = feeGbp(fare);
+    const cardFeeGbp = 0.029 * (fare + fee) + 0.25 * 0.79; // worst-case card fee, GBP
+    assert.ok(fee >= 2 * cardFeeGbp - 0.6, `£${fare}: fee £${fee.toFixed(2)} ≥ 2× card fee £${cardFeeGbp.toFixed(2)}`);
+  }
+  // Members keep the flat member fee (the subsidy is funded by their membership).
   const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
   assert.ok(Math.abs(memberFee - 4.99) < 0.05, 'member pays the flat £4.99 flight fee');
-  assert.ok(memberFee < feeGbp(900), 'still cheaper than the non-member 2% on a £900 fare');
+  assert.ok(memberFee < feeGbp(900), 'cheaper than the non-member fee on a £900 fare');
 });
 
 // ---- WAVE 6: deep-clean critical-fix regressions ----------------------------
