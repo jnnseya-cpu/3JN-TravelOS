@@ -144,12 +144,12 @@ const CSP_POLICY = [
   "object-src 'none'",
   "frame-ancestors 'self'",
   "form-action 'self' https://checkout.stripe.com",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://www.googletagmanager.com https://connect.facebook.net https://apis.google.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://www.googletagmanager.com https://connect.facebook.net https://apis.google.com https://widget.trustpilot.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: https:",
-  "connect-src 'self' https://*.googleapis.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.cloudfunctions.net https://*.google-analytics.com https://www.googletagmanager.com https://connect.facebook.net https://www.facebook.com https://api.3jntravel.com",
-  "frame-src 'self' https://www.googletagmanager.com https://td.doubleclick.net https://checkout.stripe.com",
+  "connect-src 'self' https://*.googleapis.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.cloudfunctions.net https://*.google-analytics.com https://www.googletagmanager.com https://connect.facebook.net https://www.facebook.com https://api.3jntravel.com https://*.trustpilot.com",
+  "frame-src 'self' https://www.googletagmanager.com https://td.doubleclick.net https://checkout.stripe.com https://widget.trustpilot.com",
   "worker-src 'self'",
   "manifest-src 'self'",
 ].join('; ');
@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-25-auto-margin-flight-fee-v176';
+const BUILD_TAG = '2026-07-25-trustpilot-csp-v177';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
