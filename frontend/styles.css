@@ -273,6 +273,17 @@ select, input.in {
   background: var(--navy-800); border: 1px solid var(--line-strong); color: var(--text);
   padding: 9px 12px; border-radius: 9px; font-family: inherit; font-size: 14px;
 }
+/* Precise (structured) search panel */
+.precise { margin-top: 12px; border: 1px solid var(--line-strong); border-radius: 11px; padding: 10px 14px; background: rgba(255,255,255,0.02); }
+.precise > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--gold); list-style: none; }
+.precise > summary::-webkit-details-marker { display: none; }
+.precise[open] > summary { margin-bottom: 6px; }
+.precise-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+.precise-grid .field label { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+.precise-grid input, .precise-grid select { background: var(--navy-800); border: 1px solid var(--line-strong); color: var(--text); padding: 9px 11px; border-radius: 9px; font-family: inherit; font-size: 14px; width: 100%; }
+.precise-comps { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.precise-comps .field-check { align-self: center; padding-bottom: 0; }
+@media (max-width: 760px) { .precise-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .chip {
   font-size: 12.5px; padding: 7px 12px; border-radius: 999px; cursor: pointer;

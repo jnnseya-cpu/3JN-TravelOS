@@ -967,6 +967,24 @@ test('REVIEWER: magic-link access is OFF by default (no REVIEWER_ACCESS_KEY → 
   assert.equal(r.json.error, 'reviewer-disabled', 'reports disabled, not a bad key (fails closed)');
 });
 
+test('STRUCTURED SEARCH: precise fields override the free-text parse (robust public input)', async () => {
+  const { plan } = await import('../src/planner.js');
+  // Deliberately vague/incomplete free text — the structured fields must win.
+  const r = plan({
+    text: 'a trip somewhere', context: GB, user: null, searchTier: 'smart',
+    overrides: { structured: { destination: 'Barcelona', checkIn: '2026-08-12', nights: 3, adults: 2, children: 3, childAges: [16, 13, 9], minStars: 4, components: ['hotel'] } },
+  });
+  assert.equal(r.stage, 'options', 'structured search produces bookable options');
+  assert.equal(r.intent.destination?.city, 'Barcelona', 'destination field is authoritative');
+  assert.equal(r.intent.nights, 3, 'nights field is authoritative');
+  assert.equal(r.intent.dates.checkIn, '2026-08-12', 'check-in date is exact');
+  assert.equal(r.intent.dates.checkOut, '2026-08-15', 'check-out = check-in + nights');
+  assert.equal(r.intent.minStars, 4, 'star floor is applied');
+  assert.equal(r.intent.travellers.adults, 2, 'adults exact');
+  assert.equal(r.intent.travellers.children, 3, 'children exact');
+  assert.deepEqual(r.intent.components, ['hotel'], 'components exact');
+});
+
 test('INTENT: a hotel-only request with a postcode note parses cleanly (city, 1 night, star floor)', async () => {
   const { parseIntent } = await import('../src/intent.js');
   const i = parseIntent('I want a hotel in Birmingham( CLOSE TO b15 1HE) for 2 adults (4 or 5 stars) on 31/07/2026', { country: 'GB' });

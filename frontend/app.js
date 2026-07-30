@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v196';
+const APP_BUILD = 'v197';
 
 const state = {
   context: null,
@@ -625,13 +625,52 @@ window.applyDiveLever = (i) => {
   runPlan(ov);
 };
 
+// Collect the "Precise search" fields into a structured object. Only filled
+// fields are included; the backend treats each as AUTHORITATIVE over the parse.
+function collectStructured() {
+  const s = {};
+  const v = (id) => ($(id)?.value || '').trim();
+  if (v('#psDest')) s.destination = v('#psDest');
+  if (v('#psOrigin')) s.origin = v('#psOrigin');
+  if (v('#psCheckIn')) s.checkIn = v('#psCheckIn');
+  if (v('#psNights')) s.nights = Number(v('#psNights'));
+  if (v('#psAdults')) s.adults = Number(v('#psAdults'));
+  if ($('#psChildren')?.value !== '' && $('#psChildren')?.value != null) s.children = Number($('#psChildren').value);
+  if (v('#psChildAges')) s.childAges = v('#psChildAges').split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+  if (v('#psStars')) s.minStars = Number(v('#psStars'));
+  const comps = [...document.querySelectorAll('.psComp:checked')].map((c) => c.value);
+  if (comps.length) s.components = comps;
+  return s;
+}
+// Build a clean canonical sentence from the precise fields, so a structured-only
+// search (no free text) still seeds the pipeline. The backend overrides make it
+// exact regardless; this just gives the parser something well-formed to read.
+function composeFromStructured(s) {
+  const parts = ['I want'];
+  parts.push((s.components && s.components.length) ? s.components.join(', ') : 'a hotel');
+  if (s.destination) parts.push(`in ${s.destination}`);
+  if (s.origin) parts.push(`from ${s.origin}`);
+  const pax = [];
+  if (s.adults) pax.push(`${s.adults} adult${s.adults > 1 ? 's' : ''}`);
+  if (s.children) pax.push(`${s.children} child${s.children > 1 ? 'ren' : ''}`);
+  if (pax.length) parts.push(`for ${pax.join(' and ')}`);
+  if (s.minStars) parts.push(`${s.minStars} star`);
+  if (s.checkIn) parts.push(`on ${s.checkIn}`);
+  if (s.nights) parts.push(`for ${s.nights} night${s.nights > 1 ? 's' : ''}`);
+  parts.push('cheapest reliable price.');
+  return parts.join(' ');
+}
 async function runPlan(overrides = {}) {
   const { approveAcu, ...restOverrides } = overrides;
+  const structured = collectStructured();
   let text = $('#intentInput').value.trim();
   // "Inspire me" works from a blank slate — the proposer just returns a
   // seasonal spread when there are no words to match.
   if (!text && restOverrides.inspire) text = 'somewhere nice';
-  if (!text) { toast('Describe your trip first — or tap ✨ Inspire me.'); return; }
+  // Structured-only search: no sentence typed, but precise fields filled → build
+  // a clean canonical sentence so the pipeline runs (overrides make it exact).
+  if (!text && (structured.destination || structured.components)) text = composeFromStructured(structured);
+  if (!text) { toast('Describe your trip — or fill the Precise search fields, or tap ✨ Inspire me.'); return; }
   const out = $('#plannerOut');
   out.innerHTML = scanAnimation();
 
@@ -648,7 +687,7 @@ async function runPlan(overrides = {}) {
         country: state.country,
         currencyCountry: state.country,
         approveAcu: approveAcu === true,
-        overrides: restOverrides,
+        overrides: Object.keys(structured).length ? { ...restOverrides, structured } : restOverrides,
         preferences: {
           directOnly: !!$('#directOnly')?.checked,
           departureWindow: $('#departWindow')?.value || null,

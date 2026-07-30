@@ -420,6 +420,30 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
         <div class="card composer">
           <textarea id="intentInput" placeholder="e.g. I want to travel to Dubai with my family in August for 7 nights. I want flights, hotel, visa, activities, internet abroad, airport transfer, instalments and the cheapest reliable price.">I want to travel to Dubai with my family in August for 7 nights. I want flights, hotel, visa, activities, internet abroad, airport transfer, instalments and the cheapest reliable price.</textarea>
+          <details id="preciseSearch" class="precise">
+            <summary>🎯 Precise search — fill these to be exact (optional)</summary>
+            <p class="muted" style="font-size:12px;margin:6px 0 10px">Anything you set here is used exactly as entered — no guessing. Leave a field blank to let the sentence above decide it.</p>
+            <div class="precise-grid">
+              <div class="field"><label for="psDest">Where to?</label><input id="psDest" type="text" placeholder="e.g. Barcelona" autocomplete="off"></div>
+              <div class="field"><label for="psOrigin">From (optional)</label><input id="psOrigin" type="text" placeholder="e.g. Birmingham" autocomplete="off"></div>
+              <div class="field"><label for="psCheckIn">Check-in / departure</label><input id="psCheckIn" type="date"></div>
+              <div class="field"><label for="psNights">Nights</label><input id="psNights" type="number" min="1" max="60" placeholder="e.g. 7"></div>
+              <div class="field"><label for="psAdults">Adults</label><input id="psAdults" type="number" min="1" max="16" placeholder="2"></div>
+              <div class="field"><label for="psChildren">Children</label><input id="psChildren" type="number" min="0" max="12" placeholder="0"></div>
+              <div class="field"><label for="psChildAges">Children's ages</label><input id="psChildAges" type="text" placeholder="e.g. 9, 13, 16" autocomplete="off"></div>
+              <div class="field"><label for="psStars">Hotel rating</label>
+                <select id="psStars"><option value="">Any</option><option value="3">3★ and up</option><option value="4">4★ and up</option><option value="5">5★ only</option></select>
+              </div>
+            </div>
+            <div class="precise-comps">
+              <span class="muted" style="font-size:12px">Include:</span>
+              <label class="field-check"><input type="checkbox" class="psComp" value="flights"> Flights</label>
+              <label class="field-check"><input type="checkbox" class="psComp" value="hotel"> Hotel</label>
+              <label class="field-check"><input type="checkbox" class="psComp" value="activities"> Activities</label>
+              <label class="field-check"><input type="checkbox" class="psComp" value="transfer"> Transfer</label>
+              <label class="field-check"><input type="checkbox" class="psComp" value="esim"> eSIM</label>
+            </div>
+          </details>
           <div class="composer-row">
             <div class="field">
               <label>Your country / currency</label>

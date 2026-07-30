@@ -7,7 +7,7 @@
 // "Console Error: {}" class of failures from the previous build).
 
 import { parseIntent } from './intent.js';
-import { findDestination, originForCountry, resolveOrigin, proposeDestinations } from './destinations.js';
+import { findDestination, originForCountry, resolveOrigin, proposeDestinations, resolveDestinationFromText } from './destinations.js';
 import { airportCoords, haversineKm } from './airports.js';
 import { scanAll } from './suppliers.js';
 import { deepPriceDive, farePrediction, routeFareRisk } from './price-dive.js';
@@ -70,6 +70,38 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   if (overrides.need && NEED_MAP[overrides.need]) {
     intent.components = [...NEED_MAP[overrides.need]];
     intent.needComponents = false;
+  }
+
+  // STRUCTURED SEARCH — precise fields from the UI are AUTHORITATIVE and override
+  // the free-text parse. This is what makes the search robust for the public: a
+  // user who fills the fields can never be tripped up by an odd phrasing, a
+  // postcode, or a missing word. Every field is optional; a blank field leaves
+  // the parsed value untouched.
+  const S = overrides.structured || {};
+  if (S.destination) {
+    const d = resolveDestinationFromText(String(S.destination)) || findDestination(String(S.destination));
+    if (d) { intent.destination = d; intent.unresolved = (intent.unresolved || []).filter((u) => u !== 'destination'); intent.needComponents = false; }
+  }
+  if (S.origin) intent.originCity = String(S.origin);
+  if (Array.isArray(S.components) && S.components.length) { intent.components = [...new Set(S.components)]; intent.needComponents = false; }
+  if (S.adults != null || S.children != null || Array.isArray(S.childAges)) {
+    const adults = Math.max(1, Number(S.adults) || intent.travellers?.adults || 1);
+    const childAges = Array.isArray(S.childAges) ? S.childAges.map(Number).filter((n) => Number.isFinite(n) && n >= 0) : (intent.travellers?.childAges || []);
+    const children = Number.isFinite(Number(S.children)) ? Number(S.children) : childAges.length;
+    intent.travellers = { ...intent.travellers, adults, children, childAges, total: adults + children };
+  }
+  if (Number.isFinite(Number(S.minStars)) && Number(S.minStars) >= 1 && Number(S.minStars) <= 5) intent.minStars = Number(S.minStars);
+  if (S.checkIn && /^\d{4}-\d{2}-\d{2}$/.test(String(S.checkIn))) {
+    const nights = Math.max(1, Number(S.nights) || intent.nights || 1);
+    const co = new Date(String(S.checkIn) + 'T00:00:00Z'); co.setUTCDate(co.getUTCDate() + nights);
+    intent.nights = nights;
+    intent.dates = { checkIn: String(S.checkIn), checkOut: co.toISOString().slice(0, 10) };
+    const mo = new Date(String(S.checkIn) + 'T00:00:00Z').getUTCMonth();
+    intent.month = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'][mo];
+  } else if (Number.isFinite(Number(S.nights)) && Number(S.nights) >= 1 && intent.dates?.checkIn) {
+    const nights = Math.max(1, Number(S.nights));
+    const co = new Date(intent.dates.checkIn + 'T00:00:00Z'); co.setUTCDate(co.getUTCDate() + nights);
+    intent.nights = nights; intent.dates = { ...intent.dates, checkOut: co.toISOString().slice(0, 10) };
   }
 
   // If we still can't resolve the destination, ask rather than fail — but ALSO
@@ -573,6 +605,7 @@ function publicIntent(intent) {
     priority: intent.priority,
     nationality: intent.nationality,
     hotelArea: intent.hotelArea || null,
+    minStars: intent.minStars || null, // star floor applied to the hotel pick
     budgetStay: !!intent.budgetStay,
     legs: intent.legs ? {
       out: { mode: intent.legs.out.mode, from: intent.legs.resolved?.out?.city || null },
