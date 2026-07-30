@@ -54,7 +54,7 @@ import {
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags, wipeTransactionalData, getFeaturedOverride, setFeaturedOverride,
 } from './store.js';
-import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
+import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS, syncAiraloPackages, airaloCatalogueStatus } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-trustpilot-dark-badge-default-v181';
+const BUILD_TAG = '2026-07-30-airalo-hourly-sync-v182';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2057,7 +2057,7 @@ app.patch('/api/admin/cartrawler/webhooks', safe(async (req, res) => {
 // operator completes each in one visit; the OS confirms to the customer.
 app.get('/api/admin/fulfilment', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  res.json({ orders: listFulfilmentOrders({ status: req.query.status || undefined }), doors: supplierDoors() });
+  res.json({ orders: listFulfilmentOrders({ status: req.query.status || undefined }), doors: supplierDoors(), airaloCatalogue: airaloCatalogueStatus() });
 }));
 app.post('/api/admin/fulfilment/:id/complete', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
@@ -3104,6 +3104,21 @@ app.get('/api/cron/instalments', safe(async (req, res) => {
   if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   const results = await runInstalmentEnforcement();
   res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing, potWatches: results.potWatches });
+}));
+// Airalo eSIM catalogue sync (Vercel cron → GET, hourly). Airalo require partners
+// to pull GET /v2/packages at least once per hour so the local catalogue stays in
+// step with their live inventory/pricing. Protected by CRON_SECRET when set. On
+// success we cache the packages in-process; airaloPickPackage prefers this cache
+// (and falls back to a live per-country call if the cache is cold/stale).
+app.get('/api/cron/airalo-sync', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const out = await syncAiraloPackages();
+    res.json(out);
+  } catch (e) {
+    res.status(502).json({ ok: false, error: 'airalo-sync-failed', message: String(e?.message || e) });
+  }
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved

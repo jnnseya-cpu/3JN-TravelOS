@@ -201,12 +201,70 @@ async function airaloToken() {
   return tok;
 }
 
-// Pick the cheapest Airalo package covering `countryCode` with >= dataGB. The
-// catalogue is large, so filter by country server-side.
-export async function airaloPickPackage({ countryCode, minGB = 1 }) {
+// ---- Airalo package catalogue: hourly sync + cache -------------------------
+// Airalo require partners to hit GET /v2/packages at least once an hour so the
+// catalogue never goes stale (no selling retired / out-of-stock eSIMs). We sync
+// the whole catalogue into memory and serve picks from it; a live per-country
+// call remains the fallback whenever the cache is cold or missing a country.
+let _airaloCatalogue = null; // { at:ms, byCountry:{CC:[pkg]}, count, countries }
+const AIRALO_CATALOGUE_TTL_MS = 60 * 60 * 1000; // 60 min — matches Airalo's policy
+function parsePackagesInto(byCountry, countries) {
+  for (const c of countries || []) {
+    const cc = String(c.country_code || c.slug || '').toUpperCase();
+    for (const op of c.operators || []) {
+      if (op.is_kyc_verify) continue; // can't auto-provision KYC operators
+      const ccOp = String(op.country_code || cc || '').toUpperCase();
+      for (const p of op.packages || []) {
+        if (p.type && p.type !== 'sim') continue; // skip top-ups
+        const gb = p.is_unlimited ? 999 : (Number(p.amount) || 0) / 1000; // amount is MB
+        const priceUSD = Number(p.price);
+        if (!Number.isFinite(priceUSD)) continue;
+        const key = ccOp || cc;
+        (byCountry[key] = byCountry[key] || []).push({ id: p.id, title: p.title, gb, days: p.day || null, priceUSD, apnValue: op.apn_value || null, apnType: op.apn_type || null, country: key });
+      }
+    }
+  }
+}
+// Full catalogue sync (paginated). Call hourly from the cron. Returns a summary.
+export async function syncAiraloPackages() {
   const tok = await airaloToken();
-  if (!tok || !countryCode) return null;
-  const q = new URLSearchParams({ 'filter[type]': 'local', 'filter[country]': String(countryCode).toUpperCase(), limit: '100' });
+  if (!tok) return { ok: false, reason: 'not-configured' };
+  const byCountry = {}; let page = 1; const MAX_PAGES = 12;
+  try {
+    while (page <= MAX_PAGES) {
+      const q = new URLSearchParams({ 'filter[type]': 'local', limit: '100', page: String(page) });
+      const res = await httpJSON(`${AIRALO_BASE}/v2/packages?${q}`, { headers: { Accept: 'application/json', Authorization: `Bearer ${tok}` } });
+      const data = res?.data;
+      if (!Array.isArray(data) || !data.length) break;
+      parsePackagesInto(byCountry, data);
+      if (data.length < 100) break; // last page
+      page++;
+    }
+  } catch (e) { return { ok: false, reason: 'fetch-failed', message: String(e?.message || e).slice(0, 160) }; }
+  const packages = Object.values(byCountry).reduce((s, a) => s + a.length, 0);
+  if (!packages) return { ok: false, reason: 'empty' };
+  _airaloCatalogue = { at: Date.now(), byCountry, count: packages, countries: Object.keys(byCountry).length };
+  return { ok: true, countries: _airaloCatalogue.countries, packages, at: new Date(_airaloCatalogue.at).toISOString() };
+}
+export function airaloCatalogueStatus() {
+  if (!_airaloCatalogue) return { synced: false };
+  const ageMin = Math.round((Date.now() - _airaloCatalogue.at) / 60000);
+  return { synced: true, at: new Date(_airaloCatalogue.at).toISOString(), ageMinutes: ageMin, fresh: ageMin < 60, countries: _airaloCatalogue.countries, packages: _airaloCatalogue.count };
+}
+
+// Pick the cheapest Airalo package covering `countryCode` with >= dataGB. Prefer
+// the hourly-synced catalogue (no extra API call); fall back to a live call.
+export async function airaloPickPackage({ countryCode, minGB = 1 }) {
+  if (!countryCode) return null;
+  const cc = String(countryCode).toUpperCase();
+  if (_airaloCatalogue && (Date.now() - _airaloCatalogue.at) < AIRALO_CATALOGUE_TTL_MS) {
+    const cached = (_airaloCatalogue.byCountry[cc] || []).filter((p) => p.gb >= minGB);
+    if (cached.length) return cached.sort((a, b) => a.priceUSD - b.priceUSD)[0];
+    // cache is fresh but has nothing for this country/size → fall through to live
+  }
+  const tok = await airaloToken();
+  if (!tok) return null;
+  const q = new URLSearchParams({ 'filter[type]': 'local', 'filter[country]': cc, limit: '100' });
   const res = await httpJSON(`${AIRALO_BASE}/v2/packages?${q}`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${tok}` },
   });

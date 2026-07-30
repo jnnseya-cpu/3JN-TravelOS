@@ -12,7 +12,8 @@
     "api/index.js": { "maxDuration": 30 }
   },
   "crons": [
-    { "path": "/api/cron/instalments", "schedule": "0 9 * * *" }
+    { "path": "/api/cron/instalments", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/airalo-sync", "schedule": "0 * * * *" }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
