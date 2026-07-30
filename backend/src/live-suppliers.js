@@ -1553,6 +1553,47 @@ function isBreakfastBoard(rate) {
   if (code) return ['BB', 'HB', 'FB', 'AI'].includes(code) || /BREAKFAST|HALF|FULL|INCLUSIVE/.test(String(rate?.boardName || '').toUpperCase());
   return /BREAKFAST|HALF BOARD|FULL BOARD|ALL INCLUSIVE/i.test(String(rate?.boardName || ''));
 }
+// Hotelbeds CONTENT API — the full, static hotel record: exact street address,
+// phone, photos, description, facilities. (Availability gives price + location;
+// content gives the rich detail.) Cached a week per code — content rarely
+// changes and we must not re-spend quota on every "more details" open.
+const _hbContentCache = new Map(); // code -> { at, data }
+const HB_CONTENT_TTL_MS = 7 * 24 * 3600 * 1000;
+export async function hotelbedsContent(code) {
+  if (!hotelbedsHotelsEnabled() || !code) return null;
+  const key = String(code);
+  const hit = _hbContentCache.get(key);
+  if (hit && Date.now() - hit.at < HB_CONTENT_TTL_MS) return hit.data;
+  const res = await hbRequest(`${HB_BASE}/hotel-content-api/1.0/hotels/${encodeURIComponent(key)}/details?language=ENG&useSecondaryLanguage=false`, {
+    headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: 12000,
+  });
+  const h = res?.hotel;
+  if (!h) return null;
+  // Hotelbeds image paths are relative; the CDN prefix + a size builds the URL.
+  const IMG = 'https://photos.hotelbeds.com/giata/bigger/';
+  const images = Array.isArray(h.images)
+    ? h.images.filter((im) => im?.path).sort((a, b) => (a.visualOrder || 99) - (b.visualOrder || 99)).slice(0, 12).map((im) => IMG + im.path)
+    : [];
+  const street = h.address?.content || [h.address?.street, h.address?.number].filter(Boolean).join(' ') || null;
+  const city = h.city?.content || h.destinationName || null;
+  const data = {
+    code: key,
+    name: h.name?.content || null,
+    address: [street, h.postalCode, city].filter(Boolean).join(', ') || null,
+    city, postalCode: h.postalCode || null,
+    phone: (h.phones || []).map((p) => p.phoneNumber).filter(Boolean)[0] || null,
+    coordinates: (h.coordinates && Number.isFinite(Number(h.coordinates.latitude))) ? { lat: Number(h.coordinates.latitude), lng: Number(h.coordinates.longitude) } : null,
+    category: h.categoryName || null,
+    description: h.description?.content || null,
+    images,
+    facilities: Array.isArray(h.facilities) ? [...new Set(h.facilities.map((f) => f.description?.content).filter(Boolean))].slice(0, 24) : [],
+    web: h.web || null,
+  };
+  _hbContentCache.set(key, { at: Date.now(), data });
+  if (_hbContentCache.size > 1000) _hbContentCache.delete(_hbContentCache.keys().next().value);
+  return data;
+}
+
 // Best-available hotel address from a Hotelbeds hotel node. The availability
 // response usually gives zone/destination (full street address lives in the
 // ContentAPI / booking response), so we assemble the most complete location

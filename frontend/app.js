@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v199';
+const APP_BUILD = 'v200';
 
 const state = {
   context: null,
@@ -926,17 +926,22 @@ function renderOptions(data) {
         <button class="btn btn-gold btn-sm" onclick="buyAcuFlow()">Buy ACUs to unlock</button>
       </div>`;
 
+  // A trip only has an ORIGIN/departure when it actually includes a travel mode.
+  // A hotel-only (or activities-only) request must NOT show "London → …" or a
+  // "Departure assumed" note — there's no flight to depart on.
+  const hasTransport = (intent.components || []).some((c) => ['flights', 'train', 'coach', 'ferry', 'cruise'].includes(c));
+  const showOrigin = data.journey !== false && hasTransport && !!data.origin;
   const summary = `
     <div class="card pad" style="margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;align-items:center">
         <div>
-          <span class="eyebrow">${data.journey === false ? 'Request understood' : 'Trip understood'}</span>
-          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${data.journey !== false && data.origin ? esc(data.origin.city) + ' → ' : ''}${esc(intent.destination.city)}${intent.destination.countryName ? ', ' + esc(intent.destination.countryName) : ''}</div>
-          <div class="muted" style="font-size:13.5px">${data.journey !== false && data.origin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} child${intent.travellers.children > 1 ? 'ren' : ''}${intent.travellers.childAges && intent.travellers.childAges.length ? ` (aged ${intent.travellers.childAges.join(', ')})` : ''}` : ''}${intent.travellers.infants ? ` · ${intent.travellers.infants} infant${intent.travellers.infants > 1 ? 's' : ''}` : ''}${intent.oneWay ? ` · one-way · ${intent.month || 'flexible'} · ${ukDate(intent.dates.checkIn)}` : ` · ${intent.nights} ${intent.nights === 1 ? 'night' : 'nights'} · ${intent.month || 'flexible'} · ${ukDate(intent.dates.checkIn)}${intent.dates.checkOut ? ' → ' + ukDate(intent.dates.checkOut) : ''}`}</div>
+          <span class="eyebrow">${data.journey === false || !hasTransport ? 'Request understood' : 'Trip understood'}</span>
+          <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700">${showOrigin ? esc(data.origin.city) + ' → ' : ''}${esc(intent.destination.city)}${intent.destination.countryName ? ', ' + esc(intent.destination.countryName) : ''}</div>
+          <div class="muted" style="font-size:13.5px">${showOrigin ? `${esc(data.origin.airport)}→${esc(intent.destination.code || '')} · ` : ''}${intent.travellers.adults} adult${intent.travellers.adults > 1 ? 's' : ''}${intent.travellers.children ? ` · ${intent.travellers.children} child${intent.travellers.children > 1 ? 'ren' : ''}${intent.travellers.childAges && intent.travellers.childAges.length ? ` (aged ${intent.travellers.childAges.join(', ')})` : ''}` : ''}${intent.travellers.infants ? ` · ${intent.travellers.infants} infant${intent.travellers.infants > 1 ? 's' : ''}` : ''}${intent.oneWay ? ` · one-way · ${intent.month || 'flexible'} · ${ukDate(intent.dates.checkIn)}` : ` · ${intent.nights} ${intent.nights === 1 ? 'night' : 'nights'} · ${intent.month || 'flexible'} · ${ukDate(intent.dates.checkIn)}${intent.dates.checkOut ? ' → ' + ukDate(intent.dates.checkOut) : ''}`}</div>
           ${intent.hotelArea ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 Searching hotels in <strong>${esc(intent.hotelArea)}</strong> as requested.</div>` : ''}
           ${data.recommendedDestination ? `<div class="muted" style="font-size:12px;margin-top:4px">📍 You named ${esc(data.recommendedDestination)} — we recommend <strong>${esc(intent.destination.city)}</strong> as the gateway city. Name a specific city to change it.</div>` : ''}
-          ${data.journey !== false && data.origin && data.origin.inferred ? `<div class="muted" style="font-size:12px;margin-top:4px">🛫 Departure assumed <strong>${esc(data.origin.city)}</strong> — add "from &lt;your city&gt;" to your request for exact flights.</div>` : ''}
-          ${data.journey !== false && data.origin && data.origin.approxCode ? `<div class="muted" style="font-size:12px;margin-top:4px">ℹ️ We used an approximate airport code for <strong>${esc(data.origin.city)}</strong> — name a major nearby city for an exact match.</div>` : ''}
+          ${showOrigin && data.origin.inferred ? `<div class="muted" style="font-size:12px;margin-top:4px">🛫 Departure assumed <strong>${esc(data.origin.city)}</strong> — add "from &lt;your city&gt;" to your request for exact flights.</div>` : ''}
+          ${showOrigin && data.origin.approxCode ? `<div class="muted" style="font-size:12px;margin-top:4px">ℹ️ We used an approximate airport code for <strong>${esc(data.origin.city)}</strong> — name a major nearby city for an exact match.</div>` : ''}
         </div>
         <div style="text-align:right">
           <div class="t-label">Components</div>
@@ -1390,13 +1395,31 @@ function fareSplitHTML(d, toLocal) {
 }
 
 // Detailed info + images for a selected flight or hotel.
-window.showComponentInfo = (tier, idx) => {
+window.showComponentInfo = async (tier, idx) => {
   const o = window.__options?.[tier];
   const c = o?.components?.[idx];
   if (!c) return;
   const sym = o.pricing.symbol;
   const toLocal = (usd) => money2(usd * (o.pricing.local.total / o.pricing.lines.totalUSD), sym);
   const d = c.details || {};
+  // Hotelbeds hotels: lazily pull the full Content API record (exact street
+  // address, real photos, description, facilities) the first time details open.
+  // Cached server-side, so re-opening is instant. Fails silently → the search
+  // fields (location + map) still show.
+  if (c.type === 'hotel' && d.hotelId && /hotelbeds/i.test(c.sourcedVia || '') && !d._contentLoaded) {
+    try {
+      const r = await api(`/api/hotel/content?code=${encodeURIComponent(d.hotelId)}`, { silent: true });
+      if (r?.content) {
+        if (r.content.images?.length) d.photos = r.content.images;
+        if (r.content.address) d.address = r.content.address;
+        if (r.content.description && !d.description) d.description = r.content.description;
+        if (r.content.phone) d.hotelPhone = r.content.phone;
+        if (r.content.facilities?.length && !(d.amenities || []).length) d.amenities = r.content.facilities;
+        if (r.content.coordinates) d.mapUrl = `https://www.google.com/maps/search/?api=1&query=${r.content.coordinates.lat},${r.content.coordinates.lng}`;
+      }
+    } catch { /* keep the location we already have */ }
+    d._contentLoaded = true;
+  }
   if (c.type === 'flight') {
     // Connecting itineraries show the FULL plan: every flight number, the
     // stopover airport, and exactly how long each wait is.
@@ -1514,7 +1537,7 @@ window.showComponentInfo = (tier, idx) => {
     <div class="muted" style="font-size:12.5px;margin-top:8px">${esc(d.propertyType || '')} · ${d.distanceToCentreKm ? d.distanceToCentreKm + 'km to centre · ' : ''}${d.guestRating ? d.guestRating + '/10 (' + (d.reviews || 0).toLocaleString() + ' verified reviews)' : ''}</div>
     ${d.address ? `<div class="kv" style="margin-top:8px"><span>📍 Address</span><span style="text-align:right">${esc(d.address)} · <a href="${esc(d.verifyUrl || ('https://www.google.com/search?q=' + encodeURIComponent((d.propertyName || c.supplier) + ' ' + d.address)))}" target="_blank" rel="noopener" style="color:var(--blue-bright);text-decoration:underline">see pictures & info on the web ↗</a> · <a href="${esc(d.mapUrl || ('https://www.google.com/maps/search/' + encodeURIComponent(d.address)))}" target="_blank" rel="noopener" style="color:var(--blue-bright);text-decoration:underline">map ↗</a></span></div>` : ''}
     ${(d.photos || []).length ? `
-      <div style="margin-top:12px"><span class="eyebrow">Photos · ${d.photos.length} provided by the host</span>
+      <div style="margin-top:12px"><span class="eyebrow">Photos · ${d.photos.length} ${c.type === 'host' ? 'provided by the host' : 'from the property'}</span>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
           ${d.photos.slice(0, 8).map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener" style="display:block;aspect-ratio:4/3;border-radius:8px;overflow:hidden;border:1px solid var(--line)"><img src="${esc(u)}" alt="Property photo" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'"></a>`).join('')}
         </div>

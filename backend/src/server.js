@@ -72,7 +72,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-structured-dest-fix-hotel-address-v199';
+const BUILD_TAG = '2026-07-30-hotelbeds-content-api-v200';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2659,6 +2659,16 @@ app.get('/api/expense', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
   res.json({ report: expenseReport(user.id) });
+}));
+
+// Full hotel content (address, photos, description, facilities) for a Hotelbeds
+// hotel, fetched lazily when a customer opens "more details". Cached server-side.
+app.get('/api/hotel/content', safe(async (req, res) => {
+  const code = String(req.query.code || '').trim();
+  if (!code) return res.status(400).json({ error: 'no-code' });
+  const content = await hotelbedsContent(code).catch(() => null);
+  if (!content) return res.status(404).json({ error: 'not-found', message: 'No content for this hotel (or Hotelbeds not connected).' });
+  res.json({ content });
 }));
 
 // City autocomplete for the structured "Where to? / From" fields. Public read
