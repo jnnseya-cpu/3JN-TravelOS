@@ -1451,10 +1451,15 @@ export async function fetchHotelbedsHotels(intent, dest) {
   // burnt daily allowance doesn't keep hammering the API. Search falls back.
   if (Date.now() < _hbAvailQuotaBlockedUntil) return null;
   try {
-    const rooms = Math.max(1, Math.ceil((intent.travellers?.total || 2) / 2));
     const adults = Math.max(1, intent.travellers?.adults || 2);
     const childAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges.filter((a) => a != null) : [];
-    const occ = { rooms, adults, children: childAges.length };
+    // ONE room for the whole party. Hotelbeds reads occupancies[].rooms as
+    // "N rooms EACH with this occupancy", so the old ceil(pax/2) requested e.g.
+    // 3 rooms of 2 adults + 3 children = 15 guests, hugely inflating the price.
+    // One room for the family is the cheapest correct request; properties that
+    // can't fit the party simply don't return (a family of 5 wants family
+    // rooms/apartments anyway).
+    const occ = { rooms: 1, adults, children: childAges.length };
     if (childAges.length) occ.paxes = childAges.map((a) => ({ type: 'CH', age: Math.max(0, Number(a) || 8) }));
     // Serve an identical recent search from cache — no API call (respects the
     // 50/day eval cap and Hotelbeds' "no redundant requests" review point).
@@ -1488,7 +1493,7 @@ export async function fetchHotelbedsHotels(intent, dest) {
       if (!best) continue;
       const usd = await toUSD(best.net, currency);
       if (usd == null) continue;
-      out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, rooms));
+      out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, 1));
     }
     const offers = out.length ? out : null;
     // Cache even a null so a repeat of an empty search doesn't re-spend quota.
