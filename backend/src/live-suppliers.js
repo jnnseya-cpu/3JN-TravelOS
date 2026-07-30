@@ -301,6 +301,10 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       passengers: travellers.total,
       cabin: offer.slices?.[0]?.segments?.[0]?.passengers?.[0]?.cabin_class_marketing_name || 'Economy',
       baggage: duffelBaggageLabel(offer),
+      // True only when the fare actually includes a numbered checked bag (not
+      // "per fare rules" / "no checked bag") — lets the package show a bags-
+      // included inclusion like the retail OTAs.
+      checkedBagIncluded: /\d+\s*checked bag/i.test(duffelBaggageLabel(offer)),
       offerId: offer.id,
       // Real-money safety: a Duffel offer is only ticketable until it expires,
       // and can reprice. Store both so payment can RE-VALIDATE before charging.
@@ -1400,6 +1404,14 @@ export function hotelbedsHeaders(key, secret, json = true) {
   return h;
 }
 export { HB_BASE };
+// A Hotelbeds board that includes breakfast (BB=bed&breakfast, HB=half board,
+// FB=full board, AI=all-inclusive). RO (room only) is the only breakfast-free
+// standard board.
+function isBreakfastBoard(rate) {
+  const code = String(rate?.boardCode || '').toUpperCase();
+  if (code) return ['BB', 'HB', 'FB', 'AI'].includes(code) || /BREAKFAST|HALF|FULL|INCLUSIVE/.test(String(rate?.boardName || '').toUpperCase());
+  return /BREAKFAST|HALF BOARD|FULL BOARD|ALL INCLUSIVE/i.test(String(rate?.boardName || ''));
+}
 export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, rooms) {
   const stars = Number(String(h.categoryCode || '').replace(/[^0-9]/g, '')) || Number((String(h.categoryName || '').match(/\d/) || [])[0]) || 0;
   const nightlyUSD = nights ? Math.round((priceUSD / nights) * 100) / 100 : priceUSD;
@@ -1414,6 +1426,7 @@ export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, roo
       nights, rooms: rooms || 1, nightlyUSD,
       board: rate.boardName || 'Room only',
       boardCode: rate.boardCode || null,
+      breakfastIncluded: isBreakfastBoard(rate),
       freeCancellation: rate.rateClass !== 'NRF' && !hasCharge,
       // Cert §3.8: carry Hotelbeds' own cancellation policies through UNALTERED,
       // so the customer sees the real deadline/charge before confirming.
@@ -1480,17 +1493,24 @@ export async function fetchHotelbedsHotels(intent, dest) {
     const currency = res.hotels.currency || 'EUR';
     const out = [];
     for (const h of hotels.slice(0, 20)) {
-      // Cheapest bookable NET rate across all rooms of this hotel.
-      let best = null;
+      // Cheapest bookable NET rate across all rooms of this hotel — AND, in
+      // parallel, the cheapest BREAKFAST-INCLUSIVE rate. We prefer breakfast when
+      // it's only a modest uplift, so packages present "breakfast included" like
+      // the retail OTAs (loveholidays/Trip.com) instead of a bare room-only rate.
+      let best = null; let bestBreakfast = null;
       for (const room of h.rooms || []) for (const rate of room.rates || []) {
         // Cert §3.5: opaque rates (packaging=true) may ONLY be sold bundled with
         // other products, never as a standalone hotel price. Skip them here.
         if (rate.packaging === true) continue;
         const net = Number(rate.net != null ? rate.net : rate.sellingRate);
         if (!Number.isFinite(net) || net <= 0) continue;
-        if (!best || net < best.net) best = { net, rate, roomName: room.name };
+        const cand = { net, rate, roomName: room.name };
+        if (!best || net < best.net) best = cand;
+        if (isBreakfastBoard(rate) && (!bestBreakfast || net < bestBreakfast.net)) bestBreakfast = cand;
       }
       if (!best) continue;
+      // Take breakfast when it costs ≤15% more than the cheapest room-only rate.
+      if (bestBreakfast && bestBreakfast.net <= best.net * 1.15) best = bestBreakfast;
       const usd = await toUSD(best.net, currency);
       if (usd == null) continue;
       out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, 1));

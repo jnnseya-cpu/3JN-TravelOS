@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v192';
+const APP_BUILD = 'v193';
 
 const state = {
   context: null,
@@ -1197,8 +1197,15 @@ function optionCard(o, sym, intent) {
         : ` <span class="ch-chip">${esc(c.details.outbound.stopLabel || '1 stop')}</span>`)
       : '';
     // Baggage allowance chip on flights — visible without expanding "ⓘ more".
+    // Green when a checked bag is genuinely included (matches the OTA "bags
+    // included" inclusion); neutral when it's cabin-only / per-fare-rules.
     const bagTag = c.type === 'flight' && c.details?.baggage
-      ? ` <span class="ch-chip" style="color:var(--blue-bright);border-color:rgba(78,161,255,0.3)" title="Baggage allowance included in this fare">🧳 ${esc(c.details.baggage)}</span>`
+      ? ` <span class="ch-chip" style="${c.details.checkedBagIncluded ? 'color:var(--green);border-color:rgba(70,211,154,0.35)' : 'color:var(--blue-bright);border-color:rgba(78,161,255,0.3)'}" title="Baggage allowance included in this fare">🧳 ${esc(c.details.baggage)}</span>`
+      : '';
+    // Breakfast inclusion chip on stays — presents "breakfast included" like the
+    // retail OTAs when the live rate's board covers it.
+    const boardTag = (c.type === 'hotel' || c.type === 'host') && (c.details?.breakfastIncluded || /breakfast|half board|full board|all inclusive/i.test(c.details?.board || ''))
+      ? ` <span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)" title="${esc(c.details?.board || 'Breakfast included')}">🍳 ${/all inclusive/i.test(c.details?.board || '') ? 'All-inclusive' : /full board/i.test(c.details?.board || '') ? 'Full board' : /half board/i.test(c.details?.board || '') ? 'Half board' : 'Breakfast included'}</span>`
       : '';
     // Hotel/host rating chip: star class + guest score out of 10 with review count.
     const ratingTag = (c.type === 'hotel' || c.type === 'host')
@@ -1229,7 +1236,7 @@ function optionCard(o, sym, intent) {
     // baggage, per-person fare); other components stay one-line summaries.
     const itin = c.type === 'flight' && c.details?.outbound ? flightItinBlock(c, o, sym, intent) : '';
     // With the itinerary block the stop/baggage chips are redundant noise.
-    const chips = itin ? `${legTag}${partyTag}` : `${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${modeTag}${activityTag}`;
+    const chips = itin ? `${legTag}${partyTag}` : `${legTag}${partyTag}${groupStayTag}${flightTag}${bagTag}${ratingTag}${boardTag}${modeTag}${activityTag}`;
     return `
     <li ${itin ? 'style="display:block"' : ''}><span class="cs" ${itin ? 'style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px"' : ''}>${labelFor(c)} <span class="muted">· ${esc(c.supplier)}</span>${chips} ${src}${more}${itin ? `<span class="cp">${money2(compLocal[i], sym)}</span>` : ''}</span>${itin || `<span class="cp">${money2(compLocal[i], sym)}</span>`}</li>`;
   }).join('');

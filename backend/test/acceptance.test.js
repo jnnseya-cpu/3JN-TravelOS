@@ -898,6 +898,17 @@ test('HOTELBEDS: normalizeHotelbedsHotel builds a live bedbank offer (nightly US
   assert.equal(off2.details.freeCancellation, false, 'a charged cancellation policy is not free-cancellation');
 });
 
+test('HOTELBEDS: normalizer flags breakfast board so packages can show "breakfast included"', async () => {
+  const { normalizeHotelbedsHotel } = await import('../src/live-suppliers.js');
+  const hotel = { code: 1, name: 'Test Hotel', categoryCode: '4EST' };
+  const bb = normalizeHotelbedsHotel(hotel, { rateKey: 'k', net: 400, boardCode: 'BB', boardName: 'BED AND BREAKFAST', rateClass: 'NOR', cancellationPolicies: [] }, 'Double', 400, 4, 1);
+  assert.equal(bb.details.breakfastIncluded, true, 'BB board → breakfast included');
+  const ro = normalizeHotelbedsHotel(hotel, { rateKey: 'k', net: 380, boardCode: 'RO', boardName: 'ROOM ONLY', rateClass: 'NOR', cancellationPolicies: [] }, 'Double', 380, 4, 1);
+  assert.equal(ro.details.breakfastIncluded, false, 'RO board → no breakfast');
+  const ai = normalizeHotelbedsHotel(hotel, { rateKey: 'k', net: 900, boardCode: 'AI', boardName: 'ALL INCLUSIVE', rateClass: 'NOR', cancellationPolicies: [] }, 'Double', 900, 4, 1);
+  assert.equal(ai.details.breakfastIncluded, true, 'AI board → counts as breakfast-inclusive');
+});
+
 test('HOTELBEDS: disabled by default (no key) — enable flags are false, doors listed but shut', async () => {
   const live = await import('../src/live-suppliers.js');
   const extras = await import('../src/extras-suppliers.js');
