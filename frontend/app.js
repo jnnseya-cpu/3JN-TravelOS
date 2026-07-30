@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v177';
+const APP_BUILD = 'v178';
 
 const state = {
   context: null,
@@ -5767,25 +5767,35 @@ function mountTrustpilot() {
   const tp = state.context?.trustpilot;
   const slot = document.getElementById('trustpilotSlot');
   if (!tp || !slot || !tp.reviewUrl) return;
-  // With a business-unit id → the LIVE star widget. Without it (id not found yet)
-  // → a clean Trustpilot LINK badge that works with just the domain.
+  // A clean, dark, on-brand badge — the guaranteed no-white-box baseline. Used
+  // when Trustpilot isn't wired yet, and as the fallback if the live widget can't
+  // render (bad/absent business-unit id, blocked script, or a light template).
+  const darkBadge = () => {
+    slot.innerHTML = `<a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;background:#1b1f23;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:9px 14px">
+      <span style="color:#00b67a;font-size:16px;letter-spacing:1px">★★★★★</span>
+      <span style="color:#eef2fb;font-size:12.5px">Rated 5/5 on <strong>Trustpilot</strong></span></a>`;
+    slot.style.display = '';
+  };
   if (tp.businessUnitId) {
-    slot.innerHTML = `<div class="trustpilot-widget" data-locale="en-GB" data-template-id="${esc(tp.templateId || '5419b6a8b0d04a076446a9ad')}" data-businessunit-id="${esc(tp.businessUnitId)}" data-style-height="52px" data-style-width="100%" data-theme="dark">
+    // LIVE widget — compact "Micro Star" template (transparent, dark-friendly), so
+    // it never renders as a white block. data-theme dark + a small fixed height.
+    slot.innerHTML = `<div class="trustpilot-widget" data-locale="en-GB" data-template-id="${esc(tp.templateId || '5419b6ffb0d04a076446a9af')}" data-businessunit-id="${esc(tp.businessUnitId)}" data-style-height="24px" data-style-width="100%" data-theme="dark" data-style-alignment="left">
       <a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener">Trustpilot</a></div>`;
+    slot.style.display = '';
+    const render = () => { try { window.Trustpilot?.loadFromElement(slot.querySelector('.trustpilot-widget'), true); } catch { /* ignore */ } };
     if (!document.getElementById('tpScript')) {
       const s = document.createElement('script');
       s.id = 'tpScript'; s.async = true;
-      s.src = '//widget.trustpilot.com/bootstrap/v5/tp.widget.bootstrap.min.js';
+      s.src = 'https://widget.trustpilot.com/bootstrap/v5/tp.widget.bootstrap.min.js';
+      s.onload = render; s.onerror = darkBadge; // script blocked → dark badge, never white
       document.head.appendChild(s);
-    } else if (window.Trustpilot) {
-      window.Trustpilot.loadFromElement(slot.querySelector('.trustpilot-widget'), true);
-    }
+    } else { render(); }
+    // Safety net: if the live widget hasn't drawn its iframe shortly, it can't
+    // render here — replace it with the dark badge so no white box is ever left.
+    setTimeout(() => { if (!slot.querySelector('iframe')) darkBadge(); }, 3500);
   } else {
-    slot.innerHTML = `<a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;background:#1b1f23;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:9px 14px">
-      <span style="color:#00b67a;font-size:16px;letter-spacing:1px">★★★★★</span>
-      <span style="color:#eef2fb;font-size:12.5px">Reviews on <strong>Trustpilot</strong></span></a>`;
+    darkBadge();
   }
-  slot.style.display = '';
 }
 
 // Reassurance at the moment of hesitation (checkout): secure-payment note + a
