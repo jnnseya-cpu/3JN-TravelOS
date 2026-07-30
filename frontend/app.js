@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v186';
+const APP_BUILD = 'v187';
 
 const state = {
   context: null,
@@ -433,7 +433,18 @@ async function boot() {
   // every request). Without this, admin access "randomly" dropped after a reload.
   try { const sp = localStorage.getItem('3jn_pin'); if (sp) state.staffPin = sp; } catch {}
   refreshNotifications();
-  await restoreSession();
+  // Reviewer magic-link (?reviewer=KEY): external certification access (e.g.
+  // Hotelbeds) — signs in as the isolated demo customer, then strips the param
+  // from the URL. No-op when the param is absent or the key is wrong/disabled.
+  try {
+    const revKey = new URLSearchParams(location.search).get('reviewer');
+    if (revKey) {
+      const d = await api('/api/auth/reviewer', { method: 'POST', body: JSON.stringify({ key: revKey }), silent: true });
+      if (d?.user) { setUser(d.user); toast('Reviewer access — welcome'); }
+      try { history.replaceState({}, '', location.pathname); } catch {}
+    }
+  } catch { toast('Reviewer link is invalid or disabled.'); }
+  if (!state.user) await restoreSession();
   applyRoleVisibility();
   applyStorefrontMode();
   applyDeepLink();

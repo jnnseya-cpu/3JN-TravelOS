@@ -931,6 +931,13 @@ test('HOTELBEDS: booking workflow primitives fail safe when the door is shut (no
   assert.equal((await live.bookHotelbedsHotel({})).error, 'not-configured', 'no-key beats missing-input');
 });
 
+test('REVIEWER: magic-link access is OFF by default (no REVIEWER_ACCESS_KEY → 403)', async () => {
+  // No env key configured in the test run → the door is shut for any key.
+  const r = await api('POST', '/api/auth/reviewer', { body: { key: 'anything' } });
+  assert.equal(r.status, 403, 'reviewer access disabled without REVIEWER_ACCESS_KEY');
+  assert.equal(r.json.error, 'reviewer-disabled', 'reports disabled, not a bad key (fails closed)');
+});
+
 test('HOTELBEDS: mTLS transport is dormant without a client cert (test phase → plain fetch)', async () => {
   const { hotelbedsMtlsConfigured, hbRequest } = await import('../src/hotelbeds-mtls.js');
   assert.equal(hotelbedsMtlsConfigured(), false, 'no client cert configured in tests → mTLS off');

@@ -3,6 +3,7 @@
 
 import express from 'express';
 import path from 'node:path';
+import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
@@ -200,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-hotelbeds-mtls-live-v186';
+const BUILD_TAG = '2026-07-30-reviewer-access-v187';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2386,6 +2387,38 @@ app.post('/api/account/:id/savings-guarantee', safe((req, res) => {
   const result = claimSavingsGuarantee(req.params.id, { competitorQuoteUSD, ourTotalUSD, acuSpent });
   if (!result.ok) return res.status(400).json(result);
   res.json({ ...result, guarantee: SAVINGS_GUARANTEE });
+}));
+
+// REVIEWER MAGIC-LINK ACCESS (external certification, e.g. Hotelbeds).
+// A single, isolated DEMO CUSTOMER account an external reviewer can enter via a
+// one-URL link, so they can walk the booking funnel WITHOUT a Firebase account —
+// and it works in LIVE_MODE. Security:
+//   • OFF unless the owner sets REVIEWER_ACCESS_KEY (a strong secret) — default
+//     deployments have no reviewer access at all.
+//   • The key is the gate, checked in constant time; the endpoint is rate-limited.
+//   • Grants ONLY a plain-consumer demo account (no privileges, no real customer
+//     data). Owner/privileged emails can never be reached this way; it fails
+//     closed if the configured reviewer account somehow isn't a plain consumer.
+// Rotate by changing the env var; the link then dies instantly.
+app.post('/api/auth/reviewer', safe((req, res) => {
+  const configured = String(process.env.REVIEWER_ACCESS_KEY || '').trim();
+  if (!configured) return res.status(403).json({ error: 'reviewer-disabled', message: 'Reviewer access is not enabled.' });
+  const rl = rateLimitAuth(clientIp(req));
+  if (!rl.ok) return res.status(429).json(rl);
+  const given = String((req.body || {}).key || '').trim();
+  const a = Buffer.from(given); const b = Buffer.from(configured);
+  const keyOk = a.length === b.length && timingSafeEqual(a, b);
+  if (!keyOk) return res.status(403).json({ error: 'bad-key', message: 'Reviewer link is invalid.' });
+  const email = String(process.env.REVIEWER_LOGIN_EMAIL || 'hotelbeds.reviewer@3jntravel.com').trim().toLowerCase();
+  if (isOwnerEmail(email)) return res.status(400).json({ error: 'bad-reviewer-email' });
+  let user = findUserByEmail(email);
+  if (!user) user = createUser({ email, name: 'Hotelbeds Reviewer', role: 'consumer' });
+  // Fail CLOSED: this path may only ever return a plain consumer demo account.
+  if (!user || PRIVILEGED_ROLES.has(user.role) || user.allAccess || isOwnerEmail(user.email)) {
+    return res.status(403).json({ error: 'not-a-demo-account' });
+  }
+  recordAudit({ actor: 'system', role: 'system', action: 'reviewer.login', entity: 'user', entityId: user.id, summary: 'reviewer magic-link sign-in' });
+  res.json({ user: getUser(user.id) || user });
 }));
 
 // Lightweight "login" — look up an existing account by email (prototype: no
