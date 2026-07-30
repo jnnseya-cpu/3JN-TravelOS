@@ -1673,15 +1673,21 @@ export async function fetchHotelbedsHotels(intent, dest) {
   if (Date.now() < _hbAvailQuotaBlockedUntil) return null;
   try {
     const adults = Math.max(1, intent.travellers?.adults || 2);
-    const childAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges.filter((a) => a != null) : [];
+    const statedAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges.filter((a) => a != null) : [];
+    // Children COUNT drives occupancy — a search like "2 children" with no ages
+    // must still include them (else the room was priced adults-only). Fill any
+    // missing ages with a sensible default so Hotelbeds gets a complete party.
+    const childCount = Math.max(statedAges.length, Number(intent.travellers?.children) || 0);
+    const childAges = statedAges.slice();
+    while (childAges.length < childCount) childAges.push(8);
     // ONE room for the whole party. Hotelbeds reads occupancies[].rooms as
     // "N rooms EACH with this occupancy", so the old ceil(pax/2) requested e.g.
     // 3 rooms of 2 adults + 3 children = 15 guests, hugely inflating the price.
     // One room for the family is the cheapest correct request; properties that
     // can't fit the party simply don't return (a family of 5 wants family
     // rooms/apartments anyway).
-    const occ = { rooms: 1, adults, children: childAges.length };
-    if (childAges.length) occ.paxes = childAges.map((a) => ({ type: 'CH', age: Math.max(0, Number(a) || 8) }));
+    const occ = { rooms: 1, adults, children: childCount };
+    if (childCount) occ.paxes = childAges.map((a) => ({ type: 'CH', age: Math.max(0, Number(a) || 8) }));
     // Serve an identical recent search from cache — no API call (respects the
     // 50/day eval cap and Hotelbeds' "no redundant requests" review point).
     const cacheKey = hbAvailKey(destCode, checkIn, checkOut, occ);

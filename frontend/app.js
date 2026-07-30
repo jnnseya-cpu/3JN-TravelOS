@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v200';
+const APP_BUILD = 'v201';
 
 const state = {
   context: null,
@@ -580,6 +580,29 @@ function wireCityAutocomplete(inputId, listId) {
 }
 wireCityAutocomplete('psDest', 'psDestList');
 wireCityAutocomplete('psOrigin', 'psOriginList');
+
+// Persist the precise-search fields across reloads (client-side), so a returning
+// visitor doesn't retype their trip — the free-text box already autosaves.
+const PRECISE_IDS = ['psDest', 'psOrigin', 'psCheckIn', 'psNights', 'psAdults', 'psChildren', 'psChildAges', 'psStars'];
+function savePrecise() {
+  try {
+    const o = {};
+    PRECISE_IDS.forEach((id) => { const el = document.getElementById(id); if (el) o[id] = el.value; });
+    o.comps = [...document.querySelectorAll('.psComp:checked')].map((c) => c.value);
+    localStorage.setItem('3jn_precise', JSON.stringify(o));
+  } catch { /* storage disabled — no-op */ }
+}
+(function restorePrecise() {
+  try {
+    const o = JSON.parse(localStorage.getItem('3jn_precise') || '{}');
+    PRECISE_IDS.forEach((id) => { const el = document.getElementById(id); if (el && o[id]) el.value = o[id]; });
+    (o.comps || []).forEach((v) => { const cb = document.querySelector(`.psComp[value="${v}"]`); if (cb) cb.checked = true; });
+    // If anything was restored, open the panel so the user sees their saved trip.
+    if (o.psDest || o.psCheckIn || (o.comps && o.comps.length)) { const ps = document.getElementById('preciseSearch'); if (ps) ps.open = true; }
+  } catch { /* ignore malformed */ }
+})();
+PRECISE_IDS.forEach((id) => document.getElementById(id)?.addEventListener('input', savePrecise));
+document.querySelectorAll('.psComp').forEach((cb) => cb.addEventListener('change', savePrecise));
 
 // FIRST-SEARCH NUDGE: a first-time visitor gets the Precise-search panel opened
 // for them (with a one-time highlight), so the reliable structured fields are
