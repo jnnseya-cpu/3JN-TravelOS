@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-hotelbeds-diagnostic-v188';
+const BUILD_TAG = '2026-07-30-hotelbeds-onscreen-diag-v189';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2720,6 +2720,10 @@ app.post('/api/plan', safe(async (req, res) => {
       }
       liveOverlay.flightsFound = (live.flights?.length || 0) + (live.groupFlights?.length || 0);
       liveOverlay.hotelsFound = live.hotels?.length || 0;
+      // Hotelbeds is our primary live-hotel bedbank — surface its exact state so the
+      // staff diagnostic can say WHY a hotel is still estimated (door shut vs quota
+      // vs no inventory) instead of blaming Duffel Stays.
+      liveOverlay.hotelbeds = { enabled: hotelbedsHotelsEnabled(), quota: hotelbedsAvailabilityStatus() };
       const hasLive = (live.flights && live.flights.length) || (live.hotels && live.hotels.length) || (live.groupFlights && live.groupFlights.length) || (live.activities && live.activities.length) || (live.transfers && live.transfers.length);
       if (hasLive) {
         result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, live, usage: usageStats(user?.id) });

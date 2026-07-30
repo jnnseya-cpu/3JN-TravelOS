@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v188';
+const APP_BUILD = 'v189';
 
 const state = {
   context: null,
@@ -954,7 +954,16 @@ function renderOptions(data) {
   const wantedHotel = (data.intent?.components || []).includes('hotel');
   const hotelGap = wantedHotel && lo && lo.applied && lo.hotelsFound === 0;
   if (isStaff() && hotelGap) {
-    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.55);background:rgba(216,180,106,0.08)">🛠️ <strong>Operator diagnostic:</strong> Flights are LIVE, but Duffel Stays returned <strong>0 hotels</strong> for this city (${lo.duffelMode} mode) — so the hotel is estimated and the whole package stays unpayable. In Duffel's TEST sandbox this is expected (little/no hotel inventory). To test PAYMENT now, run a <strong>flights-only</strong> search. Real Duffel <strong>live</strong> keys return real hotels globally.</div>`;
+    const hb = lo.hotelbeds || {};
+    let hbWhy;
+    if (!hb.enabled) {
+      hbWhy = 'Hotelbeds (your hotel bedbank) is <strong>NOT connected</strong> — set <strong>both</strong> the key AND the secret in Vercel (the signature needs both; a key with no secret leaves the door shut). Each Hotelbeds key is suite-specific: the HOTEL suite needs the HOTEL key in HOTELBEDS_API_KEY/HOTELBEDS_HOTEL_API_KEY — the Activities key will NOT return hotels.';
+    } else if (hb.quota?.quotaBlocked) {
+      hbWhy = `Hotelbeds is connected but the <strong>daily quota was hit (403)</strong> — paused until ${esc(hb.quota.quotaResumesAt || 'the cooldown clears')}. The eval key allows 50 requests/day; upgrade via the dashboard's profile-progression section.`;
+    } else {
+      hbWhy = `Hotelbeds is connected but returned <strong>0 rooms</strong> for this destination code / dates — the destination code may not map, or there's no inventory for those exact dates.`;
+    }
+    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.55);background:rgba(216,180,106,0.08)">🛠️ <strong>Operator diagnostic — hotel is estimated:</strong> ${hbWhy}</div>`;
   }
   if (isStaff() && lo && !lo.applied) {
     const why = ({
