@@ -931,6 +931,12 @@ test('HOTELBEDS: booking workflow primitives fail safe when the door is shut (no
   assert.equal((await live.bookHotelbedsHotel({})).error, 'not-configured', 'no-key beats missing-input');
 });
 
+test('HOTELBEDS: mTLS transport is dormant without a client cert (test phase → plain fetch)', async () => {
+  const { hotelbedsMtlsConfigured, hbRequest } = await import('../src/hotelbeds-mtls.js');
+  assert.equal(hotelbedsMtlsConfigured(), false, 'no client cert configured in tests → mTLS off');
+  assert.equal(typeof hbRequest, 'function', 'hbRequest exported as the drop-in transport');
+});
+
 test('HOTELBEDS: availability status exposes the quota guard (cache + cooldown), starts clean', async () => {
   const live = await import('../src/live-suppliers.js');
   const s = live.hotelbedsAvailabilityStatus();

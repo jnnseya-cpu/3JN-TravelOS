@@ -16,6 +16,7 @@
 // provider doesn't answer, we return null rather than a made-up "live" figure.
 
 import { createHmac, timingSafeEqual, createHash } from 'node:crypto';
+import { hbRequest } from './hotelbeds-mtls.js';
 import { fxRate, geocode } from './live-data.js';
 import { estimateFlightFares } from './suppliers.js';
 import { routeFareBaseUSD, nearbyAirports } from './airports.js';
@@ -1430,7 +1431,7 @@ export async function fetchHotelbedsHotels(intent, dest) {
     // Cert §3.6: sourceMarket unlocks market-specific pricing (3JN sells to the
     // UK market by default; override via HOTELBEDS_SOURCE_MARKET).
     const body = { sourceMarket: HB_SOURCE_MARKET, stay: { checkIn, checkOut }, occupancies: [occ], destination: { code: destCode } };
-    const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/hotels`, {
+    const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/hotels`, {
       method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: FLIGHT_TIMEOUT_MS,
     });
     // 403 = daily quota exhausted (or key not yet cleared). Back off for the
@@ -1477,7 +1478,7 @@ export async function hotelbedsCheckRate(rateKeys = []) {
   if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
   const keys = (Array.isArray(rateKeys) ? rateKeys : [rateKeys]).filter(Boolean).slice(0, 10); // §2.6 max 10
   if (!keys.length) return { ok: false, error: 'no-rate-key' };
-  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/checkrate`, {
+  const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/checkrate`, {
     method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET),
     body: JSON.stringify({ rooms: keys.map((rateKey) => ({ rateKey })) }), timeoutMs: HB_BOOK_TIMEOUT_MS,
   });
@@ -1520,7 +1521,7 @@ export async function bookHotelbedsHotel({ rateKey, rateType = 'BOOKABLE', holde
     tolerance,
     ...(remark ? { remark: String(remark).slice(0, 1024) } : {}),
   };
-  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings`, {
+  const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/bookings`, {
     method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: HB_BOOK_TIMEOUT_MS,
   });
   if (res == null) return { ok: false, error: 'unreachable' };
@@ -1548,7 +1549,7 @@ export async function cancelHotelbedsBooking(reference, { simulate = false } = {
   if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
   if (!reference) return { ok: false, error: 'no-reference' };
   const flag = simulate ? 'SIMULATION' : 'CANCELLATION';
-  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings/${encodeURIComponent(reference)}?cancellationFlag=${flag}`, {
+  const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/bookings/${encodeURIComponent(reference)}?cancellationFlag=${flag}`, {
     method: 'DELETE', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: HB_BOOK_TIMEOUT_MS,
   });
   if (res == null) return { ok: false, error: 'unreachable' };
@@ -1561,7 +1562,7 @@ export async function cancelHotelbedsBooking(reference, { simulate = false } = {
 export async function hotelbedsBookingDetail(reference) {
   if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
   if (!reference) return { ok: false, error: 'no-reference' };
-  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings/${encodeURIComponent(reference)}`, {
+  const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/bookings/${encodeURIComponent(reference)}`, {
     headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: HB_BOOK_TIMEOUT_MS,
   });
   if (res == null) return { ok: false, error: 'unreachable' };
@@ -1576,7 +1577,7 @@ export async function hotelbedsBookingList({ from, to, clientReference } = {}) {
   if (from) q.set('start', from);
   if (to) q.set('end', to);
   if (clientReference) q.set('filterType', 'CREATION'), q.set('clientReference', clientReference);
-  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings?${q.toString()}`, {
+  const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/bookings?${q.toString()}`, {
     headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: HB_BOOK_TIMEOUT_MS,
   });
   if (res == null) return { ok: false, error: 'unreachable' };

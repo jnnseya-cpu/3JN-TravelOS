@@ -9,6 +9,7 @@
 // provider returns null and the component stays estimator/ops-fulfilled.
 
 import { createHash } from 'node:crypto';
+import { hbRequest } from './hotelbeds-mtls.js';
 
 const env = process.env;
 const TIMEOUT_MS = Number(env.EXTRAS_TIMEOUT_MS) || 8000;
@@ -609,7 +610,7 @@ export async function hotelbedsActivitiesForScan({ destinationCode, destinationC
       order: 'DEFAULT',
       pagination: { itemsPerPage: 12, page: 1 },
     };
-    const res = await httpJSON(`${HB_BASE}/activity-api/3.0/activities`, { method: 'POST', headers: hbHeaders(HB_ACT_KEY, HB_ACT_SECRET), body: JSON.stringify(body) });
+    const res = await hbRequest(`${HB_BASE}/activity-api/3.0/activities`, { method: 'POST', headers: hbHeaders(HB_ACT_KEY, HB_ACT_SECRET), body: JSON.stringify(body) });
     if (res && res.__status === 403) { _hbActBlockedUntil = Date.now() + HB_ACT_COOLDOWN_MS; return null; }
     const acts = res?.activities;
     if (!Array.isArray(acts) || !acts.length) { _hbActCache.set(cacheKey, { at: Date.now(), offers: null }); return null; }
@@ -649,7 +650,7 @@ export async function hotelbedsTransferAvailability({ fromType = 'IATA', fromCod
     if (inboundISO) seg.push(encodeURIComponent(inboundISO));
     seg.push(String(adults), String(children), String(infants));
     const url = `${HB_BASE}/transfer-api/1.0/availability/en/${seg.join('/')}`;
-    const res = await httpJSON(url, { headers: hbHeaders(HB_TRF_KEY, HB_TRF_SECRET, false) });
+    const res = await hbRequest(url, { headers: hbHeaders(HB_TRF_KEY, HB_TRF_SECRET, false) });
     const services = res?.services;
     if (!Array.isArray(services) || !services.length) return null;
     let best = null;
