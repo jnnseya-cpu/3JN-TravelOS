@@ -1829,6 +1829,34 @@ export function setModuleFlags(patch = {}, by = 'admin') {
   return cur;
 }
 
+// ---- Featured Holiday override (admin "destination of the week") -------------
+// When active, the landing hero shows THIS destination instead of the seasonal
+// rotation — a one-click way to push a promo. Cleared → back to auto-rotation.
+export function getFeaturedOverride() {
+  const f = db.settings.get('featured');
+  return f && f.active ? f : null;
+}
+export function setFeaturedOverride(patch = {}, by = 'admin') {
+  if (patch.active === false) {
+    db.settings.set('featured', { active: false });
+    recordAudit({ actor: by, role: 'admin', action: 'featured.cleared', entity: 'settings', entityId: 'featured', summary: 'back to seasonal rotation' });
+    return { active: false };
+  }
+  const f = {
+    active: true,
+    short: String(patch.short || '').trim().slice(0, 40) || 'your next trip',
+    name: String(patch.name || patch.short || '').trim().slice(0, 60),
+    desc: String(patch.desc || '').trim().slice(0, 400),
+    exp: String(patch.exp || '').trim().slice(0, 80),
+    extras: String(patch.extras || '').trim().slice(0, 80),
+    note: String(patch.note || '').trim().slice(0, 80),
+    setAt: nowISO(), setBy: by,
+  };
+  db.settings.set('featured', f);
+  recordAudit({ actor: by, role: 'admin', action: 'featured.set', entity: 'settings', entityId: 'featured', summary: f.name || f.short });
+  return f;
+}
+
 export function moderateTestimonial(testimonialId, { status, by = 'admin' } = {}) {
   const t = db.testimonials.get(testimonialId);
   if (!t) return { ok: false, error: 'not-found' };

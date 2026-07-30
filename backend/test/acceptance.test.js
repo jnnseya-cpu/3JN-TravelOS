@@ -1196,6 +1196,26 @@ test('LAUNCH-3: profit is computed AFTER all costs (Stripe fees + infra + overhe
   assert.equal(typeof p.hitsTargetMargin, 'boolean');
 });
 
+test('FEATURED-1: admin can pin a featured destination (overrides rotation) and clear it', async () => {
+  const a = admin();
+  const consumer = mkUser();
+  // Admin-only.
+  assert.equal((await api('POST', '/api/admin/featured', { userId: consumer.id, body: { active: true, short: 'Nowhere' } })).status, 403);
+  // Pin.
+  const pin = await api('POST', '/api/admin/featured', { userId: a.id, body: { active: true, short: 'Accra', name: 'Accra & the coast', desc: 'Homecoming special', exp: 'City + coast', extras: 'Docs · transfers · eSIM', note: 'Detty December' } });
+  assert.equal(pin.status, 200);
+  assert.equal(pin.json.featured.active, true);
+  assert.equal(pin.json.featured.short, 'Accra');
+  // It surfaces on the public context so the landing hero can read it.
+  const ctx = await api('GET', '/api/context', {});
+  assert.equal(ctx.json.featured?.short, 'Accra');
+  assert.equal(ctx.json.featured?.note, 'Detty December');
+  // Clear → context.featured is null (back to seasonal rotation).
+  await api('POST', '/api/admin/featured', { userId: a.id, body: { active: false } });
+  const ctx2 = await api('GET', '/api/context', {});
+  assert.equal(ctx2.json.featured, null);
+});
+
 test('shutdown: close server', async () => {
   await new Promise((r) => server.close(r));
 });

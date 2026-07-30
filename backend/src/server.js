@@ -52,7 +52,7 @@ import {
   createDeal, updateDeal, setDealActive, deleteDeal, getDeal, publicDeal,
   listDeals, listDealsAdmin, dealTotalGBP, buildDealOption, createDealFulfilment,
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
-  getModuleFlags, setModuleFlags, wipeTransactionalData,
+  getModuleFlags, setModuleFlags, wipeTransactionalData, getFeaturedOverride, setFeaturedOverride,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-25-dynamic-featured-holiday-v179';
+const BUILD_TAG = '2026-07-25-featured-admin-pin-v180';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1031,6 +1031,7 @@ app.get('/api/context', safe((req, res) => {
     trustpilot: trustpilotConfig(),
     moneyProtection: moneyProtection(), // null until a real ATOL/TTA/trust scheme is set
     modules: getModuleFlags(), // VisaOS / Corporate / Embassy on-off (else "Coming Soon")
+    featured: getFeaturedOverride(), // admin "destination of the week" override, else null → seasonal rotation
     currencies: listCurrencies(),
     searchTiers: SEARCH_TIERS,
     membershipTiers: MEMBERSHIP_TIERS,
@@ -1330,6 +1331,16 @@ app.post('/api/admin/modules', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const modules = setModuleFlags(req.body || {}, currentUser(req)?.name || 'admin');
   res.json({ ok: true, modules });
+}));
+// Featured Holiday "destination of the week": pin a promo destination on the
+// landing hero, or clear it to resume the seasonal rotation. Admin only.
+app.get('/api/admin/featured', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ featured: getFeaturedOverride() });
+}));
+app.post('/api/admin/featured', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ ok: true, featured: setFeaturedOverride(req.body || {}, currentUser(req)?.name || 'admin') });
 }));
 
 // ---- Save & Search wallet (Product C) — gated behind the 'savewallet' module --

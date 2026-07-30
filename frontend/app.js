@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v179';
+const APP_BUILD = 'v180';
 
 const state = {
   context: null,
@@ -3163,6 +3163,7 @@ async function renderAdmin() {
       <button class="btn btn-sm btn-ghost" onclick="openClientMoney()" title="Customer money we're holding (must be safeguarded) vs 3JN's earned revenue vs the price-lock reserve.">💷 Client money</button>
       <button class="btn btn-sm btn-ghost" onclick="openTestimonialModeration()">💬 Review testimonials</button>
       <button class="btn btn-sm btn-ghost" onclick="openModuleToggles()">🧩 Modules on / off</button>
+      <button class="btn btn-sm btn-ghost" onclick="openFeaturedManager()">📌 Featured holiday</button>
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="openDealsManager()">🏷️ Manage deals</button>
       <button class="btn btn-sm btn-ghost" style="color:#ff8a8a;border-color:rgba(255,138,138,.4)" onclick="resetTestData()" title="Owner only. Wipes all test bookings, quotes, ledgers, activity and eSIMs to a clean launch slate.">🧨 Reset test data</button>
     </div>
@@ -5771,23 +5772,51 @@ const FEATURED_DESTS = [
   { name: 'The Maldives', short: 'the Maldives', months: [10, 11, 0, 1, 2, 3],
     desc: 'Flights, overwater villas, seaplane transfers, snorkelling and a sandbank picnic, and eSIM — one clear, honeymoon-ready price with easy instalments.',
     exp: 'Seaplane transfer + sandbank picnic', extras: 'Visa on arrival · 🚤 transfers · 📶 eSIM' },
+  { name: 'Bali & Ubud', short: 'Bali', months: [3, 4, 5, 6, 7, 8, 9],
+    desc: 'Flights, villa and resort stays, Ubud rice terraces, a temple day and a beach club, visa on arrival, transfers and eSIM — one transparent, instalment-friendly price.',
+    exp: 'Ubud rice terraces + temple day', extras: 'Visa on arrival · 🚘 transfers · 📶 eSIM' },
+  { name: 'Cairo & the Nile', short: 'Egypt', months: [9, 10, 11, 0, 1, 2, 3],
+    desc: 'Flights, hotels, the Pyramids and Sphinx, a Nile cruise add-on, eVisa, transfers and eSIM — history and warmth bundled into one all-in package.',
+    exp: 'Pyramids + Nile cruise', extras: 'eVisa ×4 · 🚘 transfers · 📶 eSIM' },
+  { name: 'The Gambia', short: 'The Gambia', months: [10, 11, 0, 1, 2, 3],
+    desc: 'Winter-sun flights, beach resorts, a river-cruise and roots-tour, transfers and eSIM — the Smiling Coast, sorted end to end with easy instalments.',
+    exp: 'River cruise + roots tour', extras: 'Visa help · 🚘 transfers · 📶 eSIM' },
+  { name: 'Jamaica & Montego Bay', short: 'Jamaica', months: [10, 11, 0, 1, 2, 3, 6, 7],
+    desc: 'Flights, all-inclusive resorts, Dunn’s River Falls and a catamaran day, transfers and eSIM — one honest, all-in island price with instalments.',
+    exp: 'Dunn’s River Falls + catamaran day', extras: 'Visa guidance · 🚘 transfers · 📶 eSIM' },
+  { name: 'Bangkok & Phuket', short: 'Thailand', months: [10, 11, 0, 1, 2, 3],
+    desc: 'Flights, city and island hotels, a Grand Palace tour and a Phi Phi islands day, transfers and eSIM — one transparent price, instalments available.',
+    exp: 'Grand Palace + Phi Phi islands day', extras: 'Visa on arrival · 🚘 transfers · 📶 eSIM' },
 ];
+function featuredFromOverride() {
+  const f = state.context?.featured;
+  if (!f || !f.active) return null;
+  return {
+    name: f.name || f.short, short: f.short || 'your next trip',
+    desc: f.desc || 'Share your travel needs and get one transparent, all-in quotation with easy instalment payments across flights, hotels, activities and visas.',
+    exp: f.exp || 'Signature experiences included', extras: f.extras || '🛂 visa · 🚘 transfers · 📶 eSIM',
+    note: f.note || '',
+  };
+}
 function mountFeaturedHoliday() {
   if (!document.getElementById('featHeadline')) return; // only on the landing hero
-  const now = new Date();
-  const m = now.getMonth();
-  let pool = FEATURED_DESTS.filter((d) => d.months.includes(m));
-  if (!pool.length) pool = FEATURED_DESTS;
-  // Rotate daily among the in-season pool so it keeps changing.
-  const pick = pool[(now.getFullYear() * 366 + dayOfYear(now)) % pool.length];
+  let pick = featuredFromOverride(); // admin "destination of the week" wins
+  if (!pick) {
+    const now = new Date();
+    const m = now.getMonth();
+    let pool = FEATURED_DESTS.filter((d) => d.months.includes(m));
+    if (!pool.length) pool = FEATURED_DESTS;
+    pick = pool[(now.getFullYear() * 366 + dayOfYear(now)) % pool.length]; // rotate daily in-season
+  }
   const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
   set('featHeadline', `Dreaming of ${pick.short}? Stop searching.`);
   set('featTitle', pick.name);
   set('featDesc', pick.desc);
   set('featCta', `Get my ${pick.short} quote`);
-  set('featHolo', `${pick.name.split(' & ')[0].split(',')[0]} · family · 7 nights`);
+  set('featHolo', `${String(pick.name).split(' & ')[0].split(',')[0]} · family · 7 nights`);
   set('featExp', pick.exp);
   set('featExtras', pick.extras);
+  const eb = document.getElementById('featEyebrow'); if (eb) eb.textContent = pick.note ? `Featured Holidays · ${pick.note}` : 'Featured Holidays';
 }
 function dayOfYear(d) { return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000); }
 function mountWhatsApp() {
@@ -6043,6 +6072,50 @@ window.potSetWatch = async (id) => {
   try { await api(`/api/pots/${id}/watch`, { method: 'POST', body: JSON.stringify({ origin, destination, departISO, returnISO }) }); }
   catch (e) { toast(e?.message || 'Could not price that route — try a nearby date or a major city.'); return; }
   toast("✓ Monitoring started — we'll alert you when your savings are enough.", 6000); openSaveWallet();
+};
+
+// ---- Admin: Featured Holiday "destination of the week" ---------------------
+// Pin a promo destination on the landing hero (overrides the seasonal rotation),
+// or clear it to resume auto-rotation. Pick from the built-in pool or go custom.
+window.openFeaturedManager = async () => {
+  let cur = null;
+  try { cur = (await api('/api/admin/featured')).featured; } catch { toast('Admin only.'); return; }
+  const opts = FEATURED_DESTS.map((d, i) => `<option value="${i}">${esc(d.short)} — ${esc(d.name)}</option>`).join('');
+  modal(`<span class="eyebrow">📌 Featured holiday</span>
+    <h3 style="margin:6px 0 4px">Destination of the week</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">${cur && cur.active ? `Currently pinned: <strong>${esc(cur.short)}</strong>. ` : 'Currently on <strong>seasonal auto-rotation</strong>. '}Pin one to push a promo, or clear it to resume the seasonal rotation.</p>
+    <div class="field"><label>Quick-fill from the pool</label>
+      <select class="in" id="fhPick" onchange="fhFill()"><option value="">— choose a destination —</option>${opts}</select></div>
+    <div class="field" style="margin-top:8px"><label>Short name (used in “Dreaming of …?”)</label><input class="in" id="fhShort" placeholder="e.g. Zanzibar" value="${esc(cur?.short || '')}"></div>
+    <div class="field" style="margin-top:8px"><label>Title</label><input class="in" id="fhName" placeholder="e.g. Zanzibar & Stone Town" value="${esc(cur?.name || '')}"></div>
+    <div class="field" style="margin-top:8px"><label>Description</label><textarea class="in" id="fhDesc" rows="3" placeholder="One transparent, all-in blurb…">${esc(cur?.desc || '')}</textarea></div>
+    <div class="field" style="margin-top:8px"><label>Signature experience line</label><input class="in" id="fhExp" placeholder="e.g. Spice tour + sunset dhow cruise" value="${esc(cur?.exp || '')}"></div>
+    <div class="field" style="margin-top:8px"><label>Extras line</label><input class="in" id="fhExtras" placeholder="e.g. Visa ×4 · 🚘 transfers · 📶 eSIM" value="${esc(cur?.extras || '')}"></div>
+    <div class="field" style="margin-top:8px"><label>Promo note (optional — shows in the eyebrow)</label><input class="in" id="fhNote" placeholder="e.g. Easter Special · save 15%" value="${esc(cur?.note || '')}"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn-gold btn-sm" onclick="fhPin()">📌 Pin this destination</button>
+      <button class="btn btn-ghost btn-sm" onclick="fhClear()">↺ Back to seasonal rotation</button>
+    </div>`);
+};
+window.fhFill = () => {
+  const i = document.getElementById('fhPick')?.value;
+  if (i === '' || i == null) return;
+  const d = FEATURED_DESTS[Number(i)]; if (!d) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('fhShort', d.short); set('fhName', d.name); set('fhDesc', d.desc); set('fhExp', d.exp); set('fhExtras', d.extras);
+};
+window.fhPin = async () => {
+  const g = (id) => document.getElementById(id)?.value?.trim() || '';
+  const body = { active: true, short: g('fhShort'), name: g('fhName'), desc: g('fhDesc'), exp: g('fhExp'), extras: g('fhExtras'), note: g('fhNote') };
+  if (!body.short) { toast('Give at least a short destination name.'); return; }
+  try { const r = await api('/api/admin/featured', { method: 'POST', body: JSON.stringify(body) }); if (state.context) state.context.featured = r.featured; }
+  catch (e) { toast('⚠ ' + (e?.message || 'Failed')); return; }
+  toast(`✓ “${body.short}” pinned as the featured holiday.`, 6000); closeModal();
+};
+window.fhClear = async () => {
+  try { await api('/api/admin/featured', { method: 'POST', body: JSON.stringify({ active: false }) }); if (state.context) state.context.featured = null; }
+  catch (e) { toast('⚠ ' + (e?.message || 'Failed')); return; }
+  toast('✓ Back to seasonal auto-rotation.'); closeModal();
 };
 
 // ---- Admin: Modules on / off (VisaOS · Corporate · Embassy) ----------------
