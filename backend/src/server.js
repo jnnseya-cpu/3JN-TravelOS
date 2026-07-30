@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-reviewer-access-v187';
+const BUILD_TAG = '2026-07-30-hotelbeds-diagnostic-v188';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1935,9 +1935,18 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
         : 'SELF-SERVE and free: sign up at travelpayouts.com, copy the API token (Tools → API), set TRAVELPAYOUTS_TOKEN. Gives real market prices incl. Ryanair/Jet2 for estimate calibration and automatic benchmark quotes (cached market data — never charged as live).',
     },
     hotels: {
-      provider: duffelStaysEnabled() ? 'Duffel Stays' : 'Amadeus',
+      provider: hotelbedsHotelsEnabled() ? 'Hotelbeds' : duffelStaysEnabled() ? 'Duffel Stays' : 'Amadeus',
       enabled: liveHotelsEnabled(),
       diagnostic: staysDiag,
+      hotelbeds: {
+        enabled: hotelbedsHotelsEnabled(),
+        availability: hotelbedsAvailabilityStatus(),
+        note: hotelbedsHotelsEnabled()
+          ? (hotelbedsAvailabilityStatus().quotaBlocked
+            ? `Hotelbeds is connected but the daily quota was hit (403) — paused until ${hotelbedsAvailabilityStatus().quotaResumesAt}. On the eval key you get 50 requests/day; upgrade in the Hotelbeds dashboard's profile-progression section.`
+            : 'Hotelbeds is CONNECTED — live NET rates flow where it has inventory. A search still showing an estimate had no Hotelbeds rooms for that exact destination code / dates.')
+          : 'Hotelbeds is NOT connected — set HOTELBEDS_API_KEY *and* HOTELBEDS_SECRET (both are required to build the X-Signature; a key with no secret leaves the door shut).',
+      },
       note: staysDiag?.ok
         ? 'Duffel Stays LIVE — live hotels flow where Duffel has coverage; a search still showing an estimate had no Stays inventory for that exact place/dates.'
         : staysDiag?.reason === 'stays-not-enabled'
