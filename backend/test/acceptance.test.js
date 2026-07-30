@@ -898,6 +898,24 @@ test('HOTELBEDS: normalizeHotelbedsHotel builds a live bedbank offer (nightly US
   assert.equal(off2.details.freeCancellation, false, 'a charged cancellation policy is not free-cancellation');
 });
 
+test('FEE BAKE-IN: high-value packages fold the margin into the price (same total), normal ones stay transparent', async () => {
+  const { priceBreakdown } = await import('../src/pricing.js');
+  const currency = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
+  // A normal-value package: the transparent fee line stays.
+  const small = priceBreakdown({ componentsUSD: 800, marketRefUSD: 1000, currency });
+  assert.equal(small.feeBakedIn, false, 'a ~£630 package keeps the transparent fee line');
+  // A high-value package (~£5k): the margin folds into the price.
+  const big = priceBreakdown({ componentsUSD: 6000, marketRefUSD: 7000, currency });
+  assert.equal(big.feeBakedIn, true, 'a high-value package bakes the fee in');
+  // CRITICAL: baking in is presentation only — the commission (and thus total)
+  // is identical to what a transparent package would charge on the same basket.
+  assert.ok(big.lines.grossCommissionUSD > 0, 'margin is still taken (not given away)');
+  assert.equal(Math.round(big.lines.totalUSD), Math.round(big.lines.suppliersUSD - big.lines.loyaltyDiscountUSD + big.lines.grossCommissionUSD + big.lines.duffelFeeUSD), 'total = suppliers − discount + margin + fees, unchanged by presentation');
+  // Flights-only never bakes in (it shows its own small fee).
+  const flightsOnly = priceBreakdown({ componentsUSD: 6000, marketRefUSD: 7000, currency, flightsOnly: true });
+  assert.equal(flightsOnly.feeBakedIn, false, 'flights-only always shows its fee');
+});
+
 test('HOTELBEDS: normalizer flags breakfast board so packages can show "breakfast included"', async () => {
   const { normalizeHotelbedsHotel } = await import('../src/live-suppliers.js');
   const hotel = { code: 1, name: 'Test Hotel', categoryCode: '4EST' };

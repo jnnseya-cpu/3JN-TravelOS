@@ -66,6 +66,12 @@ export const DUFFEL_FEES = {
   searchToBookRatio: 1500,
 };
 const GBP_USD = 1 / 0.79; // platform anchor reciprocal (≈1.266), consistent everywhere
+// FEE PRESENTATION on HIGH-VALUE packages: above this total, the 10% margin is
+// folded into the package price (no separate fee line) — matching how retail
+// OTAs present, so a big visible fee doesn't make an expensive trip look dearer.
+// The margin/total is UNCHANGED; only the presentation differs. Normal trips keep
+// the transparent line. Set PACKAGE_FEE_BAKEIN_ABOVE_GBP very high to disable.
+const FEE_BAKEIN_ABOVE_USD = Number(process.env.PACKAGE_FEE_BAKEIN_ABOVE_GBP || 2500) * GBP_USD;
 // Per-order Duffel cost we recover on a live flight booking.
 export function duffelOrderFeesUSD({ orderValueUSD = 0, ancillaries = 0 } = {}) {
   const orderUSD = DUFFEL_FEES.orderGBP * GBP_USD;
@@ -178,6 +184,10 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
     discountSource, // 'member' when the membership beat the points tier, else 'loyalty'
     feeModel,
     feeLabel,
+    // High-value packages present the margin folded into the price (no separate
+    // fee line) like the retail OTAs — same total, cleaner presentation. Only for
+    // real packages with a real margin; flights-only always show their fee.
+    feeBakedIn: !flightsOnly && grossCommissionUSD > 0 && totalUSD >= FEE_BAKEIN_ABOVE_USD,
     lines: {
       suppliersUSD: round2(componentsUSD),
       loyaltyDiscountUSD: round2(loyaltyDiscountUSD),

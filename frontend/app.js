@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v193';
+const APP_BUILD = 'v194';
 
 const state = {
   context: null,
@@ -1003,7 +1003,7 @@ function renderOptions(data) {
 
   $('#plannerOut').innerHTML = staffLiveDiag + gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
     `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
-      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.</p></div>
+      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. ${(data.packages.options || []).some((o) => o.pricing?.feeBakedIn) ? 'Package prices are all-inclusive — the full price is shown before you pay. Flights-only carry a small 2% service fee (min £4.99, capped at £15).' : 'Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.'}</p></div>
     <div class="opt-grid">${opts}</div>` + sponsoredStrip + compareCard(data, sym);
 
   // stash options for booking
@@ -1149,7 +1149,13 @@ function optionCard(o, sym, intent) {
   // components and let the LAST priced one absorb the drift, so the line items
   // always sum to the Total shown.
   const compRatio = p.local.total / (p.lines?.totalUSD || 1);
-  const compLocal = o.components.map((c) => Math.round((Number(c.priceUSD) || 0) * compRatio * 100) / 100);
+  // On a fee-baked-in (high-value) package the margin is folded PROPORTIONALLY
+  // into every component, so the parts sum to the all-inclusive total and no
+  // single line looks inflated (matches OTA presentation). Normal packages leave
+  // the margin as an explicit line and the parts show at supplier cost.
+  const bakeIn = !!p.feeBakedIn;
+  const marginMul = bakeIn && p.local.suppliers > 0 ? (p.local.total / p.local.suppliers) : 1;
+  const compLocal = o.components.map((c) => Math.round((Number(c.priceUSD) || 0) * compRatio * marginMul * 100) / 100);
   const pricedIdx = o.components.map((c, i) => (Number(c.priceUSD) > 0 ? i : -1)).filter((i) => i >= 0);
   if (pricedIdx.length) {
     const partsSum = pricedIdx.reduce((s, i) => s + compLocal[i], 0);
@@ -1252,11 +1258,16 @@ function optionCard(o, sym, intent) {
       <!-- Fabricated "you save £X vs market" removed: the estimator's market reference is not a real quote. Real savings show only via the Deep Price Dive (verified) or a live market feed. -->
       <ul class="comp-list">${comps}</ul>
       <table class="brk">
+        ${bakeIn ? `
+        ${p.local.loyaltyDiscount > 0.005 ? `<tr class="save"><td>${p.discountSource === 'member' ? 'Member' : 'Loyalty'} saving (${esc(p.loyaltyTier)})</td><td>included</td></tr>` : ''}
+        <tr class="total"><td>Package total · all-inclusive</td><td>${money2(p.local.total, sym)}</td></tr>
+        ` : `
         <tr><td>Suppliers</td><td>${money2(p.local.suppliers, sym)}</td></tr>
         ${p.local.loyaltyDiscount > 0.005 ? `<tr class="save"><td>${p.discountSource === 'member' ? 'Member' : 'Loyalty'} discount (${esc(p.loyaltyTier)} · ${(p.loyaltyDiscountPct * 100).toFixed(0)}%)</td><td>-${money2(p.local.loyaltyDiscount, sym)}</td></tr>` : ''}
         <tr><td>${esc(p.feeLabel || '3JN commission (10%)')}</td><td>${(p.local.grossCommission ?? p.local.commission) > 0 ? money2(p.local.grossCommission ?? p.local.commission, sym) : '<span style="color:var(--green)">FREE</span>'}</td></tr>
         ${p.local.duffelFee > 0 ? `<tr><td>Airline booking &amp; payment fees</td><td>${money2(p.local.duffelFee, sym)}</td></tr>` : ''}
         <tr class="total"><td>Total</td><td>${money2(p.local.total, sym)}</td></tr>
+        `}
       </table>
       ${o.bookableForRealPayment
         ? `<div class="save-tag" style="color:#79d99b;border-color:rgba(121,217,155,.4)">✓ Live bookable price</div>
