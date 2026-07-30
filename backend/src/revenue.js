@@ -187,6 +187,13 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // commitment test is "has money changed hands", never "does the user hold ACU".
   const committed = hasDeposit || subscriptionActive || hasPurchasedAcu || priorBookings > 0
     || corporateContract || whiteLabelContract || !!(user && user.membership?.active);
+  // A MEMBER pays the discounted member rate (t.acuMember), so affordability must
+  // be tested against the price they actually pay — NOT the full non-member rate.
+  // The UI quotes the member "requires N ACU" from acuMember; gating on the higher
+  // t.acu made a member with, say, 90 ACU fail a 56-ACU (member) Concierge search
+  // because 90 < the 91-ACU non-member price — "the system refused to take ACUs".
+  const isMember = !!(user && user.membership?.active);
+  const userAcuCost = (isMember && t.acuMember) ? t.acuMember : t.acu;
   const smartAcu = (SEARCH_TIERS.smart || {}).acu || 5;
   const hasStarterAcu = !!(user && user.acuBalance >= smartAcu);
   // Only bites when the user has the free starter ACU (can afford Smart) but has
@@ -202,15 +209,27 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   }
 
   // Abuse throttle (spec §15): the Search Abuse Detection Engine scores seven
-  // signals 0–100 (Normal / Monitor / Restrict / Block). Restrict+ with zero
-  // booking history downgrades to cached regardless of funding — the system is
-  // not a free AI search machine.
+  // signals 0–100 (Normal / Monitor / Restrict / Block). It exists to stop FREE
+  // users burning AI without ever converting — so it must never refuse a PAYING
+  // customer. Two funding facts exempt a search:
+  //   • committed — an active member, a deposit, a purchased-ACU top-up, a prior
+  //     booking, or a corporate/white-label contract. Money has changed hands;
+  //     the user is converted, not an abuser.
+  //   • acuFunded — the ACU balance covers this tier. The user is paying per run;
+  //     downgrading it silently refuses ACU they are willingly spending (the
+  //     exact "user has ACUs but the system refused to take them" bug).
+  // A committed user is never throttled. An ACU-funded (but not otherwise
+  // committed) user is only stopped by a hard BLOCK (farmed accounts + heavy
+  // volume, score ≥ 81) — the soft Restrict throttle can't refuse a paid search.
+  const acuFunded = !!(user && user.acuBalance >= userAcuCost);
   const abuse = searchAbuseScore({
     searchesWithoutBooking: priorBookings === 0 ? recentSearches : 0,
     repeatedSearches: sameDestinationRepeats,
     multipleAccounts, // farmed accounts from one IP get throttled to cached
   });
-  if ((abuse.level === 'block' || abuse.level === 'throttle' || recentSearches > 20 || sameDestinationRepeats > 10) && priorBookings === 0) {
+  const softThrottle = abuse.level === 'throttle' || recentSearches > 20 || sameDestinationRepeats > 10;
+  const throttleBites = abuse.level === 'block' || (softThrottle && !acuFunded);
+  if (throttleBites && priorBookings === 0 && !committed) {
     return {
       allowed: false, downgradeTo: 'free', tier, reason: 'abuse-throttle', aiCostUSD: t.aiCostUSD, abuse,
       requirement: { message: 'To continue deep AI price hunting, please add ACUs or place a refundable booking deposit.' },
@@ -220,7 +239,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // Expected 3JN revenue from a booking at this value = 10% commission.
   const expectedRevenueUSD = expectedBookingUSD * 0.10;
   const revenueCovers = expectedRevenueUSD >= t.aiCostUSD * REVENUE_TO_COST_MULTIPLE;
-  const acuCovers = user && user.acuBalance >= t.acu;
+  const acuCovers = !!(user && user.acuBalance >= userAcuCost);
 
   // FINAL PLATFORM RULE (LOCKED): no AI agent may execute a task unless funded
   // by 1) ACU balance, 2) search deposit, 3) active subscription, 4) supplier-
@@ -248,7 +267,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
       tier,
       reason: fundingReasons.join('+'),
       aiCostUSD: t.aiCostUSD,
-      acu: acuCovers ? t.acu : 0, // only debit ACU if that's the funding source
+      acu: acuCovers ? userAcuCost : 0, // debit the price the user pays (member rate for members)
       chargeAcu: acuCovers && !subscriptionActive && !hasDeposit,
       // The 8-question gate checklist (spec part 16), answered.
       checklist: gateChecklist({ acuCovers, hasDeposit, subscriptionActive, revenueCovers, recentSearches, priorBookings, intentStrong }),
@@ -263,10 +282,10 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
     reason: 'unfunded',
     aiCostUSD: t.aiCostUSD,
     requirement: {
-      acuNeeded: t.acu,
+      acuNeeded: userAcuCost,
       orDepositGBP: tier === 'deep' ? 5 : tier === 'concierge' ? 20 : 0,
       orSubscription: true,
-      message: `This ${t.name} needs funding. Buy ${t.acu} ACUs, pay a refundable search deposit, or upgrade your plan. Showing cached results instead.`,
+      message: `This ${t.name} needs funding. Buy ${userAcuCost} ACUs, pay a refundable search deposit, or upgrade your plan. Showing cached results instead.`,
     },
   };
 }

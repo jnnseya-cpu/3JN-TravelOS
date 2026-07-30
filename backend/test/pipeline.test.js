@@ -2070,6 +2070,47 @@ test('gate part 16: 8-question checklist, abuse throttle, free daily cap, intent
   assert.ok(assist.allowed && assist.reason.includes('strong-booking-intent'));
 });
 
+test('gate: abuse throttle never refuses a PAYING customer (member/ACU-funded)', () => {
+  // The reported bug: a member with 90 ACU, zero bookings, and heavy test-search
+  // volume approves a 56-ACU Concierge search and gets "add ACUs to unlock" —
+  // the throttle downgraded a converted, paying customer.
+  const smartAcu = SEARCH_TIERS.smart.acu;
+
+  // Baseline: a FREE user with the same abusive telemetry IS still throttled.
+  const freeUser = costProtectionGate({ tier: 'deep', user: null, recentSearches: 30, priorBookings: 0 });
+  assert.equal(freeUser.reason, 'abuse-throttle', 'free abusive user still throttled');
+
+  // The exact reported case: an active member on Concierge with heavy test-search
+  // volume and zero bookings. Membership is a real commitment — never throttled.
+  const member = costProtectionGate({
+    tier: 'concierge',
+    user: { acuBalance: 90, membership: { active: true, tier: 'family' } },
+    recentSearches: 30, sameDestinationRepeats: 15, priorBookings: 0,
+  });
+  assert.equal(member.allowed, true, 'committed member is not abuse-throttled');
+  assert.notEqual(member.reason, 'abuse-throttle');
+  assert.ok(member.reason.includes('acu-balance'), 'funded by their ACU balance');
+
+  // A non-member whose ACU balance covers the tier is paying per run — the soft
+  // Restrict throttle can't refuse ACU they are willingly spending.
+  const acuOnly = costProtectionGate({
+    tier: 'smart',
+    user: { acuBalance: smartAcu + 50 },
+    recentSearches: 30, sameDestinationRepeats: 15, priorBookings: 0,
+  });
+  assert.equal(acuOnly.allowed, true, 'ACU-funded search is not soft-throttled');
+  assert.ok(acuOnly.acu === smartAcu, 'debits the tier ACU cost');
+
+  // But a hard BLOCK (farmed accounts + heavy volume, score ≥ 81) still stops an
+  // ACU-holder who has not otherwise committed.
+  const farmed = costProtectionGate({
+    tier: 'smart',
+    user: { acuBalance: smartAcu + 50 },
+    recentSearches: 60, sameDestinationRepeats: 40, multipleAccounts: true, priorBookings: 0,
+  });
+  assert.equal(farmed.reason, 'abuse-throttle', 'hard block still stops uncommitted farming');
+});
+
 test('API revenue: seven productised endpoints catalogued and priced (+eSIM API)', () => {
   assert.equal(API_PRODUCTS.length, 7);
   assert.ok(API_PRODUCTS.some((p) => p.key === 'esim'), 'eSIM API is sold');
