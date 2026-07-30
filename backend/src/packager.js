@@ -16,6 +16,15 @@ import { priceBreakdown } from './pricing.js';
 function reliableVerified(offers) {
   return offers.filter((o) => o && o.verified && o.reliabilityScore >= RELIABILITY_FLOOR && Number.isFinite(o.priceUSD));
 }
+// A flight with an OVERNIGHT airport layover (or an absurd >8h wait) is a poor
+// leisure experience — you lose a night/day in a terminal. It's kept only as a
+// LAST resort (see preferDirect): a reasonable connection always beats it, but
+// if it's genuinely the only thing available we still show it (no starvation).
+function hasBadLayover(f) {
+  if (f.type !== 'flight') return false;
+  const lays = [...(f.details?.outbound?.layovers || []), ...(f.details?.inbound?.layovers || [])];
+  return lays.some((l) => l && (l.overnight === true || (l.minutes != null && l.minutes > 480)));
+}
 
 // ---- Accommodation privilege rule -------------------------------------------
 // The HOTEL holds the privileged slot in every package. A private host may
@@ -153,7 +162,11 @@ function preferDirect(list, picker) {
   if (direct.length) return picker(direct);
   const short = list.filter(isShortStopover);
   if (short.length) return picker(short);
-  return picker(list);
+  // Prefer ANY reasonable connection over an overnight/absurd-layover red-eye —
+  // a cheaper overnight fare must never beat a sane same-day connection.
+  const decent = list.filter((f) => !hasBadLayover(f));
+  if (decent.length) return picker(decent);
+  return picker(list); // last resort: only red-eye connections exist (no starvation)
 }
 
 // Departure-time windows (local outbound departure hour).
