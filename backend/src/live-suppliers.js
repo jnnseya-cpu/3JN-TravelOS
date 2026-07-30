@@ -1334,6 +1334,10 @@ export async function fetchTboHotels(intent, dest) {
 const HB_BASE = env.HOTELBEDS_BASE_URL || 'https://api.test.hotelbeds.com';
 const HB_HOTEL_KEY = env.HOTELBEDS_HOTEL_API_KEY || env.HOTELBEDS_API_KEY || '';
 const HB_HOTEL_SECRET = env.HOTELBEDS_HOTEL_SECRET || env.HOTELBEDS_SECRET || '';
+const HB_SOURCE_MARKET = env.HOTELBEDS_SOURCE_MARKET || 'UK';
+// Cert §3.11: the Booking Confirmation response MUST allow ≥60s (a live hotel
+// confirmation can be slow). CheckRate + cancellation get the same headroom.
+const HB_BOOK_TIMEOUT_MS = Number(env.HOTELBEDS_BOOK_TIMEOUT_MS) || 65000;
 export function hotelbedsHotelsEnabled() { return !!(HB_HOTEL_KEY && HB_HOTEL_SECRET) && typeof fetch === 'function'; }
 // The APItude signature + auth headers. Exported so the activities/transfers
 // suites (extras-suppliers) reuse the exact same scheme with their own keys.
@@ -1359,12 +1363,24 @@ export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, roo
     details: {
       nights, rooms: rooms || 1, nightlyUSD,
       board: rate.boardName || 'Room only',
+      boardCode: rate.boardCode || null,
       freeCancellation: rate.rateClass !== 'NRF' && !hasCharge,
+      // Cert §3.8: carry Hotelbeds' own cancellation policies through UNALTERED,
+      // so the customer sees the real deadline/charge before confirming.
+      cancellationPolicies: Array.isArray(rate.cancellationPolicies) ? rate.cancellationPolicies : null,
+      // Cert §3.9: rate comments must be shown before confirmation. The id resolves
+      // via ContentAPI RateComments (or CheckRate returns the text directly).
+      rateCommentsId: rate.rateCommentsId || null,
+      // Cert §2.7: surface promotions (e.g. included transfer / park ticket).
+      promotions: Array.isArray(rate.promotions) ? rate.promotions.map((p) => p.name).filter(Boolean) : null,
       roomType: roomName || 'Standard Room',
+      roomCode: rate.roomCode || null,
       area: h.zoneName || h.destinationName || '',
       hotelId: h.code || null,
       hotelbedsRateKey: rate.rateKey || null, // needed for checkrate + booking
-      rateType: rate.rateType || null,        // BOOKABLE (firm) vs RECHECK
+      rateType: rate.rateType || null,        // BOOKABLE (firm) vs RECHECK (must CheckRate)
+      paymentType: rate.paymentType || null,  // AT_WEB (prepaid) vs AT_HOTEL
+      hotelMandatory: rate.hotelMandatory === true, // cert §3.12 selling-rate hint
       netRate: true, // contracted net rate — the spread funds the price-lock margin
     },
     priceUSD,
@@ -1387,7 +1403,9 @@ export async function fetchHotelbedsHotels(intent, dest) {
     const childAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges.filter((a) => a != null) : [];
     const occ = { rooms, adults, children: childAges.length };
     if (childAges.length) occ.paxes = childAges.map((a) => ({ type: 'CH', age: Math.max(0, Number(a) || 8) }));
-    const body = { stay: { checkIn, checkOut }, occupancies: [occ], destination: { code: destCode } };
+    // Cert §3.6: sourceMarket unlocks market-specific pricing (3JN sells to the
+    // UK market by default; override via HOTELBEDS_SOURCE_MARKET).
+    const body = { sourceMarket: HB_SOURCE_MARKET, stay: { checkIn, checkOut }, occupancies: [occ], destination: { code: destCode } };
     const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/hotels`, {
       method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: FLIGHT_TIMEOUT_MS,
     });
@@ -1399,6 +1417,9 @@ export async function fetchHotelbedsHotels(intent, dest) {
       // Cheapest bookable NET rate across all rooms of this hotel.
       let best = null;
       for (const room of h.rooms || []) for (const rate of room.rates || []) {
+        // Cert §3.5: opaque rates (packaging=true) may ONLY be sold bundled with
+        // other products, never as a standalone hotel price. Skip them here.
+        if (rate.packaging === true) continue;
         const net = Number(rate.net != null ? rate.net : rate.sellingRate);
         if (!Number.isFinite(net) || net <= 0) continue;
         if (!best || net < best.net) best = { net, rate, roomName: room.name };
@@ -1410,6 +1431,126 @@ export async function fetchHotelbedsHotels(intent, dest) {
     }
     return out.length ? out : null;
   } catch { return null; }
+}
+
+// ---- Hotelbeds booking workflow (Cert §2: Availability → CheckRate → Booking) --
+// The certified workflow NEVER re-runs Availability: we already hold the rateKey
+// from the search. CheckRate is called ONLY when rateType==='RECHECK' (§2.5); a
+// BOOKABLE rate goes straight to Booking. All three calls use the ≥60s timeout.
+//
+// NOTE: the exact request/response field names below follow the Hotelbeds Booking
+// API 1.0 spec and MUST be re-verified at certification (same rule as the Duffel
+// Stays / TBO lanes). Every call fails safe so the ops:hotels desk remains the
+// fallback — a paid room is never left silently unbooked.
+export async function hotelbedsCheckRate(rateKeys = []) {
+  if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
+  const keys = (Array.isArray(rateKeys) ? rateKeys : [rateKeys]).filter(Boolean).slice(0, 10); // §2.6 max 10
+  if (!keys.length) return { ok: false, error: 'no-rate-key' };
+  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/checkrate`, {
+    method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET),
+    body: JSON.stringify({ rooms: keys.map((rateKey) => ({ rateKey })) }), timeoutMs: HB_BOOK_TIMEOUT_MS,
+  });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.error?.message || res.__error?.message || `http-${res.__status}`, status: res.__status };
+  const room = res.hotel?.rooms?.[0];
+  const rate = room?.rates?.[0];
+  if (!rate) return { ok: false, error: 'no-rate' };
+  return {
+    ok: true, rateKey: rate.rateKey || keys[0], rateType: rate.rateType || 'BOOKABLE',
+    net: Number(rate.net), currency: res.hotel?.currency || 'EUR',
+    rateComments: rate.rateComments || null, cancellationPolicies: rate.cancellationPolicies || null,
+    hotel: res.hotel || null,
+  };
+}
+// Confirm a hotel booking. `rooms` = [{ rateKey, paxes:[{roomId,type,name,surname,age?}] }].
+// Re-checks a RECHECK rate first and never books materially above what the
+// customer paid (loss floor via maxAmountUSD). Returns the voucher-ready record
+// (booking reference + supplier tag for the mandatory "Payable through" text).
+export async function bookHotelbedsHotel({ rateKey, rateType = 'BOOKABLE', holder = {}, rooms = [], clientReference, remark = null, maxAmountUSD = null, tolerance = 2 } = {}) {
+  if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
+  if (!rateKey || !holder?.name) return { ok: false, error: 'missing-input' };
+  let bookRateKey = rateKey;
+  // §2.5: CheckRate ONLY for RECHECK rates.
+  if (String(rateType).toUpperCase() === 'RECHECK') {
+    const cr = await hotelbedsCheckRate([rateKey]);
+    if (!cr.ok) return { ok: false, error: `checkrate:${cr.error}` };
+    bookRateKey = cr.rateKey;
+    if (maxAmountUSD != null && Number.isFinite(cr.net)) {
+      const usd = await toUSD(cr.net, cr.currency);
+      // Never confirm a room that re-priced above what we charged (+2% tolerance).
+      if (usd != null && usd > maxAmountUSD * 1.02) return { ok: false, error: 'reprice-above-paid', repriceUSD: usd };
+    }
+  }
+  const body = {
+    holder: { name: holder.name, surname: holder.surname || holder.name },
+    rooms: (rooms.length ? rooms : [{ rateKey: bookRateKey, paxes: [{ roomId: 1, type: 'AD', name: holder.name, surname: holder.surname || holder.name }] }])
+      .map((r) => ({ rateKey: r.rateKey || bookRateKey, paxes: r.paxes })),
+    clientReference: (clientReference || 'JNN-3JN').slice(0, 40),
+    tolerance,
+    ...(remark ? { remark: String(remark).slice(0, 1024) } : {}),
+  };
+  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings`, {
+    method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: HB_BOOK_TIMEOUT_MS,
+  });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.error?.message || res.__error?.message || `http-${res.__status}`, status: res.__status };
+  const bk = res.booking;
+  if (!bk?.reference) return { ok: false, error: 'no-reference' };
+  const room0 = bk.hotel?.rooms?.[0];
+  const rate0 = room0?.rates?.[0];
+  return {
+    ok: true, reference: bk.reference, clientReference: bk.clientReference || body.clientReference,
+    status: bk.status || 'CONFIRMED',
+    // §4.5 voucher: the "Payable through {supplier.name} … VAT: {supplier.vatNumber}
+    // Reference: {reference}" text is built from the supplier tag on the rate.
+    supplier: rate0?.paymentDataRequired ? null : (bk.hotel?.supplier || rate0?.supplier || null),
+    hotel: { name: bk.hotel?.name || null, categoryCode: bk.hotel?.categoryCode || null, destinationName: bk.hotel?.destinationName || null, address: bk.hotel?.address || null, phone: bk.hotel?.phone || null },
+    board: room0?.boardName || null, roomType: room0?.name || null,
+    net: Number(bk.hotel?.totalNet ?? rate0?.net) || null, currency: bk.hotel?.currency || 'EUR',
+    cancellationPolicies: rate0?.cancellationPolicies || null,
+  };
+}
+// Cancel a live booking (Cert §6.2 requires this before the certified live test
+// is charged). cancellationFlag=CANCELLATION is the real cancel; SIMULATION only
+// quotes the fee. Returns the cancellation reference + any charge.
+export async function cancelHotelbedsBooking(reference, { simulate = false } = {}) {
+  if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
+  if (!reference) return { ok: false, error: 'no-reference' };
+  const flag = simulate ? 'SIMULATION' : 'CANCELLATION';
+  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings/${encodeURIComponent(reference)}?cancellationFlag=${flag}`, {
+    method: 'DELETE', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: HB_BOOK_TIMEOUT_MS,
+  });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.error?.message || res.__error?.message || `http-${res.__status}`, status: res.__status };
+  const bk = res.booking;
+  return { ok: true, reference: bk?.reference || reference, status: bk?.status || 'CANCELLED', cancellationCharge: Number(bk?.hotel?.cancellationPolicies?.[0]?.amount) || 0, currency: bk?.hotel?.currency || 'EUR' };
+}
+// Cert (mandatory): retrieve a confirmed booking by reference. Used to reconcile
+// state and re-render the voucher from the authoritative supplier record.
+export async function hotelbedsBookingDetail(reference) {
+  if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
+  if (!reference) return { ok: false, error: 'no-reference' };
+  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings/${encodeURIComponent(reference)}`, {
+    headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: HB_BOOK_TIMEOUT_MS,
+  });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.error?.message || `http-${res.__status}`, status: res.__status };
+  return { ok: true, booking: res.booking || null };
+}
+// Cert (optional): list bookings in a date window (client-reference / status
+// filters supported by Hotelbeds). Handy for an ops reconciliation view.
+export async function hotelbedsBookingList({ from, to, clientReference } = {}) {
+  if (!hotelbedsHotelsEnabled()) return { ok: false, error: 'not-configured' };
+  const q = new URLSearchParams();
+  if (from) q.set('start', from);
+  if (to) q.set('end', to);
+  if (clientReference) q.set('filterType', 'CREATION'), q.set('clientReference', clientReference);
+  const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/bookings?${q.toString()}`, {
+    headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: HB_BOOK_TIMEOUT_MS,
+  });
+  if (res == null) return { ok: false, error: 'unreachable' };
+  if (res.__error || res.__status >= 400) return { ok: false, error: res.__error?.error?.message || `http-${res.__status}`, status: res.__status };
+  return { ok: true, bookings: res.bookings?.bookings || [], total: res.bookings?.total || 0 };
 }
 
 export async function fetchLiveHotels(intent, dest) {

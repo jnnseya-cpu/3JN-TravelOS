@@ -688,7 +688,11 @@ export function fulfilmentChannelFor(component, destCountry) {
   // AUTOMATICALLY on payment by autoBookStays (rates → quote → book), so it needs
   // no manual order here — like a live flight. Any other hotel routes to the ops
   // desk so it is reserved manually (never charged-but-unbooked).
-  if (t === 'hotel') return (component.live && component.details?.staysSearchResultId) ? null : 'ops:hotels';
+  // A live Duffel Stays room (staysSearchResultId) OR a live Hotelbeds room
+  // (hotelbedsRateKey) is booked AUTOMATICALLY on payment (autoBookStays /
+  // autoBookHotelbeds), each with its own ops-desk fail-safe — so no manual order
+  // here. Any OTHER hotel routes to the ops desk so it is reserved manually.
+  if (t === 'hotel') return (component.live && (component.details?.staysSearchResultId || component.details?.hotelbedsRateKey)) ? null : 'ops:hotels';
   if (t === 'host') return 'auto:host-marketplace';
   return null; // live flights auto-ticket via autoTicketFlight
 }

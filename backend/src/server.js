@@ -71,7 +71,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-hotelbeds-hotel-activities-transfers-v183';
+const BUILD_TAG = '2026-07-30-hotelbeds-booking-workflow-v184';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -903,6 +903,69 @@ async function autoBookStays(booking) {
     ful.stayError = r.error;
     try { createSupportTicket({ userId: booking.userId, intent: 'ops-hotel', message: `Book hotel for booking ${booking.id} — Duffel Stays auto-book failed (${r.error}). Complete it manually on the Duffel dashboard (search result ${hotel.details.staysSearchResultId}).`, reason: 'stays-auto-book-failed' }); } catch {}
     recordAudit({ actor: 'system', role: 'system', action: 'stays.ops-fallback', entity: 'booking', entityId: booking.id, summary: `auto-book failed (${r.error}) → ops desk` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🏨', title: 'Hotel being confirmed', body: 'Your payment is secured — our team is finalising your hotel booking now and your confirmation will appear shortly.' });
+  }
+}
+
+// AUTO-BOOK a live Hotelbeds bedbank room once payment is captured — the
+// Hotelbeds equivalent of autoBookStays. Runs the certified workflow: the
+// rateKey is already held from search (no re-Availability); CheckRate fires only
+// for a RECHECK rate inside bookHotelbedsHotel; then Booking confirms. Idempotent
+// (webhooks redeliver); a deposit RESERVES and books on full payment; on ANY
+// failure it fails SAFE to the ops:hotels desk so a paid room is never left
+// silently unbooked. Stores the voucher-ready supplier tag for the mandatory
+// "Payable through …" text (cert §4.5).
+async function autoBookHotelbeds(booking) {
+  const hotel = (booking.option?.components || []).find((c) => c.type === 'hotel' && c.live && c.details?.hotelbedsRateKey);
+  if (!hotel || !hotelbedsHotelsEnabled()) return;
+  const ful = (booking.fulfilment = booking.fulfilment || {});
+  if (ful.stayStatus === 'booked') return; // idempotent
+  if (!bookingFullyPaid(booking)) {
+    if (ful.stayStatus !== 'reserved') {
+      ful.stayStatus = 'reserved';
+      recordAudit({ actor: 'system', role: 'system', action: 'hotelbeds.deposit-hold', entity: 'booking', entityId: booking.id, summary: `${hotel.supplier} — reserved on deposit, books on full payment` });
+    }
+    return;
+  }
+  const lead = booking.leadTraveller || booking.lead || {};
+  const splitName = (full) => {
+    const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+    return { name: parts[0] || 'Guest', surname: parts.slice(1).join(' ') || parts[0] || 'Traveller' };
+  };
+  const rooms = Math.max(1, Number(hotel.details.rooms) || 1);
+  // Build the pax list (cert §4.3: ≥1 pax name per room; children carry age) and
+  // distribute across roomIds 1..rooms.
+  const named = (Array.isArray(booking.travellers) && booking.travellers.length ? booking.travellers : [lead]).filter((t) => t && String(t.fullName || '').trim());
+  const paxes = (named.length ? named : [lead]).map((t, i) => {
+    const nm = splitName(t.fullName || `${lead.fullName || 'Guest'}`);
+    const isChild = Number.isFinite(Number(t.age)) && Number(t.age) < 18;
+    return { roomId: (i % rooms) + 1, type: isChild ? 'CH' : 'AD', name: nm.name, surname: nm.surname, ...(isChild ? { age: Number(t.age) } : {}) };
+  });
+  const holder = splitName(lead.fullName || (named[0]?.fullName) || 'Guest');
+  const roomNodes = Array.from({ length: rooms }, (_, r) => ({ rateKey: hotel.details.hotelbedsRateKey, paxes: paxes.filter((p) => p.roomId === r + 1).length ? paxes.filter((p) => p.roomId === r + 1) : [{ roomId: r + 1, type: 'AD', name: holder.name, surname: holder.surname }] }));
+  const r = await bookHotelbedsHotel({
+    rateKey: hotel.details.hotelbedsRateKey, rateType: hotel.details.rateType || 'BOOKABLE',
+    holder, rooms: roomNodes, clientReference: booking.id, maxAmountUSD: hotel.priceUSD || null,
+    remark: 'Booked via 3JN Travel OS',
+  }).catch((e) => ({ ok: false, error: e?.message || 'exception' }));
+  if (r.ok) {
+    ful.stayStatus = 'booked';
+    ful.stayReference = r.reference;
+    ful.hotelbedsReference = r.reference;
+    hotel.details.confirmation = r.reference;
+    hotel.details.fulfilledVia = 'auto:hotelbeds-api';
+    // Voucher data (cert §4.5): supplier name + VAT drive the "Payable through" line.
+    if (r.supplier) hotel.details.hotelbedsSupplier = { name: r.supplier.name || null, vat: r.supplier.vatNumber || r.supplier.vat || null };
+    if (r.hotel?.address) hotel.details.hotelAddress = r.hotel.address;
+    if (r.hotel?.phone) hotel.details.hotelPhone = r.hotel.phone;
+    recordAudit({ actor: 'system', role: 'system', action: 'hotelbeds.booked', entity: 'booking', entityId: booking.id, summary: `hotel ref ${r.reference} · ${hotel.supplier}` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🏨', title: 'Hotel confirmed', body: `${hotel.supplier} is booked — confirmation ${r.reference}. Your voucher is in your Console.` });
+    if (lead.email) { try { await sendMail({ to: lead.email, subject: `Your hotel is confirmed — ${r.reference}`, text: `${hotel.supplier} is booked. Confirmation: ${r.reference}.`, html: `<p>${htmlEsc(hotel.supplier)} is booked.</p><p><strong>Confirmation:</strong> ${htmlEsc(r.reference)}</p>` }); } catch {} }
+  } else {
+    ful.stayStatus = 'ops-fallback';
+    ful.stayError = r.error;
+    try { createSupportTicket({ userId: booking.userId, intent: 'ops-hotel', message: `Book hotel for booking ${booking.id} — Hotelbeds auto-book failed (${r.error}). Complete it in the Hotelbeds portal (rateKey ${hotel.details.hotelbedsRateKey}).`, reason: 'hotelbeds-auto-book-failed' }); } catch {}
+    recordAudit({ actor: 'system', role: 'system', action: 'hotelbeds.ops-fallback', entity: 'booking', entityId: booking.id, summary: `auto-book failed (${r.error}) → ops desk` });
     if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🏨', title: 'Hotel being confirmed', body: 'Your payment is secured — our team is finalising your hotel booking now and your confirmation will appear shortly.' });
   }
 }
@@ -3325,6 +3388,7 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
     await autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e));
     await syncDuffelTicket(booking).catch(() => {}); // pull the PNR/e-ticket if Duffel has issued it by now
     await autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e));
+    await autoBookHotelbeds(booking).catch((e) => console.error('[hotelbeds]', e?.message || e));
     await autoBookActivities(booking).catch((e) => console.error('[activities]', e?.message || e));
     await emailBookingConfirmation(booking).catch((e) => console.error('[confirm-email]', e?.message || e));
   }
@@ -3443,6 +3507,7 @@ app.post('/api/book/:id/apply-credit', safe(async (req, res) => {
   const sym = booking.option?.pricing?.symbol || '£';
   try { await autoTicketFlight(booking); } catch (e) { console.error('[credit-ticket]', e?.message || e); }
   try { await autoBookStays(booking); } catch (e) { console.error('[credit-stays]', e?.message || e); }
+  try { await autoBookHotelbeds(booking); } catch (e) { console.error('[credit-hotelbeds]', e?.message || e); }
   try { await autoBookActivities(booking); } catch (e) { console.error('[credit-activities]', e?.message || e); }
   res.json({ ok: true, applied: result.applied, remainingCredit: result.remainingCredit, symbol: sym, message: `${sym}${result.applied.toFixed(2)} Travel Credit applied.` });
 }));
@@ -3737,6 +3802,7 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
     // (fulfilment, ticketing status) are captured by the synchronous store flush.
     try { await autoTicketFlight(updated); } catch (e) { console.error('[ticketing]', e?.message || e); }
     try { await autoBookStays(updated); } catch (e) { console.error('[stays]', e?.message || e); }
+    try { await autoBookHotelbeds(updated); } catch (e) { console.error('[hotelbeds]', e?.message || e); }
     try { await autoBookActivities(updated); } catch (e) { console.error('[activities]', e?.message || e); }
     try { await emailBookingConfirmation(updated); } catch (e) { console.error('[confirm-email]', e?.message || e); }
   }
@@ -3886,6 +3952,7 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
         await Promise.allSettled([
           autoTicketFlight(booking).catch((e) => console.error('[ticketing]', e?.message || e)),
           autoBookStays(booking).catch((e) => console.error('[stays]', e?.message || e)),
+          autoBookHotelbeds(booking).catch((e) => console.error('[hotelbeds]', e?.message || e)),
           autoBookActivities(booking).catch((e) => console.error('[activities]', e?.message || e)),
         ]);
         // Email last — it references the freshly-issued ticket/documents. Idempotent.
@@ -4292,6 +4359,27 @@ app.post('/api/admin/support/tickets/:id/resolve', safe((req, res) => {
 // gap where a refund meant leaving the app for the Stripe dashboard). Refunds
 // the booking's PaymentIntent — full amount, or a partial { amountGBP } — records
 // the refund on the booking, and resolves the linked ops-refund ticket.
+// Hotelbeds ops: retrieve a live booking by reference (mandatory cert operation)
+// and cancel one (cert §6.2 + real customer cancellations). Admin-only.
+app.get('/api/admin/hotelbeds/booking/:ref', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = await hotelbedsBookingDetail(req.params.ref);
+  res.status(r.ok ? 200 : 502).json(r);
+}));
+app.get('/api/admin/hotelbeds/bookings', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = await hotelbedsBookingList({ from: req.query.from, to: req.query.to, clientReference: req.query.clientReference });
+  res.status(r.ok ? 200 : 502).json(r);
+}));
+app.post('/api/admin/hotelbeds/cancel', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const user = currentUser(req);
+  const { reference, simulate } = req.body || {};
+  if (!reference) return res.status(400).json({ error: 'no-reference' });
+  const r = await cancelHotelbedsBooking(reference, { simulate: simulate === true });
+  if (r.ok && !simulate) recordAudit({ actor: user.id, role: 'admin', action: 'hotelbeds.cancelled', entity: 'hotelbeds-booking', entityId: reference, summary: `cancelled ${reference} (charge ${r.cancellationCharge} ${r.currency})` });
+  res.status(r.ok ? 200 : 502).json(r);
+}));
 app.post('/api/admin/refund', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const user = currentUser(req);

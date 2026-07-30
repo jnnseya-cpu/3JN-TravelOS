@@ -914,6 +914,34 @@ test('HOTELBEDS: disabled by default (no key) — enable flags are false, doors 
   assert.equal(await live.fetchHotelbedsHotels({ dates: { checkIn: '2026-08-01', checkOut: '2026-08-05' }, travellers: { total: 2, adults: 2 } }, { code: 'DXB' }), null, 'hotel search null when disabled');
 });
 
+test('HOTELBEDS: booking workflow primitives fail safe when the door is shut (no throw, no fabrication)', async () => {
+  const live = await import('../src/live-suppliers.js');
+  for (const [fn, arg] of [
+    [live.hotelbedsCheckRate, ['rk_x']],
+    [live.bookHotelbedsHotel, { rateKey: 'rk_x', holder: { name: 'Jo', surname: 'Bloggs' } }],
+    [live.cancelHotelbedsBooking, 'REF-1'],
+    [live.hotelbedsBookingDetail, 'REF-1'],
+    [live.hotelbedsBookingList, {}],
+  ]) {
+    const r = await fn(arg);
+    assert.equal(r.ok, false, 'not-ok when disabled');
+    assert.equal(r.error, 'not-configured', 'reports not-configured, never throws');
+  }
+  // Missing inputs are rejected cleanly too (guards before any network call).
+  assert.equal((await live.bookHotelbedsHotel({})).error, 'not-configured', 'no-key beats missing-input');
+});
+
+test('HOTELBEDS: fulfilment routes a live Hotelbeds room to the auto path, others to ops:hotels', async () => {
+  const { fulfilmentChannelFor } = await import('../src/extras-suppliers.js');
+  // Live Hotelbeds room (carries a rateKey) → auto-book path (null = no ops order).
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true, details: { hotelbedsRateKey: 'rk_1' } }, 'ES'), null, 'Hotelbeds live room auto-books');
+  // Live Duffel Stays room → auto path too.
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true, details: { staysSearchResultId: 's_1' } }, 'ES'), null, 'Duffel live room auto-books');
+  // Any other hotel (estimated, or a live rate with no bookable key) → ops desk.
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: true, details: {} }, 'ES'), 'ops:hotels', 'a live hotel with no bookable key still routes to ops (never charged-but-unbooked)');
+  assert.equal(fulfilmentChannelFor({ type: 'hotel', live: false, details: {} }, 'ES'), 'ops:hotels', 'estimated hotel routes to ops');
+});
+
 test('DEVICE: a booking captures the traveller device (IP + UA) for Duffel fraud signals', async () => {
   const u = mkUser();
   const r = plan({ text: 'Tokyo from London in September, flights and hotel for 2 adults, 6 nights', context: GB });

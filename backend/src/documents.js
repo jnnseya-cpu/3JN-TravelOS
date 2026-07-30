@@ -145,6 +145,9 @@ export function bookingDocument(booking, { user, currencySymbol } = {}) {
             <td class="dir">Board</td><td>${esc(d.board || d.boardBasis || 'Room only')}</td></tr>
         ${d.groupStay ? `<tr><td class="dir">Group</td><td colspan="3">${d.groupStay.guests} guests · ${esc(d.groupStay.units.join(' • '))}</td></tr>` : ''}
         ${d.bedConfiguration ? `<tr><td class="dir">Beds</td><td colspan="3">${esc(d.bedConfiguration)}</td></tr>` : ''}
+        ${d.rateComments ? `<tr><td class="dir">Notes</td><td colspan="3">${esc(d.rateComments)}</td></tr>` : ''}
+        ${Array.isArray(d.cancellationPolicies) && d.cancellationPolicies.length ? `<tr><td class="dir">Cancellation</td><td colspan="3">${esc(d.cancellationPolicies.map((p) => `Charge from ${uk((p.from || '').slice(0, 10))}`).join('; '))}</td></tr>` : ''}
+        ${d.hotelbedsSupplier && conf ? `<tr><td class="dir">Payable through</td><td colspan="3">${esc(d.hotelbedsSupplier.name || 'the supplier')}, acting as agent for the service operating company, details of which can be provided upon request.${d.hotelbedsSupplier.vat ? ` VAT: ${esc(d.hotelbedsSupplier.vat)}` : ''} Reference: ${esc(conf)}</td></tr>` : ''}
       </tbody></table>
     </div>`;
   }).join('');
