@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v197';
+const APP_BUILD = 'v198';
 
 const state = {
   context: null,
@@ -555,6 +555,48 @@ function syncCurrency(country) {
 
 // ---- Planner --------------------------------------------------------------
 $('#planBtn').addEventListener('click', runPlan);
+
+// City autocomplete for the structured "Where to? / From" fields. Debounced
+// lookups against /api/cities populate the field's <datalist> with real cities,
+// so a public user picks a known place instead of a typo. Native datalist =
+// no custom dropdown to misbehave.
+function wireCityAutocomplete(inputId, listId) {
+  const input = document.getElementById(inputId);
+  const list = document.getElementById(listId);
+  if (!input || !list) return;
+  let timer = null; let lastQ = '';
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (q.length < 2 || q === lastQ) return;
+    lastQ = q;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        const d = await api(`/api/cities?q=${encodeURIComponent(q)}`, { silent: true });
+        list.innerHTML = (d.cities || []).map((c) => `<option value="${(c.city || '').replace(/"/g, '&quot;')}">${(c.city || '')}${c.country ? ', ' + c.country : ''}</option>`).join('');
+      } catch { /* keep whatever's there */ }
+    }, 180);
+  });
+}
+wireCityAutocomplete('psDest', 'psDestList');
+wireCityAutocomplete('psOrigin', 'psOriginList');
+
+// FIRST-SEARCH NUDGE: a first-time visitor gets the Precise-search panel opened
+// for them (with a one-time highlight), so the reliable structured fields are
+// the obvious path. Dismissed permanently once they've seen it.
+try {
+  if (!localStorage.getItem('3jn_precise_seen')) {
+    const ps = document.getElementById('preciseSearch');
+    if (ps) {
+      ps.open = true;
+      ps.classList.add('precise-nudge');
+      const clear = () => { try { localStorage.setItem('3jn_precise_seen', '1'); } catch {} ps.classList.remove('precise-nudge'); };
+      ps.addEventListener('toggle', clear, { once: true });
+      ['#psDest', '#planBtn'].forEach((s) => document.querySelector(s)?.addEventListener('focus', clear, { once: true }));
+      $('#planBtn')?.addEventListener('click', clear, { once: true });
+    }
+  }
+} catch {}
 
 // Priority search: populate the paid scan tiers (in the visitor's currency) and
 // let the traveller pay for a faster/dedicated scan. Standard stays free.

@@ -7,7 +7,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
-import { destinationsCatalog, findDestination, resolveOrigin, originForCountry } from './destinations.js';
+import { destinationsCatalog, findDestination, resolveOrigin, originForCountry, searchCities } from './destinations.js';
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-structured-search-inputs-v197';
+const BUILD_TAG = '2026-07-30-city-autocomplete-nudge-v198';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2659,6 +2659,12 @@ app.get('/api/expense', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
   res.json({ report: expenseReport(user.id) });
+}));
+
+// City autocomplete for the structured "Where to? / From" fields. Public read
+// of the built-in city catalogue — cheap, no auth, no side effects.
+app.get('/api/cities', safe((req, res) => {
+  res.json({ cities: searchCities(req.query.q, Math.min(10, Number(req.query.limit) || 8)) });
 }));
 
 // ---- Plan: the core pipeline ---------------------------------------------

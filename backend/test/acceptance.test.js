@@ -967,6 +967,15 @@ test('REVIEWER: magic-link access is OFF by default (no REVIEWER_ACCESS_KEY → 
   assert.equal(r.json.error, 'reviewer-disabled', 'reports disabled, not a bad key (fails closed)');
 });
 
+test('CITY AUTOCOMPLETE: /api/cities suggests real cities by prefix (typo-proof structured search)', async () => {
+  const r = await api('GET', '/api/cities?q=barc');
+  assert.equal(r.status, 200);
+  assert.ok(r.json.cities.some((c) => c.city === 'Barcelona' && c.country === 'ES'), 'Barcelona suggested for "barc"');
+  // Too-short queries return nothing (no noise / no full-table dump).
+  const short = await api('GET', '/api/cities?q=b');
+  assert.deepEqual(short.json.cities, [], 'single letter returns no suggestions');
+});
+
 test('STRUCTURED SEARCH: precise fields override the free-text parse (robust public input)', async () => {
   const { plan } = await import('../src/planner.js');
   // Deliberately vague/incomplete free text — the structured fields must win.

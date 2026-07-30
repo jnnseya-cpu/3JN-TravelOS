@@ -424,8 +424,8 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             <summary>🎯 Precise search — fill these to be exact (optional)</summary>
             <p class="muted" style="font-size:12px;margin:6px 0 10px">Anything you set here is used exactly as entered — no guessing. Leave a field blank to let the sentence above decide it.</p>
             <div class="precise-grid">
-              <div class="field"><label for="psDest">Where to?</label><input id="psDest" type="text" placeholder="e.g. Barcelona" autocomplete="off"></div>
-              <div class="field"><label for="psOrigin">From (optional)</label><input id="psOrigin" type="text" placeholder="e.g. Birmingham" autocomplete="off"></div>
+              <div class="field"><label for="psDest">Where to?</label><input id="psDest" type="text" placeholder="Start typing a city…" autocomplete="off" list="psDestList"><datalist id="psDestList"></datalist></div>
+              <div class="field"><label for="psOrigin">From (optional)</label><input id="psOrigin" type="text" placeholder="Start typing a city…" autocomplete="off" list="psOriginList"><datalist id="psOriginList"></datalist></div>
               <div class="field"><label for="psCheckIn">Check-in / departure</label><input id="psCheckIn" type="date"></div>
               <div class="field"><label for="psNights">Nights</label><input id="psNights" type="number" min="1" max="60" placeholder="e.g. 7"></div>
               <div class="field"><label for="psAdults">Adults</label><input id="psAdults" type="number" min="1" max="16" placeholder="2"></div>

@@ -710,6 +710,29 @@ export function resolveOrigin(name) {
 
 // Resolve from a free-text REQUEST sentence → catalogue, or synthesised from the
 // extracted destination phrase, or null (ask) when nothing place-like is found.
+// City autocomplete: prefix matches first (stronger), then substring, deduped.
+// Powers the structured "Where to? / From" fields so a public user picks a real
+// city instead of a typo the parser has to guess at.
+export function searchCities(query, limit = 8) {
+  const q = String(query || '').trim().toLowerCase();
+  if (q.length < 2) return [];
+  const seen = new Set(); const out = [];
+  for (const pass of [0, 1]) {
+    for (const [key, v] of Object.entries(CITY_AIRPORTS)) {
+      if (out.length >= limit) break;
+      const name = String(v.city || '').toLowerCase();
+      const hit = pass === 0 ? (key.startsWith(q) || name.startsWith(q)) : (key.includes(q) || name.includes(q));
+      if (!hit) continue;
+      const id = `${v.city}|${v.country}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ city: v.city, country: v.country, airport: v.airport });
+    }
+    if (out.length >= limit) break;
+  }
+  return out.slice(0, limit);
+}
+
 export function resolveDestinationFromText(text) {
   // Strip parenthetical notes and UK postcodes FIRST, so "Birmingham (close to
   // B15 1HE)" resolves to Birmingham — not the fragment "B" from the postcode.
