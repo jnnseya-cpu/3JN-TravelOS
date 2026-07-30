@@ -992,6 +992,11 @@ test('STRUCTURED SEARCH: precise fields override the free-text parse (robust pub
   assert.equal(r.intent.travellers.adults, 2, 'adults exact');
   assert.equal(r.intent.travellers.children, 3, 'children exact');
   assert.deepEqual(r.intent.components, ['hotel'], 'components exact');
+  // A bare city that only lives in the airport catalogue must ALSO override the
+  // free text (regression: "Birmingham" as a lone word failed to resolve, so the
+  // precise field was silently ignored and the free-text destination won).
+  const r2 = plan({ text: 'travel to Dubai with family for 7 nights', context: GB, overrides: { structured: { destination: 'Birmingham' } } });
+  assert.equal(r2.intent.destination?.city, 'Birmingham', 'bare city in the precise field overrides free-text Dubai');
 });
 
 test('INTENT: a hotel-only request with a postcode note parses cleanly (city, 1 night, star floor)', async () => {

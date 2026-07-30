@@ -1553,6 +1553,20 @@ function isBreakfastBoard(rate) {
   if (code) return ['BB', 'HB', 'FB', 'AI'].includes(code) || /BREAKFAST|HALF|FULL|INCLUSIVE/.test(String(rate?.boardName || '').toUpperCase());
   return /BREAKFAST|HALF BOARD|FULL BOARD|ALL INCLUSIVE/i.test(String(rate?.boardName || ''));
 }
+// Best-available hotel address from a Hotelbeds hotel node. The availability
+// response usually gives zone/destination (full street address lives in the
+// ContentAPI / booking response), so we assemble the most complete location
+// string we can: street address if present, else zone + city.
+function hbHotelAddress(h) {
+  if (h?.address) {
+    if (typeof h.address === 'string') return h.address;
+    const a = h.address;
+    const parts = [a.content || a.street || a.streetName, a.number, a.postalCode, a.city].filter(Boolean);
+    if (parts.length) return parts.join(', ');
+  }
+  const loc = [h?.zoneName, h?.destinationName].filter(Boolean);
+  return loc.length ? loc.join(', ') : null;
+}
 export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, rooms) {
   const stars = Number(String(h.categoryCode || '').replace(/[^0-9]/g, '')) || Number((String(h.categoryName || '').match(/\d/) || [])[0]) || 0;
   const nightlyUSD = nights ? Math.round((priceUSD / nights) * 100) / 100 : priceUSD;
@@ -1579,7 +1593,19 @@ export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, roo
       promotions: Array.isArray(rate.promotions) ? rate.promotions.map((p) => p.name).filter(Boolean) : null,
       roomType: roomName || 'Standard Room',
       roomCode: rate.roomCode || null,
+      // LOCATION & ADDRESS — surface everything the availability gives us. The
+      // full street address comes from the ContentAPI / the booking response
+      // (captured on the voucher); here we show zone + city + a map pin so the
+      // customer sees exactly where the hotel is before booking.
       area: h.zoneName || h.destinationName || '',
+      address: hbHotelAddress(h),
+      zoneName: h.zoneName || null,
+      destinationName: h.destinationName || null,
+      categoryName: h.categoryName || null,
+      coordinates: (Number.isFinite(Number(h.latitude)) && Number.isFinite(Number(h.longitude))) ? { lat: Number(h.latitude), lng: Number(h.longitude) } : null,
+      mapUrl: (Number.isFinite(Number(h.latitude)) && Number.isFinite(Number(h.longitude)))
+        ? `https://www.google.com/maps/search/?api=1&query=${Number(h.latitude)},${Number(h.longitude)}`
+        : (h.name ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${h.name} ${h.destinationName || ''}`)}` : null),
       hotelId: h.code || null,
       hotelbedsRateKey: rate.rateKey || null, // needed for checkrate + booking
       rateType: rate.rateType || null,        // BOOKABLE (firm) vs RECHECK (must CheckRate)

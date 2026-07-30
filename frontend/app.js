@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v198';
+const APP_BUILD = 'v199';
 
 const state = {
   context: null,
@@ -1543,6 +1543,8 @@ window.showComponentInfo = (tier, idx) => {
         <div class="kv"><span>Parking</span><span>${esc(d.parking || '—')}</span></div>
         <div class="kv"><span>Pets</span><span>${esc(d.petsPolicy || '—')}</span></div>
         <div class="kv"><span>Children</span><span style="font-size:12px">${esc(d.childrenPolicy || '—')}</span></div>
+        <div class="kv"><span>Address</span><span style="font-size:12px;text-align:right">${esc(d.address || d.area || '—')}${d.mapUrl ? ` · <a href="${esc(d.mapUrl)}" target="_blank" rel="noopener" style="color:var(--blue-bright)">view on map ↗</a>` : ''}</span></div>
+        ${d.categoryName ? `<div class="kv"><span>Rating</span><span>${esc(d.categoryName)}</span></div>` : ''}
       </div>
     </div>
 

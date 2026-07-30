@@ -79,7 +79,11 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // the parsed value untouched.
   const S = overrides.structured || {};
   if (S.destination) {
-    const d = resolveDestinationFromText(String(S.destination)) || findDestination(String(S.destination));
+    const raw = String(S.destination).trim();
+    // A bare city name ("Birmingham") doesn't resolve on its own — the resolver
+    // keys on a preposition. Prepend "to " so a structured field like "Where to?
+    // Birmingham" reliably overrides the free-text destination.
+    const d = resolveDestinationFromText(`to ${raw}`) || resolveDestinationFromText(raw) || findDestination(raw);
     if (d) { intent.destination = d; intent.unresolved = (intent.unresolved || []).filter((u) => u !== 'destination'); intent.needComponents = false; }
   }
   if (S.origin) intent.originCity = String(S.origin);
