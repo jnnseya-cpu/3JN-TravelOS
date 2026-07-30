@@ -77,7 +77,7 @@ export function duffelUsable() { return !!DUFFEL_TOKEN && !(liveModeOn() && duff
 export function duffelEnabled() { return duffelUsable() && typeof fetch === 'function'; }
 export function lccFlightsEnabled() { return !!TEQUILA_KEY && typeof fetch === 'function'; }
 export function marketDataEnabled() { return !!TRAVELPAYOUTS_TOKEN && typeof fetch === 'function'; }
-export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled(); }
+export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled() || tboAirEnabled(); }
 // Duffel Stays uses the SAME Duffel token as flights — so hotels can go live the
 // moment flights work, with NO extra credentials. Amadeus stays as a fallback.
 // Set DUFFEL_STAYS=false to disable the Stays path (e.g. to force Amadeus).
@@ -991,6 +991,9 @@ export async function fetchLiveFlights(intent, dest, origin) {
     fetchDuffelFlights(intent, originCode, destCode, 'premium_economy').catch(() => null),
     fetchDuffelFlights(intent, originCode, destCode, 'business').catch(() => null),
     fetchTequilaFlights(intent, originCode, destCode).catch(() => null),
+    // TBO Air consolidator — broad content incl. Gulf/full-service carriers
+    // (Emirates/Etihad/Qatar) that Duffel doesn't sell. Inert until keyed.
+    tboAirEnabled() ? fetchTboAirFlights(intent, originCode, destCode).catch(() => null) : null,
   ];
   // Nearby-DEPARTURE economy fetches (the cheap signal), tagged with the alternate.
   for (const o of altOrigins) tasks.push(fetchDuffelFlights(intent, o, destCode, 'economy').then((r) => tagFares(r, { altAirport: true, altOriginCode: o, requestedOriginCode: originCode })).catch(() => null));
@@ -1012,6 +1015,144 @@ export async function fetchLiveFlights(intent, dest, origin) {
   const altOrigin = all.filter((f) => f?.details?.altOriginCode).sort(byPrice);
   const merged = [...requested, ...altOrigin].slice(0, 24);
   return merged.length ? merged : null;
+}
+
+// ===========================================================================
+// TBO Air (TekTravels/TBO consolidator) — flight content Duffel lacks
+// ===========================================================================
+// A flight CONSOLIDATOR API: aggregates GDS + net fares incl. Emirates/Etihad/
+// Qatar + LCCs, and is the ticketing party — so 3JN sells without its own GDS
+// contract or IATA accreditation. Flow: Authenticate → TokenId, then Search;
+// booking is FareQuote → Book (+ Ticket for GDS), completed by the ops desk
+// until that flow is certified (see autoTicketFlight — TBO fares are ops-queued
+// exactly like the Kiwi LCC path, never charged-but-unticketed).
+//
+// INERT until TBO_AIR_CLIENT_ID + credentials land. The request/response field
+// names below follow the TBO/TekTravels Air API v10 spec and MUST be re-verified
+// against TBO's docs at integration (same rule as the Duffel/Hotelbeds lanes) —
+// every call fails safe (null) so flights fall back to Duffel/estimator.
+const TBO_AIR_BASE = env.TBO_AIR_BASE_URL || 'https://api.tektravels.com';
+const TBO_AIR_CLIENT_ID = env.TBO_AIR_CLIENT_ID || '';
+const TBO_AIR_USER = env.TBO_AIR_USERNAME || env.TBO_HOTEL_USERNAME || '';
+const TBO_AIR_PASS = env.TBO_AIR_PASSWORD || env.TBO_HOTEL_PASSWORD || '';
+const TBO_AIR_IP = env.TBO_AIR_END_USER_IP || '1.1.1.1'; // TBO requires an EndUserIp
+export function tboAirEnabled() { return !!(TBO_AIR_CLIENT_ID && TBO_AIR_USER && TBO_AIR_PASS) && typeof fetch === 'function'; }
+let _tboAirToken = null; // { tokenId, at }
+async function tboAirToken() {
+  if (!tboAirEnabled()) return null;
+  // TBO TokenId lives ~24h; refresh at 12h to stay comfortably valid.
+  if (_tboAirToken && Date.now() - _tboAirToken.at < 12 * 3600 * 1000) return _tboAirToken.tokenId;
+  const res = await httpJSON(`${TBO_AIR_BASE}/SharedServices/SharedData.svc/rest/Authenticate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ ClientId: TBO_AIR_CLIENT_ID, UserName: TBO_AIR_USER, Password: TBO_AIR_PASS, EndUserIp: TBO_AIR_IP }),
+  });
+  const tok = res?.TokenId;
+  if (!tok) return null;
+  _tboAirToken = { tokenId: tok, at: Date.now() };
+  return tok;
+}
+const TBO_CABIN = { economy: '2', premium_economy: '3', business: '4', first: '5' };
+function tboCabinName(code) { return ({ 2: 'Economy', 3: 'Premium Economy', 4: 'Business', 5: 'First' })[Number(code)] || 'Economy'; }
+const _hhmm = (t) => { const m = /T(\d{2}:\d{2})/.exec(String(t || '')); return m ? m[1] : ''; };
+// Build one leg (a trip's segment array → our leg shape, matching Duffel legs).
+function tboAirLeg(segs) {
+  if (!Array.isArray(segs) || !segs.length) return null;
+  const first = segs[0], last = segs[segs.length - 1];
+  const dep = first.Origin?.DepTime || first.Origin?.DepartureTime;
+  const arr = last.Destination?.ArrTime || last.Destination?.ArrivalTime;
+  const date = (String(dep).match(/^\d{4}-\d{2}-\d{2}/) || [])[0] || null;
+  const stops = Math.max(0, segs.length - 1);
+  const layovers = [];
+  for (let i = 0; i < segs.length - 1; i++) {
+    const a = segs[i].Destination, b = segs[i + 1].Origin;
+    const aT = new Date(a?.ArrTime || a?.ArrivalTime), bT = new Date(b?.DepTime || b?.DepartureTime);
+    const mins = (bT - aT) / 60000;
+    const overnight = /* crosses local midnight or a very long wait */ Number.isFinite(mins) && (mins > 6 * 60 || (_hhmm(a?.ArrTime || a?.ArrivalTime) > _hhmm(b?.DepTime || b?.DepartureTime)));
+    layovers.push({ airport: a?.Airport?.AirportCode || '', city: a?.Airport?.CityName || '', minutes: Number.isFinite(mins) ? Math.round(mins) : null, overnight, durationLabel: Number.isFinite(mins) ? `${Math.floor(mins / 60)}h ${Math.round(mins % 60)}m` : '' });
+  }
+  return {
+    from: first.Origin?.Airport?.AirportCode || '', fromCity: first.Origin?.Airport?.CityName || '',
+    to: last.Destination?.Airport?.AirportCode || '', toCity: last.Destination?.Airport?.CityName || '',
+    date, depart: _hhmm(dep), arrive: _hhmm(arr), stops,
+    stopLabel: stops ? `${stops} stop${stops > 1 ? 's' : ''}` : 'Direct', layovers, durationLabel: '',
+  };
+}
+export function normalizeTboAirResult(r, traceId, priceUSD, travellers) {
+  const trips = Array.isArray(r?.Segments) ? r.Segments : [];
+  const outbound = tboAirLeg(trips[0]);
+  if (!outbound) return null;
+  const inbound = trips[1] ? tboAirLeg(trips[1]) : null;
+  const seg0 = trips[0]?.[0] || {};
+  const carrierName = seg0.Airline?.AirlineName || r.AirlineCode || 'Airline';
+  return {
+    type: 'flight', supplier: carrierName, verified: true, reliabilityScore: 88, live: true,
+    premium: /emirates|qatar|singapore|etihad|cathay|lufthansa|british airways/i.test(carrierName),
+    sourcedVia: 'TBO Air (live)', sourcedType: 'consolidator',
+    details: {
+      outbound, inbound, passengers: travellers?.total || 1,
+      cabin: tboCabinName(seg0.CabinClass),
+      baggage: seg0.Baggage ? `${seg0.Baggage}${seg0.CabinBaggage ? ` · cabin ${seg0.CabinBaggage}` : ''}` : 'Checked bag per fare rules',
+      checkedBagIncluded: /\d/.test(String(seg0.Baggage || '')),
+      // Booking identifiers — NOT a Duffel offerId. Ticketing goes through TBO's
+      // FareQuote→Book(→Ticket) flow, ops-queued until certified (autoTicketFlight).
+      supplierBooking: 'tbo-air', tboTraceId: traceId || null, tboResultIndex: r.ResultIndex || null,
+      tboIsLCC: r.IsLCC === true, refundable: r.IsRefundable === true,
+    },
+    priceUSD,
+  };
+}
+// Live TBO Air search for the requested route/dates. Returns normalized flight
+// offers (same shape as Duffel) or null. Cheapest-first is handled by the caller.
+export async function fetchTboAirFlights(intent, originCode, destCode) {
+  if (!tboAirEnabled()) return null;
+  const checkIn = intent?.dates?.checkIn, checkOut = intent?.dates?.checkOut;
+  if (!originCode || !destCode || !checkIn) return null;
+  try {
+    const tok = await tboAirToken();
+    if (!tok) return null;
+    const oneWay = !checkOut;
+    const cabin = TBO_CABIN[intent.flightPrefs?.cabin] || '1';
+    const segments = [{ Origin: originCode, Destination: destCode, FlightCabinClass: cabin, PreferredDepartureTime: `${checkIn}T00:00:00`, PreferredArrivalTime: `${checkIn}T00:00:00` }];
+    if (!oneWay) segments.push({ Origin: destCode, Destination: originCode, FlightCabinClass: cabin, PreferredDepartureTime: `${checkOut}T00:00:00`, PreferredArrivalTime: `${checkOut}T00:00:00` });
+    const kids = (intent.travellers?.childAges || []).filter((a) => a != null);
+    const body = {
+      EndUserIp: TBO_AIR_IP, TokenId: tok,
+      AdultCount: String(Math.max(1, intent.travellers?.adults || 1)),
+      ChildCount: String(kids.length || Math.max(0, intent.travellers?.children || 0)),
+      InfantCount: '0', DirectFlight: 'false', OneStopFlight: 'false',
+      JourneyType: oneWay ? '1' : '2', Segments: segments, Sources: null, PreferredAirlines: null,
+    };
+    const res = await httpJSON(`${TBO_AIR_BASE}/BookingEngineService_Air/AirService.svc/rest/Search`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body), timeoutMs: FLIGHT_TIMEOUT_MS,
+    });
+    const resp = res?.Response;
+    const traceId = resp?.TraceId;
+    const groups = resp?.Results;
+    if (!Array.isArray(groups)) return null;
+    const flat = groups.flat().filter(Boolean);
+    const out = [];
+    for (const r of flat.slice(0, 20)) {
+      const fare = Number(r.Fare?.PublishedFare != null ? r.Fare.PublishedFare : r.Fare?.OfferedFare);
+      if (!Number.isFinite(fare) || fare <= 0) continue;
+      const usd = await toUSD(fare, r.Fare?.Currency || 'GBP');
+      if (usd == null) continue;
+      const norm = normalizeTboAirResult(r, traceId, usd, intent.travellers);
+      if (norm) out.push(norm);
+    }
+    return out.length ? out : null;
+  } catch { return null; }
+}
+// Active probe — auth + a sample Dubai search, plain-English verdict (mirrors
+// hotelbedsDiagnostic) so an admin can see exactly why TBO Air is / isn't live.
+export async function tboAirDiagnostic() {
+  if (!tboAirEnabled()) return { ok: false, configured: false, verdict: 'TBO Air is OFF — set TBO_AIR_CLIENT_ID + TBO_AIR_USERNAME + TBO_AIR_PASSWORD (ask TBO to enable the Air API on your account), then redeploy.' };
+  const tok = await tboAirToken();
+  if (!tok) return { ok: false, configured: true, stage: 'auth', verdict: 'TBO Air credentials set but Authenticate returned no TokenId — check ClientId/UserName/Password and that the Air API is enabled on your TBO account.' };
+  const checkIn = new Date(Date.now() + 35 * 86400000).toISOString().slice(0, 10);
+  const checkOut = new Date(Date.now() + 42 * 86400000).toISOString().slice(0, 10);
+  const probe = await fetchTboAirFlights({ dates: { checkIn, checkOut }, travellers: { total: 2, adults: 2, children: 0, childAges: [] }, flightPrefs: {} }, 'BHX', 'DXB').catch(() => null);
+  const n = Array.isArray(probe) ? probe.length : 0;
+  return { ok: n > 0, configured: true, stage: 'search', authOk: true, flightsReturned: n, verdict: n > 0 ? `WORKING — TBO Air returned ${n} BHX→DXB fares. Emirates/Gulf content should now flow into results.` : 'Auth OK but the sample BHX→DXB search returned 0 fares — verify the Air API is fully provisioned for your account and the Search field names match TBO\'s current spec.' };
 }
 
 // Diagnose exactly WHY a live flight search did or didn't return bookable fares.

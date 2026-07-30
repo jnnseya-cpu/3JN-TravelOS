@@ -72,7 +72,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-fee-bakein-highvalue-v194';
+const BUILD_TAG = '2026-07-30-tbo-air-scaffold-v195';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -663,6 +663,37 @@ async function autoTicketFlight(booking) {
     });
     recordAudit({ actor: 'system', role: 'system', action: 'ticketing.ops-queued', entity: 'booking', entityId: booking.id, summary: `${lccFlight.supplier} via Kiwi Tequila — ops desk issues` });
     if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Booking confirmed — ticket on its way', body: `Your ${lccFlight.supplier} fare is confirmed at the charged price. Our ops desk is issuing the ticket now — your airline reference arrives shortly (normally under an hour).` });
+    return;
+  }
+  // TBO Air (consolidator) fares carry a TBO TraceId/ResultIndex instead of a
+  // Duffel offerId. Until the TBO FareQuote→Book→Ticket flow is certified, they
+  // are ticketed by the OPS DESK through TBO — same safe pattern as the LCC path:
+  // hold on a deposit, queue ops on full payment. A paid TBO fare is never left
+  // silently unticketed.
+  const tboFlight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.tboResultIndex && !c.details?.offerId);
+  if (tboFlight) {
+    const ful = (booking.fulfilment = booking.fulfilment || {});
+    if (ful.ticketing === 'issued' || ful.ticketing === 'ops-queue') return;
+    ful.source = 'tbo-air';
+    ful.tboTraceId = tboFlight.details.tboTraceId || null;
+    ful.tboResultIndex = tboFlight.details.tboResultIndex || null;
+    if (!bookingFullyPaid(booking)) {
+      if (ful.ticketing === 'ops-hold') return;
+      ful.ticketing = 'ops-hold';
+      ful.heldAt = new Date().toISOString();
+      recordAudit({ actor: 'system', role: 'system', action: 'ticketing.deposit-hold', entity: 'booking', entityId: booking.id, summary: `${tboFlight.supplier} (TBO Air) — held on deposit, ticket issues on full payment` });
+      if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🎟️', title: 'Seats reserved — pay the balance to ticket', body: `Your ${tboFlight.supplier} fare is reserved at the price you locked. Your e-ticket is issued the moment the balance is paid in full.` });
+      return;
+    }
+    ful.ticketing = 'ops-queue';
+    ful.queuedAt = new Date().toISOString();
+    createSupportTicket({
+      userId: booking.userId, intent: 'ops-ticketing',
+      message: `Issue TBO Air ticket for booking ${booking.id} — ${tboFlight.supplier}, paid IN FULL · TraceId ${String(tboFlight.details.tboTraceId || '').slice(0, 24)} · ResultIndex ${String(tboFlight.details.tboResultIndex || '').slice(0, 40)}. FareQuote to re-validate, then Book/Ticket in the TBO Air portal.`,
+      reason: 'TBO Air consolidator fare — ticket via TBO booking flow',
+    });
+    recordAudit({ actor: 'system', role: 'system', action: 'ticketing.ops-queued', entity: 'booking', entityId: booking.id, summary: `${tboFlight.supplier} via TBO Air — ops desk issues` });
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'Booking confirmed — ticket on its way', body: `Your ${tboFlight.supplier} fare is confirmed at the charged price. Our ops desk is issuing the ticket now — your airline reference arrives shortly.` });
     return;
   }
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
@@ -1922,7 +1953,7 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
     probe ? hotelbedsDiagnostic().catch((e) => ({ ok: false, verdict: `Hotelbeds probe threw: ${e?.message || e}` })) : Promise.resolve(null),
   ]);
   res.json({
-    flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode(), diagnostic: diag },
+    flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode(), diagnostic: diag, tboAir: probe ? await tboAirDiagnostic().catch((e) => ({ ok: false, verdict: `TBO Air probe threw: ${e?.message || e}` })) : { enabled: tboAirEnabled() } },
     lccFlights: {
       provider: 'Kiwi Tequila', enabled: lccFlightsEnabled(),
       note: lccFlightsEnabled()

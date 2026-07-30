@@ -132,6 +132,7 @@ export function supplierDoors() {
   return [
     { channel: 'flights', provider: 'Duffel', envVar: 'DUFFEL_TOKEN', signup: 'https://duffel.com', covers: 'Network carriers + easyJet/Vueling LCC — live booking + auto e-ticket', fallback: 'estimator' },
     { channel: 'flights-lcc', provider: 'Travelfusion / Kiwi partner', envVar: 'TEQUILA_API_KEY', signup: 'https://www.travelfusion.com (sales) · Ryanair approved-OTA programme', covers: 'Ryanair/Jet2 bookable content', fallback: 'ops desk books on airline site' },
+    { channel: 'flights-tbo', provider: 'TBO Air (consolidator — GDS + LCC + Gulf)', envVar: 'TBO_AIR_CLIENT_ID + TBO_AIR_USERNAME + TBO_AIR_PASSWORD', signup: 'Ask TBO to enable the Air (flights) API on your existing TBO account — no separate GDS contract / IATA needed; TBO is the ticketing party', covers: 'Emirates/Etihad/Qatar + full-service + LCC content Duffel lacks (the long-haul/Gulf gap)', fallback: 'ops desk tickets via TBO booking flow' },
     { channel: 'flights-market', provider: 'Travelpayouts (Aviasales)', envVar: 'TRAVELPAYOUTS_TOKEN', signup: 'https://www.travelpayouts.com — self-serve, token instant', covers: 'Real market prices incl. Ryanair/Jet2 (calibration + benchmark)', fallback: 'synthetic estimates' },
     { channel: 'hotels-tbo', provider: 'TBO Holidays (bedbank — NET rates)', envVar: 'TBO_HOTEL_USERNAME + TBO_HOTEL_PASSWORD', signup: 'https://www.tbotechnology.in — B2B agent signup (credit check, then API certification)', covers: 'Global hotels at contracted NET rates + free-cancellation — funds the instalment price-lock margin', fallback: 'estimator + ops desk' },
     { channel: 'hotels-ratehawk', provider: 'RateHawk (Emerging Travel Group)', envVar: 'RATEHAWK_KEY_ID + RATEHAWK_API_KEY', signup: 'https://www.ratehawk.com/partners — B2B agent signup', covers: 'Global hotels at net rates (alternative/second bedbank)', fallback: 'estimator + ops desk' },
@@ -152,6 +153,7 @@ export function supplierDoors() {
     ...d,
     open: d.channel === 'flights' ? !!env.DUFFEL_TOKEN
       : d.channel === 'flights-lcc' ? !!env.TEQUILA_API_KEY
+      : d.channel === 'flights-tbo' ? !!(env.TBO_AIR_CLIENT_ID && (env.TBO_AIR_USERNAME || env.TBO_HOTEL_USERNAME) && (env.TBO_AIR_PASSWORD || env.TBO_HOTEL_PASSWORD))
       : d.channel === 'flights-market' ? !!env.TRAVELPAYOUTS_TOKEN
       : d.channel === 'hotels' ? !!(env.AMADEUS_CLIENT_ID && env.AMADEUS_CLIENT_SECRET)
       : d.channel === 'hotels-tbo' ? !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD)

@@ -967,6 +967,31 @@ test('REVIEWER: magic-link access is OFF by default (no REVIEWER_ACCESS_KEY → 
   assert.equal(r.json.error, 'reviewer-disabled', 'reports disabled, not a bad key (fails closed)');
 });
 
+test('TBO AIR: scaffold is inert without keys, and the normalizer builds a live consolidator fare', async () => {
+  const live = await import('../src/live-suppliers.js');
+  assert.equal(live.tboAirEnabled(), false, 'TBO Air off without credentials');
+  assert.equal(await live.fetchTboAirFlights({ dates: { checkIn: '2026-08-17', checkOut: '2026-08-24' }, travellers: { total: 2, adults: 2 }, flightPrefs: {} }, 'BHX', 'DXB'), null, 'search returns null when disabled (no throw)');
+  const d = await live.tboAirDiagnostic();
+  assert.equal(d.configured, false, 'diagnostic reports not-configured');
+  // Normalizer maps a TBO result to our flight shape with ops-ticketing markers.
+  const result = {
+    ResultIndex: 'OB1', IsLCC: false, IsRefundable: true,
+    Fare: { PublishedFare: 2900, Currency: 'GBP' },
+    Segments: [[
+      { Origin: { Airport: { AirportCode: 'BHX', CityName: 'Birmingham' }, DepTime: '2026-08-17T14:35:00' }, Destination: { Airport: { AirportCode: 'DXB', CityName: 'Dubai' }, ArrTime: '2026-08-18T01:30:00' }, Airline: { AirlineName: 'Emirates', FlightNumber: 'EK40' }, CabinClass: 2, Baggage: '30 KG' },
+    ]],
+  };
+  const off = live.normalizeTboAirResult(result, 'trace-123', 2900, { total: 5 });
+  assert.equal(off.type, 'flight');
+  assert.equal(off.supplier, 'Emirates', 'carrier name mapped');
+  assert.equal(off.live, true);
+  assert.equal(off.sourcedVia, 'TBO Air (live)');
+  assert.equal(off.details.tboResultIndex, 'OB1', 'carries the ResultIndex for booking');
+  assert.equal(off.details.tboTraceId, 'trace-123', 'carries the TraceId');
+  assert.equal(off.details.offerId, undefined, 'NOT a Duffel offer — routes to TBO ops-ticketing, not Duffel');
+  assert.equal(off.details.checkedBagIncluded, true, '30 KG baggage → checked bag included');
+});
+
 test('HOTELBEDS: mTLS transport is dormant without a client cert (test phase → plain fetch)', async () => {
   const { hotelbedsMtlsConfigured, hbRequest } = await import('../src/hotelbeds-mtls.js');
   assert.equal(hotelbedsMtlsConfigured(), false, 'no client cert configured in tests → mTLS off');
