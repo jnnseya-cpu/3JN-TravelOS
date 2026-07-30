@@ -1356,6 +1356,39 @@ export function hotelbedsAvailabilityStatus() {
   return { cached: _hbAvailCache.size, quotaBlocked: blocked, quotaResumesAt: blocked ? new Date(_hbAvailQuotaBlockedUntil).toISOString() : null };
 }
 export function hotelbedsHotelsEnabled() { return !!(HB_HOTEL_KEY && HB_HOTEL_SECRET) && typeof fetch === 'function'; }
+// ACTIVE probe — hits Hotelbeds directly and returns a plain-English verdict of
+// exactly why hotels are/aren't flowing: door off (redeploy), 401 bad secret,
+// 403 quota/env mismatch, 0 hotels (our destination-code mapping), or WORKING.
+// Used by the admin diagnostics so we STOP guessing.
+export async function hotelbedsDiagnostic() {
+  if (!hotelbedsHotelsEnabled()) {
+    return { ok: false, configured: false, verdict: 'Hotelbeds hotel door is OFF in this deployment — HOTELBEDS_HOTEL_API_KEY + HOTELBEDS_HOTEL_SECRET (or shared HOTELBEDS_API_KEY/SECRET) are not both present. If you just added them, REDEPLOY so the running build picks them up.' };
+  }
+  const base = HB_BASE;
+  const mtls = !!(process.env.HOTELBEDS_CLIENT_CERT && process.env.HOTELBEDS_CLIENT_KEY);
+  const envKind = /api\.test\.hotelbeds\.com/.test(base) ? 'test' : 'production';
+  // 1) Auth check via the cheap /status endpoint.
+  const st = await hbRequest(`${base}/hotel-api/1.0/status`, { headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET, false), timeoutMs: 12000 });
+  if (st == null) return { ok: false, configured: true, base, envKind, mtls, stage: 'auth', verdict: 'Could not reach Hotelbeds (network/timeout).' };
+  if (st.__status === 401) return { ok: false, configured: true, base, envKind, mtls, stage: 'auth', http: 401, verdict: '401 Unauthorized — the SECRET does not match the KEY. Make sure HOTELBEDS_HOTEL_SECRET is the secret paired with HOTELBEDS_HOTEL_API_KEY (each suite key has its own secret).' };
+  if (st.__status === 403) return { ok: false, configured: true, base, envKind, mtls, stage: 'auth', http: 403, verdict: `403 Forbidden — either the daily eval quota (50/day) is used up, OR this key isn't authorised for the hotel suite / this environment. You are pointed at the ${envKind} endpoint${envKind === 'production' ? ' — eval keys do NOT work on production; unset HOTELBEDS_BASE_URL to use test.' : '.'}` };
+  if (st.__error) return { ok: false, configured: true, base, envKind, mtls, stage: 'auth', http: st.__status, verdict: `Hotelbeds /status returned HTTP ${st.__status}.`, body: st.__error };
+  // 2) Real availability probe: Barcelona, ~35 days out, 2 adults.
+  const d0 = new Date(Date.now() + 35 * 86400000);
+  const checkIn = d0.toISOString().slice(0, 10);
+  const checkOut = new Date(d0.getTime() + 2 * 86400000).toISOString().slice(0, 10);
+  const body = { sourceMarket: HB_SOURCE_MARKET, stay: { checkIn, checkOut }, occupancies: [{ rooms: 1, adults: 2, children: 0 }], destination: { code: 'BCN' } };
+  const av = await hbRequest(`${base}/hotel-api/1.0/hotels`, { method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: 15000 });
+  if (av == null) return { ok: false, configured: true, base, envKind, mtls, stage: 'availability', authOk: true, verdict: 'Auth OK, but the availability call could not be reached (network/timeout).' };
+  if (av.__error || av.__status >= 400) return { ok: false, configured: true, base, envKind, mtls, stage: 'availability', authOk: true, http: av.__status, verdict: `Auth OK, but the availability call failed (HTTP ${av.__status}).`, body: av.__error };
+  const n = av?.hotels?.hotels?.length || 0;
+  return {
+    ok: n > 0, configured: true, base, envKind, mtls, stage: 'availability', authOk: true, hotelsReturned: n,
+    verdict: n > 0
+      ? `WORKING — Hotelbeds returned ${n} hotels for a standard Barcelona probe. Live hotels should now appear in searches; any specific search still estimating is a destination/date with no inventory.`
+      : 'Auth is OK but Hotelbeds returned 0 hotels for a standard Barcelona probe (destination code "BCN"). This is almost certainly our destination-code mapping — we send the IATA code and Hotelbeds expects its own destination code. This is on us to fix.',
+  };
+}
 // The APItude signature + auth headers. Exported so the activities/transfers
 // suites (extras-suppliers) reuse the exact same scheme with their own keys.
 export function hotelbedsSignature(key, secret) {

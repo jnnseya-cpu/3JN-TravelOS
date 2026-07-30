@@ -72,7 +72,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-hotelbeds-onscreen-diag-v189';
+const BUILD_TAG = '2026-07-30-hotelbeds-active-probe-v190';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1916,9 +1916,10 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
   // estimated: no token, test token, network can't reach Duffel, auth rejected,
   // or simply no offers on the probe route.
   const probe = req.query.probe !== '0';
-  const [diag, staysDiag] = await Promise.all([
+  const [diag, staysDiag, hbDiag] = await Promise.all([
     probe ? duffelDiagnostic() : Promise.resolve(null),
     probe ? duffelStaysDiagnostic().catch((e) => ({ ok: false, reason: 'exception', message: e?.message || 'stays probe failed' })) : Promise.resolve(null),
+    probe ? hotelbedsDiagnostic().catch((e) => ({ ok: false, verdict: `Hotelbeds probe threw: ${e?.message || e}` })) : Promise.resolve(null),
   ]);
   res.json({
     flights: { provider: 'Duffel', enabled: liveFlightsEnabled(), mode: duffelMode(), diagnostic: diag },
@@ -1941,6 +1942,7 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
       hotelbeds: {
         enabled: hotelbedsHotelsEnabled(),
         availability: hotelbedsAvailabilityStatus(),
+        probe: hbDiag, // ACTIVE probe: the plain-English reason hotels are/aren't live
         note: hotelbedsHotelsEnabled()
           ? (hotelbedsAvailabilityStatus().quotaBlocked
             ? `Hotelbeds is connected but the daily quota was hit (403) — paused until ${hotelbedsAvailabilityStatus().quotaResumesAt}. On the eval key you get 50 requests/day; upgrade in the Hotelbeds dashboard's profile-progression section.`
@@ -1973,9 +1975,10 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
 // returns a ready/not-ready verdict per capability with a human next-step.
 app.get('/api/admin/selftest', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  const [duffel, stripe] = await Promise.all([
+  const [duffel, stripe, hbDiag] = await Promise.all([
     duffelDiagnostic().catch((e) => ({ ok: false, reason: 'exception', message: e?.message || 'probe failed' })),
     stripeDiagnostic().catch((e) => ({ ok: false, reason: 'exception', message: e?.message || 'probe failed' })),
+    hotelbedsHotelsEnabled() ? hotelbedsDiagnostic().catch((e) => ({ ok: false, verdict: `Hotelbeds probe threw: ${e?.message || e}` })) : Promise.resolve(null),
   ]);
   const liveMode = process.env.LIVE_MODE === 'true';
   const staffPinSet = Boolean(staffPin());
@@ -1994,6 +1997,8 @@ app.get('/api/admin/selftest', safe(async (req, res) => {
         : liveHotelsEnabled() ? 'Amadeus hotels are connected.'
         : 'No live hotel source — hotels show ESTIMATED prices and cannot be booked for real payment, so a package may show flight-only.',
       hotelsLive ? null : 'Duffel Stays uses the DUFFEL_TOKEN you already have — just make sure DUFFEL_STAYS is not set to "false" (or add AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET).'),
+    // Hotelbeds ACTIVE probe — the definitive "why is the hotel still estimate?" answer.
+    ...(hbDiag ? [check(hbDiag.ok, 'Hotelbeds hotels return live rates', hbDiag.verdict, hbDiag.ok ? null : (hbDiag.verdict || 'See the Hotelbeds probe detail.'))] : [check(false, 'Hotelbeds hotels return live rates', 'Hotelbeds hotel door is OFF — set HOTELBEDS_HOTEL_API_KEY + HOTELBEDS_HOTEL_SECRET (or shared HOTELBEDS_API_KEY/SECRET) and redeploy.', 'Add the hotel-suite key AND its secret, then redeploy.')]),
     check(stripe.ok && stripe.webhookSet, 'Card payments fulfil end-to-end',
       stripe.ok ? (stripe.webhookSet ? stripe.message : 'Stripe key works, but STRIPE_WEBHOOK_SECRET is missing — payments would capture but never issue the ticket.') : stripe.message,
       stripe.ok && stripe.webhookSet ? null : (!stripe.ok ? 'Set STRIPE_SECRET_KEY and make sure this host can reach api.stripe.com.' : 'Add STRIPE_WEBHOOK_SECRET (from your Stripe webhook endpoint) and redeploy.')),
