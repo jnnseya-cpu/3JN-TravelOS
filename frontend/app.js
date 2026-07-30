@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v178';
+const APP_BUILD = 'v179';
 
 const state = {
   context: null,
@@ -400,7 +400,7 @@ async function boot() {
     if (state.context.configWarning) showConfigWarning(state.context.configWarning);
     // Trust layer: a real WhatsApp button + live Trustpilot reviews — each mounts
     // ONLY when its real credential is configured (never a fake signal).
-    try { mountWhatsApp(); mountTrustpilot(); loadTestimonialStrip(); } catch { /* non-fatal */ }
+    try { mountWhatsApp(); mountTrustpilot(); loadTestimonialStrip(); mountFeaturedHoliday(); } catch { /* non-fatal */ }
     const sel = $('#countrySelect');
     sel.innerHTML = state.context.currencies
       .map((c) => `<option value="${c.country}">${c.countryName} (${c.code})</option>`).join('');
@@ -5742,6 +5742,54 @@ document.getElementById('aboutLink')?.addEventListener('click', () => window.ope
 
 // FLOATING WHATSAPP button — the single highest-impact trust element for a
 // diaspora buyer. Injected ONLY when a real WhatsApp number is configured.
+// FEATURED HOLIDAY — rotates the hero destination by season, so the landing page
+// is never stuck on one place. Picks from the destinations whose season matches
+// the current month (diaspora + community corridors weighted), then rotates daily
+// among them so it keeps changing. Pure client-side, no external calls.
+const FEATURED_DESTS = [
+  { name: 'Dubai & Abu Dhabi', short: 'Dubai', months: [10, 11, 0, 1, 2],
+    desc: 'Flights, 5★ hotels, desert safaris, Burj Khalifa, eVisa, private transfers and eSIM — bundled into one transparent package. Your perfect getaway is just a message away.',
+    exp: 'Desert safari + Burj Khalifa', extras: 'eVisa ×4 · 🚘 transfers · 📶 eSIM' },
+  { name: 'Zanzibar & Stone Town', short: 'Zanzibar', months: [5, 6, 7, 8, 9],
+    desc: 'Return flights, beachfront resorts, a spice tour and a sunset dhow cruise, visa, private transfers and eSIM — one clear, all-in package for the perfect Indian-Ocean escape.',
+    exp: 'Spice tour + sunset dhow cruise', extras: 'Visa ×4 · 🚘 transfers · 📶 eSIM' },
+  { name: 'Cape Town & the Cape', short: 'Cape Town', months: [10, 11, 0, 1, 2, 3],
+    desc: 'Flights, boutique stays, Table Mountain, Cape Point and a winelands day, transfers and eSIM — all wrapped into one transparent, instalment-friendly quote.',
+    exp: 'Table Mountain + winelands day', extras: 'Visa guidance · 🚘 transfers · 📶 eSIM' },
+  { name: 'Lagos, Accra & home', short: 'West Africa', months: [11, 0, 6, 7],
+    desc: 'Diaspora-friendly flights, city hotels, airport pickups, event access and eSIM — your trip home for the season, sorted end to end with easy instalments.',
+    exp: 'Festive event access + city tour', extras: 'Docs help · 🚘 transfers · 📶 eSIM' },
+  { name: 'Nairobi & Maasai Mara', short: 'Kenya', months: [6, 7, 8, 9, 0, 1],
+    desc: 'Flights, lodges, a Maasai Mara safari, Nairobi highlights, eVisa, transfers and eSIM — one transparent price for the trip of a lifetime.',
+    exp: 'Maasai Mara safari + Nairobi', extras: 'eVisa ×4 · 🚘 transfers · 📶 eSIM' },
+  { name: 'Istanbul & Cappadocia', short: 'Turkey', months: [3, 4, 5, 8, 9],
+    desc: 'Flights, hotels, a Bosphorus cruise and a Cappadocia hot-air-balloon add-on, eVisa, transfers and eSIM — bundled into one all-in price.',
+    exp: 'Bosphorus cruise + Cappadocia balloon', extras: 'eVisa ×4 · 🚘 transfers · 📶 eSIM' },
+  { name: 'Marrakech & Morocco', short: 'Morocco', months: [2, 3, 4, 9, 10],
+    desc: 'Flights, riad stays, a Sahara excursion and a Medina food tour, transfers and eSIM — one honest, instalment-friendly package.',
+    exp: 'Sahara excursion + Medina food tour', extras: 'Visa-free / eVisa · 🚘 transfers · 📶 eSIM' },
+  { name: 'The Maldives', short: 'the Maldives', months: [10, 11, 0, 1, 2, 3],
+    desc: 'Flights, overwater villas, seaplane transfers, snorkelling and a sandbank picnic, and eSIM — one clear, honeymoon-ready price with easy instalments.',
+    exp: 'Seaplane transfer + sandbank picnic', extras: 'Visa on arrival · 🚤 transfers · 📶 eSIM' },
+];
+function mountFeaturedHoliday() {
+  if (!document.getElementById('featHeadline')) return; // only on the landing hero
+  const now = new Date();
+  const m = now.getMonth();
+  let pool = FEATURED_DESTS.filter((d) => d.months.includes(m));
+  if (!pool.length) pool = FEATURED_DESTS;
+  // Rotate daily among the in-season pool so it keeps changing.
+  const pick = pool[(now.getFullYear() * 366 + dayOfYear(now)) % pool.length];
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('featHeadline', `Dreaming of ${pick.short}? Stop searching.`);
+  set('featTitle', pick.name);
+  set('featDesc', pick.desc);
+  set('featCta', `Get my ${pick.short} quote`);
+  set('featHolo', `${pick.name.split(' & ')[0].split(',')[0]} · family · 7 nights`);
+  set('featExp', pick.exp);
+  set('featExtras', pick.extras);
+}
+function dayOfYear(d) { return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000); }
 function mountWhatsApp() {
   const c = state.context?.contact || {};
   if (!c.whatsapp) return;
