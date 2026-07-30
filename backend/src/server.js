@@ -54,7 +54,7 @@ import {
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags, wipeTransactionalData, getFeaturedOverride, setFeaturedOverride,
 } from './store.js';
-import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS, syncAiraloPackages, airaloCatalogueStatus } from './extras-suppliers.js';
+import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS, syncAiraloPackages, airaloCatalogueStatus, hotelbedsActivitiesForScan, hotelbedsActivitiesEnabled } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
 import { runFlightBenchmark, DEFAULT_BENCHMARK_ROUTES } from './benchmark.js';
 import { embassyProposal, visaDecisionLetter } from './embassy.js';
@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-airalo-hourly-sync-v182';
+const BUILD_TAG = '2026-07-30-hotelbeds-hotel-activities-transfers-v183';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2596,10 +2596,16 @@ app.post('/api/plan', safe(async (req, res) => {
       } else {
         live = await fetchLiveOffers(intent, dest, result.origin);
       }
-      // LIVE Viator tours when activities are requested and the door is open.
-      if (viatorEnabled() && (result.intent?.components || []).includes('activities') && dest?.city) {
-        const acts = await viatorActivitiesForScan({ destinationCity: dest.city, date: intent.dates?.checkIn, pax: intent.travellers?.total }).catch(() => null);
-        if (acts && acts.length) live = { ...live, activities: acts };
+      // LIVE tours when activities are requested and a door is open. Viator +
+      // Hotelbeds run in parallel and their results are merged (cheapest-first),
+      // so the customer sees the widest live activity inventory available.
+      if ((result.intent?.components || []).includes('activities') && dest?.city) {
+        const [viatorActs, hbActs] = await Promise.all([
+          viatorEnabled() ? viatorActivitiesForScan({ destinationCity: dest.city, date: intent.dates?.checkIn, pax: intent.travellers?.total }).catch(() => null) : null,
+          hotelbedsActivitiesEnabled() ? hotelbedsActivitiesForScan({ destinationCode: dest.code, destinationCity: dest.city, date: intent.dates?.checkIn, pax: intent.travellers?.total }).catch(() => null) : null,
+        ]);
+        const acts = [...(viatorActs || []), ...(hbActs || [])].sort((a, b) => (a.priceUSD || 0) - (b.priceUSD || 0));
+        if (acts.length) live = { ...live, activities: acts };
       }
       // LIVE Mozio airport transfers when a transfer is requested and the door is open.
       if (mozioEnabled() && (result.intent?.components || []).includes('transfer') && dest?.city) {

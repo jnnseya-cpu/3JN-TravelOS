@@ -15,7 +15,7 @@
 // numbers from "estimated" to "live". Nothing here fabricates a price: if a
 // provider doesn't answer, we return null rather than a made-up "live" figure.
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual, createHash } from 'node:crypto';
 import { fxRate, geocode } from './live-data.js';
 import { estimateFlightFares } from './suppliers.js';
 import { routeFareBaseUSD, nearbyAirports } from './airports.js';
@@ -102,7 +102,7 @@ export function verifyDuffelSignature(rawBody, header, secret = DUFFEL_WEBHOOK_S
   }
   return { ok: false, reason: 'bad-signature' };
 }
-export function liveHotelsEnabled() { return (duffelStaysEnabled() || !!(AMADEUS_ID && AMADEUS_SECRET) || !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD)) && typeof fetch === 'function'; }
+export function liveHotelsEnabled() { return (duffelStaysEnabled() || !!(AMADEUS_ID && AMADEUS_SECRET) || !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD) || !!((env.HOTELBEDS_HOTEL_API_KEY || env.HOTELBEDS_API_KEY) && (env.HOTELBEDS_HOTEL_SECRET || env.HOTELBEDS_SECRET))) && typeof fetch === 'function'; }
 export function oagScheduleEnabled() { return !!(OAG_SCHEDULES_KEY || OAG_FLIGHTINFO_KEY) && typeof fetch === 'function'; }
 export function liveSuppliersConfigured() { return liveFlightsEnabled() || liveHotelsEnabled() || oagScheduleEnabled(); }
 
@@ -1322,6 +1322,96 @@ export async function fetchTboHotels(intent, dest) {
   } catch { return null; }
 }
 
+// ---- Hotelbeds APItude (bedbank) -----------------------------------------
+// One of the world's largest bedbanks (~300k properties, contracted NET rates).
+// Auth is shared across all three APItude suites: send `Api-key` + `X-Signature`,
+// where the signature is sha256hex(apiKey + secret + unixSeconds) — recomputed
+// per request (the timestamp is validated server-side). Test base is
+// api.test.hotelbeds.com (identical servers, no real charges); flip
+// HOTELBEDS_BASE_URL to https://api.hotelbeds.com for production. Each suite has
+// its OWN key/secret pair; a single HOTELBEDS_API_KEY/SECRET is accepted as a
+// fallback for all three. INERT until the key lands — no key, no lane.
+const HB_BASE = env.HOTELBEDS_BASE_URL || 'https://api.test.hotelbeds.com';
+const HB_HOTEL_KEY = env.HOTELBEDS_HOTEL_API_KEY || env.HOTELBEDS_API_KEY || '';
+const HB_HOTEL_SECRET = env.HOTELBEDS_HOTEL_SECRET || env.HOTELBEDS_SECRET || '';
+export function hotelbedsHotelsEnabled() { return !!(HB_HOTEL_KEY && HB_HOTEL_SECRET) && typeof fetch === 'function'; }
+// The APItude signature + auth headers. Exported so the activities/transfers
+// suites (extras-suppliers) reuse the exact same scheme with their own keys.
+export function hotelbedsSignature(key, secret) {
+  return createHash('sha256').update(`${key}${secret}${Math.floor(Date.now() / 1000)}`).digest('hex');
+}
+export function hotelbedsHeaders(key, secret, json = true) {
+  const h = { 'Api-key': key, 'X-Signature': hotelbedsSignature(key, secret), Accept: 'application/json', 'Accept-Encoding': 'gzip' };
+  if (json) h['Content-Type'] = 'application/json';
+  return h;
+}
+export { HB_BASE };
+export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, rooms) {
+  const stars = Number(String(h.categoryCode || '').replace(/[^0-9]/g, '')) || Number((String(h.categoryName || '').match(/\d/) || [])[0]) || 0;
+  const nightlyUSD = nights ? Math.round((priceUSD / nights) * 100) / 100 : priceUSD;
+  // A rate with NO cancellation policy amounts is free-cancellation; a policy with
+  // charges (or a non-refundable rateClass) is not. Never overstate flexibility.
+  const hasCharge = Array.isArray(rate.cancellationPolicies) && rate.cancellationPolicies.some((p) => Number(p.amount) > 0);
+  return {
+    type: 'hotel', supplier: h.name || 'Hotel', verified: true,
+    reliabilityScore: stars >= 4 ? 90 : 82, stars, live: true,
+    sourcedVia: 'Hotelbeds (live)', sourcedType: 'bedbank',
+    details: {
+      nights, rooms: rooms || 1, nightlyUSD,
+      board: rate.boardName || 'Room only',
+      freeCancellation: rate.rateClass !== 'NRF' && !hasCharge,
+      roomType: roomName || 'Standard Room',
+      area: h.zoneName || h.destinationName || '',
+      hotelId: h.code || null,
+      hotelbedsRateKey: rate.rateKey || null, // needed for checkrate + booking
+      rateType: rate.rateType || null,        // BOOKABLE (firm) vs RECHECK
+      netRate: true, // contracted net rate — the spread funds the price-lock margin
+    },
+    priceUSD,
+  };
+}
+// Live Hotelbeds availability for a destination + stay. Uses the destination
+// code we already carry (dest.code / dest.hotelbedsDest — Hotelbeds destination
+// codes align with the common city codes for major markets). Cheapest bookable
+// NET rate per hotel; converts to USD via FX. Fails safe (null) on any miss so
+// the trip stays estimated rather than showing a fabricated live price.
+export async function fetchHotelbedsHotels(intent, dest) {
+  if (!hotelbedsHotelsEnabled()) return null;
+  const checkIn = intent?.dates?.checkIn, checkOut = intent?.dates?.checkOut;
+  if (!checkIn || !checkOut) return null;
+  const destCode = String(dest?.hotelbedsDest || dest?.code || '').toUpperCase();
+  if (!destCode) return null;
+  try {
+    const rooms = Math.max(1, Math.ceil((intent.travellers?.total || 2) / 2));
+    const adults = Math.max(1, intent.travellers?.adults || 2);
+    const childAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges.filter((a) => a != null) : [];
+    const occ = { rooms, adults, children: childAges.length };
+    if (childAges.length) occ.paxes = childAges.map((a) => ({ type: 'CH', age: Math.max(0, Number(a) || 8) }));
+    const body = { stay: { checkIn, checkOut }, occupancies: [occ], destination: { code: destCode } };
+    const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/hotels`, {
+      method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: FLIGHT_TIMEOUT_MS,
+    });
+    const hotels = res?.hotels?.hotels;
+    if (!Array.isArray(hotels) || !hotels.length) return null;
+    const currency = res.hotels.currency || 'EUR';
+    const out = [];
+    for (const h of hotels.slice(0, 20)) {
+      // Cheapest bookable NET rate across all rooms of this hotel.
+      let best = null;
+      for (const room of h.rooms || []) for (const rate of room.rates || []) {
+        const net = Number(rate.net != null ? rate.net : rate.sellingRate);
+        if (!Number.isFinite(net) || net <= 0) continue;
+        if (!best || net < best.net) best = { net, rate, roomName: room.name };
+      }
+      if (!best) continue;
+      const usd = await toUSD(best.net, currency);
+      if (usd == null) continue;
+      out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, rooms));
+    }
+    return out.length ? out : null;
+  } catch { return null; }
+}
+
 export async function fetchLiveHotels(intent, dest) {
   if (!liveHotelsEnabled()) return null;
   if (duffelStaysEnabled()) {
@@ -1329,6 +1419,11 @@ export async function fetchLiveHotels(intent, dest) {
     if (stays && stays.length) return stays;
   }
   // Bedbank net rates next (the model that funds instalment price-locks).
+  // Hotelbeds first — the deepest global bedbank inventory — then TBO.
+  if (hotelbedsHotelsEnabled()) {
+    const hb = await fetchHotelbedsHotels(intent, dest).catch(() => null);
+    if (hb && hb.length) return hb;
+  }
   if (tboHotelsEnabled()) {
     const tbo = await fetchTboHotels(intent, dest).catch(() => null);
     if (tbo && tbo.length) return tbo;

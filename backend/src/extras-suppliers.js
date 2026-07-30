@@ -8,6 +8,8 @@
 // Nothing here fabricates availability: an adapter that can't reach its
 // provider returns null and the component stays estimator/ops-fulfilled.
 
+import { createHash } from 'node:crypto';
+
 const env = process.env;
 const TIMEOUT_MS = Number(env.EXTRAS_TIMEOUT_MS) || 8000;
 
@@ -132,6 +134,9 @@ export function supplierDoors() {
     { channel: 'flights-market', provider: 'Travelpayouts (Aviasales)', envVar: 'TRAVELPAYOUTS_TOKEN', signup: 'https://www.travelpayouts.com — self-serve, token instant', covers: 'Real market prices incl. Ryanair/Jet2 (calibration + benchmark)', fallback: 'synthetic estimates' },
     { channel: 'hotels-tbo', provider: 'TBO Holidays (bedbank — NET rates)', envVar: 'TBO_HOTEL_USERNAME + TBO_HOTEL_PASSWORD', signup: 'https://www.tbotechnology.in — B2B agent signup (credit check, then API certification)', covers: 'Global hotels at contracted NET rates + free-cancellation — funds the instalment price-lock margin', fallback: 'estimator + ops desk' },
     { channel: 'hotels-ratehawk', provider: 'RateHawk (Emerging Travel Group)', envVar: 'RATEHAWK_KEY_ID + RATEHAWK_API_KEY', signup: 'https://www.ratehawk.com/partners — B2B agent signup', covers: 'Global hotels at net rates (alternative/second bedbank)', fallback: 'estimator + ops desk' },
+    { channel: 'hotels-hotelbeds', provider: 'Hotelbeds APItude (bedbank — NET rates)', envVar: 'HOTELBEDS_HOTEL_API_KEY + HOTELBEDS_HOTEL_SECRET (or shared HOTELBEDS_API_KEY/SECRET); HOTELBEDS_BASE_URL for prod', signup: 'https://developer.hotelbeds.com — self-serve keys (test 50 req/day), progress to certification for production', covers: '~300k global hotels at contracted NET rates + free-cancellation — the deepest bedbank; funds the instalment price-lock margin', fallback: 'estimator + ops desk (ops:hotels)' },
+    { channel: 'activities-hotelbeds', provider: 'Hotelbeds Activities APItude', envVar: 'HOTELBEDS_ACTIVITY_API_KEY + HOTELBEDS_ACTIVITY_SECRET (or shared HOTELBEDS_API_KEY/SECRET)', signup: 'https://developer.hotelbeds.com — Activities suite key', covers: 'Global tours/activities live search, merged with Viator (cheapest-first)', fallback: 'ops desk (ops:activities)' },
+    { channel: 'transfers-hotelbeds', provider: 'Hotelbeds Transfers APItude', envVar: 'HOTELBEDS_TRANSFER_API_KEY + HOTELBEDS_TRANSFER_SECRET (or shared HOTELBEDS_API_KEY/SECRET)', signup: 'https://developer.hotelbeds.com — Transfers suite key', covers: 'Airport⇄hotel transfers; attaches at booking-time once a hotel is chosen (needs the destination hotel code)', fallback: 'Mozio / ops desk (ops:transfers)' },
     { channel: 'hotels', provider: 'Amadeus', envVar: 'AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET', signup: 'https://developers.amadeus.com — self-serve', covers: 'Live hotel rates + booking', fallback: 'estimator + ops desk' },
     { channel: 'esim', provider: 'Airalo Partners (or eSIM Access)', envVar: 'AIRALO_CLIENT_ID + AIRALO_CLIENT_SECRET (or ESIMACCESS_API_KEY)', signup: 'https://partners.airalo.com — OAuth2, self-serve; optional AIRALO_BRAND_SETTINGS_NAME for branded eSIMs Cloud', covers: 'Instant eSIM: real ICCID + LPA activation + QR + Apple direct-install + eSIMs Cloud share link, straight into the travel documents', fallback: 'auto-provisioned in-OS, ops verifies' },
     { channel: 'activities', provider: `Viator (${VIATOR_TIER})`, envVar: 'VIATOR_API_KEY (+ VIATOR_PARTNER_ID for affiliate commission, VIATOR_PARTNER_TIER affiliate|merchant, VIATOR_BASE_URL for sandbox)', signup: 'https://partnerresources.viator.com — open partner signup', covers: 'Global tours/activities: live search for all tiers; affiliate books via redirect+commission (live), merchant books via availability→book→voucher (built — set VIATOR_PARTNER_TIER=merchant + certify field names)', fallback: 'Rayna agent portal (18 countries) / ops desk' },
@@ -150,6 +155,9 @@ export function supplierDoors() {
       : d.channel === 'hotels' ? !!(env.AMADEUS_CLIENT_ID && env.AMADEUS_CLIENT_SECRET)
       : d.channel === 'hotels-tbo' ? !!(env.TBO_HOTEL_USERNAME && env.TBO_HOTEL_PASSWORD)
       : d.channel === 'hotels-ratehawk' ? !!(env.RATEHAWK_KEY_ID && env.RATEHAWK_API_KEY)
+      : d.channel === 'hotels-hotelbeds' ? !!((env.HOTELBEDS_HOTEL_API_KEY || env.HOTELBEDS_API_KEY) && (env.HOTELBEDS_HOTEL_SECRET || env.HOTELBEDS_SECRET))
+      : d.channel === 'activities-hotelbeds' ? hotelbedsActivitiesEnabled()
+      : d.channel === 'transfers-hotelbeds' ? hotelbedsTransfersEnabled()
       : d.channel === 'esim' ? (airaloEnabled() || esimApiEnabled())
       : d.channel === 'activities' ? viatorEnabled()
       : d.channel === 'transfers' ? mozioEnabled()
@@ -531,6 +539,129 @@ export async function mozioTransfersForScan({ destAirport, destCity, dateTimeISO
     details: { vehicle: r.vehicle || 'Standard', trips: 2, capacity: pax <= 3 ? '1-3 pax' : '4-6 pax (MPV)', mozioSearchId: r.searchId, mozioResultId: r.resultId },
     priceUSD: Math.round((r.priceGbp / 0.79) * 2 * 100) / 100, // ×2 = arrival + departure
   }));
+}
+
+// ===========================================================================
+// HOTELBEDS APItude — Activities + Transfers suites
+// ===========================================================================
+// Same auth as the hotel suite (see live-suppliers.js): Api-key + X-Signature =
+// sha256hex(apiKey + secret + unixSeconds). Each suite has its OWN key/secret;
+// HOTELBEDS_API_KEY/SECRET is a shared fallback. Test base by default; flip
+// HOTELBEDS_BASE_URL to https://api.hotelbeds.com for production. INERT until a
+// key lands, and every adapter fails safe (null) — never fabricates an offer.
+const HB_BASE = env.HOTELBEDS_BASE_URL || 'https://api.test.hotelbeds.com';
+const HB_ACT_KEY = env.HOTELBEDS_ACTIVITY_API_KEY || env.HOTELBEDS_API_KEY || '';
+const HB_ACT_SECRET = env.HOTELBEDS_ACTIVITY_SECRET || env.HOTELBEDS_SECRET || '';
+const HB_TRF_KEY = env.HOTELBEDS_TRANSFER_API_KEY || env.HOTELBEDS_API_KEY || '';
+const HB_TRF_SECRET = env.HOTELBEDS_TRANSFER_SECRET || env.HOTELBEDS_SECRET || '';
+function hbHeaders(key, secret, json = true) {
+  const h = { 'Api-key': key, 'X-Signature': createHash('sha256').update(`${key}${secret}${Math.floor(Date.now() / 1000)}`).digest('hex'), Accept: 'application/json', 'Accept-Encoding': 'gzip' };
+  if (json) h['Content-Type'] = 'application/json';
+  return h;
+}
+export function hotelbedsActivitiesEnabled() { return !!(HB_ACT_KEY && HB_ACT_SECRET) && typeof fetch === 'function'; }
+export function hotelbedsTransfersEnabled() { return !!(HB_TRF_KEY && HB_TRF_SECRET) && typeof fetch === 'function'; }
+
+// Walk an unknown-shaped activity node and return the smallest positive numeric
+// price we can find (Activity API 3.0 nests price under modalities→rates→
+// rateDetails→totalAmount.amount, but the exact path varies by product). Robust
+// to schema drift: we take the min positive `.amount`/`.totalAmount` we see.
+function hbActivityMinAmount(node, depth = 0) {
+  if (!node || depth > 6) return null;
+  let min = null;
+  const consider = (v) => { const n = Number(v); if (Number.isFinite(n) && n > 0) min = (min == null || n < min) ? n : min; };
+  if (Array.isArray(node)) { for (const x of node) { const m = hbActivityMinAmount(x, depth + 1); if (m != null) consider(m); } return min; }
+  if (typeof node === 'object') {
+    if (node.totalAmount != null) consider(typeof node.totalAmount === 'object' ? node.totalAmount.amount : node.totalAmount);
+    if (node.amount != null && typeof node.amount !== 'object') consider(node.amount);
+    for (const k of ['modalities', 'rates', 'rateDetails', 'amount', 'totalAmount']) {
+      if (node[k] != null && typeof node[k] === 'object') { const m = hbActivityMinAmount(node[k], depth + 1); if (m != null) consider(m); }
+    }
+  }
+  return min;
+}
+// Live Hotelbeds activities normalised to the scan offer shape (parallel to
+// viatorActivitiesForScan). Destination uses the code we already carry — for
+// major markets Hotelbeds activity destination codes align with the city code.
+// GBP→USD: Hotelbeds returns its account currency; we convert with the same
+// 0.79 anchor the rest of the scan uses when FX isn't wired here.
+export async function hotelbedsActivitiesForScan({ destinationCode, destinationCity, date, pax = 2 }) {
+  if (!hotelbedsActivitiesEnabled()) return null;
+  const dest = String(destinationCode || '').toUpperCase();
+  if (!dest || !date) return null;
+  try {
+    const body = {
+      language: 'en',
+      from: date, to: date,
+      paxes: Array.from({ length: Math.max(1, pax) }, () => ({ age: 30 })),
+      filters: [{ searchFilterItems: [{ type: 'destination', value: dest }] }],
+      order: 'DEFAULT',
+      pagination: { itemsPerPage: 12, page: 1 },
+    };
+    const res = await httpJSON(`${HB_BASE}/activity-api/3.0/activities`, { method: 'POST', headers: hbHeaders(HB_ACT_KEY, HB_ACT_SECRET), body: JSON.stringify(body) });
+    const acts = res?.activities;
+    if (!Array.isArray(acts) || !acts.length) return null;
+    const cur = String(res.currency || acts[0]?.currency || 'EUR').toUpperCase();
+    const out = [];
+    for (const a of acts.slice(0, 6)) {
+      const amount = hbActivityMinAmount(a);
+      if (amount == null) continue;
+      // Convert to USD: EUR/GBP via a conservative static anchor (scan-time only;
+      // the firm price is re-validated at booking via availability/checkrate).
+      const toUsd = cur === 'USD' ? 1 : cur === 'GBP' ? 1 / 0.79 : cur === 'EUR' ? 1.08 : 1;
+      const priceUSD = Math.round(amount * toUsd * 100) / 100;
+      if (!(priceUSD > 0)) continue;
+      out.push({
+        type: 'activity', supplier: a.name || 'Activity', verified: true, reliabilityScore: 88, live: true,
+        priceUSD,
+        details: { unit: 'per person', hotelbedsActivityCode: a.code || null, hotelbedsDate: date, hotelbedsModality: (a.modalities && a.modalities[0]?.code) || null, area: a.destinationName || destinationCity || null, live: true },
+        sourcedVia: 'Hotelbeds (live)', sourcedType: 'activities-api',
+      });
+    }
+    return out.length ? out : null;
+  } catch { return null; }
+}
+
+// Live Hotelbeds transfer availability (Transfer API 1.0). GET path-param API:
+// /availability/{lang}/from/{fromType}/{fromCode}/to/{toType}/{toCode}/{outbound}
+// [/{inbound}]/{adults}/{children}/{infants}. A transfer needs a resolvable
+// DESTINATION (a hotel ATLAS/GIATA code or IATA), so this is most reliable at
+// booking-time once a hotel is chosen. Returns the cheapest service or null.
+export async function hotelbedsTransferAvailability({ fromType = 'IATA', fromCode, toType = 'ATLAS', toCode, outboundISO, inboundISO, adults = 2, children = 0, infants = 0 }) {
+  if (!hotelbedsTransfersEnabled() || !fromCode || !toCode || !outboundISO) return null;
+  try {
+    const seg = [`from/${fromType}/${encodeURIComponent(fromCode)}`, `to/${toType}/${encodeURIComponent(toCode)}`, encodeURIComponent(outboundISO)];
+    if (inboundISO) seg.push(encodeURIComponent(inboundISO));
+    seg.push(String(adults), String(children), String(infants));
+    const url = `${HB_BASE}/transfer-api/1.0/availability/en/${seg.join('/')}`;
+    const res = await httpJSON(url, { headers: hbHeaders(HB_TRF_KEY, HB_TRF_SECRET, false) });
+    const services = res?.services;
+    if (!Array.isArray(services) || !services.length) return null;
+    let best = null;
+    for (const s of services) {
+      const amt = Number(s.price?.totalAmount);
+      if (!Number.isFinite(amt) || amt <= 0) continue;
+      if (!best || amt < best.amt) best = { amt, cur: s.price?.currencyId || res.currencyId || 'EUR', s };
+    }
+    if (!best) return null;
+    const toUsd = best.cur === 'USD' ? 1 : best.cur === 'GBP' ? 1 / 0.79 : best.cur === 'EUR' ? 1.08 : 1;
+    return {
+      type: 'transfer', supplier: best.s.vehicle?.name || best.s.transferType || 'Transfer', verified: true, reliabilityScore: 86, live: true,
+      sourcedVia: 'Hotelbeds (live)', sourcedType: 'transfer aggregator',
+      details: { vehicle: best.s.vehicle?.name || 'Standard', category: best.s.category?.name || null, trips: inboundISO ? 2 : 1, hotelbedsRateKey: best.s.rateKey || best.s.id || null, transferType: best.s.transferType || null },
+      priceUSD: Math.round(best.amt * toUsd * 100) / 100,
+    };
+  } catch { return null; }
+}
+// Scan hook: only productive when the destination carries a Hotelbeds hotel
+// code (dest.hotelbedsHotelCode). Otherwise returns null and Mozio remains the
+// scan transfer source; Hotelbeds transfers attach at booking-time.
+export async function hotelbedsTransfersForScan({ destAirport, destHotelCode, dateTimeISO, returnISO, pax = 2 }) {
+  if (!hotelbedsTransfersEnabled() || !destAirport || !destHotelCode) return null;
+  return hotelbedsTransferAvailability({
+    fromType: 'IATA', fromCode: destAirport, toType: 'ATLAS', toCode: destHotelCode,
+    outboundISO: dateTimeISO, inboundISO: returnISO || null, adults: pax, children: 0, infants: 0,
+  }).then((r) => (r ? [r] : null)).catch(() => null);
 }
 
 // ---- Fulfilment channel routing -------------------------------------------------

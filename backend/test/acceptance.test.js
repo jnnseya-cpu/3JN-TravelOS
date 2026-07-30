@@ -862,6 +862,58 @@ test('DUFFEL-WEBHOOK: signature verify accepts a real HMAC and rejects a forgery
   assert.equal(verifyDuffelSignature(body, good, '').ok, false, 'no secret configured → not verified');
 });
 
+test('HOTELBEDS: X-Signature is sha256hex(apiKey + secret + unixSeconds)', async () => {
+  const { hotelbedsSignature, hotelbedsHeaders } = await import('../src/live-suppliers.js');
+  const crypto = await import('node:crypto');
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = hotelbedsSignature('KEY123', 'SEC456');
+  // Signature must match the documented scheme for the current OR previous second
+  // (the clock can tick between our compute and the test's compute).
+  const expNow = crypto.createHash('sha256').update(`KEY123SEC456${ts}`).digest('hex');
+  const expPrev = crypto.createHash('sha256').update(`KEY123SEC456${ts - 1}`).digest('hex');
+  assert.ok(sig === expNow || sig === expPrev, 'signature matches sha256hex(key+secret+unixSeconds)');
+  assert.match(sig, /^[0-9a-f]{64}$/, 'hex SHA-256');
+  const h = hotelbedsHeaders('KEY123', 'SEC456');
+  assert.equal(h['Api-key'], 'KEY123', 'Api-key header set');
+  assert.match(h['X-Signature'], /^[0-9a-f]{64}$/, 'X-Signature header set');
+  assert.equal(h['Content-Type'], 'application/json', 'JSON content-type by default');
+});
+
+test('HOTELBEDS: normalizeHotelbedsHotel builds a live bedbank offer (nightly USD, stars, rateKey, honest cancellation)', async () => {
+  const { normalizeHotelbedsHotel } = await import('../src/live-suppliers.js');
+  const hotel = { code: 12345, name: 'Test Beach Resort', categoryCode: '4EST', zoneName: 'Marina' };
+  const rate = { rateKey: 'rk_abc', net: 400, boardName: 'Bed and breakfast', rateClass: 'NOR', rateType: 'BOOKABLE', cancellationPolicies: [] };
+  const off = normalizeHotelbedsHotel(hotel, rate, 'Double Room', 400, 4, 1);
+  assert.equal(off.type, 'hotel');
+  assert.equal(off.live, true, 'marked live');
+  assert.equal(off.sourcedVia, 'Hotelbeds (live)');
+  assert.equal(off.details.netRate, true, 'net rate flagged (funds price-lock margin)');
+  assert.equal(off.details.hotelbedsRateKey, 'rk_abc', 'carries the rateKey for checkrate/book');
+  assert.equal(off.details.nightlyUSD, 100, '400 USD / 4 nights = 100 nightly');
+  assert.equal(off.stars, 4, 'stars parsed from categoryCode');
+  assert.equal(off.details.freeCancellation, true, 'no cancellation charge → free cancellation');
+  // A cancellation policy WITH a charge must NOT be reported as free-cancellation.
+  const rate2 = { ...rate, cancellationPolicies: [{ amount: 120, from: '2026-07-25T00:00:00' }] };
+  const off2 = normalizeHotelbedsHotel(hotel, rate2, 'Double Room', 400, 4, 1);
+  assert.equal(off2.details.freeCancellation, false, 'a charged cancellation policy is not free-cancellation');
+});
+
+test('HOTELBEDS: disabled by default (no key) — enable flags are false, doors listed but shut', async () => {
+  const live = await import('../src/live-suppliers.js');
+  const extras = await import('../src/extras-suppliers.js');
+  assert.equal(live.hotelbedsHotelsEnabled(), false, 'hotel suite inert without a key');
+  assert.equal(extras.hotelbedsActivitiesEnabled(), false, 'activities suite inert without a key');
+  assert.equal(extras.hotelbedsTransfersEnabled(), false, 'transfers suite inert without a key');
+  const doors = extras.supplierDoors();
+  const hb = doors.filter((d) => String(d.channel).includes('hotelbeds'));
+  assert.equal(hb.length, 3, 'three Hotelbeds doors published (hotel/activities/transfers)');
+  assert.ok(hb.every((d) => d.open === false), 'all Hotelbeds doors shut until keys land');
+  // Search adapters must fail safe (null), not throw, when the door is shut.
+  assert.equal(await extras.hotelbedsActivitiesForScan({ destinationCode: 'DXB', date: '2026-08-01', pax: 2 }), null, 'activities scan null when disabled');
+  assert.equal(await extras.hotelbedsTransfersForScan({ destAirport: 'DXB', destHotelCode: '1', dateTimeISO: '2026-08-01T12:00:00', pax: 2 }), null, 'transfers scan null when disabled');
+  assert.equal(await live.fetchHotelbedsHotels({ dates: { checkIn: '2026-08-01', checkOut: '2026-08-05' }, travellers: { total: 2, adults: 2 } }, { code: 'DXB' }), null, 'hotel search null when disabled');
+});
+
 test('DEVICE: a booking captures the traveller device (IP + UA) for Duffel fraud signals', async () => {
   const u = mkUser();
   const r = plan({ text: 'Tokyo from London in September, flights and hotel for 2 adults, 6 nights', context: GB });
