@@ -1338,6 +1338,22 @@ const HB_SOURCE_MARKET = env.HOTELBEDS_SOURCE_MARKET || 'UK';
 // Cert §3.11: the Booking Confirmation response MUST allow ≥60s (a live hotel
 // confirmation can be slow). CheckRate + cancellation get the same headroom.
 const HB_BOOK_TIMEOUT_MS = Number(env.HOTELBEDS_BOOK_TIMEOUT_MS) || 65000;
+// QUOTA PROTECTION: the evaluation key is capped at 50 requests/day (403 when
+// exceeded), and Hotelbeds' technical review flags redundant availability calls.
+// So we (a) cache availability briefly to serve repeat searches WITHOUT a new
+// call, and (b) on a 403 (or any quota signal), stop calling for a cooldown so
+// we don't burn the remaining daily allowance — search falls back to the
+// estimator/other bedbanks. Never blocks booking calls (CheckRate/Booking/Cancel
+// must always go through). Booking is exempt because a paid room must confirm.
+const HB_AVAIL_TTL_MS = Number(env.HOTELBEDS_AVAIL_TTL_MS) || 15 * 60 * 1000; // 15 min
+const HB_QUOTA_COOLDOWN_MS = Number(env.HOTELBEDS_QUOTA_COOLDOWN_MS) || 60 * 60 * 1000; // 1h
+const _hbAvailCache = new Map(); // key → { at, offers }
+let _hbAvailQuotaBlockedUntil = 0;
+function hbAvailKey(destCode, checkIn, checkOut, occ) { return `${destCode}|${checkIn}|${checkOut}|${occ.rooms}-${occ.adults}-${occ.children}-${(occ.paxes || []).map((p) => p.age).join('.')}`; }
+export function hotelbedsAvailabilityStatus() {
+  const blocked = Date.now() < _hbAvailQuotaBlockedUntil;
+  return { cached: _hbAvailCache.size, quotaBlocked: blocked, quotaResumesAt: blocked ? new Date(_hbAvailQuotaBlockedUntil).toISOString() : null };
+}
 export function hotelbedsHotelsEnabled() { return !!(HB_HOTEL_KEY && HB_HOTEL_SECRET) && typeof fetch === 'function'; }
 // The APItude signature + auth headers. Exported so the activities/transfers
 // suites (extras-suppliers) reuse the exact same scheme with their own keys.
@@ -1397,18 +1413,29 @@ export async function fetchHotelbedsHotels(intent, dest) {
   if (!checkIn || !checkOut) return null;
   const destCode = String(dest?.hotelbedsDest || dest?.code || '').toUpperCase();
   if (!destCode) return null;
+  // Quota cooldown: after a 403 we stop calling until the window passes, so a
+  // burnt daily allowance doesn't keep hammering the API. Search falls back.
+  if (Date.now() < _hbAvailQuotaBlockedUntil) return null;
   try {
     const rooms = Math.max(1, Math.ceil((intent.travellers?.total || 2) / 2));
     const adults = Math.max(1, intent.travellers?.adults || 2);
     const childAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges.filter((a) => a != null) : [];
     const occ = { rooms, adults, children: childAges.length };
     if (childAges.length) occ.paxes = childAges.map((a) => ({ type: 'CH', age: Math.max(0, Number(a) || 8) }));
+    // Serve an identical recent search from cache — no API call (respects the
+    // 50/day eval cap and Hotelbeds' "no redundant requests" review point).
+    const cacheKey = hbAvailKey(destCode, checkIn, checkOut, occ);
+    const hit = _hbAvailCache.get(cacheKey);
+    if (hit && (Date.now() - hit.at) < HB_AVAIL_TTL_MS) return hit.offers;
     // Cert §3.6: sourceMarket unlocks market-specific pricing (3JN sells to the
     // UK market by default; override via HOTELBEDS_SOURCE_MARKET).
     const body = { sourceMarket: HB_SOURCE_MARKET, stay: { checkIn, checkOut }, occupancies: [occ], destination: { code: destCode } };
     const res = await httpJSON(`${HB_BASE}/hotel-api/1.0/hotels`, {
       method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: FLIGHT_TIMEOUT_MS,
     });
+    // 403 = daily quota exhausted (or key not yet cleared). Back off for the
+    // cooldown so we preserve whatever allowance remains tomorrow.
+    if (res && res.__status === 403) { _hbAvailQuotaBlockedUntil = Date.now() + HB_QUOTA_COOLDOWN_MS; return null; }
     const hotels = res?.hotels?.hotels;
     if (!Array.isArray(hotels) || !hotels.length) return null;
     const currency = res.hotels.currency || 'EUR';
@@ -1429,7 +1456,11 @@ export async function fetchHotelbedsHotels(intent, dest) {
       if (usd == null) continue;
       out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, rooms));
     }
-    return out.length ? out : null;
+    const offers = out.length ? out : null;
+    // Cache even a null so a repeat of an empty search doesn't re-spend quota.
+    _hbAvailCache.set(cacheKey, { at: Date.now(), offers });
+    if (_hbAvailCache.size > 500) _hbAvailCache.delete(_hbAvailCache.keys().next().value); // bound memory
+    return offers;
   } catch { return null; }
 }
 

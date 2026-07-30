@@ -561,6 +561,13 @@ function hbHeaders(key, secret, json = true) {
 }
 export function hotelbedsActivitiesEnabled() { return !!(HB_ACT_KEY && HB_ACT_SECRET) && typeof fetch === 'function'; }
 export function hotelbedsTransfersEnabled() { return !!(HB_TRF_KEY && HB_TRF_SECRET) && typeof fetch === 'function'; }
+// QUOTA PROTECTION (same rationale as the hotel suite): the Activities eval key
+// is also capped at 50 req/day. Cache identical searches briefly and back off on
+// a 403 so we never burn the daily allowance. Search falls back to Viator.
+const HB_ACT_TTL_MS = Number(env.HOTELBEDS_AVAIL_TTL_MS) || 15 * 60 * 1000;
+const HB_ACT_COOLDOWN_MS = Number(env.HOTELBEDS_QUOTA_COOLDOWN_MS) || 60 * 60 * 1000;
+const _hbActCache = new Map();
+let _hbActBlockedUntil = 0;
 
 // Walk an unknown-shaped activity node and return the smallest positive numeric
 // price we can find (Activity API 3.0 nests price under modalities→rates→
@@ -589,6 +596,10 @@ export async function hotelbedsActivitiesForScan({ destinationCode, destinationC
   if (!hotelbedsActivitiesEnabled()) return null;
   const dest = String(destinationCode || '').toUpperCase();
   if (!dest || !date) return null;
+  if (Date.now() < _hbActBlockedUntil) return null; // quota cooldown
+  const cacheKey = `${dest}|${date}|${pax}`;
+  const hit = _hbActCache.get(cacheKey);
+  if (hit && (Date.now() - hit.at) < HB_ACT_TTL_MS) return hit.offers;
   try {
     const body = {
       language: 'en',
@@ -599,8 +610,9 @@ export async function hotelbedsActivitiesForScan({ destinationCode, destinationC
       pagination: { itemsPerPage: 12, page: 1 },
     };
     const res = await httpJSON(`${HB_BASE}/activity-api/3.0/activities`, { method: 'POST', headers: hbHeaders(HB_ACT_KEY, HB_ACT_SECRET), body: JSON.stringify(body) });
+    if (res && res.__status === 403) { _hbActBlockedUntil = Date.now() + HB_ACT_COOLDOWN_MS; return null; }
     const acts = res?.activities;
-    if (!Array.isArray(acts) || !acts.length) return null;
+    if (!Array.isArray(acts) || !acts.length) { _hbActCache.set(cacheKey, { at: Date.now(), offers: null }); return null; }
     const cur = String(res.currency || acts[0]?.currency || 'EUR').toUpperCase();
     const out = [];
     for (const a of acts.slice(0, 6)) {
@@ -618,7 +630,10 @@ export async function hotelbedsActivitiesForScan({ destinationCode, destinationC
         sourcedVia: 'Hotelbeds (live)', sourcedType: 'activities-api',
       });
     }
-    return out.length ? out : null;
+    const offers = out.length ? out : null;
+    _hbActCache.set(cacheKey, { at: Date.now(), offers });
+    if (_hbActCache.size > 300) _hbActCache.delete(_hbActCache.keys().next().value);
+    return offers;
   } catch { return null; }
 }
 

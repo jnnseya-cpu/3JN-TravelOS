@@ -931,6 +931,14 @@ test('HOTELBEDS: booking workflow primitives fail safe when the door is shut (no
   assert.equal((await live.bookHotelbedsHotel({})).error, 'not-configured', 'no-key beats missing-input');
 });
 
+test('HOTELBEDS: availability status exposes the quota guard (cache + cooldown), starts clean', async () => {
+  const live = await import('../src/live-suppliers.js');
+  const s = live.hotelbedsAvailabilityStatus();
+  assert.equal(typeof s.cached, 'number', 'reports cache size');
+  assert.equal(s.quotaBlocked, false, 'not quota-blocked at rest');
+  assert.equal(s.quotaResumesAt, null, 'no cooldown active');
+});
+
 test('HOTELBEDS: fulfilment routes a live Hotelbeds room to the auto path, others to ops:hotels', async () => {
   const { fulfilmentChannelFor } = await import('../src/extras-suppliers.js');
   // Live Hotelbeds room (carries a rateKey) → auto-book path (null = no ops order).

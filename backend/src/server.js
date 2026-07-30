@@ -71,7 +71,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus } from './live-suppliers.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-30-hotelbeds-booking-workflow-v184';
+const BUILD_TAG = '2026-07-30-hotelbeds-quota-guard-v185';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2120,7 +2120,7 @@ app.patch('/api/admin/cartrawler/webhooks', safe(async (req, res) => {
 // operator completes each in one visit; the OS confirms to the customer.
 app.get('/api/admin/fulfilment', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  res.json({ orders: listFulfilmentOrders({ status: req.query.status || undefined }), doors: supplierDoors(), airaloCatalogue: airaloCatalogueStatus() });
+  res.json({ orders: listFulfilmentOrders({ status: req.query.status || undefined }), doors: supplierDoors(), airaloCatalogue: airaloCatalogueStatus(), hotelbedsAvailability: hotelbedsAvailabilityStatus() });
 }));
 app.post('/api/admin/fulfilment/:id/complete', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
