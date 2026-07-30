@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v180';
+const APP_BUILD = 'v181';
 
 const state = {
   context: null,
@@ -5853,9 +5853,12 @@ function mountTrustpilot() {
       <span style="color:#eef2fb;font-size:12.5px">Rated 5/5 on <strong>Trustpilot</strong></span></a>`;
     slot.style.display = '';
   };
-  if (tp.businessUnitId) {
+  if (tp.businessUnitId && tp.useWidget) {
     // LIVE widget — compact "Micro Star" template (transparent, dark-friendly), so
     // it never renders as a white block. data-theme dark + a small fixed height.
+    // OPT-IN (TRUSTPILOT_WIDGET=true) because the official iframe often shows a
+    // white logo box until the business profile is fully public; the dark badge
+    // below is the reliable default.
     slot.innerHTML = `<div class="trustpilot-widget" data-locale="en-GB" data-template-id="${esc(tp.templateId || '5419b6ffb0d04a076446a9af')}" data-businessunit-id="${esc(tp.businessUnitId)}" data-style-height="24px" data-style-width="100%" data-theme="dark" data-style-alignment="left">
       <a href="${esc(tp.reviewUrl)}" target="_blank" rel="noopener">Trustpilot</a></div>`;
     slot.style.display = '';

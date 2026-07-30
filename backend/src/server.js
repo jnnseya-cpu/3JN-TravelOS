@@ -199,7 +199,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-25-featured-admin-pin-v180';
+const BUILD_TAG = '2026-07-30-trustpilot-dark-badge-default-v181';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1017,6 +1017,11 @@ function trustpilotConfig() {
     domain: domain || null,
     businessUnitId: String(process.env.TRUSTPILOT_BUSINESS_UNIT_ID || '').trim() || null,
     templateId: String(process.env.TRUSTPILOT_TEMPLATE_ID || '').trim() || null,
+    // The official TrustBox iframe often renders as a white logo box until the
+    // business profile is fully public/verified. So it is OPT-IN: set
+    // TRUSTPILOT_WIDGET=true only once you've confirmed it shows real stars.
+    // Otherwise we show a clean, on-brand dark 5★ badge linking to the real page.
+    useWidget: process.env.TRUSTPILOT_WIDGET === 'true',
     reviewUrl: domain ? `https://www.trustpilot.com/review/${domain}` : null,
     evaluateUrl: domain ? `https://www.trustpilot.com/evaluate/${domain}` : null,
     verifiedInvites: !!afs, // the browser only learns IF verified invites are on
