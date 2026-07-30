@@ -306,8 +306,17 @@ function buildOption(tierName, scan, intent, currency, loyaltyPoints, memberActi
 
     let pick;
     if (key === 'flights') pick = tier.pickFlight(applyFlightPrefs(pool, intent.flightPrefs));
-    else if (key === 'hotel') pick = tier.pickHotel(pool);
-    else pick = tier.pickPerSupplier(pool);
+    else if (key === 'hotel') {
+      // Honour a stated star floor ("4 or 5 star") — the cheapest tier must NOT
+      // show a 1★ when the traveller asked for 4-5★. Fall back to the full pool
+      // only if nothing meets the floor (no starvation).
+      let hotelPool = pool;
+      if (intent.minStars) {
+        const meetsStars = pool.filter((h) => (h.stars || 0) >= intent.minStars);
+        if (meetsStars.length) hotelPool = meetsStars;
+      }
+      pick = tier.pickHotel(hotelPool);
+    } else pick = tier.pickPerSupplier(pool);
 
     if (pick) {
       componentsUSD += pick.priceUSD;

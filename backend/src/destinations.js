@@ -711,8 +711,17 @@ export function resolveOrigin(name) {
 // Resolve from a free-text REQUEST sentence → catalogue, or synthesised from the
 // extracted destination phrase, or null (ask) when nothing place-like is found.
 export function resolveDestinationFromText(text) {
-  const known = findDestination(text);
+  // Strip parenthetical notes and UK postcodes FIRST, so "Birmingham (close to
+  // B15 1HE)" resolves to Birmingham — not the fragment "B" from the postcode.
+  // Without this, a note like "(close to B15 1HE)" hijacked the destination,
+  // which then read as an unknown/foreign place (wrong "visa required", no live
+  // hotel → estimate). We still fall back to the raw text if the clean misses.
+  const cleaned = String(text || '')
+    .replace(/\([^)]*\)/g, ' ')                                  // remove "( … )" notes
+    .replace(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi, ' ')     // UK postcodes (B15 1HE)
+    .replace(/\bclose to\b|\bnear(?:\s+to)?\b|\bnext to\b/gi, ' '); // proximity phrases
+  const known = findDestination(cleaned) || findDestination(text);
   if (known) return known;
-  const guess = extractDestination(text);
+  const guess = extractDestination(cleaned) || extractDestination(text);
   return guess ? resolveDestination(guess) : null;
 }

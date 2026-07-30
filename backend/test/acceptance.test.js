@@ -967,6 +967,19 @@ test('REVIEWER: magic-link access is OFF by default (no REVIEWER_ACCESS_KEY → 
   assert.equal(r.json.error, 'reviewer-disabled', 'reports disabled, not a bad key (fails closed)');
 });
 
+test('INTENT: a hotel-only request with a postcode note parses cleanly (city, 1 night, star floor)', async () => {
+  const { parseIntent } = await import('../src/intent.js');
+  const i = parseIntent('I want a hotel in Birmingham( CLOSE TO b15 1HE) for 2 adults (4 or 5 stars) on 31/07/2026', { country: 'GB' });
+  assert.equal(i.destination?.city, 'Birmingham', 'postcode note does not hijack the city to "B"');
+  assert.equal(i.destination?.country, 'GB', 'a UK city is GB (no bogus "visa required")');
+  assert.equal(i.nights, 1, 'a hotel on a single date is 1 night, not a 7-night default');
+  assert.equal(i.minStars, 4, '"4 or 5 stars" → star floor 4');
+  assert.deepEqual(i.components, ['hotel'], 'hotel-only, no invented flight');
+  // A plain holiday with no nights still defaults sensibly (not forced to 1).
+  const h = parseIntent('holiday to Barcelona in August for 2 adults', { country: 'GB' });
+  assert.ok(h.nights >= 5, 'a package holiday keeps a multi-night default');
+});
+
 test('TBO AIR: scaffold is inert without keys, and the normalizer builds a live consolidator fare', async () => {
   const live = await import('../src/live-suppliers.js');
   assert.equal(live.tboAirEnabled(), false, 'TBO Air off without credentials');

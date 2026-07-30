@@ -118,6 +118,23 @@ function parseMonth(text) {
   return null;
 }
 
+// Minimum hotel star rating from the request ("4 or 5 star", "5-star", "4*",
+// "four star"). Returns the LOWEST star mentioned (so "4 or 5 stars" → 4, and
+// a stay below it is filtered out), or null when no star preference is stated.
+function parseMinStars(text) {
+  const t = text.toLowerCase();
+  const nums = [];
+  // digit forms: "5 star", "4-star", "4 or 5 stars", "4 and 5 star", "4*"
+  let m; const re = /(\d)\s*(?:\*|stars?\b|(?:or|and|[-–])\s*(\d)\s*(?:\*|stars?\b))/g;
+  while ((m = re.exec(t))) { if (m[1]) nums.push(+m[1]); if (m[2]) nums.push(+m[2]); }
+  // word forms: "four star", "five-star"
+  const W = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const wre = /\b(one|two|three|four|five)[\s-]?stars?\b/g;
+  while ((m = wre.exec(t))) nums.push(W[m[1]]);
+  const valid = nums.filter((n) => n >= 1 && n <= 5);
+  return valid.length ? Math.min(...valid) : null;
+}
+
 function parseComponents(text) {
   const lower = ` ${text.toLowerCase()} `;
   const requested = new Set();
@@ -406,6 +423,11 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   const nightsStated = /\d+\s*(?:night|nights|day|days|week|weeks)/i.test(raw);
   let nights = (explicit && explicit.nights) || parseNights(raw);
   if (miniCruise && !nightsStated && !(explicit && explicit.nights)) nights = 2;
+  // HOTEL-ONLY on a single date ("a hotel on 31/07") means ONE night — not a
+  // 7-night holiday. A stay with no flights/transport and no stated duration or
+  // check-out defaults to 1 night, so a one-night room isn't priced ×7.
+  const stayOnly = requested.has('hotel') && !['flights', 'train', 'coach', 'ferry', 'cruise', 'cruise'].some((m) => requested.has(m));
+  if (stayOnly && !nightsStated && !(explicit && explicit.nights) && !(explicit && explicit.checkOut)) nights = 1;
   // A trip is at least 1 night — never price a £0 "0-nights" hotel onto a package.
   nights = Math.max(1, Math.round(nights) || 1);
   // "get back by / return by / be home by <date>" — the typed date is the RETURN
@@ -497,6 +519,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     dates,
     oneWay, // single journey — no return leg is priced or fabricated
     components: [...requested],
+    minStars: parseMinStars(raw), // hotel star floor ("4 or 5 star") or null
     needComponents, // true → user named a place but no need; ask what they want
     wantsInstalments,
     wantsCheapestReliable,
