@@ -3994,6 +3994,27 @@ test('visa support reservations: fee maths, order → issue → deliver, revenue
   assert.equal(S.listFulfilmentOrders({}).find((o) => o.visaReservationId === r.reservation.id).status, 'completed');
 });
 
+test('visa reservations: Duffel auto-hold is dormant without keys; apply path issues a real PNR', async () => {
+  const S = await import('../src/store.js');
+  const LS = await import('../src/live-suppliers.js');
+  assert.equal(LS.visaAutoHoldEnabled(), false, 'auto-hold stays off until a Duffel token is configured');
+  const u = S.createUser({ email: `vah${Date.now()}@x.co`, name: 'Auto Hold' });
+  // Flight-only so a single hold completes the whole reservation; passenger manifest is captured.
+  const r = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Auto Hold', dob: '1990-05-01', gender: 'm', title: 'mr' }] });
+  assert.equal(r.reservation.status, 'processing');
+  assert.equal(r.reservation.passengers.length, 1, 'passenger manifest stored on the order');
+  // A hold with no real PNR is refused.
+  assert.equal(S.applyVisaFlightHold(r.reservation.id, { provider: 'X' }).error, 'provider-ref-required');
+  // Simulate a successful Duffel hold → real airline PNR attached, reservation ready.
+  const applied = S.applyVisaFlightHold(r.reservation.id, { provider: 'Emirates', providerRef: 'EK9ABC', heldUntil: '2026-08-05' });
+  assert.equal(applied.ok, true);
+  assert.equal(applied.allReady, true, 'flight-only reservation is complete once the flight is held');
+  const flt = applied.reservation.items.find((i) => i.type === 'flight');
+  assert.equal(flt.providerRef, 'EK9ABC'); assert.equal(flt.autoIssued, true);
+  assert.equal(applied.reservation.status, 'ready');
+  assert.equal(S.listFulfilmentOrders({}).find((o) => o.visaReservationId === r.reservation.id).status, 'completed');
+});
+
 test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {
   // A clean application lands in the admin queue as pending-review (never live).
   const a = createUser({ email: 'vq1@x.co', name: 'Queue One' });

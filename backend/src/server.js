@@ -7,7 +7,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
-import { destinationsCatalog, findDestination, resolveOrigin, originForCountry, searchCities } from './destinations.js';
+import { destinationsCatalog, findDestination, resolveOrigin, resolveDestination, originForCountry, searchCities } from './destinations.js';
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
@@ -25,7 +25,7 @@ import {
   notifyHostsOfBooking, backfillProfileFromLead, syncHostReliabilityFromReviews, bumpOSLink, osIntegrationMap,
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
-  orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation,
+  orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
@@ -74,7 +74,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -203,7 +203,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-reservations-verifiable-v207';
+const BUILD_TAG = '2026-08-01-visa-duffel-autohold-v208';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4766,12 +4766,27 @@ app.get('/api/visa/reservations/pricing', safe((req, res) => {
   res.json(visaDocPricing({ memberActive: !!currentUser(req)?.membership?.active }));
 }));
 // Order a reservation (one-off service fee; the reservation itself is held/refundable).
-app.post('/api/visa/reservations', safe((req, res) => {
+app.post('/api/visa/reservations', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
-  const result = orderVisaReservation(user.id, req.body || {});
+  const body = req.body || {};
+  const result = orderVisaReservation(user.id, body);
   if (!result.ok) return res.status(400).json(result);
-  res.json(result);
+  // AUTO-HOLD: the moment a Duffel token is configured, issue the flight hold now
+  // (a real airline PNR) instead of queuing the Visa Desk. Awaited so it's
+  // reliable on serverless; any failure/timeout falls back to the manual desk.
+  try {
+    const rec = result.reservation;
+    const hasFlight = rec.items.some((i) => i.type === 'flight');
+    if (hasFlight && visaAutoHoldEnabled() && Array.isArray(body.passengers) && body.passengers.length) {
+      const o = resolveOrigin(rec.origin); const d = resolveDestination(rec.destination) || resolveOrigin(rec.destination);
+      if (o?.airport && d?.airport && !o.approxCode && !d.approxCode) {
+        const hold = await issueVisaFlightHold({ originCode: o.airport, destCode: d.airport, departDate: rec.departDate, returnDate: rec.returnDate, travellers: rec.travellers, passengers: body.passengers, contactEmail: user.email, contactPhone: user.phone });
+        if (hold?.ok && hold.providerRef) applyVisaFlightHold(rec.id, hold);
+      }
+    }
+  } catch { /* fall back to the manual Visa Desk */ }
+  res.json({ ...result, reservation: getVisaReservation(result.reservation.id) });
 }));
 // My reservations (download + status).
 app.get('/api/visa/reservations', safe((req, res) => {

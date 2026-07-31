@@ -510,6 +510,61 @@ export async function createDuffelHoldOrder({ offerId, passengers = [], idempote
   const o = res.data;
   return { ok: true, order: { id: o.id, bookingReference: o.booking_reference || null, paymentRequiredBy: o.payment_status?.payment_required_by || null, priceGuaranteeExpiresAt: o.payment_status?.price_guarantee_expires_at || null, totalAmount: o.total_amount, totalCurrency: o.total_currency } };
 }
+// Auto-hold is live the moment a Duffel token is set (no separate switch);
+// VISA_AUTO_HOLD=false forces the manual Visa Desk even with a token.
+export function visaAutoHoldEnabled() { return duffelEnabled() && env.VISA_AUTO_HOLD !== 'false'; }
+
+// Issue a REAL held flight reservation for a visa file: search the route, pick
+// the cheapest HOLDABLE fare (not every fare can be held), and create a Duffel
+// hold order → a genuine airline PNR the embassy can verify. No payment is made;
+// the hold expires on its own. `passengers` is [{ fullName|givenName/familyName,
+// dob, gender, title, email, phone }]. Returns the airline + PNR + hold expiry,
+// or a reason (→ the caller falls back to the manual Visa Desk).
+export async function issueVisaFlightHold({ originCode, destCode, departDate, returnDate = null, travellers = 1, passengers = [], contactEmail = null, contactPhone = null } = {}) {
+  if (!duffelEnabled() || !originCode || !destCode || !departDate) return { ok: false, error: 'not-configured' };
+  const slices = [{ origin: originCode, destination: destCode, departure_date: departDate }];
+  if (returnDate) slices.push({ origin: destCode, destination: originCode, departure_date: returnDate });
+  const pax = Math.max(1, Number(travellers) || passengers.length || 1);
+  const searchPassengers = Array.from({ length: pax }, () => ({ type: 'adult' }));
+  const res = await httpJSON(`${DUFFEL_BASE}/air/offer_requests?return_offers=true`, {
+    method: 'POST', timeoutMs: FLIGHT_TIMEOUT_MS,
+    headers: { Authorization: `Bearer ${DUFFEL_TOKEN}`, 'Duffel-Version': DUFFEL_VERSION, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ data: { slices, passengers: searchPassengers, cabin_class: 'economy' } }),
+  });
+  const offers = res?.data?.offers;
+  if (!Array.isArray(offers) || !offers.length) return { ok: false, error: 'no-offers', status: res?.__status };
+  // Prefer fares that can actually be HELD (pay later); fall back to cheapest.
+  const holdable = offers.filter((o) => o?.payment_requirements?.requires_instant_payment === false);
+  const chosen = (holdable.length ? holdable : offers).sort((a, b) => Number(a.total_amount) - Number(b.total_amount))[0];
+  if (!chosen) return { ok: false, error: 'no-holdable-offer' };
+  const cE = contactEmail || AGENCY_CONTACT_EMAIL;
+  const cP = normalisePhone(contactPhone) || AGENCY_CONTACT_PHONE;
+  const depYear = Number(String(departDate).slice(0, 4)) || new Date().getUTCFullYear();
+  const orderPassengers = (chosen.passengers || [{ type: 'adult' }]).map((p, i) => {
+    const m = passengers[i] || passengers[0] || {};
+    const parts = String(m.fullName || m.name || '').trim().split(/\s+/).filter(Boolean);
+    const female = String(m.gender || '').toLowerCase().startsWith('f');
+    return {
+      id: p.id || undefined, type: p.type || 'adult',
+      given_name: m.givenName || parts[0] || `Guest${i + 1}`,
+      family_name: m.familyName || parts.slice(1).join(' ') || parts[0] || 'Traveller',
+      born_on: m.dob || `${depYear - 30}-01-01`,
+      gender: female ? 'f' : 'm',
+      title: m.title || (female ? 'ms' : 'mr'),
+      email: m.email || cE,
+      phone_number: normalisePhone(m.phone) || cP,
+    };
+  });
+  const hold = await createDuffelHoldOrder({ offerId: chosen.id, passengers: orderPassengers, idempotencyKey: `visa-hold-${chosen.id}` });
+  if (!hold.ok) return { ok: false, error: hold.error || 'hold-failed', status: hold.status };
+  const airline = chosen.owner?.name || chosen.slices?.[0]?.segments?.[0]?.marketing_carrier?.name || 'Airline';
+  return {
+    ok: true, provider: airline, providerRef: hold.order.bookingReference || null,
+    heldUntil: String(hold.order.paymentRequiredBy || hold.order.priceGuaranteeExpiresAt || '').slice(0, 10) || null,
+    verifyUrl: null, orderId: hold.order.id, amount: hold.order.totalAmount, currency: hold.order.totalCurrency,
+  };
+}
+
 // Pay a held order from balance → ISSUES THE TICKET. Called when the customer
 // has finished paying us (final instalment) or immediately for pay-in-full.
 export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey = null, device = null }) {

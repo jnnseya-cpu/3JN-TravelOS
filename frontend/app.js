@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v207';
+const APP_BUILD = 'v208';
 
 const state = {
   context: null,
@@ -4715,6 +4715,7 @@ async function renderVisaReservations() {
         <div class="field"><label>Nights</label><input class="in" type="number" id="vresNights" value="7" min="1" max="90" style="max-width:90px"></div>
         <div class="field"><label>Travellers</label><input class="in" type="number" id="vresPax" value="1" min="1" max="9" style="max-width:90px"></div>
       </div>
+      <div id="vresPaxDetails" style="margin-top:6px"></div>
       <button class="btn btn-gold" id="vresOrderBtn" style="margin-top:10px">Order reservation &amp; pay</button>
       <p class="muted" style="font-size:11px;margin-top:8px">The reservation is held/refundable — you pay only the service fee, never the fare or room. It's released after your visa decision.</p>
       ${mine.length ? `<div style="margin-top:16px"><span class="eyebrow">Your reservations</span><div style="margin-top:8px">${mineRows}</div></div>` : ''}
@@ -4722,7 +4723,40 @@ async function renderVisaReservations() {
   // Prefill destination from the visa form if present.
   const vd = $('#vf_destination'); const dest = vd && vd.options[vd.selectedIndex] ? vd.options[vd.selectedIndex].text : '';
   if (dest && $('#vresDest') && !$('#vresDest').value) $('#vresDest').value = dest.replace(/^[^\w]*/, '');
+  // Passenger details show only when a FLIGHT is included — they're what an
+  // airline PNR is issued against (and prefill the applicant as passenger 1).
+  const kindNow = () => (document.querySelector('input[name="vresKind"]:checked') || {}).value || 'pack';
+  window.renderVisaPaxFields = () => {
+    const wrap = $('#vresPaxDetails'); if (!wrap) return;
+    const kind = kindNow();
+    if (kind === 'hotel') { wrap.innerHTML = ''; return; }
+    const n = Math.max(1, Math.min(9, Number($('#vresPax')?.value) || 1));
+    const lead = $('#vf_fullName')?.value || '';
+    const block = (i) => `
+      <div style="padding:8px;border:1px solid var(--line);border-radius:10px;margin-top:6px">
+        <div class="muted" style="font-size:11px;margin-bottom:4px">Passenger ${i + 1}${i === 0 ? ' (lead)' : ''} — as on passport</div>
+        <div class="composer-row">
+          <div class="field" style="flex:1;min-width:160px"><input class="in vpax" data-i="${i}" data-k="fullName" placeholder="Full name" value="${i === 0 ? esc(lead) : ''}"></div>
+          <div class="field"><label class="muted" style="font-size:10px">Date of birth</label><input class="in vpax" type="date" data-i="${i}" data-k="dob"></div>
+          <div class="field"><label class="muted" style="font-size:10px">Title</label><select class="in vpax" data-i="${i}" data-k="title"><option value="mr">Mr</option><option value="ms">Ms</option><option value="mrs">Mrs</option><option value="miss">Miss</option></select></div>
+          <div class="field"><label class="muted" style="font-size:10px">Gender</label><select class="in vpax" data-i="${i}" data-k="gender"><option value="m">Male</option><option value="f">Female</option></select></div>
+        </div>
+      </div>`;
+    wrap.innerHTML = `<div class="muted" style="font-size:11.5px;margin-top:8px">✈ Passenger details for the flight reservation (needed to issue a real airline booking reference):</div>${Array.from({ length: n }, (_, i) => block(i)).join('')}`;
+  };
+  box.querySelectorAll('input[name="vresKind"]').forEach((el) => el.addEventListener('change', window.renderVisaPaxFields));
+  $('#vresPax')?.addEventListener('input', window.renderVisaPaxFields);
+  window.renderVisaPaxFields();
   $('#vresOrderBtn')?.addEventListener('click', orderVisaReservationFlow);
+}
+// Collect the passenger manifest from the visa reservation form.
+function collectVisaPassengers() {
+  const rows = {};
+  document.querySelectorAll('.vpax').forEach((el) => {
+    const i = el.getAttribute('data-i'); const k = el.getAttribute('data-k');
+    (rows[i] = rows[i] || {})[k] = el.value?.trim();
+  });
+  return Object.keys(rows).sort().map((i) => rows[i]).filter((p) => p.fullName);
 }
 
 window.orderVisaReservationFlow = async () => {
@@ -4737,12 +4771,17 @@ window.orderVisaReservationFlow = async () => {
     nights: Number($('#vresNights')?.value) || 7,
     travellers: Number($('#vresPax')?.value) || 1,
     applicantName: $('#vf_fullName')?.value || undefined,
+    passengers: kind === 'hotel' ? [] : collectVisaPassengers(),
   };
   const btn = $('#vresOrderBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Ordering…'; }
   try {
     const r = await api('/api/visa/reservations', { method: 'POST', body: JSON.stringify(body) });
     if (!r.ok) { toast(r.message || 'Check the reservation details.'); return; }
-    toast(`✓ Reservation ordered — £${Number(r.fee.feeGbp).toFixed(2)} · being issued, valid until ${ukDate(r.reservation.validUntil)}.`);
+    const flt = (r.reservation.items || []).find((it) => it.type === 'flight');
+    const issued = flt?.providerRef;
+    toast(issued
+      ? `✓ Reservation ordered — £${Number(r.fee.feeGbp).toFixed(2)} · flight held: ${flt.provider || 'airline'} ${flt.providerRef}.`
+      : `✓ Reservation ordered — £${Number(r.fee.feeGbp).toFixed(2)} · being issued by our Visa Desk.`);
     renderVisaReservations();
   } catch { toast('Could not order the reservation.'); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Order reservation & pay'; } }

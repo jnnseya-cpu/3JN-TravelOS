@@ -334,6 +334,10 @@ export function orderVisaReservation(userId, payload = {}) {
     destination: trip.destination, origin: trip.origin,
     departDate: trip.departDate, returnDate: trip.returnDate, nights: trip.nights, travellers: trip.travellers,
     applicantName: trip.applicantName || u.name || null, visaAppId: payload.visaAppId || null,
+    // Passenger manifest (for the flight hold + what ops/embassy see). Stored,
+    // not echoed back in list views beyond names.
+    passengers: Array.isArray(payload.passengers) ? payload.passengers.slice(0, 9).map((p) => ({ fullName: String(p.fullName || p.name || '').trim() || null, dob: p.dob || null, gender: p.gender || null, title: p.title || null })) : [],
+    contact: { email: u.email || null, phone: u.phone || null },
     feeGbp: fee.feeGbp, feeUSD: fee.feeUSD, memberDiscountPct: fee.memberDiscountPct,
     paid: true, paymentRef: id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
   };
@@ -354,6 +358,32 @@ export function orderVisaReservation(userId, payload = {}) {
 }
 export function listVisaReservationsForUser(userId) {
   return db.visaReservations.filter((r) => r.userId === userId).slice().reverse();
+}
+// Automated flight hold succeeded (Duffel) → attach the REAL airline PNR to the
+// flight item and mark it issued. If that was the last outstanding item, the
+// whole reservation goes 'ready' and its fulfilment job closes. The hotel (when
+// present) still issues via the Visa Desk, so a pack stays 'processing' until
+// the hotel is delivered.
+export function applyVisaFlightHold(rid, { provider, providerRef, heldUntil = null, verifyUrl = null } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  if (!providerRef) return { ok: false, error: 'provider-ref-required' };
+  const it = rec.items.find((x) => x.type === 'flight');
+  if (!it) return { ok: false, error: 'no-flight-item' };
+  it.provider = provider || it.provider; it.providerRef = providerRef;
+  it.verifyUrl = verifyUrl || it.verifyUrl; it.heldUntil = heldUntil || it.heldUntil;
+  it.status = 'ready'; it.documentReady = true; it.issuedAt = nowISO(); it.autoIssued = true;
+  const allReady = rec.items.every((x) => x.documentReady);
+  if (allReady) {
+    rec.status = 'ready'; rec.deliveredAt = nowISO();
+    const order = db.fulfilmentOrders.find((o) => o.visaReservationId === rid && o.status !== 'completed');
+    if (order) { order.status = 'completed'; order.completedAt = nowISO(); order.supplierRef = rec.items.map((i) => i.providerRef).filter(Boolean).join(', '); }
+  }
+  recordAudit({ actor: 'system:duffel', role: 'system', action: 'visa.reservation.flight-held', entity: 'visa-reservation', entityId: rid, summary: `${provider || 'airline'} PNR ${providerRef}${heldUntil ? ' · held to ' + heldUntil : ''}` });
+  pushNotification(rec.userId, { type: 'success', icon: '✈️', title: 'Flight reservation issued', body: allReady
+    ? `Your visa reservation is ready — airline booking reference ${providerRef} (${provider || 'airline'})${heldUntil ? ', held until ' + heldUntil : ''}. Download it for your embassy file.`
+    : `Your flight reservation is issued — reference ${providerRef} (${provider || 'airline'}). Your hotel reservation is being issued next.` });
+  return { ok: true, reservation: rec, allReady };
 }
 export function getVisaReservation(rid) { return db.visaReservations.find((r) => r.id === rid) || null; }
 export function listVisaReservations(status) {
