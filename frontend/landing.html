@@ -7,14 +7,15 @@
 <meta name="description" content="3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#060912">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="icon" href="/favicon.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <style>
   :root{
     --navy:#060d1f; --navy2:#0a1430; --black:#04070f;
     --platinum:#dfe5ee; --silver:#9aa7bd; --muted:#6b7891;
-    --gold:#d8b46a; --gold2:#f0d49a; --blue:#3f8dff; --blue2:#6fd3ff;
-    --card:rgba(14,24,48,.72); --line:rgba(216,180,106,.22); --lineB:rgba(63,141,255,.25);
+    --gold:#f4b71c; --gold2:#ffd977; --blue:#3f8dff; --blue2:#6fd3ff;
+    --card:rgba(14,24,48,.72); --line:rgba(244, 183, 28,.22); --lineB:rgba(63,141,255,.25);
   }
   *{margin:0;padding:0;box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -23,15 +24,15 @@
   a{color:inherit;text-decoration:none}
   section{position:relative;padding:110px 6vw}
   .wrap{max-width:1200px;margin:0 auto;position:relative;z-index:2}
-  .eyebrow{display:inline-block;letter-spacing:.32em;text-transform:uppercase;font-size:11px;color:var(--gold);border:1px solid var(--line);padding:7px 16px;border-radius:99px;background:rgba(216,180,106,.06)}
+  .eyebrow{display:inline-block;letter-spacing:.32em;text-transform:uppercase;font-size:11px;color:var(--gold);border:1px solid var(--line);padding:7px 16px;border-radius:99px;background:rgba(244, 183, 28,.06)}
   h1,h2{font-family:Georgia,serif;font-weight:600;letter-spacing:-.01em}
   h1{font-size:clamp(40px,6.2vw,84px);line-height:1.04}
   h2{font-size:clamp(30px,4vw,52px);line-height:1.1}
   .sub{color:var(--silver);font-size:clamp(16px,1.6vw,20px);max-width:760px}
   .gold{color:var(--gold)}.blue{color:var(--blue2)}
   .btn{display:inline-block;padding:17px 38px;border-radius:10px;font-weight:700;letter-spacing:.14em;font-size:13px;text-transform:uppercase;transition:.3s;cursor:pointer;border:1px solid transparent}
-  .btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;box-shadow:0 12px 40px rgba(216,180,106,.28)}
-  .btn-gold:hover{transform:translateY(-2px);box-shadow:0 18px 54px rgba(216,180,106,.4)}
+  .btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1204;box-shadow:0 12px 40px rgba(244, 183, 28,.28)}
+  .btn-gold:hover{transform:translateY(-2px);box-shadow:0 18px 54px rgba(244, 183, 28,.4)}
   .btn-ghost{border-color:rgba(223,229,238,.28);color:var(--platinum)}
   .btn-ghost:hover{border-color:var(--gold);color:var(--gold)}
   .card{background:var(--card);border:1px solid rgba(223,229,238,.09);border-radius:18px;backdrop-filter:blur(14px);padding:26px}
@@ -45,12 +46,12 @@
   .hero{min-height:100vh;display:flex;align-items:center;padding-top:130px;
     background:
       radial-gradient(1200px 700px at 78% 8%,rgba(63,141,255,.14),transparent 60%),
-      radial-gradient(900px 600px at 12% 90%,rgba(216,180,106,.10),transparent 60%),
+      radial-gradient(900px 600px at 12% 90%,rgba(244, 183, 28,.10),transparent 60%),
       linear-gradient(180deg,var(--navy) 0%,var(--black) 90%)}
   .skyline{position:absolute;inset:auto 0 0 0;height:34vh;opacity:.5;pointer-events:none;z-index:1}
   .routes{position:absolute;inset:0;z-index:1;opacity:.85;pointer-events:none}
   .routes path{fill:none;stroke-width:1.1;stroke-dasharray:6 9;animation:dash 9s linear infinite}
-  .routes .r1{stroke:rgba(63,141,255,.5)} .routes .r2{stroke:rgba(216,180,106,.45);animation-duration:12s}
+  .routes .r1{stroke:rgba(63,141,255,.5)} .routes .r2{stroke:rgba(244, 183, 28,.45);animation-duration:12s}
   .routes .r3{stroke:rgba(111,211,255,.35);animation-duration:15s}
   .routes circle{fill:var(--gold);opacity:.9}
   .routes .cb{fill:var(--blue2)}
@@ -59,7 +60,7 @@
     box-shadow:0 0 34px rgba(63,141,255,.16), inset 0 0 24px rgba(63,141,255,.05);backdrop-filter:blur(10px);animation:float 7s ease-in-out infinite}
   .holo b{display:block;font-size:14px;color:#fff}
   .holo .tag{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--blue2)}
-  .holo.gold{border-color:var(--line);box-shadow:0 0 34px rgba(216,180,106,.18)}
+  .holo.gold{border-color:var(--line);box-shadow:0 0 34px rgba(244, 183, 28,.18)}
   .holo.gold .tag{color:var(--gold)}
   @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
   .hero-cta{display:flex;gap:16px;flex-wrap:wrap;margin-top:38px}
@@ -72,7 +73,7 @@
   .chaos{background:linear-gradient(160deg,#170d0d,#0d0a14);border:1px solid rgba(255,110,110,.18)}
   .chaos .tab{display:inline-block;background:rgba(255,255,255,.05);border:1px solid rgba(255,120,120,.22);border-radius:7px;padding:7px 12px;margin:4px;font-size:12px;color:#e8b3ab}
   .calm{border:1px solid var(--line);background:linear-gradient(160deg,#0a1530,#07101f)}
-  .save-pop{font-family:Georgia,serif;font-size:40px;color:var(--gold);text-shadow:0 0 40px rgba(216,180,106,.4)}
+  .save-pop{font-family:Georgia,serif;font-size:40px;color:var(--gold);text-shadow:0 0 40px rgba(244, 183, 28,.4)}
   .kv{display:flex;justify-content:space-between;border-bottom:1px solid rgba(223,229,238,.07);padding:10px 2px;font-size:14px;color:var(--silver)}
   .kv b{color:var(--platinum);font-weight:600}
   .ok{color:#79d99b}
@@ -97,7 +98,7 @@
   .ledger .row b{font-family:Georgia,serif;font-size:22px;color:var(--blue2)}
   .ledger .total{border:none;padding-top:22px}
   .ledger .total span{color:var(--platinum);font-size:18px}
-  .ledger .total b{font-size:44px;color:var(--gold);text-shadow:0 0 40px rgba(216,180,106,.35)}
+  .ledger .total b{font-size:44px;color:var(--gold);text-shadow:0 0 40px rgba(244, 183, 28,.35)}
   .bar{height:5px;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--blue2));margin-top:6px;box-shadow:0 0 14px rgba(63,141,255,.5)}
 
   /* ---------- Section 5: negotiation ---------- */
@@ -105,8 +106,8 @@
   .lobby{border-radius:20px;min-height:380px;position:relative;overflow:hidden;border:1px solid var(--line);
     background:linear-gradient(200deg,#1b1408 0%,#0d0a06 45%,#070b16 100%)}
   .lobby::before{content:"";position:absolute;inset:0;background:
-    radial-gradient(340px 180px at 30% 20%,rgba(216,180,106,.22),transparent 70%),
-    repeating-linear-gradient(90deg,transparent 0 88px,rgba(216,180,106,.06) 88px 90px)}
+    radial-gradient(340px 180px at 30% 20%,rgba(244, 183, 28,.22),transparent 70%),
+    repeating-linear-gradient(90deg,transparent 0 88px,rgba(244, 183, 28,.06) 88px 90px)}
   .lobby .concierge{position:absolute;left:8%;bottom:10%;width:70%;padding:16px 20px;border-radius:14px;background:rgba(8,16,36,.86);border:1px solid var(--lineB);font-size:13px;box-shadow:0 0 40px rgba(63,141,255,.2)}
   .outcome{display:flex;align-items:center;gap:12px;padding:13px 16px;border:1px solid rgba(121,217,155,.22);background:rgba(9,20,20,.6);border-radius:12px;margin-bottom:10px;font-size:14.5px}
   .outcome .dot{width:9px;height:9px;border-radius:50%;background:#79d99b;box-shadow:0 0 12px #79d99b}
@@ -144,7 +145,7 @@
   .tiers{grid-template-columns:repeat(4,1fr);align-items:stretch}
   .tier{position:relative;padding:30px 24px;border-radius:20px;border:1px solid rgba(223,229,238,.1);background:linear-gradient(165deg,#0c1731,#070d1c);transition:.3s}
   .tier:hover{transform:translateY(-6px)}
-  .tier.gold-card{border-color:var(--line);background:linear-gradient(165deg,#17130a,#0b0d18);box-shadow:0 24px 60px rgba(216,180,106,.14)}
+  .tier.gold-card{border-color:var(--line);background:linear-gradient(165deg,#17130a,#0b0d18);box-shadow:0 24px 60px rgba(244, 183, 28,.14)}
   .tier h3{font-family:Georgia,serif;font-size:21px;color:#fff}
   .tier .price{font-family:Georgia,serif;font-size:34px;color:var(--gold);margin:12px 0 2px}
   .tier .per{font-size:12px;color:var(--muted)}
@@ -164,13 +165,13 @@
   .final{min-height:78vh;display:flex;align-items:center;text-align:center;
     background:
       radial-gradient(900px 500px at 50% 0%,rgba(63,141,255,.16),transparent 65%),
-      radial-gradient(700px 420px at 50% 100%,rgba(216,180,106,.14),transparent 70%),
+      radial-gradient(700px 420px at 50% 100%,rgba(244, 183, 28,.14),transparent 70%),
       linear-gradient(180deg,var(--black),var(--navy) 55%,var(--black))}
   .final h2{font-size:clamp(34px,4.6vw,64px)}
   .final .mega{font-family:Georgia,serif;font-size:clamp(44px,7vw,104px);background:linear-gradient(135deg,var(--gold2),var(--gold) 45%,var(--blue2));-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1.05;margin:12px 0 34px}
 
   /* ---------- footer ---------- */
-  footer{background:#03060d;border-top:1px solid rgba(216,180,106,.14);padding:80px 6vw 46px}
+  footer{background:#03060d;border-top:1px solid rgba(244, 183, 28,.14);padding:80px 6vw 46px}
   .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:34px;max-width:1200px;margin:0 auto}
   .fgrid h4{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--gold);margin-bottom:16px}
   .fgrid a{display:block;color:var(--silver);font-size:14px;padding:5px 0;transition:.2s}
@@ -178,8 +179,9 @@
   .fbottom{max-width:1200px;margin:56px auto 0;padding-top:26px;border-top:1px solid rgba(223,229,238,.07);display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:13px}
 
   nav.top{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;justify-content:space-between;align-items:center;padding:18px 6vw;
-    background:rgba(4,7,15,.72);backdrop-filter:blur(16px);border-bottom:1px solid rgba(216,180,106,.12)}
-  .logo{font-family:Georgia,serif;font-size:21px;color:#fff;letter-spacing:.04em}
+    background:rgba(4,7,15,.72);backdrop-filter:blur(16px);border-bottom:1px solid rgba(244, 183, 28,.12)}
+  .logo{display:inline-flex;align-items:center;gap:9px;font-family:Georgia,serif;font-size:21px;color:#fff;letter-spacing:.04em}
+  .logo img{width:30px;height:30px;border-radius:8px;box-shadow:0 0 18px rgba(244,183,28,.30)}
   .logo b{color:var(--gold)}
   nav.top .links{display:flex;gap:26px;font-size:13px;color:var(--silver)}
   nav.top .links a:hover{color:var(--gold)}
@@ -223,7 +225,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 
 <nav class="top">
-  <a class="logo" href="/#top">3JN <b>Travel OS</b></a>
+  <a class="logo" href="/#top"><img src="/logo.svg" alt="" width="30" height="30">3JN <b>Travel OS</b></a>
   <div class="links">
     <a href="#problem">Why 3JN</a><a href="#core">AI Core</a><a href="#savings">Savings</a>
     <a href="#book">Booking</a><a href="#earn">Earn</a><a href="#intel">Intelligence</a><a href="#membership">Membership</a><a href="/app">Open the OS</a>

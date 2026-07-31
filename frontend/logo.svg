@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="3JN Travel">
+  <defs>
+    <linearGradient id="jnNavy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25406C"/>
+      <stop offset="1" stop-color="#132140"/>
+    </linearGradient>
+    <linearGradient id="jnGold" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#FFDD74"/>
+      <stop offset="0.45" stop-color="#F4B71C"/>
+      <stop offset="1" stop-color="#E0930E"/>
+    </linearGradient>
+    <linearGradient id="jnSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- app-icon squircle -->
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#jnNavy)"/>
+  <rect x="16" y="16" width="480" height="240" rx="108" fill="url(#jnSheen)"/>
+
+  <!-- gold swoosh ribbon: thin at the left, thickening to the right and lifting toward the plane -->
+  <path d="M92 360 C 200 410, 348 408, 452 296 C 372 356, 232 360, 118 336 Z" fill="url(#jnGold)"/>
+
+  <!-- climbing airliner in the open top-right, nose to the upper-right -->
+  <g transform="translate(430 96) rotate(42) scale(1.7)">
+    <path d="M32 2 C34 2 36 6 36 14 L36 24 L60 40 L60 46 L36 38 L36 52 L44 60 L44 63 L32 58 L20 63 L20 60 L28 52 L28 38 L4 46 L4 40 L28 24 L28 14 C28 6 30 2 32 2 Z" fill="url(#jnGold)"/>
+  </g>
+
+  <!-- sparkles -->
+  <path d="M70 292 C72 306 76 310 90 312 C76 314 72 318 70 332 C68 318 64 314 50 312 C64 310 68 306 70 292 Z" fill="url(#jnGold)"/>
+  <path d="M50 340 C51.5 349 54 351.5 63 353 C54 354.5 51.5 357 50 366 C48.5 357 46 354.5 37 353 C46 351.5 48.5 349 50 340 Z" fill="url(#jnGold)"/>
+
+  <!-- wordmark -->
+  <text x="252" y="318" text-anchor="middle" font-family="'Arial Black','Arial',sans-serif" font-weight="900" font-size="200" letter-spacing="-6" fill="#F5F8FF">3JN</text>
+</svg>

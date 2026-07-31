@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v202';
+const APP_BUILD = 'v203';
 
 const state = {
   context: null,
@@ -306,7 +306,7 @@ const LOYALTY = [
 // monthly) that unlocks the perks and returns 10% as ACU. Monthly is gone.
 let membershipBilling = 'yearly';
 function payAsYouGoHTML() {
-  return `<div class="card pad" style="grid-column:1/-1;margin-bottom:14px;border-color:rgba(216,180,106,0.4)">
+  return `<div class="card pad" style="grid-column:1/-1;margin-bottom:14px;border-color:rgba(244, 183, 28,0.4)">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div>
         <strong style="font-size:16px">No subscription needed — pay only for what you use</strong>
@@ -350,7 +350,7 @@ function renderStatic() {
     <div class="card step"><span class="num">${num}</span><span class="tag">${tag}</span><h3>${title}</h3><p>${desc}</p></div>`).join('');
 
   $('#loyaltyGrid').innerHTML = LOYALTY.map(([name, pts, disc]) => `
-    <div class="card agent-card"><div class="ag-ico" style="background:rgba(216,180,106,0.15)">★</div><h4>${name}</h4><p>${pts} · ${disc}</p></div>`).join('');
+    <div class="card agent-card"><div class="ag-ico" style="background:rgba(244, 183, 28,0.15)">★</div><h4>${name}</h4><p>${pts} · ${disc}</p></div>`).join('');
 }
 window.selectTier = async (key) => {
   if (!state.user) {
@@ -800,7 +800,7 @@ async function runPlan(overrides = {}) {
 // cached search), never silently proceed.
 function renderTopup(data) {
   const out = $('#plannerOut');
-  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(244, 183, 28,0.4)">
     <div style="font-size:34px">⚡</div>
     <h3 style="margin:10px 0 6px">You're out of ACUs</h3>
     <p class="muted" style="font-size:14px">${data.message || `${data.tierName} needs ${data.acuNeeded} ACU.`}</p>
@@ -819,7 +819,7 @@ window.runFreeSearch = () => { const sel = $('#tierSelect'); if (sel) sel.value 
 // for 2 more. Signed-in member used their 2 free → invite to join Travel+.
 function renderSignupWall(data) {
   const out = $('#plannerOut');
-  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(244, 183, 28,0.4)">
     <div style="font-size:34px">🔍</div>
     <h3 style="margin:10px 0 6px">You've used your free searches</h3>
     <p class="muted" style="font-size:14px">${esc(data.message || 'Create a free account to keep searching.')}</p>
@@ -832,7 +832,7 @@ function renderSignupWall(data) {
 }
 function renderMembershipWall(data) {
   const out = $('#plannerOut');
-  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(244, 183, 28,0.4)">
     <div style="font-size:34px">⭐</div>
     <h3 style="margin:10px 0 6px">Join Travel+ to keep searching</h3>
     <p class="muted" style="font-size:14px">${esc(data.message || "You've used your free searches. A Travel+ membership funds your standard searches.")}</p>
@@ -848,7 +848,7 @@ function renderMembershipWall(data) {
 // commitment first: a refundable £20 deposit, a subscription, or a premium plan.
 function renderConciergeCommitment(data) {
   const out = $('#plannerOut');
-  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(216,180,106,0.4)">
+  out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(244, 183, 28,0.4)">
     <div style="font-size:34px">🤝</div>
     <h3 style="margin:10px 0 6px">Concierge Search needs a commitment</h3>
     <p class="muted" style="font-size:14px">${data.message || 'Concierge pairs AI agents with a human travel expert — place a refundable £20 deposit, or use a subscription/premium plan.'}</p>
@@ -943,7 +943,7 @@ function renderOptions(data) {
 
   const gateBanner = gate.allowed
     ? `<div class="pill" style="margin:0 0 16px"><span class="dot"></span> ${gate.tierName} ran · funded by ${gate.reason} · AI cost $${gate.aiCostUSD}</div>`
-    : `<div class="card pad" style="margin-bottom:16px;border-color:rgba(216,180,106,0.4)">
+    : `<div class="card pad" style="margin-bottom:16px;border-color:rgba(244, 183, 28,0.4)">
         <strong>⚠ Cost-Protection Gate</strong>
         <p class="muted" style="font-size:13.5px;margin:6px 0 10px">${gate.requirement?.message || 'Search downgraded.'}</p>
         <button class="btn btn-gold btn-sm" onclick="buyAcuFlow()">Buy ACUs to unlock</button>
@@ -999,8 +999,8 @@ function renderOptions(data) {
       <span class="eyebrow">Deep Price Dive · ${dive.combinationsExplored.toLocaleString()} combinations explored across ${dive.leversChecked} levers${diveStaff && dive.basis === 'estimated' ? ' · estimated' : ''}</span>
       ${diveSavings.length ? diveSavings.map((sv, i) => {
         const tag = sv.basis === 'verified' ? '<span class="chip" style="font-size:9px;border-color:rgba(121,217,155,.4);color:#79d99b">verified</span>'
-          : sv.basis === 'estimated' ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">estimate</span>'
-          : sv.basis === 'indicative' ? '<span class="chip" style="font-size:9px;border-color:rgba(216,180,106,.4);color:var(--gold)">indicative</span>' : '';
+          : sv.basis === 'estimated' ? '<span class="chip" style="font-size:9px;border-color:rgba(244, 183, 28,.4);color:var(--gold)">estimate</span>'
+          : sv.basis === 'indicative' ? '<span class="chip" style="font-size:9px;border-color:rgba(244, 183, 28,.4);color:var(--gold)">indicative</span>' : '';
         let applyBtn = '';
         if (sv.apply && (sv.apply.shiftDays || sv.apply.airport)) {
           window.__diveApply = window.__diveApply || {};
@@ -1033,7 +1033,7 @@ function renderOptions(data) {
     ? `<div class="pill" style="margin:0 0 16px;border-color:rgba(78,161,255,0.4)">🧭 No travel mode specified — compared ${mc.map((m) => ({ flights: '✈ flights', train: '🚆 train', coach: '🚌 coach (FlixBus, Eurolines…)', ferry: '⛴ ferry' }[m] || m)).join(' vs ')} · cheapest reliable won</div>`
     : '';
   const flightPrefNote = fpBits.length
-    ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(216,180,106,0.45)' : 'rgba(70,211,154,0.35)'}">${fpBits.join(' · ')}</div>`
+    ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(244, 183, 28,0.45)' : 'rgba(70,211,154,0.35)'}">${fpBits.join(' · ')}</div>`
     : '';
 
   // Provenance transparency: real fares (Duffel/Amadeus), real schedules (OAG,
@@ -1050,7 +1050,7 @@ function renderOptions(data) {
   } else if (ps.flights === 'partial') {
     // Group with some parties live, some estimated — say so precisely.
     const n = pl ? `${pl.live} of ${pl.total}` : 'some';
-    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.4)">🟡 ${n} departure fares are live &amp; bookable · the rest are indicative until we confirm live availability for those airports</div>`;
+    psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(244, 183, 28,0.4)">🟡 ${n} departure fares are live &amp; bookable · the rest are indicative until we confirm live availability for those airports</div>`;
   } else if (ss.flights === 'live') {
     psNote = `<div class="pill" style="margin:0 0 16px;border-color:rgba(70,211,154,0.35)">🟢 Real flight schedules (OAG) · live carriers, times &amp; non-stops — fares indicative until a fare provider is connected</div>`;
   } else if (ps.flights || ps.hotel) {
@@ -1072,7 +1072,7 @@ function renderOptions(data) {
     } else {
       hbWhy = `Hotelbeds is connected but returned <strong>0 rooms</strong> for this destination code / dates — the destination code may not map, or there's no inventory for those exact dates.`;
     }
-    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.55);background:rgba(216,180,106,0.08)">🛠️ <strong>Operator diagnostic — hotel is estimated:</strong> ${hbWhy}</div>`;
+    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(244, 183, 28,0.55);background:rgba(244, 183, 28,0.08)">🛠️ <strong>Operator diagnostic — hotel is estimated:</strong> ${hbWhy}</div>`;
   }
   if (isStaff() && lo && !lo.applied) {
     const why = ({
@@ -1082,7 +1082,7 @@ function renderOptions(data) {
       'no-supplier-keys': 'No supplier keys detected at runtime — the deploy is not reading DUFFEL_TOKEN / STRIPE_SECRET_KEY.',
       'not-options-stage': 'The search did not produce bookable options (clarify/inspire stage) — no live fetch ran.',
     })[lo.reason] || `Estimated. reason=${esc(lo.reason || 'unknown')}, attempted=${lo.attempted}, flights=${lo.flightsFound}, hotels=${lo.hotelsFound}.`;
-    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(216,180,106,0.55);background:rgba(216,180,106,0.08)">🛠️ <strong>Operator diagnostic:</strong> ${why}</div>`;
+    psNote += `<div class="pill" style="margin:0 0 16px;border-color:rgba(244, 183, 28,0.55);background:rgba(244, 183, 28,0.08)">🛠️ <strong>Operator diagnostic:</strong> ${why}</div>`;
   }
 
   // Clearly-LABELLED sponsored strip — separate from (never mixed into) the
@@ -1324,7 +1324,7 @@ function optionCard(o, sym, intent) {
       : '';
     // Hotel/host rating chip: star class + guest score out of 10 with review count.
     const ratingTag = (c.type === 'hotel' || c.type === 'host')
-      ? `${c.stars ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">${'★'.repeat(c.stars)}</span>` : ''}${c.details?.guestRating ? ` <span class="ch-chip" title="${(c.details.reviews || 0).toLocaleString()} verified reviews">${c.details.guestRating}/10</span>` : ''}`
+      ? `${c.stars ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(244, 183, 28,0.4)">${'★'.repeat(c.stars)}</span>` : ''}${c.details?.guestRating ? ` <span class="ch-chip" title="${(c.details.reviews || 0).toLocaleString()} verified reviews">${c.details.guestRating}/10</span>` : ''}`
       : '';
     // Mixed-mode leg chip: one booking, per-direction means & departure points.
     const legTag = c.details?.leg
@@ -1335,7 +1335,7 @@ function optionCard(o, sym, intent) {
       ? ` <span class="ch-chip" style="color:var(--blue-bright);border-color:rgba(78,161,255,0.35)">👥 ${esc(c.details.party)}${c.details.route ? ' · ' + esc(c.details.route) : ''}</span>`
       : '';
     const groupStayTag = c.details?.groupStay
-      ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)" title="${esc(c.details.groupStay.units.join(' • '))}">🏠 Whole group · ${c.details.groupStay.guests} guests · ${c.details.groupStay.units.length} rooms/apartments</span>`
+      ? ` <span class="ch-chip" style="color:var(--gold);border-color:rgba(244, 183, 28,0.4)" title="${esc(c.details.groupStay.units.join(' • '))}">🏠 Whole group · ${c.details.groupStay.guests} guests · ${c.details.groupStay.units.length} rooms/apartments</span>`
       : '';
     // Transport-mode chip: nights + cabin (cruise) or class/duration (rail/coach/ferry).
     const modeTag = ['cruise', 'train', 'coach', 'ferry'].includes(c.type)
@@ -1345,7 +1345,7 @@ function optionCard(o, sym, intent) {
     // partner tracking — surface it as a click-through so the customer reserves on
     // Viator and the commission attributes to us. rel="sponsored" is honest SEO.
     const activityTag = c.type === 'activity' && /^https?:\/\//.test(c.details?.productUrl || '')
-      ? ` <a class="ch-chip" href="${encodeURI(c.details.productUrl)}" target="_blank" rel="noopener sponsored" style="color:var(--gold);border-color:rgba(216,180,106,0.4);text-decoration:none" onclick="event.stopPropagation()" title="Reserve this tour on Viator${c.details.rating ? ' · ★' + c.details.rating : ''}${c.details.reviews ? ' · ' + Number(c.details.reviews).toLocaleString() + ' reviews' : ''}">🎟 Book on Viator ↗</a>`
+      ? ` <a class="ch-chip" href="${encodeURI(c.details.productUrl)}" target="_blank" rel="noopener sponsored" style="color:var(--gold);border-color:rgba(244, 183, 28,0.4);text-decoration:none" onclick="event.stopPropagation()" title="Reserve this tour on Viator${c.details.rating ? ' · ★' + c.details.rating : ''}${c.details.reviews ? ' · ' + Number(c.details.reviews).toLocaleString() + ' reviews' : ''}">🎟 Book on Viator ↗</a>`
       : '';
     // Flights carry the FULL itinerary on the card (dates, times, stops, via,
     // baggage, per-person fare); other components stay one-line summaries.
@@ -1381,7 +1381,7 @@ function optionCard(o, sym, intent) {
       ${o.bookableForRealPayment
         ? `<div class="save-tag" style="color:#79d99b;border-color:rgba(121,217,155,.4)">✓ Live bookable price</div>
            <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="openBooking('${o.tier}')">Quote & ${intent.wantsInstalments ? 'pay in instalments' : 'book'}</button>`
-        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(216,180,106,.4)">We book it for you — pay in full or in instalments</div>
+        : `<div class="save-tag" style="color:var(--gold);border-color:rgba(244, 183, 28,.4)">We book it for you — pay in full or in instalments</div>
            <button class="btn ${o.recommended ? 'btn-gold' : 'btn-ghost'} btn-block" style="margin-top:10px" onclick="openBooking('${o.tier}')">Book with 3JN${intent.wantsInstalments ? ' · pay monthly' : ''}</button>`}
     </div>`;
 }
@@ -1685,7 +1685,7 @@ function priceZoneHTML(quote) {
       <div class="kv" style="font-weight:700;font-size:12.5px"><span>Price-locked total</span><span style="color:var(--gold)">${money2(lockedTotal, sym)}</span></div>
       <div class="muted" style="font-size:11px;margin-top:2px">Pay in full instead and skip ${hasLock && hasFee ? 'both fees' : 'this fee'} — ${money2(option.pricing.local.total, sym)} today.</div>` : '';
   const smart = inst.engine === 'ai-smart' ? `
-    <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.35)">
+    <div class="card pad" style="margin:10px 0;border-color:rgba(244, 183, 28,0.35)">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
         <strong>🤖 ${esc(inst.plan)}</strong>
         <span class="muted" style="font-size:11.5px">${inst.daysToDeparture} days to departure · AI-selected</span></div>
@@ -1703,7 +1703,7 @@ function priceZoneHTML(quote) {
   if (inst.instantOnly) {
     return `
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
-    <div class="card pad" style="margin:10px 0;border-color:rgba(216,180,106,0.45);background:rgba(216,180,106,0.06)">
+    <div class="card pad" style="margin:10px 0;border-color:rgba(244, 183, 28,0.45);background:rgba(244, 183, 28,0.06)">
       <strong>🔒 This fare is paid in full at booking</strong>
       <div class="muted" style="font-size:12px;margin-top:4px">The airline doesn't allow this fare to be held, so it can't be split into instalments. You pay the full ${money2(option.pricing.local.total, sym)} now and your e-ticket is issued straight away. Prefer to pay monthly? Choose a holdable fare and the instalment plan comes back automatically.</div>
     </div>
@@ -1841,7 +1841,7 @@ window.openBooking = async (tier) => {
       </select>
       <div class="muted" style="font-size:11px;margin-top:4px">All payments run on Stripe today. BitriPay Wallet &amp; mobile money unlock automatically the day BitriPay launches.</div>
     </div>
-    <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.35)">
+    <div class="card pad" style="margin-top:12px;border-color:rgba(244, 183, 28,0.35)">
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
         <input type="checkbox" id="bkProtection" style="margin-top:3px" />
         <div><strong>🛡 Booking Protection</strong> <span class="muted" style="font-size:12px">· priority price-drop rebooking, mistake check, refund guidance, disruption support, document review, visa alerts</span>
@@ -2144,7 +2144,7 @@ async function renderConsoleInner() {
   const quoteCards = quoteReqs.length ? `<div class="card pad" style="margin-bottom:16px"><span class="eyebrow">Exact-quote requests</span>${quoteReqs.map((q) => {
     const badge = q.status === 'paid' ? '<span class="tag-confirmed">✓ paid & booked</span>'
       : q.status === 'priced' ? '<span class="chip" style="border-color:rgba(121,217,155,.4);color:#79d99b">exact price ready</span>'
-      : '<span class="chip" style="border-color:rgba(216,180,106,.4);color:var(--gold)">confirming price…</span>';
+      : '<span class="chip" style="border-color:rgba(244, 183, 28,.4);color:var(--gold)">confirming price…</span>';
     const priceLine = q.confirmedTotalLocal ? `<strong style="color:var(--gold)">${q.symbol}${q.confirmedTotalLocal}</strong> confirmed` : `est ${q.symbol}${q.estimatedTotalLocal}`;
     const payBtn = q.status === 'priced' ? `<button class="btn btn-gold btn-sm" style="margin-top:8px" onclick="payExactQuote('${q.id}')">Pay ${q.symbol}${q.confirmedTotalLocal} & book</button>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(223,229,238,.07)">
@@ -2166,7 +2166,7 @@ async function renderConsoleInner() {
   };
   const rb = !u.allAccess && ROLE_BANNERS[u.role];
   const roleBanner = rb ? `
-    <div class="card pad" style="border-color:rgba(216,180,106,.45);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <div class="card pad" style="border-color:rgba(244, 183, 28,.45);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div><span class="eyebrow">${rb.icon} ${esc(rb.title)}</span>
         <p class="muted" style="font-size:12.5px;margin:4px 0 0;max-width:640px">${rb.sub}</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${rb.actions.map(([label, fn]) => `<button class="btn btn-gold btn-sm" onclick="${fn}">${label}</button>`).join('')}</div>
@@ -2174,7 +2174,7 @@ async function renderConsoleInner() {
 
   const laf = state.lastAccountFetch;
   const staleNote = stale
-    ? `<div class="card pad" style="border-color:rgba(216,180,106,.35);margin-bottom:12px"><span class="muted" style="font-size:12.5px">⟳ Showing your saved profile — syncing your latest bookings &amp; balances…${laf && laf.status ? ` <span style="opacity:.7">(sync: HTTP ${laf.status} ${esc(laf.msg || '')})</span>` : ''}</span></div>`
+    ? `<div class="card pad" style="border-color:rgba(244, 183, 28,.35);margin-bottom:12px"><span class="muted" style="font-size:12.5px">⟳ Showing your saved profile — syncing your latest bookings &amp; balances…${laf && laf.status ? ` <span style="opacity:.7">(sync: HTTP ${laf.status} ${esc(laf.msg || '')})</span>` : ''}</span></div>`
     : '';
   out.innerHTML = `${staleNote}${roleBanner}<div class="console-grid"><div>${profile}</div><div>${cards}</div></div>`;
   if (u.allAccess || ['merchant', 'partner', 'admin'].includes(u.role)) renderMerchantPortal();
@@ -2668,7 +2668,7 @@ async function renderBitriPay() {
       <span>${money(p.amountMinor)} · ${p.status === 'settled' ? '✓ settled' : `<a onclick="settleLink('${p.id}')" style="color:var(--gold);cursor:pointer">mark paid</a>`} <a onclick="showQR('${p.ref}','${p.qrData}')" style="cursor:pointer" title="QR">▦</a></span>
     </div>`).join('') || '<div class="muted" style="font-size:13px">No payment links yet.</div>';
   el.innerHTML = `
-    <span class="eyebrow">BitriPay · Payment Links &amp; Settlement <span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">SANDBOX — launching soon</span></span>
+    <span class="eyebrow">BitriPay · Payment Links &amp; Settlement <span class="ch-chip" style="color:var(--gold);border-color:rgba(244, 183, 28,0.4)">SANDBOX — launching soon</span></span>
     <div class="muted" style="font-size:11.5px;margin:4px 0 6px">BitriPay is completing certification. Live customer payments run on <strong>Stripe</strong> today; this portal is a sandbox preview — links here don't move real money yet.</div>
     <div class="kv"><span>Settled / pending</span><span>${s.settled || 0} / ${s.pending || 0}</span></div>
     <div class="kv"><span>Gross settled</span><span>${money(s.grossMinor)}</span></div>
@@ -2794,13 +2794,13 @@ function bookingCard(b) {
   return `
     <div class="card booking-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(216,180,106,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'} ${lockBadge}</div>
+        <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(244, 183, 28,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'} ${lockBadge}</div>
         <strong style="font-family:'Space Grotesk'">${money2(o.pricing.local.total, sym)}</strong>
       </div>
       ${tripLine ? `<div style="font-size:13px;font-weight:600;margin:4px 0 2px">✈ ${tripLine}</div>` : ''}
       ${((o.components || []).length > 1 || !tripLine) ? `<p class="muted" style="font-size:12.5px;margin:6px 0">${comps}</p>` : ''}
       ${b.fulfilment?.ticketing === 'reissue-pending' ? `
-        <div class="card pad" style="margin:8px 0;border-color:rgba(216,180,106,.5);background:rgba(216,180,106,.08)">
+        <div class="card pad" style="margin:8px 0;border-color:rgba(244, 183, 28,.5);background:rgba(244, 183, 28,.08)">
           <strong style="color:var(--gold)">🔄 Change requested — being reissued</strong>
           <div class="muted" style="font-size:12px;margin-top:3px">Our travel team is confirming your ${esc(b.pendingChangeFee?.description || 'change')} with the airline and reissuing your e-ticket.${b.pendingChangeFee?.amountGbp ? ` The £${b.pendingChangeFee.amountGbp} change fee applies only once your new ticket is issued — never before.` : ''} Your updated e-ticket will arrive by email.</div>
         </div>` : ''}
@@ -3018,7 +3018,7 @@ async function renderVendors() {
   }
 
   out.innerHTML = `<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">${tierCards}</div>
-    <div class="card pad" style="margin-top:12px;border-color:rgba(216,180,106,0.3)">
+    <div class="card pad" style="margin-top:12px;border-color:rgba(244, 183, 28,0.3)">
       <span class="eyebrow">✈ Flights-only bookings — different maths, bigger prize</span>
       <p class="muted" style="font-size:12.5px;margin:6px 0">Flights-only baskets carry a small <strong>2%</strong> service fee (min £4.99, capped at £15) instead of 10% (that's how our flight prices beat the comparison sites). On those you earn <strong>30% of the fee</strong> — but you keep <strong>lifetime attribution</strong>: every hotel, package or extra that customer ever books afterwards pays your full ${'3–4%'} rate automatically, no code needed. Bring us a customer once, earn on everything they ever book.</p>
     </div>
@@ -3089,7 +3089,7 @@ window.openDocs = async (bookingId) => {
             : d.needsRefund ? `<div style="color:var(--gold);font-size:12.5px;margin-top:6px">Your full refund is being processed — you’ll get a confirmation shortly.</div>` : ''}
        </div>` : '';
   const reissueCard = reissuing
-    ? `<div class="card pad" style="border-color:rgba(216,180,106,.5);background:rgba(216,180,106,.08);margin-top:10px">
+    ? `<div class="card pad" style="border-color:rgba(244, 183, 28,.5);background:rgba(244, 183, 28,.08);margin-top:10px">
          <strong style="color:var(--gold)">🔄 Change requested — being reissued</strong>
          <div class="muted" style="font-size:12.5px;margin-top:6px">Our travel team is confirming your change with the airline and reissuing your e-ticket. You'll receive the updated e-ticket by email, and any change fee applies <b>only once your new ticket is issued</b> — never before. Your existing PNR below stays valid until the new one is confirmed.</div>
        </div>` : '';
@@ -3339,7 +3339,7 @@ async function renderAdmin() {
     ${uh ? (() => {
       const risk = (v) => v?.securityRisk === 'Low' ? '#79d99b' : v?.securityRisk === 'Medium' ? 'var(--gold)' : '#ff6b6b';
       const pend = (uh.pendingReview || []).map((l) => `
-        <div class="card pad" style="margin-bottom:10px;border-color:rgba(216,180,106,.35)">
+        <div class="card pad" style="margin-bottom:10px;border-color:rgba(244, 183, 28,.35)">
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
             <strong>${esc(l.title)}</strong>
             <span style="font-size:12px;color:${risk(l.aiVerification)}">AI verify ${l.aiVerification?.score ?? '—'}/100 · ${l.aiVerification?.securityRisk || '—'} risk</span>
@@ -3398,7 +3398,7 @@ async function renderAdmin() {
             ['White-label SaaS', st.whiteLabelRevenueUSD],
             ['API per-call revenue', st.apiRevenueUSD],
           ].map(([k, v]) => `<div class="kv"><span>${k}</span><span>$${Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></div>`).join('');
-          return `<div class="card pad" style="margin-top:16px;border-color:rgba(216,180,106,0.35)"><span class="eyebrow">3JN income — every stream (our revenue only)</span>
+          return `<div class="card pad" style="margin-top:16px;border-color:rgba(244, 183, 28,0.35)"><span class="eyebrow">3JN income — every stream (our revenue only)</span>
             ${rows}
             <div class="kv" style="margin-top:8px"><span><strong>Total 3JN revenue</strong></span><span style="color:var(--gold)"><strong>$${Number(profit.revenueUSD || 0).toLocaleString()}</strong></span></div>
             ${(() => {
@@ -3536,7 +3536,7 @@ window.openExposure = async () => {
   const s = d.summary || {};
   const gbp = (n) => '£' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const stat = (label, val, hint, danger) => `
-    <div class="card pad" style="flex:1 1 150px;border-color:${danger && val > 0 ? 'rgba(255,138,138,.4)' : 'rgba(216,180,106,.3)'}">
+    <div class="card pad" style="flex:1 1 150px;border-color:${danger && val > 0 ? 'rgba(255,138,138,.4)' : 'rgba(244, 183, 28,.3)'}">
       <div style="font-size:22px;font-weight:700;color:${danger && val > 0 ? '#ff8a8a' : 'var(--gold)'}">${gbp(val)}</div>
       <div class="muted" style="font-size:11.5px;margin-top:4px">${label}</div>
       ${hint ? `<div class="muted" style="font-size:10px;margin-top:2px">${hint}</div>` : ''}
@@ -3603,7 +3603,7 @@ window.openOpsQueue = async () => {
          </div>`
       : isReissue
       ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
-           ${t.reissueChannel ? `<div style="font-size:11.5px;margin-bottom:6px;padding:6px 8px;background:rgba(216,180,106,.1);border-radius:6px;line-height:1.5">${esc(t.reissueChannel)}</div>` : ''}
+           ${t.reissueChannel ? `<div style="font-size:11.5px;margin-bottom:6px;padding:6px 8px;background:rgba(244, 183, 28,.1);border-radius:6px;line-height:1.5">${esc(t.reissueChannel)}</div>` : ''}
            <div class="muted" style="font-size:11px;margin-bottom:6px">Reissue with the airline/supplier first (above). The new PNR + e-ticket come from <strong>them, not the customer</strong> — then enter what the airline gave you. If the reissue kept the same PNR, leave it as-is.</div>
            <div style="display:flex;gap:6px;flex-wrap:wrap">
              <input class="in" id="ri_pnr_${esc(t.id)}" placeholder="Airline PNR" value="${esc(t.pnr || '')}" style="flex:1;min-width:120px;font-size:12px">
@@ -3629,7 +3629,7 @@ window.openOpsQueue = async () => {
            <input class="in" id="opsNote_${esc(t.id)}" placeholder="Resolution note" style="flex:1;font-size:12px">
            <button class="btn btn-gold btn-sm" onclick="resolveOpsTicket('${esc(t.id)}')">Mark done</button>
          </div>`;
-    return `<div class="card pad" style="margin-bottom:10px;border-color:rgba(216,180,106,.3)">
+    return `<div class="card pad" style="margin-bottom:10px;border-color:rgba(244, 183, 28,.3)">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">
         <strong style="color:${color}">${label}</strong>
         <span class="muted" style="font-size:11px">${esc(ukDate(t.createdAt))}</span>
@@ -4183,7 +4183,7 @@ async function renderDeals() {
       <div class="card deal-card" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
         ${dealBanner(d)}
         <div class="pad" style="display:flex;flex-direction:column;flex:1">
-          ${d.featured ? '<span class="chip" style="align-self:flex-start;border-color:rgba(216,180,106,.5);color:var(--gold);margin-bottom:6px">★ Featured</span>' : ''}
+          ${d.featured ? '<span class="chip" style="align-self:flex-start;border-color:rgba(244, 183, 28,.5);color:var(--gold);margin-bottom:6px">★ Featured</span>' : ''}
           <h3 style="margin:2px 0 2px">${esc(d.title)}</h3>
           ${loc ? `<div class="muted" style="font-size:12.5px">📍 ${esc(loc)}${d.nights ? ' · ' + d.nights + ' nights' : ''}</div>` : ''}
           ${d.summary ? `<p class="muted" style="font-size:12.5px;margin:8px 0">${esc(d.summary)}</p>` : ''}
@@ -4772,7 +4772,7 @@ async function renderVisaGov() {
   // policy — full decision powers on its queue, no policy control.
   const isConsulate = state.user?.role === 'consulate' && !state.user?.allAccess;
   out.innerHTML = `
-    <div class="card pad" style="border-color:rgba(216,180,106,.45);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div class="card pad" style="border-color:rgba(244, 183, 28,.45);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
         <span class="eyebrow">${isConsulate ? '🛂 Consulate eVisa Processing Centre' : '🛡 Embassy Decision Command Centre'}</span>
         <div style="font-family:'Space Grotesk';font-weight:700;font-size:17px;margin-top:2px">${isConsulate ? 'You process and decide — under the Embassy\'s policy.' : 'You hold full policy and decision authority.'}</div>
@@ -4781,7 +4781,7 @@ async function renderVisaGov() {
           : 'The AI screens every file and proposes against <strong>your</strong> criteria — you confirm, override, refuse or request more. Applicants see <strong>nothing</strong> until you release the decision. You set the visa fees, the refusal reasons, the visa conditions, and the letter carries your embassy\'s name, seal and language.'}</p>
       </div>
       ${isConsulate
-        ? '<span class="chip" style="color:var(--gold);border-color:rgba(216,180,106,.4)">🔒 Policy set by the Embassy</span>'
+        ? '<span class="chip" style="color:var(--gold);border-color:rgba(244, 183, 28,.4)">🔒 Policy set by the Embassy</span>'
         : '<button class="btn btn-gold btn-sm" onclick="openEmbassySettings()">⚙ Set criteria · fees · branding · language</button>'}
     </div>
     <div class="kpi-grid">${kpis}</div>
@@ -4845,7 +4845,7 @@ window.openVisaApp = async (id) => {
       </div>` : ''}
       ${dec
         ? `<div class="card pad" style="margin-top:14px;border-color:rgba(70,211,154,0.3)"><strong>Embassy decision: ${esc(dec.decision)}</strong>
-            <span class="chip" style="font-size:10.5px;margin-left:8px;color:${dec.released ? 'var(--green)' : 'var(--gold)'};border-color:${dec.released ? 'rgba(70,211,154,.4)' : 'rgba(216,180,106,.4)'}">${dec.released ? '✓ RELEASED to applicant' : '🔒 CONFIDENTIAL — applicant not yet informed'}</span>
+            <span class="chip" style="font-size:10.5px;margin-left:8px;color:${dec.released ? 'var(--green)' : 'var(--gold)'};border-color:${dec.released ? 'rgba(70,211,154,.4)' : 'rgba(244, 183, 28,.4)'}">${dec.released ? '✓ RELEASED to applicant' : '🔒 CONFIDENTIAL — applicant not yet informed'}</span>
             <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(dec.reason || '')}${(dec.conditions || []).length ? '<br>Conditions: ' + dec.conditions.map(esc).join(' · ') : ''} · ${new Date(dec.at).toLocaleString()}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
               ${!dec.released ? `<button class="btn btn-gold btn-sm" onclick="releaseVisa('${a.id}')">📤 Release decision to applicant</button>` : ''}
@@ -5338,7 +5338,7 @@ function showVerifyBanner() {
   if ($('#verifyBanner')) return;
   const b = document.createElement('div');
   b.id = 'verifyBanner';
-  b.style.cssText = 'position:sticky;top:0;z-index:60;background:linear-gradient(90deg,rgba(216,180,106,.16),rgba(216,180,106,.08));border-bottom:1px solid rgba(216,180,106,.35);padding:9px 16px;font-size:13px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
+  b.style.cssText = 'position:sticky;top:0;z-index:60;background:linear-gradient(90deg,rgba(244, 183, 28,.16),rgba(244, 183, 28,.08));border-bottom:1px solid rgba(244, 183, 28,.35);padding:9px 16px;font-size:13px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
   b.innerHTML = `<span>📧 Verify your email to secure your account — check your inbox.</span>
     <button class="btn btn-ghost btn-sm" style="padding:5px 14px" onclick="resendVerifyEmail()">Resend email</button>
     <span style="cursor:pointer;color:var(--muted);font-size:16px;line-height:1" onclick="this.parentElement.remove()" title="Dismiss">×</span>`;
@@ -5888,7 +5888,7 @@ window.openAbout = () => {
   const a = state.context?.contact?.about || {};
   const photo = a.founderPhoto ? `<img src="${esc(a.founderPhoto)}" alt="${esc(a.founderName || 'Founder')}" style="width:84px;height:84px;border-radius:50%;object-fit:cover;border:2px solid var(--gold)">` : '';
   const founder = a.founderName ? `
-    <div style="display:flex;gap:14px;align-items:center;margin:12px 0;padding:12px;border:1px solid rgba(216,180,106,.25);border-radius:12px">
+    <div style="display:flex;gap:14px;align-items:center;margin:12px 0;padding:12px;border:1px solid rgba(244, 183, 28,.25);border-radius:12px">
       ${photo}
       <div><div style="font-weight:700">${esc(a.founderName)}</div>${a.founderRole ? `<div class="muted" style="font-size:12.5px">${esc(a.founderRole)}</div>` : ''}</div>
     </div>` : '';
@@ -6370,7 +6370,7 @@ async function renderHosting() {
   const statusChip = (l) => l.status === 'live'
     ? '<span class="ch-chip" style="color:var(--green);border-color:rgba(70,211,154,0.35)">● Live in searches</span>'
     : l.status === 'pending-review'
-      ? '<span class="ch-chip" style="color:var(--gold);border-color:rgba(216,180,106,0.4)">🕓 Awaiting 3JN review</span>'
+      ? '<span class="ch-chip" style="color:var(--gold);border-color:rgba(244, 183, 28,0.4)">🕓 Awaiting 3JN review</span>'
       : '<span class="ch-chip" style="color:var(--muted)">⏸ Paused</span>';
   const props = (d.listings || []).map((l) => `
     <div class="card pad" style="margin-bottom:10px">
@@ -6709,7 +6709,7 @@ window.openHostCalendar = async (listingId) => {
     const iso = dt.toISOString().slice(0, 10);
     const isBlocked = blocked.has(iso);
     const ov = overrides[iso];
-    cells.push(`<div onclick="hostCalToggle('${listingId}','${iso}')" title="${iso}${ov ? ' · $' + ov : ''}" style="cursor:pointer;padding:6px 2px;border-radius:6px;text-align:center;font-size:11px;border:1px solid ${isBlocked ? 'rgba(255,107,107,.5)' : ov ? 'rgba(216,180,106,.5)' : 'var(--line)'};background:${isBlocked ? 'rgba(255,107,107,.15)' : ov ? 'rgba(216,180,106,.12)' : 'transparent'}">
+    cells.push(`<div onclick="hostCalToggle('${listingId}','${iso}')" title="${iso}${ov ? ' · $' + ov : ''}" style="cursor:pointer;padding:6px 2px;border-radius:6px;text-align:center;font-size:11px;border:1px solid ${isBlocked ? 'rgba(255,107,107,.5)' : ov ? 'rgba(244, 183, 28,.5)' : 'var(--line)'};background:${isBlocked ? 'rgba(255,107,107,.15)' : ov ? 'rgba(244, 183, 28,.12)' : 'transparent'}">
       ${dt.getUTCDate()}${dt.getUTCDate() === 1 || i === 0 ? `<div style="font-size:9px;color:var(--muted)">${dt.toLocaleString('en', { month: 'short', timeZone: 'UTC' })}</div>` : ''}${ov ? `<div style="font-size:9px;color:var(--gold)">$${ov}</div>` : ''}${isBlocked ? '<div style="font-size:9px;color:#ff8a8a">✕</div>' : ''}</div>`);
   }
   modal(`
