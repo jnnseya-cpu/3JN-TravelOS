@@ -3994,6 +3994,28 @@ test('visa support reservations: fee maths, order → issue → deliver, revenue
   assert.equal(S.listFulfilmentOrders({}).find((o) => o.visaReservationId === r.reservation.id).status, 'completed');
 });
 
+test('visa reservations: fee is charged first when Stripe is live (awaiting-payment → paid)', async () => {
+  const S = await import('../src/store.js');
+  const u = S.createUser({ email: `vpay${Date.now()}@x.co`, name: 'Pay First' });
+  // Stripe-live path: the order is NOT paid/issued until the fee clears.
+  const pending = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Pay First', dob: '1990-01-01' }] }, { awaitingPayment: true });
+  assert.equal(pending.awaitingPayment, true);
+  assert.equal(pending.reservation.paid, false, 'not paid until the fee clears');
+  assert.equal(pending.reservation.status, 'awaiting-payment');
+  const revBefore = S.profitabilityDashboard().streams.visaDocsRevenueUSD;
+  // Fee paid (webhook) → flips to paid + processing, and revenue now counts.
+  const paid = S.markVisaReservationPaid(pending.reservation.id, { paymentRef: 'cs_test', paymentIntent: 'pi_fee_1' });
+  assert.equal(paid.reservation.paid, true);
+  assert.ok(S.profitabilityDashboard().streams.visaDocsRevenueUSD > revBefore, 'fee revenue counts only once paid');
+  assert.equal(paid.reservation.status, 'processing');
+  assert.equal(paid.reservation.feePaymentIntent, 'pi_fee_1');
+  // Idempotent: a redelivered webhook doesn't double-process.
+  assert.equal(S.markVisaReservationPaid(pending.reservation.id, {}).already, true);
+  // Simulation path (no Stripe flag) still issues immediately (paid true).
+  const sim = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Sim', dob: '1990-01-01' }] });
+  assert.equal(sim.reservation.paid, true);
+});
+
 test('visa reservations: Duffel auto-hold is dormant without keys; apply path issues a real PNR', async () => {
   const S = await import('../src/store.js');
   const LS = await import('../src/live-suppliers.js');

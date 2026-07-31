@@ -26,7 +26,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
-  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent,
+  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-deposit-stripe-auth-v211';
+const BUILD_TAG = '2026-08-01-visa-fee-charged-v212';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4038,6 +4038,13 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
         const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null, paymentIntent: event.data?.object?.payment_intent || null });
         if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '🔎', title: 'Search deposit placed', body: `Your refundable ${meta.tier} search deposit is active — it comes straight off your booking when you travel.` });
       }
+    } else if (meta.kind === 'visa-fee' && meta.reservationId) {
+      // The visa reservation SERVICE FEE was paid → mark paid + issue it (flight
+      // hold, hotel book, deposit hold). Idempotent on the event id.
+      if (fresh) {
+        const paid = markVisaReservationPaid(meta.reservationId, { paymentRef: event.data?.object?.id, paymentIntent: event.data?.object?.payment_intent || null });
+        if (paid.ok) await fulfilVisaReservation(meta.reservationId);
+      }
     } else if (meta.kind === 'visa-deposit' && meta.reservationId) {
       // The customer authorized (held, not charged) their refundable room deposit
       // via Checkout — record the manual-capture PaymentIntent so we can release
@@ -4807,29 +4814,22 @@ app.get('/api/visa/fees', safe((req, res) => {
 app.get('/api/visa/reservations/pricing', safe((req, res) => {
   res.json(visaDocPricing({ memberActive: !!currentUser(req)?.membership?.active }));
 }));
-// Order a reservation (one-off service fee; the reservation itself is held/refundable).
-app.post('/api/visa/reservations', safe(async (req, res) => {
-  const user = currentUser(req);
-  if (!user) return res.status(401).json({ error: 'auth-required' });
-  const body = req.body || {};
-  const result = orderVisaReservation(user.id, body);
-  if (!result.ok) return res.status(400).json(result);
-  // AUTO-HOLD: the moment a Duffel token is configured, issue the flight hold now
-  // (a real airline PNR) instead of queuing the Visa Desk. Awaited so it's
-  // reliable on serverless; any failure/timeout falls back to the manual desk.
+// FULFIL a PAID visa reservation: auto-hold the flight (Duffel), auto-book the
+// hotel (Hotelbeds, if enabled), and place the refundable room-deposit HOLD on
+// the card saved by the fee payment. Every step fails safe to the manual Visa
+// Desk. Called after payment (webhook) or immediately in simulation.
+async function fulfilVisaReservation(rid) {
+  const rec = getVisaReservation(rid);
+  if (!rec || !rec.paid) return;
   try {
-    const rec = result.reservation;
-    const hasFlight = rec.items.some((i) => i.type === 'flight');
-    if (hasFlight && visaAutoHoldEnabled() && Array.isArray(body.passengers) && body.passengers.length) {
+    const hasFlight = rec.items.some((i) => i.type === 'flight' && i.status !== 'ready');
+    if (hasFlight && visaAutoHoldEnabled() && Array.isArray(rec.passengers) && rec.passengers.length) {
       const o = resolveOrigin(rec.origin); const d = resolveDestination(rec.destination) || resolveOrigin(rec.destination);
       if (o?.airport && d?.airport && !o.approxCode && !d.approxCode) {
-        const hold = await issueVisaFlightHold({ originCode: o.airport, destCode: d.airport, departDate: rec.departDate, returnDate: rec.returnDate, travellers: rec.travellers, passengers: body.passengers, contactEmail: user.email, contactPhone: user.phone });
+        const hold = await issueVisaFlightHold({ originCode: o.airport, destCode: d.airport, departDate: rec.departDate, returnDate: rec.returnDate, travellers: rec.travellers, passengers: rec.passengers, contactEmail: rec.contact?.email, contactPhone: rec.contact?.phone });
         if (hold?.ok && hold.providerRef) applyVisaFlightHold(rec.id, hold);
       }
     }
-    // AUTO-HOTEL (OFF unless VISA_AUTO_HOTEL=true — a hotel booking is a real
-    // liability until cancelled): book a free-cancellation Hotelbeds room and
-    // attach the real confirmation. Any failure → the manual Visa Desk.
     const hasHotel = rec.items.some((i) => i.type === 'hotel' && i.status !== 'ready');
     if (hasHotel && visaAutoHotelEnabled()) {
       const d = resolveDestination(rec.destination) || resolveOrigin(rec.destination);
@@ -4839,27 +4839,41 @@ app.post('/api/visa/reservations', safe(async (req, res) => {
         if (hb?.ok && hb.providerRef) applyVisaHotelBooking(rec.id, hb);
       }
     }
-  } catch { /* fall back to the manual Visa Desk */ }
-  // REFUNDABLE ROOM DEPOSIT as a real Stripe HOLD (authorization, not a charge).
-  // If the customer has a card on file, authorize off-session now; otherwise hand
-  // back a deposit Checkout URL so they can authorize it. Zero for flight-only.
-  let depositCheckoutUrl = null;
+    // Refundable room deposit as a real HOLD on the card saved by the fee payment.
+    if (rec.roomDepositGbp > 0 && stripeEnabled() && !rec.depositAuthorized) {
+      const saved = rec.feePaymentIntent || userSavedCardIntent(rec.userId);
+      if (saved) {
+        const auth = await authorizeSavedCard({ originalPaymentIntentId: saved, amountMinor: Math.round(rec.roomDepositGbp * 100), description: `3JN visa room deposit (refundable hold) — ${rec.id}`, metadata: { kind: 'visa-deposit', reservationId: rec.id, userId: rec.userId } }).catch(() => ({ ok: false }));
+        if (auth.ok && auth.paymentIntentId) setVisaDepositIntent(rec.id, { paymentIntentId: auth.paymentIntentId, authorized: true });
+      }
+    }
+  } catch { /* manual Visa Desk fallback */ }
+}
+// Order a reservation. When Stripe is live the £-fee is CHARGED first (Checkout,
+// which also saves the card), and the reservation is issued only after payment
+// (webhook → fulfilVisaReservation). In simulation it's issued immediately.
+app.post('/api/visa/reservations', safe(async (req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const body = req.body || {};
+  const result = orderVisaReservation(user.id, body, { awaitingPayment: stripeEnabled() });
+  if (!result.ok) return res.status(400).json(result);
   const rec = result.reservation;
-  if (rec.roomDepositGbp > 0 && stripeEnabled()) {
-    const minor = Math.round(rec.roomDepositGbp * 100);
-    const saved = userSavedCardIntent(user.id);
-    let authed = false;
-    if (saved) {
-      const auth = await authorizeSavedCard({ originalPaymentIntentId: saved, amountMinor: minor, description: `3JN visa room deposit (refundable hold) — ${rec.id}`, metadata: { kind: 'visa-deposit', reservationId: rec.id, userId: user.id } }).catch(() => ({ ok: false }));
-      if (auth.ok && auth.paymentIntentId) { setVisaDepositIntent(rec.id, { paymentIntentId: auth.paymentIntentId, authorized: true }); authed = true; }
-    }
-    if (!authed) {
-      const origin = `${req.protocol}://${req.get('host')}`;
-      const co = await createDepositCheckoutSession({ amountMinor: minor, description: `3JN visa room deposit (refundable hold) — ${rec.id}`, userId: user.id, reservationId: rec.id, customerEmail: user.email, successUrl: `${origin}/visaos?deposit=ok`, cancelUrl: `${origin}/visaos?deposit=cancel` }).catch(() => ({ ok: false }));
-      if (co.ok) depositCheckoutUrl = co.url;
-    }
+  if (result.awaitingPayment) {
+    // Charge the service fee via Checkout (saves the card for the deposit hold).
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const co = await createCheckoutSession({
+      amountMinor: Math.round(rec.feeGbp * 100), currency: 'gbp',
+      description: `3JN visa reservation — ${rec.kind}`, userId: user.id, customerEmail: user.email,
+      successUrl: `${origin}/visaos?visa_paid=${rec.id}`, cancelUrl: `${origin}/visaos?visa_cancel=${rec.id}`,
+      metadata: { kind: 'visa-fee', reservationId: rec.id, userId: user.id },
+    }).catch(() => ({ ok: false }));
+    if (!co.ok) return res.status(502).json({ ok: false, error: 'checkout-failed', message: 'Could not start payment. Please try again.' });
+    return res.json({ ...result, checkoutUrl: co.url });
   }
-  res.json({ ...result, reservation: getVisaReservation(result.reservation.id), depositCheckoutUrl });
+  // Simulation (no Stripe): issue immediately.
+  await fulfilVisaReservation(rec.id);
+  res.json({ ...result, reservation: getVisaReservation(rec.id) });
 }));
 // My reservations (download + status).
 app.get('/api/visa/reservations', safe((req, res) => {

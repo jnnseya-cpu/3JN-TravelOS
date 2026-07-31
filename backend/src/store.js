@@ -312,7 +312,7 @@ export function getVisaApplication(appId) {
 // the visa decision. Issuance is handled by the Visa Desk (ops): the order is
 // created 'processing' with a fulfilment job queued; deliverVisaReservation()
 // writes the confirmed locators + validity and notifies the applicant.
-export function orderVisaReservation(userId, payload = {}) {
+export function orderVisaReservation(userId, payload = {}, { awaitingPayment = false } = {}) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'auth-required' };
   const v = validateVisaDocOrder(payload);
@@ -320,6 +320,10 @@ export function orderVisaReservation(userId, payload = {}) {
   const trip = v.trip;
   const fee = visaDocFee(trip.kind, { memberActive: !!u.membership?.active });
   const dep = visaHotelDeposit(trip.nights, trip.kind);
+  // When Stripe is live the service fee is really charged first (Checkout), so
+  // the order waits at 'awaiting-payment' and is only issued after payment. In
+  // simulation (no Stripe) it's treated as paid so the demo flow still works.
+  const deferPay = !!awaitingPayment && fee.feeGbp > 0;
   const rid = id('vres');
   const validUntil = visaReservationValidity(nowISO());
   // `reference` is our INTERNAL 3JN order ref (VF-/VH-) — NOT presented as the
@@ -331,7 +335,7 @@ export function orderVisaReservation(userId, payload = {}) {
   if (trip.needsFlight) items.push({ type: 'flight', status: 'processing', reference: visaDocReference('VF', rid + ':flight'), route: `${trip.origin} → ${trip.destination}${trip.returnDate ? ' → ' + trip.origin : ''}`, departDate: trip.departDate, returnDate: trip.returnDate, provider: null, providerRef: null, verifyUrl: null, heldUntil: null, issuedAt: null, documentReady: false });
   if (trip.needsHotel) items.push({ type: 'hotel', status: 'processing', reference: visaDocReference('VH', rid + ':hotel'), city: trip.destination, checkIn: trip.departDate, nights: trip.nights, provider: null, providerRef: null, verifyUrl: null, freeCancellation: true, issuedAt: null, documentReady: false });
   const rec = {
-    id: rid, userId, kind: trip.kind, status: 'processing',
+    id: rid, userId, kind: trip.kind, status: deferPay ? 'awaiting-payment' : 'processing',
     destination: trip.destination, origin: trip.origin,
     departDate: trip.departDate, returnDate: trip.returnDate, nights: trip.nights, travellers: trip.travellers,
     applicantName: trip.applicantName || u.name || null, visaAppId: payload.visaAppId || null,
@@ -345,7 +349,7 @@ export function orderVisaReservation(userId, payload = {}) {
     roomDepositGbp: dep.depositGbp, roomDepositUSD: round2(dep.depositGbp / GBP_ANCHOR),
     roomDepositStatus: dep.depositGbp > 0 ? 'held' : 'none',
     depositPaymentIntent: null, depositAuthorized: false, // real Stripe hold (set at order / via webhook)
-    paid: true, paymentRef: id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
+    paid: !deferPay, feePaymentIntent: null, paymentRef: deferPay ? null : id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
   };
   db.visaReservations.push(rec);
   capArr(db.visaReservations, 500);
@@ -359,8 +363,21 @@ export function orderVisaReservation(userId, payload = {}) {
     customer: { name: rec.applicantName, email: u.email || null, phone: u.phone || null },
     userId, vendorId: null, supplierRef: null, note: `Hold ${trip.kind} valid until ${validUntil}`, createdAt: nowISO(), completedAt: null,
   });
-  pushNotification(userId, { type: 'success', icon: '🛂', title: 'Visa reservation ordered', body: `Your ${VISA_DOC_PRODUCTS[trip.kind]?.name || 'visa reservation'} is being issued and will be ready shortly, valid until ${validUntil}. You'll be notified when your documents are ready to download.` });
-  return { ok: true, reservation: rec, fee };
+  if (!deferPay) pushNotification(userId, { type: 'success', icon: '🛂', title: 'Visa reservation ordered', body: `Your ${VISA_DOC_PRODUCTS[trip.kind]?.name || 'visa reservation'} is being issued and will be ready shortly, valid until ${validUntil}. You'll be notified when your documents are ready to download.` });
+  return { ok: true, reservation: rec, fee, awaitingPayment: deferPay };
+}
+// The service fee was paid (Stripe Checkout) → flip the order to paid and hand it
+// to fulfilment. Idempotent: a redelivered webhook won't re-notify.
+export function markVisaReservationPaid(rid, { paymentRef = null, paymentIntent = null } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  if (rec.paid) return { ok: true, reservation: rec, already: true };
+  rec.paid = true; rec.paymentRef = paymentRef || rec.paymentRef || id('vpay');
+  rec.feePaymentIntent = paymentIntent || rec.feePaymentIntent;
+  if (rec.status === 'awaiting-payment') rec.status = 'processing';
+  recordAudit({ actor: rec.userId, role: 'consumer', action: 'visa.reservation.paid', entity: 'visa-reservation', entityId: rid, summary: `£${rec.feeGbp} fee paid` });
+  pushNotification(rec.userId, { type: 'success', icon: '🛂', title: 'Payment received — reservation being issued', body: `Your ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'visa reservation'} is being issued now; you'll be notified when it's ready to download.` });
+  return { ok: true, reservation: rec };
 }
 export function listVisaReservationsForUser(userId) {
   return db.visaReservations.filter((r) => r.userId === userId).slice().reverse();

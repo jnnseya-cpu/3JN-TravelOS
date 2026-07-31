@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v211';
+const APP_BUILD = 'v212';
 
 const state = {
   context: null,
@@ -4681,6 +4681,12 @@ async function renderVisaApply() {
 async function renderVisaReservations() {
   const box = $('#visaResBlock');
   if (!box) return;
+  // Feedback on return from the Stripe fee Checkout.
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('visa_paid')) { toast('✓ Payment received — your reservation is being issued.'); history.replaceState(null, '', location.pathname); }
+    else if (q.get('visa_cancel')) { toast('Payment cancelled — your reservation was not placed.'); history.replaceState(null, '', location.pathname); }
+  } catch { /* no-op */ }
   let pricing, mine = [];
   try { pricing = await api('/api/visa/reservations/pricing'); } catch { box.innerHTML = ''; return; }
   try { mine = (await api('/api/visa/reservations')).reservations || []; } catch { /* none yet */ }
@@ -4799,11 +4805,11 @@ window.orderVisaReservationFlow = async () => {
   try {
     const r = await api('/api/visa/reservations', { method: 'POST', body: JSON.stringify(body) });
     if (!r.ok) { toast(r.message || 'Check the reservation details.'); return; }
-    // If a refundable deposit needs authorizing (no card on file), send the
-    // customer to Stripe to place the HOLD (not a charge).
-    if (r.depositCheckoutUrl) {
-      toast('Authorizing your refundable room deposit…');
-      window.location.href = r.depositCheckoutUrl;
+    // When Stripe is live, pay the service fee first (Checkout) — the reservation
+    // is issued once payment lands. Redirect the customer to pay.
+    if (r.checkoutUrl) {
+      toast('Taking you to secure payment…');
+      window.location.href = r.checkoutUrl;
       return;
     }
     const flt = (r.reservation.items || []).find((it) => it.type === 'flight');
