@@ -25,6 +25,7 @@ import {
   notifyHostsOfBooking, backfillProfileFromLead, syncHostReliabilityFromReviews, bumpOSLink, osIntegrationMap,
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
+  orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
@@ -68,6 +69,7 @@ import { learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS, ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY, VISAOS_REVENUE_MODEL, TRAVEL_OS_INTEGRATION } from './visaos.js';
 import { visaFramework, buildChecklist, assessApplication, validateApplicant } from './visa-framework.js';
+import { visaDocPricing } from './visa-docs.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
@@ -201,7 +203,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-31-per-booking-margin-readout-v205';
+const BUILD_TAG = '2026-08-01-visa-support-reservations-v206';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4756,6 +4758,43 @@ app.get('/api/visaos/applications/:id/letter', safe((req, res) => {
 app.get('/api/visa/fees', safe((req, res) => {
   const config = getEmbassyConfig(req.query.country || 'DEFAULT');
   res.json({ country: config.country, embassyName: config.embassyName, fees: config.fees });
+}));
+
+// ---- Visa support reservations (flight + hotel held for a visa file) --------
+// Storefront pricing (member-aware). Public so applicants see the price first.
+app.get('/api/visa/reservations/pricing', safe((req, res) => {
+  res.json(visaDocPricing({ memberActive: !!currentUser(req)?.membership?.active }));
+}));
+// Order a reservation (one-off service fee; the reservation itself is held/refundable).
+app.post('/api/visa/reservations', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const result = orderVisaReservation(user.id, req.body || {});
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+}));
+// My reservations (download + status).
+app.get('/api/visa/reservations', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ reservations: listVisaReservationsForUser(user.id) });
+}));
+app.get('/api/visa/reservations/:id', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const rec = getVisaReservation(req.params.id);
+  if (!rec || rec.userId !== user.id) return res.status(404).json({ error: 'not-found' });
+  res.json({ reservation: rec });
+}));
+// Ops/admin: the Visa Desk queue + deliver (issue the held reservation).
+app.get('/api/admin/visa/reservations', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ reservations: listVisaReservations(req.query.status) });
+}));
+app.post('/api/admin/visa/reservations/:id/deliver', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const by = currentUser(req)?.id || 'ops';
+  res.json(deliverVisaReservation(req.params.id, { ...(req.body || {}), by }));
 }));
 
 app.get('/api/visaos/probability', safe((req, res) => {

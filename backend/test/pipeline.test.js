@@ -3946,6 +3946,44 @@ test('per-booking margin readout: gross fee − perks − vendor carve = net kep
   assert.ok(dash.perBookingMargins.some((r) => r.id === b.id), 'booking appears in the readout');
 });
 
+test('visa support reservations: fee maths, order → issue → deliver, revenue booked', async () => {
+  const { visaDocFee, validateVisaDocOrder, visaReservationValidity } = await import('../src/visa-docs.js');
+  const S = await import('../src/store.js');
+  // Fee maths: pack saves vs separate; members get 20% off.
+  const packNon = visaDocFee('pack', { memberActive: false });
+  const packMem = visaDocFee('pack', { memberActive: true });
+  assert.equal(packNon.feeGbp, 24.99);
+  assert.equal(packMem.memberDiscountPct, 20);
+  assert.ok(packMem.feeGbp < packNon.feeGbp, 'member pays less');
+  assert.ok(visaDocFee('flight').feeGbp + visaDocFee('hotel').feeGbp > packNon.feeGbp, 'pack is cheaper than buying both');
+  // Validation guards.
+  assert.equal(validateVisaDocOrder({ kind: 'pack', destination: 'Dubai' }).ok, false, 'flight needs an origin + date');
+  assert.ok(visaReservationValidity('2026-08-01') > '2026-08-01', 'validity is in the future');
+
+  const u = S.createUser({ email: `vres${Date.now()}@x.co`, name: 'Reyna Vega' });
+  const r = S.orderVisaReservation(u.id, { kind: 'pack', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', returnDate: '2026-09-20', nights: 10, travellers: 2 });
+  assert.equal(r.ok, true);
+  assert.equal(r.reservation.status, 'processing', 'starts processing — issued by the Visa Desk, not instant-faked');
+  assert.equal(r.reservation.items.length, 2, 'flight + hotel');
+  assert.ok(r.reservation.items.every((it) => it.reference && !it.documentReady), 'locators reserved, not yet issued');
+  assert.equal(r.reservation.paid, true);
+  // A Visa Desk fulfilment job is queued.
+  const jobs = S.listFulfilmentOrders({}).filter((o) => o.visaReservationId === r.reservation.id);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].channel, 'ops:visa-desk');
+  // It appears in the applicant's list.
+  assert.ok(S.listVisaReservationsForUser(u.id).some((x) => x.id === r.reservation.id));
+  // Revenue is booked (the one-off service fee), and the pricing floor still holds.
+  const dash = S.profitabilityDashboard();
+  assert.ok(dash.streams.visaDocsRevenueUSD > 0, 'service fee counted as revenue');
+  // Ops delivers → ready, notified, job closed.
+  const del = S.deliverVisaReservation(r.reservation.id, { validUntil: '2026-09-05' });
+  assert.equal(del.ok, true);
+  assert.equal(del.reservation.status, 'ready');
+  assert.ok(del.reservation.items.every((it) => it.documentReady && it.issuedAt), 'all items issued');
+  assert.equal(S.listFulfilmentOrders({}).find((o) => o.visaReservationId === r.reservation.id).status, 'completed');
+});
+
 test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {
   // A clean application lands in the admin queue as pending-review (never live).
   const a = createUser({ email: 'vq1@x.co', name: 'Queue One' });

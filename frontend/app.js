@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v205';
+const APP_BUILD = 'v206';
 
 const state = {
   context: null,
@@ -3304,6 +3304,8 @@ async function renderAdmin() {
   try { qr = await api('/api/admin/quote-requests'); } catch { /* optional panel */ }
   let vend = null;
   try { vend = (await api('/api/admin/vendors')).vendors; } catch { /* optional panel */ }
+  let vres = null;
+  try { vres = (await api('/api/admin/visa/reservations')).reservations; } catch { /* optional panel */ }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -3424,6 +3426,25 @@ async function renderAdmin() {
           <div class="card pad"><span class="eyebrow">All vendors (${vend.length})</span><div style="margin-top:10px">${others}</div></div>
         </div>`;
     })() : ''}
+    ${vres ? (() => {
+      const processing = vres.filter((r) => r.status === 'processing');
+      const q = processing.map((r) => `
+        <div class="card pad" style="margin-bottom:10px;border-color:rgba(244, 183, 28,.35)">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+            <strong>${esc(r.applicantName || r.userId)} <span class="muted" style="font-weight:400">· ${esc((r.kind || '').toUpperCase())}</span></strong>
+            <span style="font-size:12px;color:var(--gold)">£${Number(r.feeGbp || 0).toFixed(2)} · valid ${esc(ukDate(r.validUntil))}</span>
+          </div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + 'n' : ''} · ${r.travellers} pax</div>
+          <div style="margin-top:6px">${(r.items || []).map((it) => `<span class="chip" style="font-size:10px">${it.type === 'flight' ? '✈' : '🏨'} ${esc(it.reference)}</span>`).join(' ')}</div>
+          <button class="btn btn-gold btn-sm" style="margin-top:10px" onclick="visaResDeliver('${esc(r.id)}')">✓ Mark issued &amp; deliver</button>
+        </div>`).join('') || '<div class="muted" style="font-size:13px">No reservations awaiting issue.</div>';
+      const done = vres.filter((r) => r.status !== 'processing').slice(0, 12).map((r) => `<div class="kv"><span>${esc(r.applicantName || r.userId)} <span class="muted">· ${esc(r.kind)} · ${esc(r.destination)}</span></span><span style="color:var(--green)">${esc(r.status)}</span></div>`).join('') || '<div class="muted" style="font-size:13px">None delivered yet.</div>';
+      return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Visa Desk — reservation issuance</h2></div>
+        <div class="console-grid">
+          <div class="card pad"><span class="eyebrow">Awaiting issue (${processing.length})</span><p class="muted" style="font-size:11.5px;margin:4px 0 8px">Issue the held flight itinerary / free-cancellation hotel, then deliver — the applicant is notified and can download.</p><div>${q}</div></div>
+          <div class="card pad"><span class="eyebrow">Recently delivered</span><div style="margin-top:8px">${done}</div></div>
+        </div>`;
+    })() : ''}
     ${qr && qr.requests?.length ? `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Exact-quote requests — confirm real bookable prices</h2></div>
       <div class="card pad">${qr.requests.map((r) => `
         <div style="padding:12px 0;border-bottom:1px solid rgba(223,229,238,.07)">
@@ -3451,6 +3472,7 @@ async function renderAdmin() {
             ['ACU pack sales', st.acuSalesRevenueUSD],
             ['Forfeited search deposits', st.searchDepositRevenueUSD],
             ['Booking protection fees', st.protectionRevenueUSD],
+            ['Visa reservations (service fee)', st.visaDocsRevenueUSD],
             ['Corporate accounts', st.corporateRevenueUSD],
             ['White-label SaaS', st.whiteLabelRevenueUSD],
             ['API per-call revenue', st.apiRevenueUSD],
@@ -4625,6 +4647,7 @@ async function renderVisaApply() {
         <div class="muted" style="font-size:11.5px;margin-top:6px" id="vGateNote">Complete all required fields and attach all documents to enable the AI run.</div>
       </div>
       <div id="visaDecision" style="margin-top:20px"></div>
+      <div id="visaResBlock" style="margin-top:20px"></div>
     </div>`;
 
   $('#vSubmit').addEventListener('click', submitVisa);
@@ -4634,7 +4657,112 @@ async function renderVisaApply() {
   $('#vCountry').addEventListener('change', loadVisaDocs);
   $('#vType').addEventListener('change', loadVisaDocs);
   loadVisaDocs();
+  renderVisaReservations();
 }
+
+// ---- Visa support reservations (flight + hotel held for a visa file) --------
+// Embassies require proof of onward travel + accommodation, but you shouldn't
+// buy a non-refundable ticket/room before your visa. We issue a genuine,
+// verifiable held flight itinerary + a free-cancellation hotel reservation,
+// valid for your appointment window, for a flat one-off service fee.
+async function renderVisaReservations() {
+  const box = $('#visaResBlock');
+  if (!box) return;
+  let pricing, mine = [];
+  try { pricing = await api('/api/visa/reservations/pricing'); } catch { box.innerHTML = ''; return; }
+  try { mine = (await api('/api/visa/reservations')).reservations || []; } catch { /* none yet */ }
+  const money = (n) => '£' + Number(n || 0).toFixed(2);
+  const prod = (p) => `
+    <label class="card pad" style="cursor:pointer;display:block;border-color:rgba(244, 183, 28,.3)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="radio" name="vresKind" value="${p.kind}"${p.kind === 'pack' ? ' checked' : ''} style="accent-color:var(--gold)">
+        <strong>${esc(p.name)}</strong>
+        <span style="margin-left:auto;color:var(--gold);font-weight:700">${money(p.feeGbp)}${p.memberDiscountPct ? ` <span class="muted" style="font-size:11px;text-decoration:line-through">${money(p.baseGbp)}</span>` : ''}</span>
+      </div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">${(p.includes || []).map(esc).join(' · ')}</div>
+    </label>`;
+  const statusChip = (s) => {
+    const map = { processing: ['🕓 Issuing', 'var(--gold)'], ready: ['✓ Ready', 'var(--green)'], released: ['Released', 'var(--muted)'] };
+    const [t, c] = map[s] || [s, 'var(--muted)'];
+    return `<span style="color:${c};font-weight:600">${t}</span>`;
+  };
+  const mineRows = mine.map((r) => `
+    <div class="card pad" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <strong>${esc((pricing.products.find((p) => p.kind === r.kind) || {}).name || r.kind)}</strong>${statusChip(r.status)}
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + ' nights' : ''} · valid until ${esc(ukDate(r.validUntil))}</div>
+      <div style="margin-top:6px">${(r.items || []).map((it) => `<span class="chip" style="font-size:11px;border-color:${it.documentReady ? 'rgba(70,211,154,.4)' : 'rgba(244,183,28,.4)'}">${it.type === 'flight' ? '✈' : '🏨'} ${esc(it.reference)}${it.documentReady ? '' : ' · issuing'}</span>`).join(' ')}</div>
+      ${r.status === 'ready' ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="printVisaReservation('${esc(r.id)}')">🖨 Print confirmation</button>` : '<p class="muted" style="font-size:11.5px;margin-top:6px">Your reservation is being issued — you\'ll be notified when it\'s ready to download.</p>'}
+    </div>`).join('');
+  box.innerHTML = `
+    <div class="card pad" style="border-color:rgba(244, 183, 28,.35)">
+      <span class="eyebrow">🛂 Reservations for your visa — flight &amp; hotel</span>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 12px">Embassies ask for proof of onward travel and accommodation — but don't buy a non-refundable ticket or room before your visa is granted. We issue a <strong>genuine, verifiable held flight itinerary</strong> and a <strong>free-cancellation hotel reservation</strong>, valid ${pricing.validityDays} days for your appointment, for a one-off fee. ${pricing.memberDiscountPct ? `Travel+ members save ${pricing.memberDiscountPct}%.` : ''}</p>
+      <div style="display:grid;gap:8px">${pricing.products.map(prod).join('')}</div>
+      <div class="composer-row" style="margin-top:12px">
+        <div class="field"><label>Flying from</label><input class="in" id="vresOrigin" placeholder="e.g. London"></div>
+        <div class="field"><label>Destination</label><input class="in" id="vresDest" placeholder="e.g. Dubai"></div>
+        <div class="field"><label>Arrival date</label><input class="in" type="date" id="vresDepart"></div>
+        <div class="field"><label>Return date <span class="muted">(optional)</span></label><input class="in" type="date" id="vresReturn"></div>
+        <div class="field"><label>Nights</label><input class="in" type="number" id="vresNights" value="7" min="1" max="90" style="max-width:90px"></div>
+        <div class="field"><label>Travellers</label><input class="in" type="number" id="vresPax" value="1" min="1" max="9" style="max-width:90px"></div>
+      </div>
+      <button class="btn btn-gold" id="vresOrderBtn" style="margin-top:10px">Order reservation &amp; pay</button>
+      <p class="muted" style="font-size:11px;margin-top:8px">The reservation is held/refundable — you pay only the service fee, never the fare or room. It's released after your visa decision.</p>
+      ${mine.length ? `<div style="margin-top:16px"><span class="eyebrow">Your reservations</span><div style="margin-top:8px">${mineRows}</div></div>` : ''}
+    </div>`;
+  // Prefill destination from the visa form if present.
+  const vd = $('#vf_destination'); const dest = vd && vd.options[vd.selectedIndex] ? vd.options[vd.selectedIndex].text : '';
+  if (dest && $('#vresDest') && !$('#vresDest').value) $('#vresDest').value = dest.replace(/^[^\w]*/, '');
+  $('#vresOrderBtn')?.addEventListener('click', orderVisaReservationFlow);
+}
+
+window.orderVisaReservationFlow = async () => {
+  if (!state.user) { openAuth('login'); return; }
+  const kind = (document.querySelector('input[name="vresKind"]:checked') || {}).value || 'pack';
+  const body = {
+    kind,
+    origin: $('#vresOrigin')?.value?.trim(),
+    destination: $('#vresDest')?.value?.trim(),
+    departDate: $('#vresDepart')?.value,
+    returnDate: $('#vresReturn')?.value || null,
+    nights: Number($('#vresNights')?.value) || 7,
+    travellers: Number($('#vresPax')?.value) || 1,
+    applicantName: $('#vf_fullName')?.value || undefined,
+  };
+  const btn = $('#vresOrderBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Ordering…'; }
+  try {
+    const r = await api('/api/visa/reservations', { method: 'POST', body: JSON.stringify(body) });
+    if (!r.ok) { toast(r.message || 'Check the reservation details.'); return; }
+    toast(`✓ Reservation ordered — £${Number(r.fee.feeGbp).toFixed(2)} · being issued, valid until ${ukDate(r.reservation.validUntil)}.`);
+    renderVisaReservations();
+  } catch { toast('Could not order the reservation.'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Order reservation & pay'; } }
+};
+
+window.printVisaReservation = async (id) => {
+  let rec;
+  try { rec = (await api(`/api/visa/reservations/${id}`)).reservation; } catch { toast('Could not load the reservation.'); return; }
+  if (!rec) return;
+  const rows = (rec.items || []).map((it) => it.type === 'flight'
+    ? `<tr><td>Flight reservation</td><td>${esc(it.reference)}</td><td>${esc(it.route || '')}<br>${esc(ukDate(it.departDate))}${it.returnDate ? ' – ' + esc(ukDate(it.returnDate)) : ''}</td></tr>`
+    : `<tr><td>Hotel reservation</td><td>${esc(it.reference)}</td><td>${esc(it.city || '')}<br>${esc(ukDate(it.checkIn))} · ${it.nights} nights</td></tr>`).join('');
+  const w = window.open('', '_blank');
+  if (!w) { toast('Allow pop-ups to print your confirmation.'); return; }
+  w.document.write(`<!doctype html><html><head><title>3JN Visa Reservation ${esc(rec.id)}</title>
+    <style>body{font-family:Arial,Helvetica,sans-serif;color:#16294c;max-width:720px;margin:32px auto;padding:0 20px}
+    h1{font-size:20px;margin:0 0 4px}.muted{color:#667;font-size:12px}table{width:100%;border-collapse:collapse;margin:18px 0}
+    td,th{border:1px solid #dde;padding:10px;text-align:left;font-size:13px;vertical-align:top}th{background:#f4f6fb}
+    .badge{display:inline-block;background:#eaf7ef;color:#1a8f5a;border:1px solid #b8e6cd;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700}</style></head>
+    <body><h1>3JN Travel — Reservation Confirmation</h1>
+    <div class="muted">For visa application purposes · Reference ${esc(rec.id)} · Issued for ${esc(rec.applicantName || '')}</div>
+    <p><span class="badge">Valid until ${esc(ukDate(rec.validUntil))}</span></p>
+    <table><thead><tr><th>Item</th><th>Reference</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted">This is a genuine held/refundable reservation issued to support a visa application. It is not a purchased ticket or paid room; it is released after the visa decision. Verify at 3jntravel.com with the reference above.</p>
+    </body></html>`);
+  w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
+};
 
 // Load the country/type-specific checklist and render each document as an
 // attach-toggle. The AI run stays locked until every document is attached.
@@ -5629,6 +5757,13 @@ window.vendorDecide = async (userId, decision) => {
   try { await api(`/api/admin/vendors/${userId}/decide`, { method: 'POST', body: JSON.stringify({ approve: decision === 'approve', reason }) }); }
   catch (e) { toast(e.message || 'Decision failed.'); return; }
   toast(decision === 'approve' ? '✓ Vendor approved — code issued & applicant notified.' : '✕ Application rejected — applicant notified.');
+  renderAdmin();
+};
+window.visaResDeliver = async (id) => {
+  if (!confirm('Confirm the flight/hotel reservation is issued and deliver it to the applicant?')) return;
+  try { await api(`/api/admin/visa/reservations/${id}/deliver`, { method: 'POST', body: JSON.stringify({}) }); }
+  catch (e) { toast(e.message || 'Could not deliver.'); return; }
+  toast('✓ Reservation delivered — applicant notified.');
   renderAdmin();
 };
 window.provisionTest = async () => {

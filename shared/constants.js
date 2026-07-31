@@ -37,6 +37,17 @@ export const FLIGHT_ONLY_MEMBER_FREE = false;
 // on every single booking, whatever the mix. Perks scale with margin: thin trips
 // give little, fat-margin packages (bedbank) give the full headline savings.
 export const MEMBER_PERK_MARGIN_SHARE = 0.25;
+// ---- Visa support reservations (Revenue Source) -----------------------------
+// A genuine, verifiable onward-flight reservation and a free-cancellation hotel
+// reservation, issued for a visa application and valid long enough to cover an
+// embassy appointment. Sold at a flat one-off SERVICE fee (not the fare/room
+// cost — the reservations are held/refundable, never charged to the traveller).
+// Members get a small discount; the service cost is near-zero so margin holds.
+export const VISA_DOC_FEE_FLIGHT_GBP = 14.99; // onward/return flight reservation
+export const VISA_DOC_FEE_HOTEL_GBP = 14.99;  // accommodation reservation
+export const VISA_DOC_FEE_PACK_GBP = 24.99;   // both together (saves £4.99)
+export const VISA_DOC_MEMBER_DISCOUNT = 0.20; // Travel+ members: 20% off the fee
+export const VISA_DOC_VALIDITY_DAYS = 14;     // reservation stays valid this long
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never
 // of booking value) — plus lifetime attribution on the customer they brought.

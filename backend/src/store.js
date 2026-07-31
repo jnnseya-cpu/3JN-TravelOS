@@ -14,6 +14,7 @@ import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
+import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS } from './visa-docs.js';
 import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
@@ -43,6 +44,7 @@ const db = {
   approvals: [], // business travel approval queue
   notifications: [], // per-user notification feed
   visaApps: [], // VisaOS applications + decisions
+  visaReservations: [], // visa support reservations (flight/hotel held for a visa file)
   esims: [], // provisioned eSIM profiles
   contracts: [], // supplier volume agreements
   blog: [], // AI-written blog posts
@@ -301,6 +303,75 @@ export function listVisaApplicationsForUser(userId) {
 }
 export function getVisaApplication(appId) {
   return db.visaApps.find((a) => a.id === appId) || null;
+}
+
+// ---- Visa support reservations --------------------------------------------
+// Order a genuine, held/refundable flight and/or hotel reservation for a visa
+// application at a flat one-off SERVICE fee. The reservation is NOT a charged
+// fare/room — a flight is HELD and a hotel is FREE-CANCELLATION, released after
+// the visa decision. Issuance is handled by the Visa Desk (ops): the order is
+// created 'processing' with a fulfilment job queued; deliverVisaReservation()
+// writes the confirmed locators + validity and notifies the applicant.
+export function orderVisaReservation(userId, payload = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'auth-required' };
+  const v = validateVisaDocOrder(payload);
+  if (!v.ok) return v;
+  const trip = v.trip;
+  const fee = visaDocFee(trip.kind, { memberActive: !!u.membership?.active });
+  const rid = id('vres');
+  const validUntil = visaReservationValidity(nowISO());
+  const items = [];
+  if (trip.needsFlight) items.push({ type: 'flight', status: 'processing', reference: visaDocReference('VF', rid + ':flight'), route: `${trip.origin} → ${trip.destination}${trip.returnDate ? ' → ' + trip.origin : ''}`, departDate: trip.departDate, returnDate: trip.returnDate, issuedAt: null, documentReady: false });
+  if (trip.needsHotel) items.push({ type: 'hotel', status: 'processing', reference: visaDocReference('VH', rid + ':hotel'), city: trip.destination, checkIn: trip.departDate, nights: trip.nights, issuedAt: null, documentReady: false });
+  const rec = {
+    id: rid, userId, kind: trip.kind, status: 'processing',
+    destination: trip.destination, origin: trip.origin,
+    departDate: trip.departDate, returnDate: trip.returnDate, nights: trip.nights, travellers: trip.travellers,
+    applicantName: trip.applicantName || u.name || null, visaAppId: payload.visaAppId || null,
+    feeGbp: fee.feeGbp, feeUSD: fee.feeUSD, memberDiscountPct: fee.memberDiscountPct,
+    paid: true, paymentRef: id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
+  };
+  db.visaReservations.push(rec);
+  capArr(db.visaReservations, 500);
+  recordAudit({ actor: userId, role: u.role, action: 'visa.reservation.ordered', entity: 'visa-reservation', entityId: rid, summary: `${trip.kind} · ${trip.origin || ''}→${trip.destination} · £${fee.feeGbp}` });
+  // Queue the Visa Desk fulfilment job (ops or an automated hold issues it).
+  db.fulfilmentOrders.push({
+    id: id('ford'), bookingId: null, visaReservationId: rid,
+    componentType: 'visa-reservation', componentLabel: `Visa reservation — ${VISA_DOC_PRODUCTS[trip.kind]?.name || trip.kind}`,
+    channel: 'ops:visa-desk', status: 'new', destination: trip.destination, destCountry: null, serviceDate: trip.departDate,
+    pax: trip.travellers, sellPrice: fee.feeGbp, symbol: '£', sellGbp: fee.feeGbp,
+    customer: { name: rec.applicantName, email: u.email || null, phone: u.phone || null },
+    userId, vendorId: null, supplierRef: null, note: `Hold ${trip.kind} valid until ${validUntil}`, createdAt: nowISO(), completedAt: null,
+  });
+  pushNotification(userId, { type: 'success', icon: '🛂', title: 'Visa reservation ordered', body: `Your ${VISA_DOC_PRODUCTS[trip.kind]?.name || 'visa reservation'} is being issued and will be ready shortly, valid until ${validUntil}. You'll be notified when your documents are ready to download.` });
+  return { ok: true, reservation: rec, fee };
+}
+export function listVisaReservationsForUser(userId) {
+  return db.visaReservations.filter((r) => r.userId === userId).slice().reverse();
+}
+export function getVisaReservation(rid) { return db.visaReservations.find((r) => r.id === rid) || null; }
+export function listVisaReservations(status) {
+  const all = db.visaReservations.slice().reverse();
+  return status ? all.filter((r) => r.status === status) : all;
+}
+// Ops/Visa Desk confirms issuance → mark items ready, close the job, notify.
+export function deliverVisaReservation(rid, { items = null, validUntil = null, note = null, by = 'ops' } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  rec.items.forEach((it) => {
+    const patch = Array.isArray(items) ? items.find((x) => x.type === it.type) : null;
+    it.status = 'ready'; it.documentReady = true; it.issuedAt = nowISO();
+    if (patch?.reference) it.reference = patch.reference;
+    if (patch?.supplierRef) it.supplierRef = patch.supplierRef;
+  });
+  if (validUntil) rec.validUntil = validUntil;
+  rec.status = 'ready'; rec.deliveredAt = nowISO(); if (note) rec.note = note;
+  const order = db.fulfilmentOrders.find((o) => o.visaReservationId === rid && o.status !== 'completed');
+  if (order) { order.status = 'completed'; order.completedAt = nowISO(); order.supplierRef = rec.items.map((i) => i.reference).join(', '); order.note = note || order.note; }
+  recordAudit({ actor: by, role: 'ops', action: 'visa.reservation.delivered', entity: 'visa-reservation', entityId: rid, summary: `${rec.kind} ready · valid until ${rec.validUntil}` });
+  pushNotification(rec.userId, { type: 'success', icon: '📄', title: 'Visa reservation ready', body: `Your ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'visa reservation'} is ready to download for your embassy file. Valid until ${rec.validUntil}.` });
+  return { ok: true, reservation: rec };
 }
 // ---- Embassy governance: per-country configuration --------------------------
 // Criteria/branding/language/fees/templates a government sets for ITS visas.
@@ -2720,6 +2791,7 @@ export function profitabilityDashboard() {
     searchDepositRevenueUSD: round2(db.searchDeposits.filter((d) => d.forfeited).reduce((s, d) => s + d.amountGBP, 0) * GBP_TO_USD),
     acuSalesRevenueUSD: round2((db.acuTxns.filter((t) => t.type === 'PURCHASE').reduce((s, t) => s + t.amount, 0) / ACU_PER_GBP) * GBP_TO_USD),
     protectionRevenueUSD: sumB((b) => b.protection?.fee),
+    visaDocsRevenueUSD: round2(db.visaReservations.filter((r) => r.paid).reduce((s, r) => s + (r.feeUSD || 0), 0)),
     corporateRevenueUSD: round2(users.filter((u) => u.corporatePlan?.active).reduce((s, u) => s + (u.corporatePlan.pricePerMonth || 0), 0) * GBP_TO_USD),
     whiteLabelRevenueUSD: round2(db.apiKeys.filter((k) => !k.revokedAt && k.environment === 'production').length * 199 * GBP_TO_USD),
     apiRevenueUSD: round2(db.apiKeys.reduce((s, k) => s + (k.calls || 0), 0) * 0.05 * GBP_TO_USD),
@@ -2750,10 +2822,12 @@ export function profitabilityDashboard() {
   const memberGrossUSD = streams.subscriptionRevenueUSD + streams.corporateRevenueUSD;
   const memberTxns = users.filter((u) => u.membership?.active).length + users.filter((u) => u.corporatePlan?.active).length;
   const depositGrossUSD = round2(db.searchDeposits.reduce((s, d) => s + (d.amountGBP || 0), 0) * GBP_TO_USD);
+  const visaDocsGrossUSD = round2(db.visaReservations.filter((r) => r.paid).reduce((s, r) => s + (r.feeUSD || 0), 0));
+  const visaDocsTxns = db.visaReservations.filter((r) => r.paid).length;
   const depositTxns = db.searchDeposits.length;
 
-  const grossCardVolumeUSD = round2(bookingPaidUSD + acuGrossUSD + memberGrossUSD + depositGrossUSD);
-  const chargeCount = bookingTxns + acuTxnCount + memberTxns + depositTxns;
+  const grossCardVolumeUSD = round2(bookingPaidUSD + acuGrossUSD + memberGrossUSD + depositGrossUSD + visaDocsGrossUSD);
+  const chargeCount = bookingTxns + acuTxnCount + memberTxns + depositTxns + visaDocsTxns;
   const stripeFeesUSD = round2(grossCardVolumeUSD * STRIPE_PCT + chargeCount * STRIPE_FIXED_USD);
   const infraCostUSD = round2(chargeCount * INFRA_PER_TXN_USD + INFRA_MONTHLY_USD);
   const overheadUSD = round2(OVERHEAD_MONTHLY_USD);
@@ -3138,7 +3212,7 @@ export function sponsoredPlacementRevenueGBP() {
 // array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
 // resolve on any instance sticks and a new ticket can't be overwritten by a peer.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings', 'freeSearchIps'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'visaReservations', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
 // A previously-persisted supportTickets node may be an ARRAY (old whole-array
 // format) or a Firebase object with integer keys. Re-key by the ticket's own id
