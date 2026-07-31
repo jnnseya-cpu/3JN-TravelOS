@@ -201,7 +201,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-07-31-brand-logo-refresh-v203';
+const BUILD_TAG = '2026-07-31-vendor-approval-process-v204';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4150,7 +4150,9 @@ app.get('/api/vendors/programme', safe((req, res) => {
     topSellerBonus: '+1% for the following month — re-earned monthly.',
   });
 }));
-// Apply (AI risk review runs immediately; clean pass auto-approves).
+// Apply. The AI risk review runs immediately as a RECOMMENDATION only — the
+// application lands in 'pending-review' for an admin to decide (a sanctions hit
+// is the sole auto-reject). No code or commission until an admin approves.
 app.post('/api/vendors/apply', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
@@ -4211,8 +4213,9 @@ app.get('/api/admin/vendors', safe((req, res) => {
 }));
 app.post('/api/admin/vendors/:userId/decide', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  const { approve, tier, status } = req.body || {};
-  res.json(decideVendor(req.params.userId, { approve, tier, status }));
+  const { approve, tier, status, reason } = req.body || {};
+  const by = currentUser(req)?.id || 'admin';
+  res.json(decideVendor(req.params.userId, { approve, tier, status, by, reason }));
 }));
 app.post('/api/admin/vendors/payout-run', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;

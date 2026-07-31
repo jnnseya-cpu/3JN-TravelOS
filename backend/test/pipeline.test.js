@@ -75,7 +75,7 @@ import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
 import { bookingDocument, bookingPdf } from '../src/documents.js';
 import { saveEmbassyConfig, getEmbassyConfig, redactVisaForApplicant, releaseVisaDecision } from '../src/store.js';
 import { updateHostPayout, hostDashboard } from '../src/store.js';
-import { applyVendor, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
+import { applyVendor, decideVendor, listVendors, vendorDashboard, runWeeklyVendorPayouts, recordVendorSale, flagVendorSale } from '../src/store.js';
 import { db } from '../src/store.js';
 import { assist } from '../src/assistant.js';
 import { getUserRaw } from '../src/store.js';
@@ -3887,15 +3887,21 @@ test('wave7 MONEY-1: a loyalty-discounted sale never pays a vendor more than 3JN
   assert.equal(legacy.vendorGbp, 30); assert.equal(legacy.platformKeepsGbp, 70);
 });
 
-test('vendor lifecycle: AI risk review → approved → attributed sale → Friday payout', () => {
+test('vendor lifecycle: application → admin approval → attributed sale → Friday payout', () => {
   const v = createUser({ email: 'vlife@x.co', name: 'Vendor Life' });
   const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@v'], businessHistory: true });
-  assert.equal(appd.profile.status, 'approved', 'clean applicant auto-approves');
+  assert.equal(appd.profile.status, 'pending-review', 'no application auto-approves — human decision required');
   assert.ok(appd.profile.vendorCode.startsWith('VND-'));
-  // Missing identity/address → NOT auto-approved.
+  // The code is INERT until approved: a sale attributed before approval earns nothing.
+  const early = recordVendorSale({ vendorId: v.id, bookingId: 'bk-early', saleGbp: 500, customerId: 'someone' });
+  assert.equal(early.ok, false, 'commission cannot accrue before admin approval');
+  // Admin approves → code active, welcome notification, commission unlocked.
+  const dec = decideVendor(v.id, { approve: true, by: 'admin1' });
+  assert.equal(dec.profile.status, 'approved');
+  // Even a clean, complete application stays pending (no auto-approve path).
   const shady = createUser({ email: 'shady@x.co', name: 'No Docs' });
   const appS = applyVendor(shady.id, {});
-  assert.notEqual(appS.profile.status, 'approved', 'incomplete applications never auto-approve');
+  assert.equal(appS.profile.status, 'pending-review', 'applications never auto-approve');
   // Attributed sale on first payment. The carve is 3% of the FEE-EXCLUSIVE
   // supplier base (net £1,000), NOT the fee-inclusive total — so 3JN's 7%
   // keep-floor is preserved. netSuppliersUSD £1,000 ≈ $1,266 at the 0.79 anchor.
@@ -3915,9 +3921,40 @@ test('vendor lifecycle: AI risk review → approved → attributed sale → Frid
   assert.equal(runWeeklyVendorPayouts().batches.filter((x) => x.vendorId === v.id).length, 0, 'never pays twice');
 });
 
+test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {
+  // A clean application lands in the admin queue as pending-review (never live).
+  const a = createUser({ email: 'vq1@x.co', name: 'Queue One' });
+  const ra = applyVendor(a.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@a'], businessHistory: true });
+  assert.equal(ra.profile.status, 'pending-review');
+  assert.ok(ra.profile.aiRecommendation, 'AI recommendation attached for the admin');
+  assert.equal(ra.profile.decidedBy, null, 'no decision yet');
+  // It shows up in the admin queue with applicant identity + AI guidance.
+  const queue = listVendors('pending-review');
+  const row = queue.find((x) => x.userId === a.id);
+  assert.ok(row && row.name === 'Queue One' && row.email === 'vq1@x.co', 'queue carries who applied');
+  assert.ok('overallRisk' in row && 'aiRecommendation' in row, 'queue carries the AI verdict');
+  // Admin approves → active, stamped with who decided.
+  const dec = decideVendor(a.id, { approve: true, by: 'admin7' });
+  assert.equal(dec.profile.status, 'approved');
+  assert.equal(dec.profile.decidedBy, 'admin7');
+  assert.ok(dec.profile.approvedAt);
+  // A second application can be rejected with a reason.
+  const b = createUser({ email: 'vq2@x.co', name: 'Queue Two' });
+  applyVendor(b.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@b'], businessHistory: true });
+  const rej = decideVendor(b.id, { approve: false, by: 'admin7', reason: 'Unverifiable trading history' });
+  assert.equal(rej.profile.status, 'rejected');
+  assert.equal(rej.profile.decisionReason, 'Unverifiable trading history');
+  // A sanctions/blacklist hit is the ONE auto-decision — an immediate reject, no queue.
+  const s = createUser({ email: 'vq3@x.co', name: 'Sanctioned' });
+  const rs = applyVendor(s.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@s'], businessHistory: true, flags: 'sanctions' });
+  assert.equal(rs.profile.status, 'rejected', 'sanctions hit auto-rejects');
+  assert.ok(!listVendors('pending-review').some((x) => x.userId === s.id), 'sanctioned applicant never enters the queue');
+});
+
 test('vendor protections: self-referral earns nothing; flagged sales are not paid', () => {
   const v = createUser({ email: 'vself@x.co', name: 'Selfie' });
   const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@s'], businessHistory: true });
+  decideVendor(v.id, { approve: true }); // admin approval activates the vendor
   // Self-referral: vendor books for themselves with their own code.
   const own = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 500 } }, totalUSD: 635, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: v.id, vendorCode: appd.profile.vendorCode });
   recordPayment(own.id, { type: 'deposit', amount: 100 });
@@ -3932,6 +3969,7 @@ test('vendor protections: self-referral earns nothing; flagged sales are not pai
 test('vendor commission is HELD until the trip completes (departure/checkout passed)', () => {
   const v = createUser({ email: 'vhold@x.co', name: 'Hold V' });
   const appd = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@h'], businessHistory: true });
+  decideVendor(v.id, { approve: true }); // admin approval activates the vendor
   const cust = createUser({ email: 'vhc@x.co', name: 'C' });
   const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1100 }, lines: { netSuppliersUSD: 1265.82 }, revenue: { commissionUSD: 126.58 } }, totalUSD: 1392, travellers: { total: 1 }, components: [
     { type: 'flight', supplier: 'BA', live: true, details: { outbound: { from: 'LHR', to: 'DXB', date: '2097-10-03' }, inbound: { from: 'DXB', to: 'LHR', date: '2097-10-10' } } },
@@ -5226,7 +5264,8 @@ test('wave5 IDOR: disruption + price-guard reject a non-owner', async () => {
 test('wave5 vendor job: re-confirm never double-mints the 90% payout', () => {
   const v = createUser({ email: `vend${Date.now()}@x.co`, name: 'Photo Vendor' });
   const appd = applyVendorW5(v.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@p'], businessHistory: true });
-  assert.equal(appd.profile.status, 'approved');
+  assert.equal(appd.profile.status, 'pending-review');
+  decideVendor(v.id, { approve: true }); // admin approval activates the vendor
   const args = { vendorId: v.id, bookingId: 'bk_w5', orderId: 'ford_w5', priceGbp: 100, serviceDate: '2026-09-01' };
   const first = recordVendorServiceJob(args);
   const second = recordVendorServiceJob(args);

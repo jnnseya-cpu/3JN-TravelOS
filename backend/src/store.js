@@ -2345,17 +2345,30 @@ export function applyVendor(userId, { tier = 'independent', identityDoc, address
   if (!u) return { ok: false, error: 'auth-required' };
   const t = VENDOR_TIERS[tier] || VENDOR_TIERS.independent;
   const review = vendorRiskReview({ name: u.name, email: u.email, tier: t.key, identityDoc, addressProof, socialHandles, businessHistory, documents, flags });
-  const status = review.sanctionsHit ? 'rejected' : review.passed ? 'approved' : 'pending-review';
+  // APPROVAL PROCESS (never weaken): an application is NEVER auto-approved. The
+  // AI risk review is a RECOMMENDATION that routes the application to a human —
+  // it does not grant the partnership itself. A sanctions/blacklist hit is the
+  // only auto-decision (an immediate reject; you never onboard a sanctioned
+  // party). Everything else lands in 'pending-review' until an admin decides in
+  // the Admin → Vendor applications queue. Only decideVendor() issues the code,
+  // unlocks commission and sends the "approved" welcome.
+  const status = review.sanctionsHit ? 'rejected' : 'pending-review';
   const p = {
     userId, tier: t.key, status,
-    vendorCode: 'VND-' + userId.slice(-4).toUpperCase(),
+    vendorCode: 'VND-' + userId.slice(-4).toUpperCase(), // minted now, INERT until approved
     riskReview: review, documents: (documents || []).slice(0, 12),
-    appliedAt: nowISO(), decidedAt: status === 'approved' || status === 'rejected' ? nowISO() : null,
+    aiRecommendation: review.recommendation, overallRisk: review.overallRisk,
+    appliedAt: nowISO(), decidedAt: status === 'rejected' ? nowISO() : null,
+    decidedBy: status === 'rejected' ? 'system:sanctions' : null,
     topSellerMonth: null, // month key this vendor holds the +1% bonus for
   };
   db.vendorProfiles.set(userId, p);
-  recordAudit({ actor: userId, role: u.role, action: 'vendor.applied', entity: 'vendor', entityId: userId, summary: `${t.key} · risk ${review.overallRisk} → ${status}` });
-  if (status === 'approved') pushNotification(userId, { type: 'success', icon: '🤝', title: 'Vendor Partner approved', body: `Welcome to the Vendor Partner Programme! Your code is ${p.vendorCode}. You earn ${(t.commissionRate * 100).toFixed(0)}% on every eligible sale, paid every Friday.` });
+  recordAudit({ actor: userId, role: u.role, action: 'vendor.applied', entity: 'vendor', entityId: userId, summary: `${t.key} · risk ${review.overallRisk} · ${review.recommendation} → ${status}` });
+  if (status === 'rejected') {
+    pushNotification(userId, { type: 'warning', icon: '🤝', title: 'Vendor Partner application declined', body: 'We were unable to approve your Vendor Partner application following compliance screening. If you believe this is an error, contact support.' });
+  } else {
+    pushNotification(userId, { type: 'info', icon: '🤝', title: 'Application received — under review', body: 'Thanks for applying to the Vendor Partner Programme. Our compliance team is reviewing your application; you\'ll be notified as soon as a decision is made. No code or commission is active until you\'re approved.' });
+  }
   return { ok: true, profile: p };
 }
 export function getVendorProfile(userId) { return db.vendorProfiles.get(userId) || null; }
@@ -2364,15 +2377,31 @@ export function findVendorByCode(code) {
   const c = String(code).trim().toUpperCase();
   return [...db.vendorProfiles.values()].find((v) => v.vendorCode === c) || null;
 }
-// Admin decides a pending application (or suspends/reinstates).
-export function decideVendor(userId, { approve, tier, status } = {}) {
+// Admin decides a pending application (or suspends/reinstates). THIS is the
+// human approval step — it issues the code, unlocks commission and notifies the
+// applicant. Notifications fire only on a genuine state transition (idempotent).
+export function decideVendor(userId, { approve, tier, status, by = 'admin', reason = '' } = {}) {
   const p = db.vendorProfiles.get(userId);
   if (!p) return { ok: false, error: 'not-found' };
+  const prev = p.status;
   if (tier && VENDOR_TIERS[tier]) p.tier = tier;
-  if (typeof approve === 'boolean') p.status = approve ? 'approved' : 'rejected';
-  if (status) p.status = status; // e.g. 'suspended'
+  let next = p.status;
+  if (typeof approve === 'boolean') next = approve ? 'approved' : 'rejected';
+  if (status) next = status; // explicit: 'suspended' | 'approved' | 'rejected' | 'pending-review'
+  p.status = next;
   p.decidedAt = nowISO();
-  recordAudit({ actor: 'admin', role: 'admin', action: 'vendor.decided', entity: 'vendor', entityId: userId, summary: `${p.tier} → ${p.status}` });
+  p.decidedBy = by;
+  if (reason) p.decisionReason = reason;
+  const t = VENDOR_TIERS[p.tier] || VENDOR_TIERS.independent;
+  if (next === 'approved' && prev !== 'approved') {
+    p.approvedAt = nowISO();
+    pushNotification(userId, { type: 'success', icon: '🤝', title: 'Vendor Partner approved', body: `Welcome to the Vendor Partner Programme! Your code is ${p.vendorCode}. You earn ${(t.commissionRate * 100).toFixed(0)}% on every eligible sale, paid every Friday.` });
+  } else if (next === 'rejected' && prev !== 'rejected') {
+    pushNotification(userId, { type: 'warning', icon: '🤝', title: 'Vendor Partner application declined', body: reason ? `After review we can't approve your application at this time: ${reason} You're welcome to reapply with updated details.` : 'After review we weren\'t able to approve your Vendor Partner application at this time. You\'re welcome to reapply with updated details.' });
+  } else if (next === 'suspended' && prev !== 'suspended') {
+    pushNotification(userId, { type: 'warning', icon: '⛔', title: 'Vendor Partner suspended', body: reason ? `Your Vendor Partner account has been suspended: ${reason}` : 'Your Vendor Partner account has been suspended pending review. Contact support for details.' });
+  }
+  recordAudit({ actor: by, role: 'admin', action: 'vendor.decided', entity: 'vendor', entityId: userId, summary: `${p.tier} · ${prev} → ${p.status}${reason ? ' · ' + reason : ''}` });
   return { ok: true, profile: p };
 }
 
@@ -2504,7 +2533,20 @@ export function vendorLeaderboard(limit = 20) {
 }
 export function listVendors(status) {
   const all = [...db.vendorProfiles.values()];
-  return status ? all.filter((v) => v.status === status) : all;
+  const list = status ? all.filter((v) => v.status === status) : all;
+  // Enrich for the admin queue: who applied + the AI's recommendation, so an
+  // admin can decide without a second lookup. Returns copies (read-only view).
+  return list.map((v) => {
+    const u = db.users.get(v.userId);
+    return {
+      ...v,
+      name: u?.name || null, email: u?.email || null,
+      aiRecommendation: v.aiRecommendation || v.riskReview?.recommendation || null,
+      overallRisk: v.overallRisk ?? v.riskReview?.overallRisk ?? null,
+      kycIncomplete: !!v.riskReview?.kycIncomplete,
+      sanctionsHit: !!v.riskReview?.sanctionsHit,
+    };
+  });
 }
 
 // Admin / profitability snapshot.

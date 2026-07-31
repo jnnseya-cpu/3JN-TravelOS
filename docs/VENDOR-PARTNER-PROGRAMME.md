@@ -37,7 +37,19 @@ Access is not automatic. AI agents + compliance review screen every applicant:
 identity verification · proof of address · online footprint · social credibility ·
 fraud risk signals · previous business activity · reputation · behavioural risk ·
 payment risk · travel-compliance risk · sanctions/blacklist screening · document
-authenticity. Only passing applicants receive portal access.
+authenticity.
+
+**Approval process (no application is ever auto-approved):**
+1. Applicant submits → the AI risk review runs and produces a *recommendation*
+   (APPROVE / REFER / REJECT) plus an overall risk score. The application lands in
+   `pending-review` — no sell code, no commission, nothing active yet.
+2. A sanctions/blacklist hit is the ONLY automatic decision: an immediate reject
+   (a sanctioned party never enters the queue).
+3. An admin reviews the application in **Admin → Vendor Partner applications** with
+   the AI recommendation, risk score and KYC flags in front of them, then Approves
+   or Rejects (with a reason). Only this human decision issues the vendor code,
+   unlocks commission and sends the applicant their welcome. Admins can later
+   suspend/reinstate a partner from the same queue.
 
 ## 5. Vendor Portal
 Approved partners get a secure portal: sell eligible products · track sales ·

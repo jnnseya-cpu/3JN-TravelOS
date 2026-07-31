@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v203';
+const APP_BUILD = 'v204';
 
 const state = {
   context: null,
@@ -2948,7 +2948,10 @@ async function renderVendors() {
   let mine = null;
   if (state.user) { try { mine = (await api('/api/vendors/me')).dashboard; } catch { /* not a vendor yet */ } }
 
-  const portal = mine ? `
+  // Status-aware portal: the live sell link + earnings ONLY show once an admin
+  // has approved the application. Pending/declined/suspended each get a clear
+  // status card instead — no code or commission is active until approved.
+  const approvedPortal = () => `
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:22px">
       ${[['Status', mine.status], ['Rate', mine.commissionRatePct + '%' + (mine.topSellerBonusActive ? ' 🏆' : '')], ['Sales', mine.totalSales], ['Earned', '£' + mine.commissionEarnedGbp.toLocaleString()], ['Held until travel', '£' + (mine.heldUntilTravelGbp || 0).toLocaleString()], ['Ready for Friday', '£' + mine.pendingPayoutGbp.toLocaleString()]]
         .map(([l, v]) => `<div class="card pad" style="text-align:center"><div class="t-label">${l}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${v}</div></div>`).join('')}
@@ -2960,17 +2963,43 @@ async function renderVendors() {
       </div>
       <p class="muted" style="font-size:12px;margin-top:8px">Code <strong style="color:var(--gold)">${esc(mine.vendorCode)}</strong> · Every eligible sale through your link earns ${mine.commissionRatePct}% — paid automatically every Friday. ${mine.leaderboardRank ? `Leaderboard: #${mine.leaderboardRank}.` : ''} Top seller each month earns +1% the following month.</p>
       ${(mine.payoutHistory || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Recent payouts</span>${mine.payoutHistory.map((p) => `<div class="kv"><span>${ukDate(p.at)}</span><span>£${p.amountGbp.toLocaleString()} · <span class="muted">${esc(p.status)}</span></span></div>`).join('')}</div>` : ''}
-    </div>`
-    : `
+    </div>`;
+
+  const statusCard = () => {
+    const s = mine.status;
+    if (s === 'pending-review') return `
+      <div class="card pad center" style="margin-top:22px;border-color:rgba(244, 183, 28,.35)">
+        <div style="font-size:34px;margin-bottom:6px">🕓</div>
+        <h3 style="margin:0 0 8px">Application under review</h3>
+        <p class="muted" style="max-width:560px;margin:0 auto">Thanks for applying — your application has passed the automated risk screen and is now with our compliance team for a final decision. <strong>No sell code or commission is active yet.</strong> We'll notify you the moment you're approved, and your portal, sell link and weekly payouts unlock here automatically.</p>
+      </div>`;
+    if (s === 'rejected') return `
+      <div class="card pad center" style="margin-top:22px;border-color:rgba(255,107,107,.4)">
+        <div style="font-size:34px;margin-bottom:6px">🚫</div>
+        <h3 style="margin:0 0 8px">Application not approved</h3>
+        <p class="muted" style="max-width:560px;margin:0 auto">We weren't able to approve your Vendor Partner application at this time. If you believe this is an error or your circumstances have changed, contact support to reapply.</p>
+      </div>`;
+    if (s === 'suspended') return `
+      <div class="card pad center" style="margin-top:22px;border-color:rgba(255,107,107,.4)">
+        <div style="font-size:34px;margin-bottom:6px">⛔</div>
+        <h3 style="margin:0 0 8px">Account suspended</h3>
+        <p class="muted" style="max-width:560px;margin:0 auto">Your Vendor Partner account is currently suspended. Contact support to resolve this and reinstate your portal.</p>
+      </div>`;
+    return approvedPortal();
+  };
+
+  const applyCard = `
     <div class="card pad center" style="margin-top:22px">
       <h3 style="margin:0 0 8px">${state.user ? 'Apply to become a Vendor Partner' : 'Sign in to apply'}</h3>
-      <p class="muted" style="max-width:560px;margin:0 auto 14px">Every applicant passes an AI risk review (identity, address, credibility, fraud, sanctions screening). Approved partners get the portal, weekly Friday payouts and the monthly Top Seller bonus.</p>
+      <p class="muted" style="max-width:560px;margin:0 auto 14px">Every applicant passes an AI risk review (identity, address, credibility, fraud, sanctions screening), then a <strong>human compliance review</strong> before approval. Approved partners get the portal, weekly Friday payouts and the monthly Top Seller bonus.</p>
       ${state.user ? `
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
         <button class="btn btn-gold" onclick="applyVendorFlow('independent')">Apply as Individual (3%)</button>
         <button class="btn btn-ghost" onclick="applyVendorFlow('registered')">Apply as Registered Agent (4%)</button>
       </div>` : '<button class="btn btn-gold" onclick="openAuth()">Sign in / Create account</button>'}
     </div>`;
+
+  const portal = mine ? (mine.status === 'approved' ? approvedPortal() : statusCard()) : applyCard;
 
   // SERVICE LISTINGS + JOBS — for approved vendors who DELIVER services
   // (photographer, guide, driver, translator, restaurant). They list at their
@@ -3050,7 +3079,7 @@ window.confirmVendorJob = async (id) => {
 window.applyVendorFlow = async (tier) => {
   try {
     const r = await api('/api/vendors/apply', { method: 'POST', body: JSON.stringify({ tier, identityDoc: true, addressProof: true, socialHandles: ['pending-verification'], businessHistory: tier === 'registered', documents: tier === 'registered' ? ['company-registration', 'tax-registration', 'director-id', 'bank-proof'] : [] }) });
-    if (r.ok) { toast(r.profile.status === 'approved' ? '✓ Approved! Welcome to the programme.' : 'Application received — our compliance team is reviewing it.'); renderVendors(); }
+    if (r.ok) { toast(r.profile.status === 'rejected' ? 'Application could not be approved (compliance screening).' : '✓ Application received — our compliance team will review it and notify you.'); renderVendors(); }
     else toast('Could not submit application.');
   } catch { toast('Could not submit application.'); }
 };
@@ -3273,6 +3302,8 @@ async function renderAdmin() {
   try { uh = await api('/api/admin/users-hosts'); } catch { /* optional panel */ }
   let qr = null;
   try { qr = await api('/api/admin/quote-requests'); } catch { /* optional panel */ }
+  let vend = null;
+  try { vend = (await api('/api/admin/vendors')).vendors; } catch { /* optional panel */ }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -3365,6 +3396,32 @@ async function renderAdmin() {
             <div class="card pad"><span class="eyebrow">All properties (${(uh.listings || []).length})</span>${allListings}</div>
             <div class="card pad" style="margin-top:16px"><span class="eyebrow">All users (${(uh.users || []).length}) · ${(uh.hosts || []).length} hosts</span>${userRows}</div>
           </div>
+        </div>`;
+    })() : ''}
+    ${vend ? (() => {
+      const tierLabel = (k) => k === 'registered' ? 'Registered Agent (4%)' : 'Individual (3%)';
+      const riskCol = (r) => r == null ? 'var(--muted)' : r <= 30 ? '#79d99b' : r <= 45 ? 'var(--gold)' : '#ff6b6b';
+      const recCol = (rec) => /APPROVE/.test(rec || '') ? '#79d99b' : /REJECT/.test(rec || '') ? '#ff6b6b' : 'var(--gold)';
+      const pending = vend.filter((v) => v.status === 'pending-review');
+      const pend = pending.map((v) => `
+        <div class="card pad" style="margin-bottom:10px;border-color:rgba(244, 183, 28,.35)">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
+            <strong>${esc(v.name || v.userId)} <span class="muted" style="font-weight:400">${v.email ? '· ' + esc(v.email) : ''}</span></strong>
+            <span style="font-size:12px;color:${riskCol(v.overallRisk)}">AI risk ${v.overallRisk ?? '—'}/100</span>
+          </div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">${tierLabel(v.tier)} · applied ${v.appliedAt ? ukDate(v.appliedAt) : '—'}${v.documents?.length ? ' · ' + v.documents.length + ' docs' : ''}</div>
+          <div style="margin-top:6px;font-size:12px;color:${recCol(v.aiRecommendation)}">🤖 ${esc(v.aiRecommendation || 'No recommendation')}</div>
+          ${v.kycIncomplete ? '<div style="font-size:11.5px;color:#ff8a8a;margin-top:3px">⚠ KYC incomplete — identity / address / registration docs missing</div>' : ''}
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn btn-gold btn-sm" onclick="vendorDecide('${esc(v.userId)}','approve')">✓ Approve</button>
+            <button class="btn btn-ghost btn-sm" onclick="vendorDecide('${esc(v.userId)}','reject')" style="color:#ff8a8a">✕ Reject</button>
+          </div>
+        </div>`).join('') || '<div class="muted" style="font-size:13px">No applications awaiting review.</div>';
+      const others = vend.filter((v) => v.status !== 'pending-review').map((v) => `<div class="kv"><span>${esc(v.name || v.userId)} <span class="muted">· ${tierLabel(v.tier)}</span></span><span style="color:${v.status === 'approved' ? '#79d99b' : v.status === 'rejected' ? '#ff6b6b' : 'var(--gold)'}">${esc(v.status)}${v.status === 'approved' ? ' · ' + esc(v.vendorCode) : ''}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No decided vendors yet.</div>';
+      return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Vendor Partner applications</h2></div>
+        <div class="console-grid">
+          <div class="card pad"><span class="eyebrow">Awaiting your decision (${pending.length})</span><div style="margin-top:10px">${pend}</div></div>
+          <div class="card pad"><span class="eyebrow">All vendors (${vend.length})</span><div style="margin-top:10px">${others}</div></div>
         </div>`;
     })() : ''}
     ${qr && qr.requests?.length ? `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Exact-quote requests — confirm real bookable prices</h2></div>
@@ -5537,6 +5594,15 @@ window.reviewListing = async (id, decision) => {
   try { await api(`/api/admin/listings/${id}/review`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); }
   catch (e) { toast(e.message || 'Review failed.'); return; }
   toast(decision === 'approve' ? '✓ Property approved — now live for booking.' : '✕ Property rejected — host notified.');
+  renderAdmin();
+};
+window.vendorDecide = async (userId, decision) => {
+  let reason = '';
+  if (decision === 'reject') { reason = prompt('Reason for rejection (sent to the applicant):') || 'Did not pass review'; }
+  else if (!confirm('Approve this Vendor Partner? This issues their sell code and starts commission on their sales.')) return;
+  try { await api(`/api/admin/vendors/${userId}/decide`, { method: 'POST', body: JSON.stringify({ approve: decision === 'approve', reason }) }); }
+  catch (e) { toast(e.message || 'Decision failed.'); return; }
+  toast(decision === 'approve' ? '✓ Vendor approved — code issued & applicant notified.' : '✕ Application rejected — applicant notified.');
   renderAdmin();
 };
 window.provisionTest = async () => {
