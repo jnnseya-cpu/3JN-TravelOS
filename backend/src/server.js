@@ -92,7 +92,7 @@ import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
-import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-payment-recovery-v216';
+const BUILD_TAG = '2026-08-01-stripe-webhook-status-v217';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1943,6 +1943,27 @@ app.get('/api/admin/ai-margin', safe((req, res) => {
   res.json({ minMarginPct: MIN_AI_MARGIN * 100, ...aiMarginReport(req.query.provider) });
 }));
 
+// Is the Stripe webhook REGISTERED (not just the secret set)? Asks Stripe for the
+// account's webhook endpoints and confirms one points at THIS handler with
+// checkout.session.completed enabled. The definitive go-live check.
+app.get('/api/admin/stripe/webhook-status', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const HANDLER_PATH = '/api/pay/stripe/webhook';
+  const reg = await webhookRegistration(HANDLER_PATH);
+  const origin = `${req.protocol}://${req.get('host')}`;
+  const expectedUrl = `${origin}${HANDLER_PATH}`;
+  const registered = !!reg.matched;
+  const verdict = !stripeEnabled()
+    ? 'Stripe is not configured — nothing to register yet.'
+    : !reg.ok
+      ? `Could not read your Stripe webhook endpoints: ${reg.reason}.`
+      : registered
+        ? `✓ Webhook REGISTERED and enabled at ${reg.matched.url} with checkout.session.completed${reg.secretSet ? '' : ' — but STRIPE_WEBHOOK_SECRET is NOT set on the server, so its signature will be rejected. Set it from the endpoint\'s "Signing secret".'}. ${reg.secretSet ? 'Primary path is live.' : ''}`.trim()
+        : reg.endpoints.length
+          ? `✗ No registered endpoint matches ${expectedUrl} with checkout.session.completed. Found ${reg.endpoints.length} other endpoint(s) — check the URL/events. (Payments still issue via the return-reconcile safety net, but fix this for the clean primary path.)`
+          : `✗ No webhook endpoints registered on this Stripe account. Add one → Stripe Dashboard · Developers · Webhooks · "Add endpoint": URL ${expectedUrl}, event checkout.session.completed. (Payments still issue via the return-reconcile safety net meanwhile.)`;
+  res.json({ mode: reg.mode, registered, secretSet: reg.secretSet, expectedUrl, matched: reg.matched, otherEndpoints: reg.endpoints, verdict });
+}));
 // Live-supplier status: is Duffel connected, and is it a TEST or LIVE key?
 app.get('/api/admin/live-status', safe(async (req, res) => {
   if (!requireRole(req, res, ['admin'])) return;

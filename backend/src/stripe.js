@@ -120,6 +120,32 @@ async function stripeGet(path) {
   return json;
 }
 
+// Ask Stripe which webhook endpoints are REGISTERED on this account, and whether
+// one actually points at our handler with checkout.session.completed enabled.
+// This is the only way to *confirm* the webhook is wired (the secret being set
+// is necessary but not sufficient). `expectPath` is our handler path, e.g.
+// '/api/pay/stripe/webhook'.
+export async function webhookRegistration(expectPath = '/api/pay/stripe/webhook') {
+  const key = env.STRIPE_SECRET_KEY || '';
+  const mode = key.startsWith('sk_live') ? 'live' : key.startsWith('sk_test') ? 'test' : 'none';
+  if (!key) return { ok: false, mode, secretSet: false, reason: 'not-configured', endpoints: [], matched: null };
+  const secretSet = Boolean(env.STRIPE_WEBHOOK_SECRET);
+  try {
+    const list = await stripeGet('/webhook_endpoints?limit=100');
+    const endpoints = (list.data || []).map((e) => ({
+      url: e.url, status: e.status,
+      wildcard: Array.isArray(e.enabled_events) && e.enabled_events.includes('*'),
+      hasCheckoutCompleted: Array.isArray(e.enabled_events) && (e.enabled_events.includes('*') || e.enabled_events.includes('checkout.session.completed')),
+    }));
+    // A match = a registered endpoint whose URL ends with our handler path, is
+    // enabled, and subscribes to checkout.session.completed (or all events).
+    const matched = endpoints.find((e) => e.url && e.url.endsWith(expectPath) && e.status === 'enabled' && e.hasCheckoutCompleted) || null;
+    return { ok: true, mode, secretSet, expectPath, matched, endpoints };
+  } catch (e) {
+    return { ok: false, mode, secretSet, reason: e?.message || 'lookup-failed', endpoints: [], matched: null };
+  }
+}
+
 // Retrieve a Checkout Session to confirm payment WITHOUT relying on the webhook.
 // On return from Checkout the app calls this to reconcile the booking — so a
 // missing/delayed/misconfigured webhook can never leave a paid booking stuck at
