@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v212';
+const APP_BUILD = 'v213';
 
 const state = {
   context: null,
@@ -4732,7 +4732,7 @@ async function renderVisaReservations() {
       <div id="vresPaxDetails" style="margin-top:6px"></div>
       <div id="vresDepositNote" style="margin-top:8px"></div>
       <button class="btn btn-gold" id="vresOrderBtn" style="margin-top:10px">Order reservation &amp; pay</button>
-      <p class="muted" style="font-size:11px;margin-top:8px">You never pay the airfare or the room. The flight is held free; the hotel is a real free-cancellation booking, so a <strong>fully-refundable room deposit</strong> is held and released after your visa decision.</p>
+      <p class="muted" style="font-size:11px;margin-top:8px">You never pay the airfare or the room. The flight is held free; the hotel is a real free-cancellation booking, so a <strong>fully-refundable room deposit</strong> is held (not charged) and released once the booking is safely cancelled.</p>
       ${mine.length ? `<div style="margin-top:16px"><span class="eyebrow">Your reservations</span><div style="margin-top:8px">${mineRows}</div></div>` : ''}
     </div>`;
   // Prefill destination from the visa form if present.
@@ -4747,12 +4747,22 @@ async function renderVisaReservations() {
     if (kind === 'hotel') { wrap.innerHTML = ''; return; }
     const n = Math.max(1, Math.min(9, Number($('#vresPax')?.value) || 1));
     const lead = $('#vf_fullName')?.value || '';
+    // DoB as Day/Month/Year selects — no calendar to page back through, and each
+    // dropdown is type-ahead (type "1985" to jump). Assembled into ISO in collect.
+    const yNow = new Date().getFullYear();
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dobPicker = (i) => `
+      <div style="display:flex;gap:4px">
+        <select class="in vpax" data-i="${i}" data-k="dobD" style="max-width:66px"><option value="">Day</option>${Array.from({ length: 31 }, (_, d) => `<option value="${d + 1}">${d + 1}</option>`).join('')}</select>
+        <select class="in vpax" data-i="${i}" data-k="dobM" style="max-width:80px"><option value="">Month</option>${MONTHS.map((m, mi) => `<option value="${mi + 1}">${m}</option>`).join('')}</select>
+        <select class="in vpax" data-i="${i}" data-k="dobY" style="max-width:82px"><option value="">Year</option>${Array.from({ length: yNow - 1920 + 1 }, (_, k) => yNow - k).map((y) => `<option value="${y}">${y}</option>`).join('')}</select>
+      </div>`;
     const block = (i) => `
       <div style="padding:8px;border:1px solid var(--line);border-radius:10px;margin-top:6px">
         <div class="muted" style="font-size:11px;margin-bottom:4px">Passenger ${i + 1}${i === 0 ? ' (lead)' : ''} — as on passport</div>
         <div class="composer-row">
           <div class="field" style="flex:1;min-width:160px"><input class="in vpax" data-i="${i}" data-k="fullName" placeholder="Full name" value="${i === 0 ? esc(lead) : ''}"></div>
-          <div class="field"><label class="muted" style="font-size:10px">Date of birth</label><input class="in vpax" type="date" data-i="${i}" data-k="dob"></div>
+          <div class="field"><label class="muted" style="font-size:10px">Date of birth</label>${dobPicker(i)}</div>
           <div class="field"><label class="muted" style="font-size:10px">Title</label><select class="in vpax" data-i="${i}" data-k="title"><option value="mr">Mr</option><option value="ms">Ms</option><option value="mrs">Mrs</option><option value="miss">Miss</option></select></div>
           <div class="field"><label class="muted" style="font-size:10px">Gender</label><select class="in vpax" data-i="${i}" data-k="gender"><option value="m">Male</option><option value="f">Female</option></select></div>
         </div>
@@ -4768,7 +4778,7 @@ async function renderVisaReservations() {
     if (kind === 'flight') { note.innerHTML = ''; return; }
     const n = Math.max(1, Math.min(90, Number($('#vresNights')?.value) || 1));
     const d = Math.min(dep.capGbp, Math.max(dep.minGbp, n * dep.perNightGbp));
-    note.innerHTML = `<div class="pill" style="border-color:rgba(70,211,154,.35);font-size:12px">🏨 Refundable room deposit: <strong>£${d.toFixed(2)}</strong> <span class="muted">— held for the hotel booking, fully released after your visa decision (${dep.perNightGbp}/night, min £${dep.minGbp}, cap £${dep.capGbp}).</span></div>`;
+    note.innerHTML = `<div class="pill" style="border-color:rgba(70,211,154,.35);font-size:12px">🏨 Refundable room deposit: <strong>£${d.toFixed(2)}</strong> <span class="muted">— a hold (not a charge) that secures the free-cancellation room; released once the booking is safely cancelled. You're only charged if you keep the room past its free-cancellation date (£${dep.perNightGbp}/night, min £${dep.minGbp}, cap £${dep.capGbp}).</span></div>`;
   };
   const refresh = () => { window.renderVisaPaxFields(); window.updateVisaDeposit(); };
   box.querySelectorAll('input[name="vresKind"]').forEach((el) => el.addEventListener('change', refresh));
@@ -4784,7 +4794,13 @@ function collectVisaPassengers() {
     const i = el.getAttribute('data-i'); const k = el.getAttribute('data-k');
     (rows[i] = rows[i] || {})[k] = el.value?.trim();
   });
-  return Object.keys(rows).sort().map((i) => rows[i]).filter((p) => p.fullName);
+  return Object.keys(rows).sort().map((i) => {
+    const p = rows[i];
+    // Reassemble the Day/Month/Year selects into the ISO date the backend wants.
+    if (p.dobY && p.dobM && p.dobD) p.dob = `${p.dobY}-${String(p.dobM).padStart(2, '0')}-${String(p.dobD).padStart(2, '0')}`;
+    delete p.dobD; delete p.dobM; delete p.dobY;
+    return p;
+  }).filter((p) => p.fullName);
 }
 
 window.orderVisaReservationFlow = async () => {
