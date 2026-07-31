@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v214';
+const APP_BUILD = 'v216';
 
 const state = {
   context: null,
@@ -4681,11 +4681,17 @@ async function renderVisaApply() {
 async function renderVisaReservations() {
   const box = $('#visaResBlock');
   if (!box) return;
-  // Feedback on return from the Stripe fee Checkout.
+  // Return from the Stripe fee Checkout. Reconcile DIRECTLY from the session id
+  // (the safety net if the webhook is delayed/misconfigured) so the reservation
+  // issues even when no webhook fires — idempotent with the webhook.
   try {
     const q = new URLSearchParams(location.search);
-    if (q.get('visa_paid')) { toast('✓ Payment received — your reservation is being issued.'); history.replaceState(null, '', location.pathname); }
-    else if (q.get('visa_cancel')) { toast('Payment cancelled — your reservation was not placed.'); history.replaceState(null, '', location.pathname); }
+    const paidId = q.get('visa_paid'); const sid = q.get('session_id');
+    if (paidId) {
+      toast('✓ Payment received — issuing your reservation…');
+      if (sid) { try { await api(`/api/visa/reservations/${paidId}/reconcile`, { method: 'POST', body: JSON.stringify({ sessionId: sid }) }); } catch { /* webhook will catch it */ } }
+      history.replaceState(null, '', location.pathname);
+    } else if (q.get('visa_cancel')) { toast('Payment cancelled — your reservation was not placed.'); history.replaceState(null, '', location.pathname); }
   } catch { /* no-op */ }
   let pricing, mine = [];
   try { pricing = await api('/api/visa/reservations/pricing'); } catch { box.innerHTML = ''; return; }

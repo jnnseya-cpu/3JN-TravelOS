@@ -462,6 +462,19 @@ export function visaHotelsToCancel(todayISO = null, bufferDays = 2) {
     .map(({ r, it }) => ({ id: r.id, hotelbedsRef: it.hotelbedsRef, cancelBy: it.cancelBy }));
 }
 export function getVisaReservation(rid) { return db.visaReservations.find((r) => r.id === rid) || null; }
+// Store the fee Checkout session id so a stuck payment (webhook missed AND the
+// customer never returned) can be recovered later by an admin reconcile.
+export function setVisaFeeSession(rid, sessionId) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec || !sessionId) return { ok: false };
+  rec.feeCheckoutSession = sessionId;
+  return { ok: true };
+}
+// Reservations awaiting payment (for an admin reconcile sweep) — each carries the
+// Checkout session id needed to verify the payment with Stripe.
+export function visaReservationsAwaitingPayment() {
+  return db.visaReservations.filter((r) => !r.paid && r.status === 'awaiting-payment' && r.feeCheckoutSession);
+}
 // Record the Stripe deposit hold (authorization) on a reservation — from the
 // order-time off-session auth, or from the deposit Checkout webhook.
 export function setVisaDepositIntent(rid, { paymentIntentId, authorized = true } = {}) {

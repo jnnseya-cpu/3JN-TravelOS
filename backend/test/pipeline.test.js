@@ -4002,6 +4002,10 @@ test('visa reservations: fee is charged first when Stripe is live (awaiting-paym
   assert.equal(pending.awaitingPayment, true);
   assert.equal(pending.reservation.paid, false, 'not paid until the fee clears');
   assert.equal(pending.reservation.status, 'awaiting-payment');
+  // Recovery net: the stored fee session id lets an admin sweep re-verify a
+  // stuck payment (webhook missed AND customer never returned).
+  S.setVisaFeeSession(pending.reservation.id, 'cs_test_stuck');
+  assert.ok(S.visaReservationsAwaitingPayment().some((r) => r.id === pending.reservation.id && r.feeCheckoutSession === 'cs_test_stuck'), 'awaiting-payment sweep sees the stored session');
   const revBefore = S.profitabilityDashboard().streams.visaDocsRevenueUSD;
   // Fee paid (webhook) → flips to paid + processing, and revenue now counts.
   const paid = S.markVisaReservationPaid(pending.reservation.id, { paymentRef: 'cs_test', paymentIntent: 'pi_fee_1' });
@@ -4011,6 +4015,8 @@ test('visa reservations: fee is charged first when Stripe is live (awaiting-paym
   assert.equal(paid.reservation.feePaymentIntent, 'pi_fee_1');
   // Idempotent: a redelivered webhook doesn't double-process.
   assert.equal(S.markVisaReservationPaid(pending.reservation.id, {}).already, true);
+  // Once paid, it drops out of the awaiting-payment sweep.
+  assert.ok(!S.visaReservationsAwaitingPayment().some((r) => r.id === pending.reservation.id), 'paid reservation leaves the sweep');
   // Simulation path (no Stripe flag) still issues immediately (paid true).
   const sim = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Sim', dob: '1990-01-01' }] });
   assert.equal(sim.reservation.paid, true);

@@ -26,7 +26,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
-  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid,
+  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid, setVisaFeeSession, visaReservationsAwaitingPayment,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-homepage-card-v214';
+const BUILD_TAG = '2026-08-01-visa-payment-recovery-v216';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4865,15 +4865,59 @@ app.post('/api/visa/reservations', safe(async (req, res) => {
     const co = await createCheckoutSession({
       amountMinor: Math.round(rec.feeGbp * 100), currency: 'gbp',
       description: `3JN visa reservation — ${rec.kind}`, userId: user.id, customerEmail: user.email,
-      successUrl: `${origin}/visaos?visa_paid=${rec.id}`, cancelUrl: `${origin}/visaos?visa_cancel=${rec.id}`,
+      successUrl: `${origin}/visaos?visa_paid=${rec.id}&session_id={CHECKOUT_SESSION_ID}`, cancelUrl: `${origin}/visaos?visa_cancel=${rec.id}`,
       metadata: { kind: 'visa-fee', reservationId: rec.id, userId: user.id },
     }).catch(() => ({ ok: false }));
     if (!co.ok) return res.status(502).json({ ok: false, error: 'checkout-failed', message: 'Could not start payment. Please try again.' });
+    if (co.sessionId) setVisaFeeSession(rec.id, co.sessionId); // recoverable if webhook + return both miss
     return res.json({ ...result, checkoutUrl: co.url });
   }
   // Simulation (no Stripe): issue immediately.
   await fulfilVisaReservation(rec.id);
   res.json({ ...result, reservation: getVisaReservation(rec.id) });
+}));
+// RECONCILE a visa reservation directly from its paid Checkout session — the
+// safety net for when the Stripe webhook is delayed or misconfigured. Called on
+// return from Checkout (?session_id={CHECKOUT_SESSION_ID}); needs no stored
+// state, so it survives a serverless instance change. Idempotent with the
+// webhook: markVisaReservationPaid + fulfil both no-op if already done.
+app.post('/api/visa/reservations/:id/reconcile', safe(async (req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const rec = getVisaReservation(req.params.id);
+  if (!rec) return res.status(404).json({ error: 'not-found' });
+  if (rec.userId !== user.id && user.role !== 'admin') return res.status(403).json({ error: 'not-your-reservation' });
+  if (rec.paid) return res.json({ reservation: rec, reconciled: false, already: true });
+  const sessionId = (req.body || {}).sessionId;
+  if (!sessionId || !stripeEnabled()) return res.json({ reservation: rec, reconciled: false });
+  const s = await retrieveCheckoutSession(sessionId).catch(() => ({ ok: false }));
+  if (!s.ok) return res.json({ reservation: rec, reconciled: false, error: s.error });
+  if (!s.paid) return res.json({ reservation: rec, reconciled: false, pending: true });
+  // SECURITY: the paid session must actually belong to THIS reservation.
+  if (s.metadata?.reservationId && s.metadata.reservationId !== rec.id) {
+    return res.status(409).json({ error: 'session-reservation-mismatch' });
+  }
+  const paid = markVisaReservationPaid(rec.id, { paymentRef: sessionId, paymentIntent: s.paymentIntent || null });
+  if (paid.ok && !paid.already) await fulfilVisaReservation(rec.id);
+  res.json({ reservation: getVisaReservation(rec.id), reconciled: true });
+}));
+// ADMIN safety sweep: reconcile any reservation stuck at 'awaiting-payment' by
+// re-checking its stored Checkout session with Stripe. Catches the last-resort
+// case where the webhook never fired AND the customer never returned. Safe to
+// run anytime (idempotent) — e.g. a cron or a one-click ops button.
+app.post('/api/admin/visa/reconcile-pending', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  if (!stripeEnabled()) return res.json({ ok: true, checked: 0, issued: 0, note: 'Stripe not configured.' });
+  const pending = visaReservationsAwaitingPayment();
+  let issued = 0;
+  for (const rec of pending) {
+    const s = await retrieveCheckoutSession(rec.feeCheckoutSession).catch(() => ({ ok: false }));
+    if (s.ok && s.paid && (!s.metadata?.reservationId || s.metadata.reservationId === rec.id)) {
+      const paid = markVisaReservationPaid(rec.id, { paymentRef: rec.feeCheckoutSession, paymentIntent: s.paymentIntent || null });
+      if (paid.ok && !paid.already) { await fulfilVisaReservation(rec.id); issued += 1; }
+    }
+  }
+  res.json({ ok: true, checked: pending.length, issued });
 }));
 // My reservations (download + status).
 app.get('/api/visa/reservations', safe((req, res) => {
