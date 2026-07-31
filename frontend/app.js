@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v204';
+const APP_BUILD = 'v205';
 
 const state = {
   context: null,
@@ -3472,6 +3472,32 @@ async function renderAdmin() {
               </div>`;
             })()}
             <div class="muted" style="font-size:11px;margin-top:6px">TRUE net = revenue − AI − Stripe − infra − overhead. Stripe fees hit the WHOLE amount charged (the full ticket), not just our margin. Tune rates via env: STRIPE_FEE_PCT, INFRA_COST_PER_TXN_USD, INFRA_MONTHLY_USD, OVERHEAD_MONTHLY_USD, TARGET_MARGIN_PCT. Supplier gross (host 90% etc.) is excluded — this is 3JN's income only.</div>
+          </div>`;
+        })() : ''}
+        ${profit?.marginTotals ? (() => {
+          const mt = profit.marginTotals;
+          const rows = profit.perBookingMargins || [];
+          const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+          const allClear = mt.losses === 0;
+          const line = (r) => {
+            const col = r.loss ? '#ff6b6b' : r.floorHeld ? 'var(--green)' : 'var(--gold)';
+            const badge = r.loss ? '🔴' : r.floorHeld ? '🟢' : '🟡';
+            const label = (r.destination || r.tier || r.id || '—').toString();
+            return `<div class="kv" style="align-items:baseline;gap:10px">
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${badge} ${esc(label)}<span class="muted" style="font-size:11px">${r.member ? ' · member' : ''}${r.vendorCode ? ' · ' + esc(r.vendorCode) : ''}${(r.feeModel || '').startsWith('flight') ? ' · flight' : ''}</span></span>
+              <span style="font-size:12px;white-space:nowrap">${usd(r.grossFeeUSD)} <span class="muted">−${usd(r.memberPerksUSD)}p −${usd(r.vendorCarveUSD)}v =</span> <strong style="color:${col}">${usd(r.netKeptUSD)}</strong> <span class="muted">${r.keptPctOfFee != null ? '(' + r.keptPctOfFee + '%)' : ''}</span></span>
+            </div>`;
+          };
+          const list = rows.length ? rows.map(line).join('') : '<div class="muted" style="font-size:12.5px">No priced bookings yet — the readout populates as real bookings come in.</div>';
+          return `<div class="card pad" style="margin-top:16px;border-color:${allClear ? 'rgba(70,211,154,.4)' : 'rgba(255,107,107,.5)'}">
+            <span class="eyebrow">Per-booking margin — the profit floor, proven</span>
+            <p class="muted" style="font-size:12px;margin:6px 0 10px">Every giveaway traced against the fee 3JN charged: <strong>gross fee → − member perks → − vendor carve → 3JN net kept</strong>. Net can never go negative, and normally stays ≥35% of the fee.</p>
+            <div class="kv"><span>Gross fees charged <span class="muted" style="font-size:11px">all bookings</span></span><span>${usd(mt.grossFeeUSD)}</span></div>
+            <div class="kv"><span>− Member perks drawn <span class="muted" style="font-size:11px">discount + Travel Credit</span></span><span>−${usd(mt.memberPerksUSD)}</span></div>
+            <div class="kv"><span>− Vendor carve paid</span><span>−${usd(mt.vendorCarveUSD)}</span></div>
+            <div class="kv" style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,.08)"><span><strong>= 3JN net kept</strong> <span class="muted" style="font-size:11px">${mt.keptPctOfFee != null ? mt.keptPctOfFee + '% of gross fee' : ''}</span></span><span style="color:${mt.netKeptUSD >= 0 ? 'var(--green)' : '#ff6b6b'}"><strong>${usd(mt.netKeptUSD)}</strong></span></div>
+            <div class="kv" style="margin-top:6px"><span><strong>Floor held</strong></span><span style="color:${allClear ? 'var(--green)' : '#ff6b6b'}"><strong>${mt.floorHeld}/${mt.count} bookings ${mt.losses ? '· ' + mt.losses + ' LOSS ⚠' : '· 0 losses 🟢'}</strong></span></div>
+            <div style="margin-top:10px"><span class="eyebrow">Recent bookings — newest first (gross −perks −vendor = kept)</span><div style="margin-top:6px">${list}</div></div>
           </div>`;
         })() : ''}
         ${profit?.acuEconomics ? (() => {

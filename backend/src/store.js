@@ -2659,6 +2659,48 @@ export function secureDeadlineSweep(todayISO) {
 // The admin's real-time money view: ACUs sold vs burned, AI costs, and every
 // revenue stream side by side — computed live from the actual ledgers, never
 // hard-coded.
+// PER-BOOKING MARGIN READOUT — proves the profit floor on a real booking, not in
+// theory. Every giveaway is traced against the gross fee 3JN charged:
+//   gross fee  → the full 10% (or flat flight fee) before any member rebate
+//   − member perks drawn  (loyalty discount already taken + Travel Credit banked)
+//   − vendor carve         (partner commission actually recorded on this booking)
+//   = 3JN net kept         (must be ≥ 0 — never a loss — and normally ≥35% of fee)
+// All in USD (the admin's reporting currency). Member perks and the vendor carve
+// are stored in the member's local/GBP, converted at the single 0.79 anchor.
+export function bookingMarginBreakdown(b) {
+  const pr = b?.option?.pricing;
+  const L = pr?.lines;
+  if (!L || L.grossCommissionUSD == null) return null; // estimate-only / legacy booking
+  const GBP_TO_USD = 1 / GBP_ANCHOR;
+  const grossFeeUSD = round2(L.grossCommissionUSD || 0);
+  const memberDiscountUSD = round2(L.loyaltyDiscountUSD || 0);
+  // Travel Credit is banked in the member's local currency (GBP for members).
+  const travelCreditUSD = round2((b.travelCreditEarned || 0) * GBP_TO_USD);
+  // The vendor carve actually recorded against THIS booking (killed sales excluded).
+  const vendorCarveGbp = db.vendorSales
+    .filter((s) => s.bookingId === b.id && !s.refunded && !s.chargeback && !s.fraudFlag)
+    .reduce((s, x) => s + (x.vendorGbp || 0), 0);
+  const vendorCarveUSD = round2(vendorCarveGbp * GBP_TO_USD);
+  const memberPerksUSD = round2(memberDiscountUSD + travelCreditUSD);
+  const netKeptUSD = round2(grossFeeUSD - memberPerksUSD - vendorCarveUSD);
+  const keptPctOfFee = grossFeeUSD > 0 ? Math.round((netKeptUSD / grossFeeUSD) * 1000) / 10 : null;
+  return {
+    id: b.id, at: b.createdAt || null,
+    destination: b.option?.destination || null, tier: b.option?.tier || null,
+    feeModel: pr.feeModel || null,
+    member: pr.discountSource === 'member' || memberPerksUSD > 0,
+    vendorCode: b.vendorCode || null,
+    grossFeeUSD, memberDiscountUSD, travelCreditUSD, memberPerksUSD,
+    perkBudgetUSD: round2(L.memberPerkBudgetUSD || 0),
+    vendorCarveUSD, netKeptUSD, keptPctOfFee,
+    // Floor held = 3JN kept ≥35% of the gross fee (the proven worst-case package
+    // floor: max member perks + a registered vendor still leaves ≥35%). loss = a
+    // net-negative fee, which the pricing rules make structurally impossible.
+    floorHeld: netKeptUSD >= grossFeeUSD * 0.35 - 0.02,
+    loss: netKeptUSD < -0.01,
+  };
+}
+
 export function profitabilityDashboard() {
   const bookings = [...db.bookings.values()];
   const users = [...db.users.values()];
@@ -2738,6 +2780,28 @@ export function profitabilityDashboard() {
     streams,
     bookings: bookings.length,
     payingMembers: users.filter((u) => u.membership?.active).length,
+    ...(() => {
+      // Per-booking margin readout: newest first, plus roll-up totals so the
+      // profit floor is visible at a glance across every real booking.
+      const rows = bookings.map(bookingMarginBreakdown).filter(Boolean)
+        .sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+      const totals = rows.reduce((t, r) => {
+        t.grossFeeUSD += r.grossFeeUSD; t.memberPerksUSD += r.memberPerksUSD;
+        t.vendorCarveUSD += r.vendorCarveUSD; t.netKeptUSD += r.netKeptUSD;
+        if (r.loss) t.losses++; if (r.floorHeld) t.floorHeld++;
+        return t;
+      }, { grossFeeUSD: 0, memberPerksUSD: 0, vendorCarveUSD: 0, netKeptUSD: 0, losses: 0, floorHeld: 0 });
+      return {
+        perBookingMargins: rows.slice(0, 40),
+        marginTotals: {
+          count: rows.length,
+          grossFeeUSD: round2(totals.grossFeeUSD), memberPerksUSD: round2(totals.memberPerksUSD),
+          vendorCarveUSD: round2(totals.vendorCarveUSD), netKeptUSD: round2(totals.netKeptUSD),
+          floorHeld: totals.floorHeld, losses: totals.losses,
+          keptPctOfFee: totals.grossFeeUSD > 0 ? Math.round((totals.netKeptUSD / totals.grossFeeUSD) * 1000) / 10 : null,
+        },
+      };
+    })(),
   };
 }
 

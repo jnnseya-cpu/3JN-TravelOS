@@ -3921,6 +3921,31 @@ test('vendor lifecycle: application → admin approval → attributed sale → F
   assert.equal(runWeeklyVendorPayouts().batches.filter((x) => x.vendorId === v.id).length, 0, 'never pays twice');
 });
 
+test('per-booking margin readout: gross fee − perks − vendor carve = net kept, floor holds', async () => {
+  const { bookingMarginBreakdown, getBooking } = await import('../src/store.js');
+  const vend = createUser({ email: 'vmr@x.co', name: 'Margin Vendor' });
+  const code = applyVendor(vend.id, { tier: 'independent', identityDoc: true, addressProof: true, socialHandles: ['@m'], businessHistory: true }).profile.vendorCode;
+  decideVendor(vend.id, { approve: true });
+  const cust = createUser({ email: 'cmr@x.co', name: 'Margin Cust' });
+  const b = createBooking({ option: { tier: 'Standard', destination: 'Dubai', pricing: {
+    symbol: '£', local: { total: 1100 }, feeModel: 'commission-10',
+    lines: { netSuppliersUSD: 1265.82, grossCommissionUSD: 126.58, loyaltyDiscountUSD: 20, commissionUSD: 106.58, memberPerkBudgetUSD: 31.65 },
+    revenue: { commissionUSD: 106.58 },
+  }, totalUSD: 1392, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: cust.id, vendorCode: code });
+  recordPayment(b.id, { type: 'deposit', amount: 200 });
+  const m = bookingMarginBreakdown(getBooking(b.id));
+  assert.equal(m.grossFeeUSD, 126.58, 'gross fee = full 10% before rebate');
+  assert.equal(m.memberDiscountUSD, 20);
+  assert.ok(m.vendorCarveUSD > 0, 'vendor carve recorded against the booking');
+  assert.ok(Math.abs(m.netKeptUSD - (m.grossFeeUSD - m.memberPerksUSD - m.vendorCarveUSD)) < 0.01, 'net kept = gross − perks − carve');
+  assert.equal(m.loss, false, 'never a loss');
+  assert.ok(m.floorHeld, 'floor held — kept ≥35% of the gross fee');
+  // The roll-up surfaces it and confirms no booking breaches the floor.
+  const dash = (await import('../src/store.js')).profitabilityDashboard();
+  assert.ok(dash.marginTotals.count >= 1 && dash.marginTotals.losses === 0, 'roll-up shows zero losses');
+  assert.ok(dash.perBookingMargins.some((r) => r.id === b.id), 'booking appears in the readout');
+});
+
 test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {
   // A clean application lands in the admin queue as pending-review (never live).
   const a = createUser({ email: 'vq1@x.co', name: 'Queue One' });
