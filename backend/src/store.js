@@ -344,6 +344,7 @@ export function orderVisaReservation(userId, payload = {}) {
     // released after the visa decision. Zero for flight-only.
     roomDepositGbp: dep.depositGbp, roomDepositUSD: round2(dep.depositGbp / GBP_ANCHOR),
     roomDepositStatus: dep.depositGbp > 0 ? 'held' : 'none',
+    depositPaymentIntent: null, depositAuthorized: false, // real Stripe hold (set at order / via webhook)
     paid: true, paymentRef: id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
   };
   db.visaReservations.push(rec);
@@ -444,6 +445,22 @@ export function visaHotelsToCancel(todayISO = null, bufferDays = 2) {
     .map(({ r, it }) => ({ id: r.id, hotelbedsRef: it.hotelbedsRef, cancelBy: it.cancelBy }));
 }
 export function getVisaReservation(rid) { return db.visaReservations.find((r) => r.id === rid) || null; }
+// Record the Stripe deposit hold (authorization) on a reservation — from the
+// order-time off-session auth, or from the deposit Checkout webhook.
+export function setVisaDepositIntent(rid, { paymentIntentId, authorized = true } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  rec.depositPaymentIntent = paymentIntentId || rec.depositPaymentIntent;
+  rec.depositAuthorized = !!authorized;
+  recordAudit({ actor: 'system:stripe', role: 'system', action: 'visa.deposit.authorized', entity: 'visa-reservation', entityId: rid, summary: `hold £${rec.roomDepositGbp} · ${paymentIntentId || '-'}` });
+  return { ok: true, reservation: rec };
+}
+// The customer's most recent reusable card (a saved PaymentIntent from a prior
+// paid booking) — used to authorize the deposit off-session when they have one.
+export function userSavedCardIntent(userId) {
+  const bookings = [...db.bookings.values()].filter((b) => b.userId === userId && b.stripePaymentIntent).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return bookings[0]?.stripePaymentIntent || null;
+}
 export function listVisaReservations(status) {
   const all = db.visaReservations.slice().reverse();
   return status ? all.filter((r) => r.status === status) : all;

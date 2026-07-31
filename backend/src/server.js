@@ -26,7 +26,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
-  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel,
+  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
@@ -92,7 +92,7 @@ import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
-import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-hotel-deposit-cron-v210';
+const BUILD_TAG = '2026-08-01-visa-deposit-stripe-auth-v211';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3296,15 +3296,30 @@ app.get('/api/cron/airalo-sync', safe(async (req, res) => {
 // (CRON_SECRET-protected). The refundable room deposit means the customer carries
 // any residual, but this keeps bookings from ever reaching a charge in the first
 // place.
+// Cancel a visa hotel booking AND settle its Stripe deposit hold: no cancel
+// charge → RELEASE the hold (customer's funds freed); a charge → CAPTURE the hold
+// (the deposit covers the room, so 3JN is never out of pocket). Used by the cron
+// sweep and both admin actions.
+async function cancelVisaHotelAndSettle(id, hotelbedsRef) {
+  const cancel = await cancelHotelbedsBooking(hotelbedsRef).catch(() => ({ ok: false }));
+  if (!cancel?.ok) return { ok: false, error: cancel?.error || 'cancel-failed' };
+  const charge = Number(cancel.cancellationCharge) || 0;
+  const rec = getVisaReservation(id);
+  if (rec?.depositPaymentIntent && stripeEnabled()) {
+    if (charge > 0) await captureAuthorization({ paymentIntentId: rec.depositPaymentIntent }).catch(() => {});
+    else await releaseAuthorization({ paymentIntentId: rec.depositPaymentIntent }).catch(() => {});
+  }
+  const marked = markVisaHotelCancelled(id, { cancellationRef: cancel.reference, charge });
+  return { ok: true, charge, reservation: marked.reservation };
+}
 app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
   if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   const due = visaHotelsToCancel(null, Number(req.query.bufferDays) || 2);
   const results = [];
   for (const d of due) {
-    const cancel = await cancelHotelbedsBooking(d.hotelbedsRef).catch(() => ({ ok: false }));
-    if (cancel?.ok) { markVisaHotelCancelled(d.id, { cancellationRef: cancel.reference, charge: cancel.cancellationCharge }); results.push({ id: d.id, cancelled: true }); }
-    else results.push({ id: d.id, cancelled: false });
+    const out = await cancelVisaHotelAndSettle(d.id, d.hotelbedsRef);
+    results.push({ id: d.id, cancelled: !!out.ok });
   }
   res.json({ ok: true, due: due.length, cancelled: results.filter((r) => r.cancelled).length, results });
 }));
@@ -4022,6 +4037,15 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       if (fresh) {
         const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null, paymentIntent: event.data?.object?.payment_intent || null });
         if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '🔎', title: 'Search deposit placed', body: `Your refundable ${meta.tier} search deposit is active — it comes straight off your booking when you travel.` });
+      }
+    } else if (meta.kind === 'visa-deposit' && meta.reservationId) {
+      // The customer authorized (held, not charged) their refundable room deposit
+      // via Checkout — record the manual-capture PaymentIntent so we can release
+      // or capture it when the hotel is cancelled.
+      if (fresh) {
+        const pi = event.data?.object?.payment_intent || null;
+        const r = setVisaDepositIntent(meta.reservationId, { paymentIntentId: pi, authorized: true });
+        if (r.ok && meta.userId) pushNotification(meta.userId, { type: 'success', icon: '🏨', title: 'Room deposit authorized', body: 'Your refundable room deposit is held (not charged) — it\'s released after your visa decision.' });
       }
     } else if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
       // A confirmed exact-quote was paid.
@@ -4816,7 +4840,26 @@ app.post('/api/visa/reservations', safe(async (req, res) => {
       }
     }
   } catch { /* fall back to the manual Visa Desk */ }
-  res.json({ ...result, reservation: getVisaReservation(result.reservation.id) });
+  // REFUNDABLE ROOM DEPOSIT as a real Stripe HOLD (authorization, not a charge).
+  // If the customer has a card on file, authorize off-session now; otherwise hand
+  // back a deposit Checkout URL so they can authorize it. Zero for flight-only.
+  let depositCheckoutUrl = null;
+  const rec = result.reservation;
+  if (rec.roomDepositGbp > 0 && stripeEnabled()) {
+    const minor = Math.round(rec.roomDepositGbp * 100);
+    const saved = userSavedCardIntent(user.id);
+    let authed = false;
+    if (saved) {
+      const auth = await authorizeSavedCard({ originalPaymentIntentId: saved, amountMinor: minor, description: `3JN visa room deposit (refundable hold) — ${rec.id}`, metadata: { kind: 'visa-deposit', reservationId: rec.id, userId: user.id } }).catch(() => ({ ok: false }));
+      if (auth.ok && auth.paymentIntentId) { setVisaDepositIntent(rec.id, { paymentIntentId: auth.paymentIntentId, authorized: true }); authed = true; }
+    }
+    if (!authed) {
+      const origin = `${req.protocol}://${req.get('host')}`;
+      const co = await createDepositCheckoutSession({ amountMinor: minor, description: `3JN visa room deposit (refundable hold) — ${rec.id}`, userId: user.id, reservationId: rec.id, customerEmail: user.email, successUrl: `${origin}/visaos?deposit=ok`, cancelUrl: `${origin}/visaos?deposit=cancel` }).catch(() => ({ ok: false }));
+      if (co.ok) depositCheckoutUrl = co.url;
+    }
+  }
+  res.json({ ...result, reservation: getVisaReservation(result.reservation.id), depositCheckoutUrl });
 }));
 // My reservations (download + status).
 app.get('/api/visa/reservations', safe((req, res) => {
@@ -4848,9 +4891,9 @@ app.post('/api/admin/visa/reservations/:id/cancel-hotel', safe(async (req, res) 
   const rec = getVisaReservation(req.params.id);
   const hotel = rec?.items?.find((i) => i.type === 'hotel' && i.hotelbedsRef);
   if (!hotel) return res.status(404).json({ error: 'no-hotel-booking' });
-  const cancel = await cancelHotelbedsBooking(hotel.hotelbedsRef).catch((e) => ({ ok: false, error: e?.message }));
-  if (!cancel?.ok) return res.status(502).json({ ok: false, error: cancel?.error || 'cancel-failed' });
-  res.json(markVisaHotelCancelled(req.params.id, { cancellationRef: cancel.reference, charge: cancel.cancellationCharge }));
+  const out = await cancelVisaHotelAndSettle(req.params.id, hotel.hotelbedsRef);
+  if (!out.ok) return res.status(502).json({ ok: false, error: out.error || 'cancel-failed' });
+  res.json({ ok: true, reservation: out.reservation, charge: out.charge });
 }));
 // SAFETY SWEEP: cancel any auto-booked visa hotel whose free-cancel deadline is
 // near, so a forgotten booking never bills 3JN. Call from a cron/schedule.
@@ -4859,11 +4902,10 @@ app.post('/api/admin/visa/reservations/sweep-cancellations', safe(async (req, re
   const due = visaHotelsToCancel(null, Number(req.body?.bufferDays) || 2);
   const results = [];
   for (const d of due) {
-    const cancel = await cancelHotelbedsBooking(d.hotelbedsRef).catch(() => ({ ok: false }));
-    if (cancel?.ok) { markVisaHotelCancelled(d.id, { cancellationRef: cancel.reference, charge: cancel.cancellationCharge }); results.push({ id: d.id, cancelled: true }); }
-    else results.push({ id: d.id, cancelled: false });
+    const out = await cancelVisaHotelAndSettle(d.id, d.hotelbedsRef);
+    results.push({ id: d.id, cancelled: !!out.ok });
   }
-  res.json({ ok: true, swept: results.length, results });
+  res.json({ ok: true, swept: results.filter((r) => r.cancelled).length, results });
 }));
 
 app.get('/api/visaos/probability', safe((req, res) => {

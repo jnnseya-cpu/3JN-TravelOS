@@ -151,6 +151,78 @@ export async function createRefund({ paymentIntentId, amountMinor = null, reason
   }
 }
 
+// ---- Authorizations (card HOLDS) — for the refundable visa room deposit ------
+// A hold reserves funds on the customer's card WITHOUT charging (capture_method:
+// manual). We capture it only if the room is ever charged, and release it (no
+// charge) once the booking is cancelled — so the customer carries the room, not
+// 3JN. NOTE: card auth holds expire after ~7 days; for a longer visa window the
+// safety cron cancels the room well before then, and a capture-then-refund model
+// is the fallback for very long timelines.
+export async function authorizeSavedCard({ originalPaymentIntentId, amountMinor, currency = 'gbp', description, metadata = {} }) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured', reason: 'Card payments are not configured.' };
+  if (!originalPaymentIntentId) return { ok: false, error: 'no-original-intent', reason: 'No card on file to authorize.' };
+  if (!(amountMinor > 0)) return { ok: false, error: 'invalid-amount' };
+  try {
+    const orig = await stripeGet(`/payment_intents/${encodeURIComponent(originalPaymentIntentId)}`);
+    const customer = typeof orig.customer === 'string' ? orig.customer : orig.customer?.id;
+    const paymentMethod = typeof orig.payment_method === 'string' ? orig.payment_method : orig.payment_method?.id;
+    if (!customer || !paymentMethod) return { ok: false, error: 'no-saved-card', reason: 'The original payment did not save a reusable card.' };
+    const pi = await stripePost('/payment_intents', {
+      amount: Math.round(amountMinor), currency: currency.toLowerCase(),
+      customer, payment_method: paymentMethod,
+      capture_method: 'manual', off_session: true, confirm: true,
+      description: description || '3JN refundable deposit', metadata,
+    });
+    // A successful hold sits at requires_capture.
+    if (pi.status === 'requires_capture' || pi.status === 'succeeded') return { ok: true, paymentIntentId: pi.id, status: pi.status, amount: pi.amount };
+    return { ok: false, status: pi.status, requiresAction: pi.status === 'requires_action', paymentIntentId: pi.id, reason: `Card needs confirmation (${pi.status}).` };
+  } catch (e) {
+    const msg = e?.message || 'authorize-failed';
+    return { ok: false, error: msg, requiresAction: /authentication/i.test(msg), reason: msg };
+  }
+}
+// Capture (charge) a previously authorized hold — full, or a partial amount.
+export async function captureAuthorization({ paymentIntentId, amountMinor = null } = {}) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
+  if (!paymentIntentId) return { ok: false, error: 'no-payment-intent' };
+  try {
+    const body = {};
+    if (amountMinor != null && amountMinor > 0) body.amount_to_capture = Math.round(amountMinor);
+    const pi = await stripePost(`/payment_intents/${encodeURIComponent(paymentIntentId)}/capture`, body);
+    return { ok: pi.status === 'succeeded', status: pi.status, amount: pi.amount_received ?? pi.amount };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'capture-failed' };
+  }
+}
+// Release (cancel) an authorization hold — funds returned to the customer.
+export async function releaseAuthorization({ paymentIntentId } = {}) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
+  if (!paymentIntentId) return { ok: false, error: 'no-payment-intent' };
+  try {
+    const pi = await stripePost(`/payment_intents/${encodeURIComponent(paymentIntentId)}/cancel`, {});
+    return { ok: pi.status === 'canceled', status: pi.status };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'release-failed' };
+  }
+}
+// Collect + AUTHORIZE a deposit via Checkout when the customer has no saved card
+// (first-time payer). Manual capture = a hold, not a charge. The webhook stores
+// the resulting PaymentIntent on the reservation (kind: visa-deposit).
+export async function createDepositCheckoutSession({ amountMinor, currency = 'gbp', description, userId, reservationId, successUrl, cancelUrl, customerEmail, metadata = {} }) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
+  if (!(amountMinor > 0)) return { ok: false, error: 'invalid-amount' };
+  const meta = { kind: 'visa-deposit', userId: userId || '', reservationId: reservationId || '', ...metadata };
+  const session = await stripePost('/checkout/sessions', {
+    mode: 'payment', success_url: successUrl, cancel_url: cancelUrl,
+    customer_email: customerEmail || undefined,
+    line_items: [{ quantity: 1, price_data: { currency: currency.toLowerCase(), unit_amount: Math.round(amountMinor), product_data: { name: description || '3JN refundable room deposit (hold)' } } }],
+    metadata: meta,
+    // HOLD, don't charge; save the card so we can capture/release later.
+    payment_intent_data: { metadata: meta, capture_method: 'manual', setup_future_usage: 'off_session' },
+  });
+  return { ok: true, sessionId: session.id, url: session.url };
+}
+
 // Live reachability + key probe for the admin readiness check. Does a light
 // authenticated GET (/balance) so it proves BOTH that the network can reach
 // Stripe AND that the secret key is valid — without creating anything.

@@ -4053,6 +4053,12 @@ test('visa reservations: hotel auto-book is OFF by default; apply/cancel/sweep m
   S.applyVisaHotelBooking(r2.reservation.id, { provider: 'H', providerRef: 'HB-9', hotelbedsRef: 'HB-9', cancelBy: '2026-10-08' });
   const charged = S.markVisaHotelCancelled(r2.reservation.id, { cancellationRef: 'CXL-2', charge: 40 });
   assert.equal(charged.reservation.roomDepositStatus, 'consumed', 'a charge is covered by the deposit, not 3JN');
+  // The Stripe deposit HOLD (authorization) is recorded on the reservation so it
+  // can be released (clean cancel) or captured (charge) later.
+  const held = S.setVisaDepositIntent(r2.reservation.id, { paymentIntentId: 'pi_hold_123', authorized: true });
+  assert.equal(held.ok, true);
+  assert.equal(S.getVisaReservation(r2.reservation.id).depositPaymentIntent, 'pi_hold_123');
+  assert.equal(S.getVisaReservation(r2.reservation.id).depositAuthorized, true);
 });
 
 test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {

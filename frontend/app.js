@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v210';
+const APP_BUILD = 'v211';
 
 const state = {
   context: null,
@@ -4799,9 +4799,16 @@ window.orderVisaReservationFlow = async () => {
   try {
     const r = await api('/api/visa/reservations', { method: 'POST', body: JSON.stringify(body) });
     if (!r.ok) { toast(r.message || 'Check the reservation details.'); return; }
+    // If a refundable deposit needs authorizing (no card on file), send the
+    // customer to Stripe to place the HOLD (not a charge).
+    if (r.depositCheckoutUrl) {
+      toast('Authorizing your refundable room deposit…');
+      window.location.href = r.depositCheckoutUrl;
+      return;
+    }
     const flt = (r.reservation.items || []).find((it) => it.type === 'flight');
     const issued = flt?.providerRef;
-    const depNote = r.reservation.roomDepositGbp > 0 ? ` (+£${Number(r.reservation.roomDepositGbp).toFixed(2)} refundable deposit)` : '';
+    const depNote = r.reservation.roomDepositGbp > 0 ? ` (+£${Number(r.reservation.roomDepositGbp).toFixed(2)} refundable deposit${r.reservation.depositAuthorized ? ' held' : ''})` : '';
     toast(issued
       ? `✓ Ordered — £${Number(r.fee.feeGbp).toFixed(2)}${depNote} · flight held: ${flt.provider || 'airline'} ${flt.providerRef}.`
       : `✓ Ordered — £${Number(r.fee.feeGbp).toFixed(2)}${depNote} · being issued by our Visa Desk.`);
