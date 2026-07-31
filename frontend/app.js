@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v209';
+const APP_BUILD = 'v210';
 
 const state = {
   context: null,
@@ -4704,7 +4704,7 @@ async function renderVisaReservations() {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
         <strong>${esc((pricing.products.find((p) => p.kind === r.kind) || {}).name || r.kind)}</strong>${statusChip(r.status)}
       </div>
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + ' nights' : ''}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + ' nights' : ''}${r.roomDepositGbp > 0 ? ` · deposit £${Number(r.roomDepositGbp).toFixed(2)} <span style="color:${r.roomDepositStatus === 'refunded' ? 'var(--green)' : r.roomDepositStatus === 'consumed' ? '#ff8a8a' : 'var(--gold)'}">${r.roomDepositStatus === 'held' ? 'held' : r.roomDepositStatus}</span>` : ''}</div>
       <div style="margin-top:6px">${(r.items || []).map((it) => it.documentReady && it.providerRef
         ? `<span class="chip" style="font-size:11px;border-color:rgba(70,211,154,.4)">${it.type === 'flight' ? '✈' : '🏨'} ${esc(it.provider || '')} · <strong>${esc(it.providerRef)}</strong></span>`
         : `<span class="chip" style="font-size:11px;border-color:rgba(244,183,28,.4)">${it.type === 'flight' ? '✈' : '🏨'} issuing…</span>`).join(' ')}</div>
@@ -4724,8 +4724,9 @@ async function renderVisaReservations() {
         <div class="field"><label>Travellers</label><input class="in" type="number" id="vresPax" value="1" min="1" max="9" style="max-width:90px"></div>
       </div>
       <div id="vresPaxDetails" style="margin-top:6px"></div>
+      <div id="vresDepositNote" style="margin-top:8px"></div>
       <button class="btn btn-gold" id="vresOrderBtn" style="margin-top:10px">Order reservation &amp; pay</button>
-      <p class="muted" style="font-size:11px;margin-top:8px">The reservation is held/refundable — you pay only the service fee, never the fare or room. It's released after your visa decision.</p>
+      <p class="muted" style="font-size:11px;margin-top:8px">You never pay the airfare or the room. The flight is held free; the hotel is a real free-cancellation booking, so a <strong>fully-refundable room deposit</strong> is held and released after your visa decision.</p>
       ${mine.length ? `<div style="margin-top:16px"><span class="eyebrow">Your reservations</span><div style="margin-top:8px">${mineRows}</div></div>` : ''}
     </div>`;
   // Prefill destination from the visa form if present.
@@ -4752,9 +4753,22 @@ async function renderVisaReservations() {
       </div>`;
     wrap.innerHTML = `<div class="muted" style="font-size:11.5px;margin-top:8px">✈ Passenger details for the flight reservation (needed to issue a real airline booking reference):</div>${Array.from({ length: n }, (_, i) => block(i)).join('')}`;
   };
-  box.querySelectorAll('input[name="vresKind"]').forEach((el) => el.addEventListener('change', window.renderVisaPaxFields));
+  // Refundable room deposit (hotel/pack) — shown live so the customer knows the
+  // fee is not the only amount held, and that the deposit comes back.
+  const dep = pricing.hotelDeposit || { perNightGbp: 30, minGbp: 40, capGbp: 200 };
+  window.updateVisaDeposit = () => {
+    const note = $('#vresDepositNote'); if (!note) return;
+    const kind = kindNow();
+    if (kind === 'flight') { note.innerHTML = ''; return; }
+    const n = Math.max(1, Math.min(90, Number($('#vresNights')?.value) || 1));
+    const d = Math.min(dep.capGbp, Math.max(dep.minGbp, n * dep.perNightGbp));
+    note.innerHTML = `<div class="pill" style="border-color:rgba(70,211,154,.35);font-size:12px">🏨 Refundable room deposit: <strong>£${d.toFixed(2)}</strong> <span class="muted">— held for the hotel booking, fully released after your visa decision (${dep.perNightGbp}/night, min £${dep.minGbp}, cap £${dep.capGbp}).</span></div>`;
+  };
+  const refresh = () => { window.renderVisaPaxFields(); window.updateVisaDeposit(); };
+  box.querySelectorAll('input[name="vresKind"]').forEach((el) => el.addEventListener('change', refresh));
   $('#vresPax')?.addEventListener('input', window.renderVisaPaxFields);
-  window.renderVisaPaxFields();
+  document.querySelector('#vresNights')?.addEventListener('input', window.updateVisaDeposit);
+  refresh();
   $('#vresOrderBtn')?.addEventListener('click', orderVisaReservationFlow);
 }
 // Collect the passenger manifest from the visa reservation form.
@@ -4787,9 +4801,10 @@ window.orderVisaReservationFlow = async () => {
     if (!r.ok) { toast(r.message || 'Check the reservation details.'); return; }
     const flt = (r.reservation.items || []).find((it) => it.type === 'flight');
     const issued = flt?.providerRef;
+    const depNote = r.reservation.roomDepositGbp > 0 ? ` (+£${Number(r.reservation.roomDepositGbp).toFixed(2)} refundable deposit)` : '';
     toast(issued
-      ? `✓ Reservation ordered — £${Number(r.fee.feeGbp).toFixed(2)} · flight held: ${flt.provider || 'airline'} ${flt.providerRef}.`
-      : `✓ Reservation ordered — £${Number(r.fee.feeGbp).toFixed(2)} · being issued by our Visa Desk.`);
+      ? `✓ Ordered — £${Number(r.fee.feeGbp).toFixed(2)}${depNote} · flight held: ${flt.provider || 'airline'} ${flt.providerRef}.`
+      : `✓ Ordered — £${Number(r.fee.feeGbp).toFixed(2)}${depNote} · being issued by our Visa Desk.`);
     renderVisaReservations();
   } catch { toast('Could not order the reservation.'); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Order reservation & pay'; } }

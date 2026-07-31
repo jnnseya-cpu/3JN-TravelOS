@@ -576,21 +576,23 @@ export function visaAutoHotelEnabled() { return hotelbedsHotelsEnabled() && env.
 // Book a REAL free-cancellation Hotelbeds reservation for a visa file. Returns
 // the hotel + confirmation number + the free-cancel deadline, or a reason (→ the
 // caller falls back to the manual Visa Desk). Never books a non-refundable rate.
-export async function issueVisaHotelReservation({ destCode, checkIn, checkOut, nights = 1, adults = 1, guestName = '' } = {}) {
+export async function issueVisaHotelReservation({ destCode, checkIn, checkOut, nights = 1, adults = 1, guestName = '', maxRoomUSD = null } = {}) {
   if (!hotelbedsHotelsEnabled() || !destCode || !checkIn || !checkOut) return { ok: false, error: 'not-configured' };
   const intent = { dates: { checkIn, checkOut }, travellers: { adults: Math.max(1, Number(adults) || 1) }, nights: Math.max(1, Number(nights) || 1) };
   const hotels = await fetchHotelbedsHotels(intent, { code: String(destCode).toUpperCase() }).catch(() => null);
   if (!Array.isArray(hotels) || !hotels.length) return { ok: false, error: 'no-availability' };
   const priceOf = (h) => Number(h.priceUSD ?? h.totalUSD ?? h.nightlyUSD ?? h.details?.priceUSD ?? Infinity);
-  // FREE-CANCELLATION only, cheapest first — minimise exposure until we cancel.
+  // FREE-CANCELLATION only, PRICED AT/UNDER the customer's deposit (so the deposit
+  // always covers the room), cheapest first — minimise exposure until we cancel.
   const cand = hotels
     .filter((h) => h.details?.freeCancellation && h.details?.hotelbedsRateKey)
+    .filter((h) => maxRoomUSD == null || priceOf(h) <= Number(maxRoomUSD) * 1.02)
     .sort((a, b) => priceOf(a) - priceOf(b))[0];
-  if (!cand) return { ok: false, error: 'no-free-cancellation-rate' };
+  if (!cand) return { ok: false, error: 'no-free-cancellation-rate-within-deposit' };
   const parts = String(guestName || '').trim().split(/\s+/).filter(Boolean);
   const name = parts[0] || 'Guest';
   const surname = parts.slice(1).join(' ') || parts[0] || 'Traveller';
-  const booking = await bookHotelbedsHotel({ rateKey: cand.details.hotelbedsRateKey, rateType: cand.details.rateType || 'BOOKABLE', holder: { name, surname }, clientReference: 'JNN-VISA' });
+  const booking = await bookHotelbedsHotel({ rateKey: cand.details.hotelbedsRateKey, rateType: cand.details.rateType || 'BOOKABLE', holder: { name, surname }, clientReference: 'JNN-VISA', maxAmountUSD: maxRoomUSD });
   if (!booking.ok || !booking.reference) return { ok: false, error: booking.error || 'book-failed' };
   // Free-cancel deadline: the earliest dated cancellation policy, else check-in.
   const pol = Array.isArray(booking.cancellationPolicies) ? booking.cancellationPolicies.find((p) => p.from) : null;

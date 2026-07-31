@@ -4024,6 +4024,12 @@ test('visa reservations: hotel auto-book is OFF by default; apply/cancel/sweep m
   const u = S.createUser({ email: `vhb${Date.now()}@x.co`, name: 'Hotel Booker' });
   const r = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: '2026-09-10', nights: 5, travellers: 1 });
   assert.equal(r.reservation.status, 'processing');
+  // Refundable room deposit is held so the CUSTOMER carries the room, not 3JN.
+  assert.equal(r.reservation.roomDepositGbp, 150, '5 nights × £30 deposit');
+  assert.equal(r.reservation.roomDepositStatus, 'held');
+  // A flight-only order never carries a room deposit.
+  const fo = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Hotel Booker', dob: '1990-01-01' }] });
+  assert.equal(fo.reservation.roomDepositGbp, 0, 'flight-only has no room deposit');
   // Refuse without a real confirmation number.
   assert.equal(S.applyVisaHotelBooking(r.reservation.id, { provider: 'Rove' }).error, 'provider-ref-required');
   // Simulate a successful Hotelbeds free-cancel booking → ready + records the deadline.
@@ -4036,11 +4042,17 @@ test('visa reservations: hotel auto-book is OFF by default; apply/cancel/sweep m
   assert.ok(!S.visaHotelsToCancel('2026-01-01', 2).some((x) => x.id === r.reservation.id), 'not swept far ahead of the deadline');
   const due = S.visaHotelsToCancel('2026-09-07', 2);
   assert.ok(due.some((x) => x.id === r.reservation.id && x.hotelbedsRef === 'HB-77120'), 'swept as the deadline approaches');
-  // Cancellation records state so it isn't cancelled twice.
+  // Cancellation with NO charge → the customer's deposit is fully refunded.
   const cancelled = S.markVisaHotelCancelled(r.reservation.id, { cancellationRef: 'CXL-1', charge: 0 });
   assert.equal(cancelled.ok, true);
   assert.equal(booked.reservation.items.find((i) => i.type === 'hotel').status, 'cancelled');
+  assert.equal(cancelled.reservation.roomDepositStatus, 'refunded', 'no charge → deposit refunded to customer');
   assert.ok(!S.visaHotelsToCancel('2026-09-07', 2).some((x) => x.id === r.reservation.id), 'cancelled booking drops out of the sweep');
+  // If a booking IS charged (missed deadline), the deposit COVERS it — 3JN never pays.
+  const r2 = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: '2026-10-10', nights: 3, travellers: 1 });
+  S.applyVisaHotelBooking(r2.reservation.id, { provider: 'H', providerRef: 'HB-9', hotelbedsRef: 'HB-9', cancelBy: '2026-10-08' });
+  const charged = S.markVisaHotelCancelled(r2.reservation.id, { cancellationRef: 'CXL-2', charge: 40 });
+  assert.equal(charged.reservation.roomDepositStatus, 'consumed', 'a charge is covered by the deposit, not 3JN');
 });
 
 test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {

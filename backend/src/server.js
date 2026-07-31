@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-hotel-autobook-v209';
+const BUILD_TAG = '2026-08-01-visa-hotel-deposit-cron-v210';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3291,6 +3291,23 @@ app.get('/api/cron/airalo-sync', safe(async (req, res) => {
     res.status(502).json({ ok: false, error: 'airalo-sync-failed', message: String(e?.message || e) });
   }
 }));
+// Scheduled safety sweep: cancel every auto-booked visa hotel whose free-cancel
+// deadline is near, so a forgotten booking never bills 3JN. Runs from Vercel Cron
+// (CRON_SECRET-protected). The refundable room deposit means the customer carries
+// any residual, but this keeps bookings from ever reaching a charge in the first
+// place.
+app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  const due = visaHotelsToCancel(null, Number(req.query.bufferDays) || 2);
+  const results = [];
+  for (const d of due) {
+    const cancel = await cancelHotelbedsBooking(d.hotelbedsRef).catch(() => ({ ok: false }));
+    if (cancel?.ok) { markVisaHotelCancelled(d.id, { cancellationRef: cancel.reference, charge: cancel.cancellationCharge }); results.push({ id: d.id, cancelled: true }); }
+    else results.push({ id: d.id, cancelled: false });
+  }
+  res.json({ ok: true, due: due.length, cancelled: results.filter((r) => r.cancelled).length, results });
+}));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved
 // with the PSP; consent is recorded either way).
@@ -4794,7 +4811,7 @@ app.post('/api/visa/reservations', safe(async (req, res) => {
       const d = resolveDestination(rec.destination) || resolveOrigin(rec.destination);
       const checkOut = (() => { const t = new Date(`${rec.departDate}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + Math.max(1, rec.nights || 1)); return t.toISOString().slice(0, 10); })();
       if (d?.airport || d?.code || d?.hotelbedsDest) {
-        const hb = await issueVisaHotelReservation({ destCode: d.hotelbedsDest || d.code || d.airport, checkIn: rec.departDate, checkOut, nights: rec.nights, adults: rec.travellers, guestName: rec.applicantName });
+        const hb = await issueVisaHotelReservation({ destCode: d.hotelbedsDest || d.code || d.airport, checkIn: rec.departDate, checkOut, nights: rec.nights, adults: rec.travellers, guestName: rec.applicantName, maxRoomUSD: rec.roomDepositUSD || null });
         if (hb?.ok && hb.providerRef) applyVisaHotelBooking(rec.id, hb);
       }
     }

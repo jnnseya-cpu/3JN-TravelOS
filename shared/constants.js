@@ -48,6 +48,15 @@ export const VISA_DOC_FEE_HOTEL_GBP = 14.99;  // accommodation reservation
 export const VISA_DOC_FEE_PACK_GBP = 24.99;   // both together (saves £4.99)
 export const VISA_DOC_MEMBER_DISCOUNT = 0.20; // Travel+ members: 20% off the fee
 export const VISA_DOC_VALIDITY_DAYS = 14;     // reservation stays valid this long
+// REFUNDABLE ROOM DEPOSIT (liability transfer): a hotel reservation is a real
+// booking on 3JN's bedbank account, so the customer puts down a refundable
+// deposit that covers the room. It's released after the visa decision (booking
+// cancelled, no charge); if the room is ever charged, the deposit covers it — so
+// the customer carries the room cost, never 3JN. We only book a free-cancel room
+// priced at/under this deposit, so it always covers the exposure.
+export const VISA_HOTEL_DEPOSIT_PER_NIGHT_GBP = 30;
+export const VISA_HOTEL_DEPOSIT_MIN_GBP = 40;
+export const VISA_HOTEL_DEPOSIT_CAP_GBP = 200;
 // Partners earn a share of what 3JN ACTUALLY takes on a flights-only booking
 // (industry standard: affiliates get a % of the platform's commission, never
 // of booking value) — plus lifetime attribution on the customer they brought.

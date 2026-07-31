@@ -16,6 +16,7 @@
 import {
   VISA_DOC_FEE_FLIGHT_GBP, VISA_DOC_FEE_HOTEL_GBP, VISA_DOC_FEE_PACK_GBP,
   VISA_DOC_MEMBER_DISCOUNT, VISA_DOC_VALIDITY_DAYS,
+  VISA_HOTEL_DEPOSIT_PER_NIGHT_GBP, VISA_HOTEL_DEPOSIT_MIN_GBP, VISA_HOTEL_DEPOSIT_CAP_GBP,
 } from '../../shared/constants.js';
 
 const GBP_TO_USD = 1 / 0.79; // single platform anchor
@@ -55,11 +56,23 @@ export function visaDocFee(kind, { memberActive = false } = {}) {
   };
 }
 
+// Refundable room deposit for a hotel/pack stay: covers the room so the CUSTOMER
+// carries it, not 3JN. Scales with nights, floored + capped. Fully refunded once
+// the booking is cancelled after the visa decision.
+export function visaHotelDeposit(nights = 1, kind = 'pack') {
+  if (kind === 'flight') return { depositGbp: 0, perNightGbp: VISA_HOTEL_DEPOSIT_PER_NIGHT_GBP };
+  const n = Math.max(1, Math.min(90, Number(nights) || 1));
+  const raw = n * VISA_HOTEL_DEPOSIT_PER_NIGHT_GBP;
+  const depositGbp = round2(Math.min(VISA_HOTEL_DEPOSIT_CAP_GBP, Math.max(VISA_HOTEL_DEPOSIT_MIN_GBP, raw)));
+  return { depositGbp, perNightGbp: VISA_HOTEL_DEPOSIT_PER_NIGHT_GBP };
+}
+
 // The pricing catalogue for the storefront (member-aware).
 export function visaDocPricing({ memberActive = false } = {}) {
   return {
     validityDays: VISA_DOC_VALIDITY_DAYS,
     memberDiscountPct: Math.round(VISA_DOC_MEMBER_DISCOUNT * 100),
+    hotelDeposit: { perNightGbp: VISA_HOTEL_DEPOSIT_PER_NIGHT_GBP, minGbp: VISA_HOTEL_DEPOSIT_MIN_GBP, capGbp: VISA_HOTEL_DEPOSIT_CAP_GBP },
     products: VISA_DOC_KINDS.map((k) => ({ ...VISA_DOC_PRODUCTS[k], ...visaDocFee(k, { memberActive }) })),
   };
 }

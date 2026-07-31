@@ -14,7 +14,7 @@ import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
-import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS } from './visa-docs.js';
+import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS, visaHotelDeposit } from './visa-docs.js';
 import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
@@ -319,6 +319,7 @@ export function orderVisaReservation(userId, payload = {}) {
   if (!v.ok) return v;
   const trip = v.trip;
   const fee = visaDocFee(trip.kind, { memberActive: !!u.membership?.active });
+  const dep = visaHotelDeposit(trip.nights, trip.kind);
   const rid = id('vres');
   const validUntil = visaReservationValidity(nowISO());
   // `reference` is our INTERNAL 3JN order ref (VF-/VH-) — NOT presented as the
@@ -339,6 +340,10 @@ export function orderVisaReservation(userId, payload = {}) {
     passengers: Array.isArray(payload.passengers) ? payload.passengers.slice(0, 9).map((p) => ({ fullName: String(p.fullName || p.name || '').trim() || null, dob: p.dob || null, gender: p.gender || null, title: p.title || null })) : [],
     contact: { email: u.email || null, phone: u.phone || null },
     feeGbp: fee.feeGbp, feeUSD: fee.feeUSD, memberDiscountPct: fee.memberDiscountPct,
+    // Refundable room deposit (hotel/pack only) — the CUSTOMER carries the room,
+    // released after the visa decision. Zero for flight-only.
+    roomDepositGbp: dep.depositGbp, roomDepositUSD: round2(dep.depositGbp / GBP_ANCHOR),
+    roomDepositStatus: dep.depositGbp > 0 ? 'held' : 'none',
     paid: true, paymentRef: id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
   };
   db.visaReservations.push(rec);
@@ -416,7 +421,14 @@ export function markVisaHotelCancelled(rid, { cancellationRef = null, charge = 0
   const it = rec.items.find((x) => x.type === 'hotel');
   if (!it || !it.hotelbedsRef) return { ok: false, error: 'no-hotel-booking' };
   it.status = 'cancelled'; it.cancelledAt = nowISO(); it.cancellationRef = cancellationRef; it.cancellationCharge = charge || 0;
-  recordAudit({ actor: 'system', role: 'system', action: 'visa.reservation.hotel-cancelled', entity: 'visa-reservation', entityId: rid, summary: `${cancellationRef || 'cancelled'}${charge ? ' · charge ' + charge : ''}` });
+  // Settle the room deposit: no cancel charge → fully refunded to the customer;
+  // a charge (rare — a missed deadline) is covered BY the deposit (consumed), so
+  // 3JN is never out of pocket.
+  if (rec.roomDepositGbp > 0 && rec.roomDepositStatus === 'held') {
+    rec.roomDepositStatus = (Number(charge) > 0) ? 'consumed' : 'refunded';
+    rec.roomDepositSettledAt = nowISO();
+  }
+  recordAudit({ actor: 'system', role: 'system', action: 'visa.reservation.hotel-cancelled', entity: 'visa-reservation', entityId: rid, summary: `${cancellationRef || 'cancelled'}${charge ? ' · charge ' + charge : ''} · deposit ${rec.roomDepositStatus}` });
   return { ok: true, reservation: rec, hotelbedsRef: it.hotelbedsRef };
 }
 // SAFETY SWEEP: auto-booked hotel reservations still live whose free-cancel

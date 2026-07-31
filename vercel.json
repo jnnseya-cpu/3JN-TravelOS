@@ -13,7 +13,8 @@
   },
   "crons": [
     { "path": "/api/cron/instalments", "schedule": "0 9 * * *" },
-    { "path": "/api/cron/airalo-sync", "schedule": "0 * * * *" }
+    { "path": "/api/cron/airalo-sync", "schedule": "0 * * * *" },
+    { "path": "/api/cron/visa-hotel-sweep", "schedule": "0 */6 * * *" }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
