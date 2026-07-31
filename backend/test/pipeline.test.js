@@ -4015,6 +4015,34 @@ test('visa reservations: Duffel auto-hold is dormant without keys; apply path is
   assert.equal(S.listFulfilmentOrders({}).find((o) => o.visaReservationId === r.reservation.id).status, 'completed');
 });
 
+test('visa reservations: hotel auto-book is OFF by default; apply/cancel/sweep manage the liability', async () => {
+  const S = await import('../src/store.js');
+  const LS = await import('../src/live-suppliers.js');
+  // OFF unless BOTH Hotelbeds keys AND VISA_AUTO_HOTEL=true (a hotel booking is a
+  // real liability, so it never turns on implicitly).
+  assert.equal(LS.visaAutoHotelEnabled(), false, 'hotel auto-book stays off by default');
+  const u = S.createUser({ email: `vhb${Date.now()}@x.co`, name: 'Hotel Booker' });
+  const r = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: '2026-09-10', nights: 5, travellers: 1 });
+  assert.equal(r.reservation.status, 'processing');
+  // Refuse without a real confirmation number.
+  assert.equal(S.applyVisaHotelBooking(r.reservation.id, { provider: 'Rove' }).error, 'provider-ref-required');
+  // Simulate a successful Hotelbeds free-cancel booking → ready + records the deadline.
+  const booked = S.applyVisaHotelBooking(r.reservation.id, { provider: 'Rove Downtown', providerRef: 'HB-77120', hotelbedsRef: 'HB-77120', cancelBy: '2026-09-08' });
+  assert.equal(booked.ok, true); assert.equal(booked.allReady, true);
+  const hotel = booked.reservation.items.find((i) => i.type === 'hotel');
+  assert.equal(hotel.providerRef, 'HB-77120'); assert.equal(hotel.cancelBy, '2026-09-08'); assert.equal(hotel.autoIssued, true);
+  // Sweep: this booking's deadline (2026-09-08) is due when "today" is close to it,
+  // but NOT when today is far earlier.
+  assert.ok(!S.visaHotelsToCancel('2026-01-01', 2).some((x) => x.id === r.reservation.id), 'not swept far ahead of the deadline');
+  const due = S.visaHotelsToCancel('2026-09-07', 2);
+  assert.ok(due.some((x) => x.id === r.reservation.id && x.hotelbedsRef === 'HB-77120'), 'swept as the deadline approaches');
+  // Cancellation records state so it isn't cancelled twice.
+  const cancelled = S.markVisaHotelCancelled(r.reservation.id, { cancellationRef: 'CXL-1', charge: 0 });
+  assert.equal(cancelled.ok, true);
+  assert.equal(booked.reservation.items.find((i) => i.type === 'hotel').status, 'cancelled');
+  assert.ok(!S.visaHotelsToCancel('2026-09-07', 2).some((x) => x.id === r.reservation.id), 'cancelled booking drops out of the sweep');
+});
+
 test('vendor approval process: pending queue, admin approve/reject, sanctions auto-reject', () => {
   // A clean application lands in the admin queue as pending-review (never live).
   const a = createUser({ email: 'vq1@x.co', name: 'Queue One' });

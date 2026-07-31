@@ -385,6 +385,52 @@ export function applyVisaFlightHold(rid, { provider, providerRef, heldUntil = nu
     : `Your flight reservation is issued — reference ${providerRef} (${provider || 'airline'}). Your hotel reservation is being issued next.` });
   return { ok: true, reservation: rec, allReady };
 }
+// Automated hotel booking succeeded (Hotelbeds free-cancellation) → attach the
+// REAL hotel confirmation + the free-cancel deadline (so it can be cancelled
+// after the visa decision) and mark the hotel item issued.
+export function applyVisaHotelBooking(rid, { provider, providerRef, hotelbedsRef = null, cancelBy = null, verifyUrl = null } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  if (!providerRef) return { ok: false, error: 'provider-ref-required' };
+  const it = rec.items.find((x) => x.type === 'hotel');
+  if (!it) return { ok: false, error: 'no-hotel-item' };
+  it.provider = provider || it.provider; it.providerRef = providerRef;
+  it.hotelbedsRef = hotelbedsRef || providerRef; it.cancelBy = cancelBy || it.cancelBy;
+  it.verifyUrl = verifyUrl || it.verifyUrl;
+  it.status = 'ready'; it.documentReady = true; it.issuedAt = nowISO(); it.autoIssued = true;
+  const allReady = rec.items.every((x) => x.documentReady);
+  if (allReady) {
+    rec.status = 'ready'; rec.deliveredAt = nowISO();
+    const order = db.fulfilmentOrders.find((o) => o.visaReservationId === rid && o.status !== 'completed');
+    if (order) { order.status = 'completed'; order.completedAt = nowISO(); order.supplierRef = rec.items.map((i) => i.providerRef).filter(Boolean).join(', '); }
+  }
+  recordAudit({ actor: 'system:hotelbeds', role: 'system', action: 'visa.reservation.hotel-booked', entity: 'visa-reservation', entityId: rid, summary: `${provider || 'hotel'} ${providerRef}${cancelBy ? ' · free-cancel to ' + cancelBy : ''}` });
+  pushNotification(rec.userId, { type: 'success', icon: '🏨', title: 'Hotel reservation issued', body: `Your hotel reservation is confirmed — ${provider || 'hotel'} · ${providerRef}.${allReady ? ' Your visa reservation is ready to download.' : ''}` });
+  return { ok: true, reservation: rec, allReady };
+}
+// Hotel booking cancelled (after the visa decision, or by the safety sweep) →
+// record it so we don't try to cancel twice and the ledger is clean.
+export function markVisaHotelCancelled(rid, { cancellationRef = null, charge = 0 } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  const it = rec.items.find((x) => x.type === 'hotel');
+  if (!it || !it.hotelbedsRef) return { ok: false, error: 'no-hotel-booking' };
+  it.status = 'cancelled'; it.cancelledAt = nowISO(); it.cancellationRef = cancellationRef; it.cancellationCharge = charge || 0;
+  recordAudit({ actor: 'system', role: 'system', action: 'visa.reservation.hotel-cancelled', entity: 'visa-reservation', entityId: rid, summary: `${cancellationRef || 'cancelled'}${charge ? ' · charge ' + charge : ''}` });
+  return { ok: true, reservation: rec, hotelbedsRef: it.hotelbedsRef };
+}
+// SAFETY SWEEP: auto-booked hotel reservations still live whose free-cancel
+// deadline is within `bufferDays` — these MUST be cancelled or 3JN pays for the
+// room. The caller (server) does the actual Hotelbeds cancel, then marks each.
+export function visaHotelsToCancel(todayISO = null, bufferDays = 2) {
+  const today = new Date(`${(todayISO || nowISO()).slice(0, 10)}T00:00:00Z`);
+  const limit = new Date(today); limit.setUTCDate(limit.getUTCDate() + Math.max(0, bufferDays));
+  const limitISO = limit.toISOString().slice(0, 10);
+  return db.visaReservations
+    .map((r) => ({ r, it: r.items.find((x) => x.type === 'hotel' && x.autoIssued && x.hotelbedsRef && x.status === 'ready') }))
+    .filter(({ it }) => it && it.cancelBy && it.cancelBy <= limitISO)
+    .map(({ r, it }) => ({ id: r.id, hotelbedsRef: it.hotelbedsRef, cancelBy: it.cancelBy }));
+}
 export function getVisaReservation(rid) { return db.visaReservations.find((r) => r.id === rid) || null; }
 export function listVisaReservations(status) {
   const all = db.visaReservations.slice().reverse();

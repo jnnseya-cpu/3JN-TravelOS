@@ -565,6 +565,43 @@ export async function issueVisaFlightHold({ originCode, destCode, departDate, re
   };
 }
 
+// LIABILITY NOTE: unlike a flight hold (which auto-expires at no cost), a hotel
+// booking is a REAL booking that 3JN must CANCEL before its free-cancellation
+// deadline or pay for the room. So auto-hotel is OFF unless explicitly enabled
+// (VISA_AUTO_HOTEL=true), only books FREE-CANCELLATION rates, and records the
+// deadline + supplier reference so the reservation can be cancelled after the
+// visa decision (admin action + safety sweep).
+export function visaAutoHotelEnabled() { return hotelbedsHotelsEnabled() && env.VISA_AUTO_HOTEL === 'true'; }
+
+// Book a REAL free-cancellation Hotelbeds reservation for a visa file. Returns
+// the hotel + confirmation number + the free-cancel deadline, or a reason (→ the
+// caller falls back to the manual Visa Desk). Never books a non-refundable rate.
+export async function issueVisaHotelReservation({ destCode, checkIn, checkOut, nights = 1, adults = 1, guestName = '' } = {}) {
+  if (!hotelbedsHotelsEnabled() || !destCode || !checkIn || !checkOut) return { ok: false, error: 'not-configured' };
+  const intent = { dates: { checkIn, checkOut }, travellers: { adults: Math.max(1, Number(adults) || 1) }, nights: Math.max(1, Number(nights) || 1) };
+  const hotels = await fetchHotelbedsHotels(intent, { code: String(destCode).toUpperCase() }).catch(() => null);
+  if (!Array.isArray(hotels) || !hotels.length) return { ok: false, error: 'no-availability' };
+  const priceOf = (h) => Number(h.priceUSD ?? h.totalUSD ?? h.nightlyUSD ?? h.details?.priceUSD ?? Infinity);
+  // FREE-CANCELLATION only, cheapest first — minimise exposure until we cancel.
+  const cand = hotels
+    .filter((h) => h.details?.freeCancellation && h.details?.hotelbedsRateKey)
+    .sort((a, b) => priceOf(a) - priceOf(b))[0];
+  if (!cand) return { ok: false, error: 'no-free-cancellation-rate' };
+  const parts = String(guestName || '').trim().split(/\s+/).filter(Boolean);
+  const name = parts[0] || 'Guest';
+  const surname = parts.slice(1).join(' ') || parts[0] || 'Traveller';
+  const booking = await bookHotelbedsHotel({ rateKey: cand.details.hotelbedsRateKey, rateType: cand.details.rateType || 'BOOKABLE', holder: { name, surname }, clientReference: 'JNN-VISA' });
+  if (!booking.ok || !booking.reference) return { ok: false, error: booking.error || 'book-failed' };
+  // Free-cancel deadline: the earliest dated cancellation policy, else check-in.
+  const pol = Array.isArray(booking.cancellationPolicies) ? booking.cancellationPolicies.find((p) => p.from) : null;
+  return {
+    ok: true, provider: booking.hotel?.name || cand.name || cand.hotelName || 'Hotel',
+    providerRef: booking.reference, hotelbedsRef: booking.reference,
+    cancelBy: String(pol?.from || checkIn || '').slice(0, 10) || null,
+    net: booking.net, currency: booking.currency,
+  };
+}
+
 // Pay a held order from balance → ISSUES THE TICKET. Called when the customer
 // has finished paying us (final instalment) or immediately for pay-in-full.
 export async function payDuffelOrder({ orderId, amount, currency, idempotencyKey = null, device = null }) {

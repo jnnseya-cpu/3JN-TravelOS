@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v208';
+const APP_BUILD = 'v209';
 
 const state = {
   context: null,
@@ -3444,11 +3444,19 @@ async function renderAdmin() {
           <button class="btn btn-gold btn-sm" style="margin-top:10px" onclick="visaResDeliver('${esc(r.id)}')">✓ Mark issued &amp; deliver</button>
         </div>`).join('') || '<div class="muted" style="font-size:13px">No reservations awaiting issue.</div>';
       const done = vres.filter((r) => r.status !== 'processing').slice(0, 12).map((r) => `<div class="kv"><span>${esc(r.applicantName || r.userId)} <span class="muted">· ${esc(r.kind)} · ${esc(r.destination)}</span></span><span style="color:var(--green)">${esc(r.status)}</span></div>`).join('') || '<div class="muted" style="font-size:13px">None delivered yet.</div>';
+      // Auto-booked hotels still LIVE (Hotelbeds) — 3JN is on the hook for the room
+      // until each is cancelled before its free-cancel deadline.
+      const liveHotels = vres.map((r) => ({ r, it: (r.items || []).find((i) => i.type === 'hotel' && i.hotelbedsRef && i.status === 'ready') })).filter((x) => x.it);
+      const hotelRows = liveHotels.map(({ r, it }) => `<div class="kv" style="align-items:baseline">
+          <span>${esc(it.provider || 'Hotel')} <span class="muted">· ${esc(r.applicantName || r.userId)} · ref ${esc(it.providerRef)}</span></span>
+          <span>${it.cancelBy ? `<span class="muted" style="font-size:11px">cancel by ${esc(ukDate(it.cancelBy))}</span> ` : ''}<button class="btn btn-ghost btn-sm" style="color:#ff8a8a;padding:2px 8px" onclick="visaHotelCancel('${esc(r.id)}')">Cancel</button></span>
+        </div>`).join('') || '<div class="muted" style="font-size:13px">No live hotel bookings to cancel.</div>';
       return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Visa Desk — reservation issuance</h2></div>
         <div class="console-grid">
           <div class="card pad"><span class="eyebrow">Awaiting issue (${processing.length})</span><p class="muted" style="font-size:11.5px;margin:4px 0 8px">Issue the held flight itinerary / free-cancellation hotel, then deliver — the applicant is notified and can download.</p><div>${q}</div></div>
           <div class="card pad"><span class="eyebrow">Recently delivered</span><div style="margin-top:8px">${done}</div></div>
-        </div>`;
+        </div>
+        ${liveHotels.length ? `<div class="card pad" style="margin-top:12px;border-color:rgba(255,107,107,.35)"><span class="eyebrow">⚠ Live hotel bookings — cancel after the visa decision (else 3JN pays the room)</span><div style="margin-top:8px">${hotelRows}</div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="visaHotelSweep()">Run cancellation sweep (deadline ≤ 2 days)</button></div>` : ''}`;
     })() : ''}
     ${qr && qr.requests?.length ? `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Exact-quote requests — confirm real bookable prices</h2></div>
       <div class="card pad">${qr.requests.map((r) => `
@@ -5804,6 +5812,19 @@ window.vendorDecide = async (userId, decision) => {
   catch (e) { toast(e.message || 'Decision failed.'); return; }
   toast(decision === 'approve' ? '✓ Vendor approved — code issued & applicant notified.' : '✕ Application rejected — applicant notified.');
   renderAdmin();
+};
+window.visaHotelCancel = async (id) => {
+  if (!confirm('Cancel this hotel booking with Hotelbeds? Do this once the visa decision is in — it frees 3JN from paying for the room.')) return;
+  let r;
+  try { r = await api(`/api/admin/visa/reservations/${id}/cancel-hotel`, { method: 'POST', body: JSON.stringify({}) }); }
+  catch (e) { toast(e.message || 'Cancel failed.'); return; }
+  if (r?.ok === false) { toast(r.error || 'Cancel failed.'); return; }
+  toast('✓ Hotel booking cancelled.'); renderAdmin();
+};
+window.visaHotelSweep = async () => {
+  if (!confirm('Cancel all auto-booked visa hotels whose free-cancel deadline is within 2 days?')) return;
+  try { const r = await api('/api/admin/visa/reservations/sweep-cancellations', { method: 'POST', body: JSON.stringify({ bufferDays: 2 }) }); toast(`Swept ${r.swept} booking(s).`); renderAdmin(); }
+  catch (e) { toast(e.message || 'Sweep failed.'); }
 };
 window.visaResDeliver = async (id) => {
   let rec;

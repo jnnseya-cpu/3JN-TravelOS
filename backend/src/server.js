@@ -26,6 +26,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
+  applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
@@ -74,7 +75,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -203,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-duffel-autohold-v208';
+const BUILD_TAG = '2026-08-01-visa-hotel-autobook-v209';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4785,6 +4786,18 @@ app.post('/api/visa/reservations', safe(async (req, res) => {
         if (hold?.ok && hold.providerRef) applyVisaFlightHold(rec.id, hold);
       }
     }
+    // AUTO-HOTEL (OFF unless VISA_AUTO_HOTEL=true — a hotel booking is a real
+    // liability until cancelled): book a free-cancellation Hotelbeds room and
+    // attach the real confirmation. Any failure → the manual Visa Desk.
+    const hasHotel = rec.items.some((i) => i.type === 'hotel' && i.status !== 'ready');
+    if (hasHotel && visaAutoHotelEnabled()) {
+      const d = resolveDestination(rec.destination) || resolveOrigin(rec.destination);
+      const checkOut = (() => { const t = new Date(`${rec.departDate}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + Math.max(1, rec.nights || 1)); return t.toISOString().slice(0, 10); })();
+      if (d?.airport || d?.code || d?.hotelbedsDest) {
+        const hb = await issueVisaHotelReservation({ destCode: d.hotelbedsDest || d.code || d.airport, checkIn: rec.departDate, checkOut, nights: rec.nights, adults: rec.travellers, guestName: rec.applicantName });
+        if (hb?.ok && hb.providerRef) applyVisaHotelBooking(rec.id, hb);
+      }
+    }
   } catch { /* fall back to the manual Visa Desk */ }
   res.json({ ...result, reservation: getVisaReservation(result.reservation.id) });
 }));
@@ -4810,6 +4823,30 @@ app.post('/api/admin/visa/reservations/:id/deliver', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const by = currentUser(req)?.id || 'ops';
   res.json(deliverVisaReservation(req.params.id, { ...(req.body || {}), by }));
+}));
+// Cancel an auto-booked hotel reservation (after the visa decision) so 3JN is
+// never charged for a room it held for a visa file.
+app.post('/api/admin/visa/reservations/:id/cancel-hotel', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const rec = getVisaReservation(req.params.id);
+  const hotel = rec?.items?.find((i) => i.type === 'hotel' && i.hotelbedsRef);
+  if (!hotel) return res.status(404).json({ error: 'no-hotel-booking' });
+  const cancel = await cancelHotelbedsBooking(hotel.hotelbedsRef).catch((e) => ({ ok: false, error: e?.message }));
+  if (!cancel?.ok) return res.status(502).json({ ok: false, error: cancel?.error || 'cancel-failed' });
+  res.json(markVisaHotelCancelled(req.params.id, { cancellationRef: cancel.reference, charge: cancel.cancellationCharge }));
+}));
+// SAFETY SWEEP: cancel any auto-booked visa hotel whose free-cancel deadline is
+// near, so a forgotten booking never bills 3JN. Call from a cron/schedule.
+app.post('/api/admin/visa/reservations/sweep-cancellations', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const due = visaHotelsToCancel(null, Number(req.body?.bufferDays) || 2);
+  const results = [];
+  for (const d of due) {
+    const cancel = await cancelHotelbedsBooking(d.hotelbedsRef).catch(() => ({ ok: false }));
+    if (cancel?.ok) { markVisaHotelCancelled(d.id, { cancellationRef: cancel.reference, charge: cancel.cancellationCharge }); results.push({ id: d.id, cancelled: true }); }
+    else results.push({ id: d.id, cancelled: false });
+  }
+  res.json({ ok: true, swept: results.length, results });
 }));
 
 app.get('/api/visaos/probability', safe((req, res) => {
