@@ -321,9 +321,14 @@ export function orderVisaReservation(userId, payload = {}) {
   const fee = visaDocFee(trip.kind, { memberActive: !!u.membership?.active });
   const rid = id('vres');
   const validUntil = visaReservationValidity(nowISO());
+  // `reference` is our INTERNAL 3JN order ref (VF-/VH-) — NOT presented as the
+  // airline PNR. What an embassy verifies is the REAL provider reference issued
+  // by the Visa Desk: `providerRef` (airline record locator / hotel confirmation
+  // number), `provider` (airline / hotel name) and `verifyUrl`. Those are filled
+  // in on delivery (manually by ops, or automatically once a live hold fires).
   const items = [];
-  if (trip.needsFlight) items.push({ type: 'flight', status: 'processing', reference: visaDocReference('VF', rid + ':flight'), route: `${trip.origin} → ${trip.destination}${trip.returnDate ? ' → ' + trip.origin : ''}`, departDate: trip.departDate, returnDate: trip.returnDate, issuedAt: null, documentReady: false });
-  if (trip.needsHotel) items.push({ type: 'hotel', status: 'processing', reference: visaDocReference('VH', rid + ':hotel'), city: trip.destination, checkIn: trip.departDate, nights: trip.nights, issuedAt: null, documentReady: false });
+  if (trip.needsFlight) items.push({ type: 'flight', status: 'processing', reference: visaDocReference('VF', rid + ':flight'), route: `${trip.origin} → ${trip.destination}${trip.returnDate ? ' → ' + trip.origin : ''}`, departDate: trip.departDate, returnDate: trip.returnDate, provider: null, providerRef: null, verifyUrl: null, heldUntil: null, issuedAt: null, documentReady: false });
+  if (trip.needsHotel) items.push({ type: 'hotel', status: 'processing', reference: visaDocReference('VH', rid + ':hotel'), city: trip.destination, checkIn: trip.departDate, nights: trip.nights, provider: null, providerRef: null, verifyUrl: null, freeCancellation: true, issuedAt: null, documentReady: false });
   const rec = {
     id: rid, userId, kind: trip.kind, status: 'processing',
     destination: trip.destination, origin: trip.origin,
@@ -355,22 +360,39 @@ export function listVisaReservations(status) {
   const all = db.visaReservations.slice().reverse();
   return status ? all.filter((r) => r.status === status) : all;
 }
-// Ops/Visa Desk confirms issuance → mark items ready, close the job, notify.
+// Ops/Visa Desk confirms issuance → attach the REAL provider references, mark
+// items ready, close the job and notify. `items` is an array of per-type patches
+// carrying what the embassy actually verifies:
+//   flight: { type:'flight', provider:'Emirates', providerRef:'ABC123' (airline
+//            PNR), verifyUrl, heldUntil }
+//   hotel:  { type:'hotel', provider:'Rove Downtown', providerRef:'HTLXYZ'
+//            (confirmation no.), verifyUrl }
+// A flight item WITHOUT a real providerRef is refused — we never mark a flight
+// "ready" with only our internal locator, because that would not be verifiable.
 export function deliverVisaReservation(rid, { items = null, validUntil = null, note = null, by = 'ops' } = {}) {
   const rec = db.visaReservations.find((r) => r.id === rid);
   if (!rec) return { ok: false, error: 'not-found' };
+  const patchFor = (t) => (Array.isArray(items) ? items.find((x) => x.type === t) : null);
+  // Guard: every item must carry a real provider reference to be issued.
+  for (const it of rec.items) {
+    const p = patchFor(it.type);
+    const ref = p?.providerRef || it.providerRef;
+    if (!ref) return { ok: false, error: 'provider-ref-required', message: `Enter the real ${it.type === 'flight' ? 'airline booking reference (PNR)' : 'hotel confirmation number'} before delivering — an embassy verifies that, not our internal reference.` };
+  }
   rec.items.forEach((it) => {
-    const patch = Array.isArray(items) ? items.find((x) => x.type === it.type) : null;
+    const p = patchFor(it.type) || {};
     it.status = 'ready'; it.documentReady = true; it.issuedAt = nowISO();
-    if (patch?.reference) it.reference = patch.reference;
-    if (patch?.supplierRef) it.supplierRef = patch.supplierRef;
+    if (p.provider) it.provider = p.provider;
+    if (p.providerRef) it.providerRef = p.providerRef;
+    if (p.verifyUrl) it.verifyUrl = p.verifyUrl;
+    if (it.type === 'flight' && p.heldUntil) it.heldUntil = p.heldUntil;
   });
   if (validUntil) rec.validUntil = validUntil;
   rec.status = 'ready'; rec.deliveredAt = nowISO(); if (note) rec.note = note;
   const order = db.fulfilmentOrders.find((o) => o.visaReservationId === rid && o.status !== 'completed');
-  if (order) { order.status = 'completed'; order.completedAt = nowISO(); order.supplierRef = rec.items.map((i) => i.reference).join(', '); order.note = note || order.note; }
-  recordAudit({ actor: by, role: 'ops', action: 'visa.reservation.delivered', entity: 'visa-reservation', entityId: rid, summary: `${rec.kind} ready · valid until ${rec.validUntil}` });
-  pushNotification(rec.userId, { type: 'success', icon: '📄', title: 'Visa reservation ready', body: `Your ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'visa reservation'} is ready to download for your embassy file. Valid until ${rec.validUntil}.` });
+  if (order) { order.status = 'completed'; order.completedAt = nowISO(); order.supplierRef = rec.items.map((i) => i.providerRef).filter(Boolean).join(', '); order.note = note || order.note; }
+  recordAudit({ actor: by, role: 'ops', action: 'visa.reservation.delivered', entity: 'visa-reservation', entityId: rid, summary: `${rec.kind} ready · refs ${rec.items.map((i) => i.providerRef).filter(Boolean).join(',')}` });
+  pushNotification(rec.userId, { type: 'success', icon: '📄', title: 'Visa reservation ready', body: `Your ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'visa reservation'} is ready to download for your embassy file — with a verifiable ${rec.kind === 'hotel' ? 'hotel confirmation' : 'airline booking reference'}.` });
   return { ok: true, reservation: rec };
 }
 // ---- Embassy governance: per-country configuration --------------------------

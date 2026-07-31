@@ -3976,11 +3976,21 @@ test('visa support reservations: fee maths, order → issue → deliver, revenue
   // Revenue is booked (the one-off service fee), and the pricing floor still holds.
   const dash = S.profitabilityDashboard();
   assert.ok(dash.streams.visaDocsRevenueUSD > 0, 'service fee counted as revenue');
-  // Ops delivers → ready, notified, job closed.
-  const del = S.deliverVisaReservation(r.reservation.id, { validUntil: '2026-09-05' });
+  // Delivery is REFUSED without a real provider reference (embassies verify that,
+  // not our internal locator).
+  const bad = S.deliverVisaReservation(r.reservation.id, { items: [{ type: 'flight', provider: 'Emirates' }] });
+  assert.equal(bad.ok, false, 'no delivery without a real airline PNR / hotel confirmation');
+  assert.equal(bad.error, 'provider-ref-required');
+  // Ops delivers with REAL references → ready, notified, job closed.
+  const del = S.deliverVisaReservation(r.reservation.id, { items: [
+    { type: 'flight', provider: 'Emirates', providerRef: 'EK7X9Q', verifyUrl: 'https://emirates.com/manage', heldUntil: '2026-09-05' },
+    { type: 'hotel', provider: 'Rove Downtown', providerRef: 'HTL-55123' },
+  ] });
   assert.equal(del.ok, true);
   assert.equal(del.reservation.status, 'ready');
-  assert.ok(del.reservation.items.every((it) => it.documentReady && it.issuedAt), 'all items issued');
+  assert.ok(del.reservation.items.every((it) => it.documentReady && it.issuedAt && it.providerRef), 'all items issued with real references');
+  const flt = del.reservation.items.find((it) => it.type === 'flight');
+  assert.equal(flt.providerRef, 'EK7X9Q'); assert.equal(flt.provider, 'Emirates');
   assert.equal(S.listFulfilmentOrders({}).find((o) => o.visaReservationId === r.reservation.id).status, 'completed');
 });
 

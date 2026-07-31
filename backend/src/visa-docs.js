@@ -26,17 +26,17 @@ export const VISA_DOC_KINDS = ['flight', 'hotel', 'pack'];
 export const VISA_DOC_PRODUCTS = {
   flight: {
     kind: 'flight', name: 'Flight reservation (for visa)', feeGbp: VISA_DOC_FEE_FLIGHT_GBP,
-    includes: ['Verifiable onward/return flight itinerary', 'Real booking locator', `Valid ${VISA_DOC_VALIDITY_DAYS} days`, 'PDF for your embassy file'],
+    includes: ['Real onward/return flight reservation', 'Airline booking reference you can verify on the airline site', 'Held — issued close to your appointment', 'PDF for your embassy file'],
     delivers: ['flight'],
   },
   hotel: {
     kind: 'hotel', name: 'Hotel reservation (for visa)', feeGbp: VISA_DOC_FEE_HOTEL_GBP,
-    includes: ['Free-cancellation hotel reservation', 'Named confirmation for your dates', `Valid ${VISA_DOC_VALIDITY_DAYS} days`, 'PDF for your embassy file'],
+    includes: ['Real free-cancellation hotel reservation', 'Named hotel confirmation number for your dates', `Held ~${VISA_DOC_VALIDITY_DAYS} days`, 'PDF for your embassy file'],
     delivers: ['hotel'],
   },
   pack: {
     kind: 'pack', name: 'Flight + hotel reservation pack', feeGbp: VISA_DOC_FEE_PACK_GBP,
-    includes: ['Both reservations for your visa file', 'Onward flight + free-cancellation hotel', `Valid ${VISA_DOC_VALIDITY_DAYS} days`, `Saves £${round2(VISA_DOC_FEE_FLIGHT_GBP + VISA_DOC_FEE_HOTEL_GBP - VISA_DOC_FEE_PACK_GBP)}`],
+    includes: ['Both reservations for your visa file', 'Onward flight + free-cancellation hotel', 'Real, verifiable references', `Saves £${round2(VISA_DOC_FEE_FLIGHT_GBP + VISA_DOC_FEE_HOTEL_GBP - VISA_DOC_FEE_PACK_GBP)}`],
     delivers: ['flight', 'hotel'],
   },
 };

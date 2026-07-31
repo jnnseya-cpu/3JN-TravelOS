@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v206';
+const APP_BUILD = 'v207';
 
 const state = {
   context: null,
@@ -173,7 +173,7 @@ function applyStorefrontMode() {
 // ON only until context loads, so a real module never flickers as "coming soon".
 function moduleOn(key) { const m = state.context?.modules; return m ? m[key] !== false : true; }
 const MODULE_META = {
-  visaos: { label: '3JN VisaOS', blurb: 'AI-assisted visa eligibility, document checks and application support are on the way. In the meantime, visa support is included with our packages.' },
+  visaos: { label: '3JN VisaOS', blurb: 'AI-assisted visa eligibility and document checks are on the way. Available right now: order the flight & hotel reservations you need for a visa application below.' },
   corporate: { label: 'Business Travel', blurb: 'Corporate travel — policies, approvals, expense and team booking — is coming soon. Talk to us if you manage travel for a team.' },
   embassy: { label: 'Embassy Decision Command', blurb: 'The government/embassy visa-decision console is coming soon.' },
   savewallet: { label: 'Save & Search', blurb: 'Save toward a future trip while our technology watches routes, dates and prices — and buy when your funds and flight are ready. Coming soon. (Saving is never a booking: no fare or seat is held until you buy.)' },
@@ -191,16 +191,21 @@ function moduleGate(view) {
 function renderComingSoon(meta) {
   const body = document.getElementById('comingBody');
   if (!body) return;
-  body.innerHTML = `<div style="max-width:600px;margin:60px auto;text-align:center;padding:40px 22px">
+  // Visa support reservations are a STANDALONE product — they don't need the full
+  // AI VisaOS decision engine, so they stay available even when that module is off.
+  const isVisa = meta === MODULE_META.visaos;
+  body.innerHTML = `<div style="max-width:600px;margin:${isVisa ? '40px' : '60px'} auto ${isVisa ? '10px' : '60px'};text-align:center;padding:${isVisa ? '24px' : '40px'} 22px">
     <div style="font-size:48px;line-height:1">🚧</div>
     <span class="eyebrow">Coming soon</span>
     <h2 style="margin:10px 0 6px">${esc(meta.label)}</h2>
-    <p class="muted" style="font-size:14.5px;max-width:44ch;margin:0 auto">${esc(meta.blurb)}</p>
+    <p class="muted" style="font-size:14.5px;max-width:46ch;margin:0 auto">${esc(meta.blurb)}</p>
     <div class="hero-cta" style="justify-content:center;margin-top:22px">
       <button class="btn btn-gold" onclick="nav('planner')">Plan a trip</button>
       ${state.context?.contact?.whatsapp ? `<a class="btn btn-ghost" style="color:#25D366;border-color:rgba(37,211,102,.4)" href="https://wa.me/${esc(state.context.contact.whatsapp)}" target="_blank" rel="noopener">💬 Message us</a>` : `<button class="btn btn-ghost" onclick="nav('home')">Back to home</button>`}
     </div>
-  </div>`;
+  </div>
+  ${isVisa ? '<div class="wrap" style="max-width:760px;margin:0 auto 50px"><div id="visaResBlock"></div></div>' : ''}`;
+  if (isVisa) renderVisaReservations();
 }
 function nav(view) {
   // Search is always reachable for everyone (ACU-gated on execution). Only the
@@ -4691,14 +4696,16 @@ async function renderVisaReservations() {
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
         <strong>${esc((pricing.products.find((p) => p.kind === r.kind) || {}).name || r.kind)}</strong>${statusChip(r.status)}
       </div>
-      <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + ' nights' : ''} · valid until ${esc(ukDate(r.validUntil))}</div>
-      <div style="margin-top:6px">${(r.items || []).map((it) => `<span class="chip" style="font-size:11px;border-color:${it.documentReady ? 'rgba(70,211,154,.4)' : 'rgba(244,183,28,.4)'}">${it.type === 'flight' ? '✈' : '🏨'} ${esc(it.reference)}${it.documentReady ? '' : ' · issuing'}</span>`).join(' ')}</div>
-      ${r.status === 'ready' ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="printVisaReservation('${esc(r.id)}')">🖨 Print confirmation</button>` : '<p class="muted" style="font-size:11.5px;margin-top:6px">Your reservation is being issued — you\'ll be notified when it\'s ready to download.</p>'}
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + ' nights' : ''}</div>
+      <div style="margin-top:6px">${(r.items || []).map((it) => it.documentReady && it.providerRef
+        ? `<span class="chip" style="font-size:11px;border-color:rgba(70,211,154,.4)">${it.type === 'flight' ? '✈' : '🏨'} ${esc(it.provider || '')} · <strong>${esc(it.providerRef)}</strong></span>`
+        : `<span class="chip" style="font-size:11px;border-color:rgba(244,183,28,.4)">${it.type === 'flight' ? '✈' : '🏨'} issuing…</span>`).join(' ')}</div>
+      ${r.status === 'ready' ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="printVisaReservation('${esc(r.id)}')">🖨 Print confirmation</button>` : '<p class="muted" style="font-size:11.5px;margin-top:6px">Being issued by our Visa Desk — you\'ll be notified with a verifiable booking reference when it\'s ready.</p>'}
     </div>`).join('');
   box.innerHTML = `
     <div class="card pad" style="border-color:rgba(244, 183, 28,.35)">
       <span class="eyebrow">🛂 Reservations for your visa — flight &amp; hotel</span>
-      <p class="muted" style="font-size:12.5px;margin:6px 0 12px">Embassies ask for proof of onward travel and accommodation — but don't buy a non-refundable ticket or room before your visa is granted. We issue a <strong>genuine, verifiable held flight itinerary</strong> and a <strong>free-cancellation hotel reservation</strong>, valid ${pricing.validityDays} days for your appointment, for a one-off fee. ${pricing.memberDiscountPct ? `Travel+ members save ${pricing.memberDiscountPct}%.` : ''}</p>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 12px">Embassies ask for proof of onward travel and accommodation — but don't buy a non-refundable ticket or room before your visa is granted. Our Visa Desk issues a <strong>real held flight reservation</strong> (with an airline booking reference you can verify on the airline's site) and a <strong>free-cancellation hotel reservation</strong>, for a flat one-off <strong>service fee</strong> — you never pay the fare or the room. ${pricing.memberDiscountPct ? `Travel+ members save ${pricing.memberDiscountPct}%.` : ''}</p>
       <div style="display:grid;gap:8px">${pricing.products.map(prod).join('')}</div>
       <div class="composer-row" style="margin-top:12px">
         <div class="field"><label>Flying from</label><input class="in" id="vresOrigin" placeholder="e.g. London"></div>
@@ -4746,8 +4753,8 @@ window.printVisaReservation = async (id) => {
   try { rec = (await api(`/api/visa/reservations/${id}`)).reservation; } catch { toast('Could not load the reservation.'); return; }
   if (!rec) return;
   const rows = (rec.items || []).map((it) => it.type === 'flight'
-    ? `<tr><td>Flight reservation</td><td>${esc(it.reference)}</td><td>${esc(it.route || '')}<br>${esc(ukDate(it.departDate))}${it.returnDate ? ' – ' + esc(ukDate(it.returnDate)) : ''}</td></tr>`
-    : `<tr><td>Hotel reservation</td><td>${esc(it.reference)}</td><td>${esc(it.city || '')}<br>${esc(ukDate(it.checkIn))} · ${it.nights} nights</td></tr>`).join('');
+    ? `<tr><td>Flight reservation<br><span class="muted">${esc(it.provider || 'Airline')}</span></td><td><strong>${esc(it.providerRef || '—')}</strong>${it.verifyUrl ? `<br><a href="${esc(it.verifyUrl)}">verify</a>` : ''}</td><td>${esc(it.route || '')}<br>${esc(ukDate(it.departDate))}${it.returnDate ? ' – ' + esc(ukDate(it.returnDate)) : ''}${it.heldUntil ? `<br><span class="muted">held until ${esc(ukDate(it.heldUntil))}</span>` : ''}</td></tr>`
+    : `<tr><td>Hotel reservation<br><span class="muted">${esc(it.provider || 'Hotel')}</span></td><td><strong>${esc(it.providerRef || '—')}</strong>${it.verifyUrl ? `<br><a href="${esc(it.verifyUrl)}">verify</a>` : ''}</td><td>${esc(it.city || '')}<br>${esc(ukDate(it.checkIn))} · ${it.nights} nights${it.freeCancellation ? '<br><span class="muted">free cancellation</span>' : ''}</td></tr>`).join('');
   const w = window.open('', '_blank');
   if (!w) { toast('Allow pop-ups to print your confirmation.'); return; }
   w.document.write(`<!doctype html><html><head><title>3JN Visa Reservation ${esc(rec.id)}</title>
@@ -4756,10 +4763,10 @@ window.printVisaReservation = async (id) => {
     td,th{border:1px solid #dde;padding:10px;text-align:left;font-size:13px;vertical-align:top}th{background:#f4f6fb}
     .badge{display:inline-block;background:#eaf7ef;color:#1a8f5a;border:1px solid #b8e6cd;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700}</style></head>
     <body><h1>3JN Travel — Reservation Confirmation</h1>
-    <div class="muted">For visa application purposes · Reference ${esc(rec.id)} · Issued for ${esc(rec.applicantName || '')}</div>
-    <p><span class="badge">Valid until ${esc(ukDate(rec.validUntil))}</span></p>
-    <table><thead><tr><th>Item</th><th>Reference</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="muted">This is a genuine held/refundable reservation issued to support a visa application. It is not a purchased ticket or paid room; it is released after the visa decision. Verify at 3jntravel.com with the reference above.</p>
+    <div class="muted">For visa application purposes · 3JN order ${esc(rec.id)} · Issued for ${esc(rec.applicantName || '')}</div>
+    <p><span class="badge">Booking references below are verifiable with the airline / hotel</span></p>
+    <table><thead><tr><th>Item</th><th>Booking reference</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted">Each reservation above is a genuine held (flight) or free-cancellation (hotel) booking issued to support a visa application, verifiable directly with the airline/hotel using the booking reference shown. It is not a purchased ticket or paid room and is released/cancelled after the visa decision. The "3JN order" number is our internal reference only — not the airline record locator.</p>
     </body></html>`);
   w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
 };
@@ -5760,11 +5767,38 @@ window.vendorDecide = async (userId, decision) => {
   renderAdmin();
 };
 window.visaResDeliver = async (id) => {
-  if (!confirm('Confirm the flight/hotel reservation is issued and deliver it to the applicant?')) return;
-  try { await api(`/api/admin/visa/reservations/${id}/deliver`, { method: 'POST', body: JSON.stringify({}) }); }
-  catch (e) { toast(e.message || 'Could not deliver.'); return; }
-  toast('✓ Reservation delivered — applicant notified.');
-  renderAdmin();
+  let rec;
+  try { rec = ((await api('/api/admin/visa/reservations')).reservations || []).find((r) => r.id === id); } catch { /* */ }
+  if (!rec) { toast('Could not load the reservation.'); return; }
+  const val = (k) => document.getElementById(k)?.value?.trim() || undefined;
+  const flightFld = `<div style="margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <strong>✈ Flight — ${esc(rec.origin || '')} → ${esc(rec.destination || '')}</strong>
+      <input class="in" id="vd_f_provider" placeholder="Airline (e.g. Emirates)" style="margin-top:6px">
+      <input class="in" id="vd_f_ref" placeholder="Airline booking reference / PNR (required)" style="margin-top:6px">
+      <input class="in" id="vd_f_verify" placeholder="Airline verify URL (optional)" style="margin-top:6px">
+      <label class="muted" style="font-size:11px;display:block;margin-top:6px">Held until</label><input class="in" id="vd_f_held" type="date"></div>`;
+  const hotelFld = `<div style="margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <strong>🏨 Hotel — ${esc(rec.destination || '')}</strong>
+      <input class="in" id="vd_h_provider" placeholder="Hotel name" style="margin-top:6px">
+      <input class="in" id="vd_h_ref" placeholder="Hotel confirmation number (required)" style="margin-top:6px">
+      <input class="in" id="vd_h_verify" placeholder="Hotel/booking verify URL (optional)" style="margin-top:6px"></div>`;
+  const hasF = rec.items.some((i) => i.type === 'flight');
+  const hasH = rec.items.some((i) => i.type === 'hotel');
+  modal(`<span class="eyebrow">Deliver visa reservation</span>
+    <h3 style="margin:6px 0 4px">${esc(rec.applicantName || rec.userId)}</h3>
+    <p class="muted" style="font-size:12px">Enter the <strong>real</strong> references the embassy will verify — a genuine airline PNR and/or hotel confirmation number. We never deliver with only our internal reference.</p>
+    ${hasF ? flightFld : ''}${hasH ? hotelFld : ''}
+    <button class="btn btn-gold" id="vdSubmit" style="margin-top:12px">Deliver to applicant</button>`);
+  document.getElementById('vdSubmit').addEventListener('click', async () => {
+    const items = [];
+    if (hasF) items.push({ type: 'flight', provider: val('vd_f_provider'), providerRef: val('vd_f_ref'), verifyUrl: val('vd_f_verify'), heldUntil: val('vd_f_held') });
+    if (hasH) items.push({ type: 'hotel', provider: val('vd_h_provider'), providerRef: val('vd_h_ref'), verifyUrl: val('vd_h_verify') });
+    let r;
+    try { r = await api(`/api/admin/visa/reservations/${id}/deliver`, { method: 'POST', body: JSON.stringify({ items }) }); }
+    catch (e) { toast(e.message || 'Could not deliver.'); return; }
+    if (r?.ok === false) { toast(r.message || 'Could not deliver.'); return; }
+    closeModal(); toast('✓ Delivered — applicant notified.'); renderAdmin();
+  });
 };
 window.provisionTest = async () => {
   // Demo/test accounts are disabled for the commercial launch — point people to
