@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-stripe-webhook-status-v217';
+const BUILD_TAG = '2026-08-01-visa-copy-honest-window-v218';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4073,7 +4073,7 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       if (fresh) {
         const pi = event.data?.object?.payment_intent || null;
         const r = setVisaDepositIntent(meta.reservationId, { paymentIntentId: pi, authorized: true });
-        if (r.ok && meta.userId) pushNotification(meta.userId, { type: 'success', icon: '🏨', title: 'Room deposit authorized', body: 'Your refundable room deposit is held (not charged) — it\'s released after your visa decision.' });
+        if (r.ok && meta.userId) pushNotification(meta.userId, { type: 'success', icon: '🏨', title: 'Room deposit authorized', body: 'Your refundable room deposit is held (not charged) — it\'s released once your hotel booking is safely cancelled.' });
       }
     } else if (meta.bookingId && String(meta.bookingId).startsWith('qr_')) {
       // A confirmed exact-quote was paid.
