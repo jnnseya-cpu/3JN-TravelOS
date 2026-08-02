@@ -31,12 +31,15 @@ function form(data, prefix = '') {
   return parts.filter(Boolean).join('&');
 }
 
-async function stripePost(path, data) {
+async function stripePost(path, data, { idempotencyKey = null } = {}) {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
       'content-type': 'application/x-www-form-urlencoded',
+      // Stripe de-dupes writes that share an Idempotency-Key — so a retried or
+      // cross-instance-raced create can never produce a second charge/hold.
+      ...(idempotencyKey ? { 'idempotency-key': String(idempotencyKey) } : {}),
     },
     body: form(data),
   });
@@ -184,7 +187,7 @@ export async function createRefund({ paymentIntentId, amountMinor = null, reason
 // 3JN. NOTE: card auth holds expire after ~7 days; for a longer visa window the
 // safety cron cancels the room well before then, and a capture-then-refund model
 // is the fallback for very long timelines.
-export async function authorizeSavedCard({ originalPaymentIntentId, amountMinor, currency = 'gbp', description, metadata = {} }) {
+export async function authorizeSavedCard({ originalPaymentIntentId, amountMinor, currency = 'gbp', description, metadata = {}, idempotencyKey = null }) {
   if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured', reason: 'Card payments are not configured.' };
   if (!originalPaymentIntentId) return { ok: false, error: 'no-original-intent', reason: 'No card on file to authorize.' };
   if (!(amountMinor > 0)) return { ok: false, error: 'invalid-amount' };
@@ -198,7 +201,7 @@ export async function authorizeSavedCard({ originalPaymentIntentId, amountMinor,
       customer, payment_method: paymentMethod,
       capture_method: 'manual', off_session: true, confirm: true,
       description: description || '3JN refundable deposit', metadata,
-    });
+    }, { idempotencyKey });
     // A successful hold sits at requires_capture.
     if (pi.status === 'requires_capture' || pi.status === 'succeeded') return { ok: true, paymentIntentId: pi.id, status: pi.status, amount: pi.amount };
     return { ok: false, status: pi.status, requiresAction: pi.status === 'requires_action', paymentIntentId: pi.id, reason: `Card needs confirmation (${pi.status}).` };

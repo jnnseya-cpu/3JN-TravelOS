@@ -1577,7 +1577,12 @@ const HB_HOTEL_SECRET = env.HOTELBEDS_HOTEL_SECRET || env.HOTELBEDS_SECRET || ''
 const HB_SOURCE_MARKET = env.HOTELBEDS_SOURCE_MARKET || 'UK';
 // Cert §3.11: the Booking Confirmation response MUST allow ≥60s (a live hotel
 // confirmation can be slow). CheckRate + cancellation get the same headroom.
-const HB_BOOK_TIMEOUT_MS = Number(env.HOTELBEDS_BOOK_TIMEOUT_MS) || 65000;
+// MUST stay well under the Vercel function cap (maxDuration 30s). A 65s budget
+// let a slow Hotelbeds call outlive the platform limit, so Vercel killed the
+// whole request AT 30s — before the AbortController/try-catch fallback ran and
+// before res.json() flushed the payment/fulfilment state. Capped to 20s so a slow
+// supplier fails GRACEFULLY to the ops desk instead of taking the request down.
+const HB_BOOK_TIMEOUT_MS = Math.min(20000, Number(env.HOTELBEDS_BOOK_TIMEOUT_MS) || 20000);
 // QUOTA PROTECTION: the evaluation key is capped at 50 requests/day (403 when
 // exceeded), and Hotelbeds' technical review flags redundant availability calls.
 // So we (a) cache availability briefly to serve repeat searches WITHOUT a new

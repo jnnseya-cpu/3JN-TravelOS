@@ -128,7 +128,7 @@ export function flightNetCostGbp(booking, rateFromUSD = 0.79) {
   const d = f.details || {};
   // Live Duffel amount is already in the offer currency; when that's the display
   // currency use it directly, otherwise convert the USD figure.
-  const code = (booking?.option?.pricing?.code || 'GBP').toUpperCase();
+  const code = (booking?.option?.pricing?.currency || 'GBP').toUpperCase();
   if (d.liveAmount != null && String(d.liveCurrency || '').toUpperCase() === code) return gbp2(d.liveAmount);
   const usd = Number(d.priceUSD || f.priceUSD || 0);
   return gbp2(usd * (rateFromUSD || 0.79));

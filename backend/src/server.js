@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-01-visa-copy-honest-window-v218';
+const BUILD_TAG = '2026-08-02-launch-hardening-w1-v219';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1030,7 +1030,7 @@ async function autoBookActivities(booking) {
   const t = booking.option?.travellers || {};
   const adults = Math.max(1, Number(t.adults) || Number(t.total) || 1);
   const childAges = Array.isArray(t.childAges) ? t.childAges : [];
-  const currency = booking.option?.pricing?.code || 'GBP';
+  const currency = booking.option?.pricing?.currency || 'GBP';
   let anyFail = false;
   for (const act of activities) {
     if (act.details.confirmation) continue; // idempotent — already booked
@@ -3335,8 +3335,14 @@ async function cancelVisaHotelAndSettle(id, hotelbedsRef) {
 }
 app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
-  const due = visaHotelsToCancel(null, Number(req.query.bufferDays) || 2);
+  // Fail CLOSED: this sweep CANCELS real hotel bookings, so it must never be
+  // publicly triggerable. Requires CRON_SECRET (Vercel auto-sends it on cron runs
+  // when the env var is set — so setting CRON_SECRET is a hard go-live item).
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  // Clamp the buffer (max 3 days) so a caller can never force EARLY mass
+  // cancellation of reservations before customers' embassy appointments.
+  const bufferDays = Math.min(3, Math.max(0, Number(req.query.bufferDays) || 2));
+  const due = visaHotelsToCancel(null, bufferDays);
   const results = [];
   for (const d of due) {
     const out = await cancelVisaHotelAndSettle(d.id, d.hotelbedsRef);
@@ -3510,7 +3516,7 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
     const sym = target.option?.pricing?.symbol || '£';
     const session = await createCheckoutSession({
       amountMinor: Math.round(Number(item.amount) * 100),
-      currency: target.option?.pricing?.code || 'GBP',
+      currency: target.option?.pricing?.currency || 'GBP',
       description: `3JN Travel — instalment ${index + 1} (${target.option?.tier || 'booking'})`.slice(0, 200),
       bookingId: target.id,
       userId: user.id,
@@ -3906,10 +3912,11 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
   const s = await retrieveCheckoutSession(sessionId).catch(() => ({ ok: false }));
   if (!s.ok) return res.json({ booking, reconciled: false, error: s.error });
   if (!s.paid) return res.json({ booking, reconciled: false, pending: true });
-  // SECURITY: the Stripe session must actually belong to THIS booking (its
-  // metadata carries the bookingId we set at creation) — so a caller can't point
-  // a paid session for booking A at booking B.
-  if (s.metadata?.bookingId && s.metadata.bookingId !== booking.id) {
+  // SECURITY (fail CLOSED): the Stripe session must carry THIS booking's id in
+  // metadata (set at checkout creation). Requiring an exact match — not just
+  // "present and matching" — stops a paid session with no bookingId (e.g. an ACU
+  // top-up) being replayed to credit a booking it never paid for.
+  if (s.metadata?.bookingId !== booking.id) {
     return res.status(409).json({ error: 'session-booking-mismatch' });
   }
   const amount = (s.amountTotal || 0) / 100;
@@ -4064,7 +4071,9 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       // hold, hotel book, deposit hold). Idempotent on the event id.
       if (fresh) {
         const paid = markVisaReservationPaid(meta.reservationId, { paymentRef: event.data?.object?.id, paymentIntent: event.data?.object?.payment_intent || null });
-        if (paid.ok) await fulfilVisaReservation(meta.reservationId);
+        // Only fulfil if THIS call flipped it to paid — never when it was already
+        // paid (a reconcile beat us), so the deposit hold can't be placed twice.
+        if (paid.ok && !paid.already) await fulfilVisaReservation(meta.reservationId);
       }
     } else if (meta.kind === 'visa-deposit' && meta.reservationId) {
       // The customer authorized (held, not charged) their refundable room deposit
@@ -4190,9 +4199,12 @@ app.post('/api/rewards/withdraw', safe((req, res) => {
   const { amountGbp, method } = req.body || {};
   res.json(requestWithdrawal(user.id, { amountGbp, method }));
 }));
-// Public leaderboard (§4).
+// Public leaderboard (§4). SECURITY: strip the raw partnerId — a real user id is
+// a bearer credential under the header-auth model, so it must never leave a public
+// endpoint. Ranks + names + stats only.
 app.get('/api/rewards/leaderboard', safe((req, res) => {
-  res.json({ leaderboard: rewardsLeaderboard(Number(req.query.limit) || 20) });
+  const board = rewardsLeaderboard(Number(req.query.limit) || 20).map(({ partnerId, ...row }) => row);
+  res.json({ leaderboard: board });
 }));
 // Admin: review & decide influencer applications (§3/§6).
 app.get('/api/admin/rewards/influencers', safe((req, res) => {
@@ -4240,7 +4252,10 @@ app.get('/api/vendors/me', safe((req, res) => {
   res.json({ dashboard: dash });
 }));
 app.get('/api/vendors/leaderboard', safe((req, res) => {
-  res.json({ leaderboard: vendorLeaderboard(Number(req.query.limit) || 20) });
+  // SECURITY: never expose the raw vendorId (a real user id = a bearer credential
+  // under header auth). Public board shows names + sales only.
+  const board = vendorLeaderboard(Number(req.query.limit) || 20).map(({ vendorId, userId, ...row }) => row);
+  res.json({ leaderboard: board });
 }));
 // Vendor SERVICE LISTINGS: an approved vendor lists what they deliver
 // (photographer/guide/driver/translator/restaurant) at their own price;
@@ -4322,7 +4337,7 @@ async function collectChangeCharge(booking, amountGbp, note) {
   if (!(minor > 0)) return { ok: true, zero: true, paymentIntentId: null };
   if (!stripeEnabled()) return { ok: false, reason: 'card payments are not configured' };
   if (!booking.stripePaymentIntent) return { ok: false, reason: 'no saved card on file for this booking' };
-  const cur = (booking.option?.pricing?.code || 'GBP').toLowerCase();
+  const cur = (booking.option?.pricing?.currency || 'GBP').toLowerCase();
   return chargeSavedCard({ originalPaymentIntentId: booking.stripePaymentIntent, amountMinor: minor, currency: cur, description: note || `3JN change — ${booking.id}`, metadata: { bookingId: booking.id, kind: 'change-charge' } });
 }
 
@@ -4336,7 +4351,7 @@ async function attemptAutoReissue(booking) {
   const departISO = fc?.details?.outbound?.date;
   const returnISO = fc?.details?.inbound?.date || null;
   if (!departISO) return { ok: false };
-  const bookingCode = String(booking.option?.pricing?.code || 'GBP').toUpperCase();
+  const bookingCode = String(booking.option?.pricing?.currency || 'GBP').toUpperCase();
   // SELECT the airline offer (the pinned exact-total the customer approved, or a
   // fresh quote) but DO NOT commit yet — we collect the customer's payment FIRST.
   const pinned = booking.pendingChangeFee?.airlineQuote || null;
@@ -4403,7 +4418,7 @@ app.post('/api/support/chat', safe(async (req, res) => {
       const ch = pa.quote.changes;
       const q = await duffelOrderChangeQuote({ orderId, departISO: ch.newDate, returnISO: ch.newReturnDate || null }).catch(() => ({ ok: false }));
       if (!q.ok || !q.offer) break; // fare doesn't allow an online change → keep the "confirmed at re-issue" wording
-      const code = (b.option?.pricing?.code || 'GBP').toUpperCase();
+      const code = (b.option?.pricing?.currency || 'GBP').toUpperCase();
       if (String(q.offer.changeCurrency || '').toUpperCase() !== code) break; // never show an FX-converted price
       const sym = b.option?.pricing?.symbol || '£';
       const feeGbp = Number(pa.quote.totalExtraGbp) || 0;
@@ -4864,7 +4879,7 @@ async function fulfilVisaReservation(rid) {
     if (rec.roomDepositGbp > 0 && stripeEnabled() && !rec.depositAuthorized) {
       const saved = rec.feePaymentIntent || userSavedCardIntent(rec.userId);
       if (saved) {
-        const auth = await authorizeSavedCard({ originalPaymentIntentId: saved, amountMinor: Math.round(rec.roomDepositGbp * 100), description: `3JN visa room deposit (refundable hold) — ${rec.id}`, metadata: { kind: 'visa-deposit', reservationId: rec.id, userId: rec.userId } }).catch(() => ({ ok: false }));
+        const auth = await authorizeSavedCard({ originalPaymentIntentId: saved, amountMinor: Math.round(rec.roomDepositGbp * 100), description: `3JN visa room deposit (refundable hold) — ${rec.id}`, metadata: { kind: 'visa-deposit', reservationId: rec.id, userId: rec.userId }, idempotencyKey: `visa-deposit-${rec.id}` }).catch(() => ({ ok: false }));
         if (auth.ok && auth.paymentIntentId) setVisaDepositIntent(rec.id, { paymentIntentId: auth.paymentIntentId, authorized: true });
       }
     }
@@ -4914,9 +4929,16 @@ app.post('/api/visa/reservations/:id/reconcile', safe(async (req, res) => {
   const s = await retrieveCheckoutSession(sessionId).catch(() => ({ ok: false }));
   if (!s.ok) return res.json({ reservation: rec, reconciled: false, error: s.error });
   if (!s.paid) return res.json({ reservation: rec, reconciled: false, pending: true });
-  // SECURITY: the paid session must actually belong to THIS reservation.
-  if (s.metadata?.reservationId && s.metadata.reservationId !== rec.id) {
+  // SECURITY (fail CLOSED): the paid session must carry THIS reservation's id in
+  // metadata AND cover at least the fee. Otherwise any cheap unrelated paid
+  // session (a search deposit, an ACU top-up — none of which carry reservationId)
+  // could be replayed here to fulfil a reservation for free while 3JN eats the
+  // live Duffel/Hotelbeds supplier cost.
+  if (s.metadata?.reservationId !== rec.id) {
     return res.status(409).json({ error: 'session-reservation-mismatch' });
+  }
+  if (!(Number(s.amountTotal) >= Math.round((rec.feeGbp || 0) * 100))) {
+    return res.status(409).json({ error: 'session-amount-insufficient' });
   }
   const paid = markVisaReservationPaid(rec.id, { paymentRef: sessionId, paymentIntent: s.paymentIntent || null });
   if (paid.ok && !paid.already) await fulfilVisaReservation(rec.id);
@@ -4933,7 +4955,8 @@ app.post('/api/admin/visa/reconcile-pending', safe(async (req, res) => {
   let issued = 0;
   for (const rec of pending) {
     const s = await retrieveCheckoutSession(rec.feeCheckoutSession).catch(() => ({ ok: false }));
-    if (s.ok && s.paid && (!s.metadata?.reservationId || s.metadata.reservationId === rec.id)) {
+    // Fail CLOSED: exact reservation match AND the session must cover the fee.
+    if (s.ok && s.paid && s.metadata?.reservationId === rec.id && Number(s.amountTotal) >= Math.round((rec.feeGbp || 0) * 100)) {
       const paid = markVisaReservationPaid(rec.id, { paymentRef: rec.feeCheckoutSession, paymentIntent: s.paymentIntent || null });
       if (paid.ok && !paid.already) { await fulfilVisaReservation(rec.id); issued += 1; }
     }
