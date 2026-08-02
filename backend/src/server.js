@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-02-launch-hardening-w2-v220';
+const BUILD_TAG = '2026-08-02-launch-hardening-w3-v221';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -308,7 +308,10 @@ app.use(async (req, res, next) => {
     // before mutating (so this instance sees other instances' changes and never
     // clobbers them), then flush synchronously before the response.
     if (IS_SERVERLESS && isEnabled()) {
-      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep memory */ }
+      // MERGING refresh (union-by-id) — never wipes a record this instance holds
+      // but the just-loaded snapshot lacks (the cross-instance lockout bug), and
+      // makes the per-record diff-flush below write supersets rather than replacing.
+      try { const snap = await load(); if (snap) hydrateMerge(snap); } catch { /* keep memory */ }
       // Snapshot the store BEFORE the handler runs. Many POSTs are effectively
       // read-only (search, telemetry, chat, checkout-session creation) — if the
       // handler changed nothing, we must NOT do a Firebase write, or every such
@@ -383,7 +386,8 @@ app.use(async (req, res, next) => {
     const stale = Date.now() - lastRehydrateAt > 5000;
     if (missingCaller || stale) {
       rehydrating = true;
-      try { const snap = await load(); if (snap) hydrate(snap); } catch { /* keep serving from memory */ }
+      // MERGING refresh so a stale/partial snapshot can never wipe a live record.
+      try { const snap = await load(); if (snap) hydrateMerge(snap); } catch { /* keep serving from memory */ }
       lastRehydrateAt = Date.now();
       rehydrating = false;
     }
