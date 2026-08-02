@@ -14,7 +14,7 @@ import { quoteChange, applyChange, quoteCancellation } from './operator.js';
 import { VENDOR_TIERS, commissionSplit, flightOnlySplit, saleIsPayable, serviceCompletionDate, topSellerForMonth, previousMonthKey, vendorRiskReview, deriveVendorMetrics } from './vendors.js';
 import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
-import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS, visaHotelDeposit } from './visa-docs.js';
+import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS, visaHotelDeposit, isValidYMD } from './visa-docs.js';
 import { benchmarkVerdict } from './benchmark.js';
 import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
@@ -318,6 +318,16 @@ export function orderVisaReservation(userId, payload = {}, { awaitingPayment = f
   const v = validateVisaDocOrder(payload);
   if (!v.ok) return v;
   const trip = v.trip;
+  // Guard passenger DoBs (flight/pack) — an impossible date (e.g. Feb 30 from the
+  // day/month/year picker) would corrupt the airline hold, so reject at order time
+  // with a clear message rather than silently failing to the manual desk.
+  if (trip.needsFlight && Array.isArray(payload.passengers)) {
+    for (const p of payload.passengers) {
+      if (p?.dob && !isValidYMD(String(p.dob).slice(0, 10))) {
+        return { ok: false, error: 'invalid-dob', message: `Check the date of birth for ${p.fullName || p.name || 'a passenger'} — that isn't a real date.` };
+      }
+    }
+  }
   const fee = visaDocFee(trip.kind, { memberActive: !!u.membership?.active });
   const dep = visaHotelDeposit(trip.nights, trip.kind);
   // When Stripe is live the service fee is really charged first (Checkout), so

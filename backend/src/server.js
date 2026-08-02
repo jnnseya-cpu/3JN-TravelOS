@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-02-launch-hardening-w1-v219';
+const BUILD_TAG = '2026-08-02-launch-hardening-w2-v220';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -1623,8 +1623,13 @@ app.get('/api/account/:id', safe(async (req, res) => {
   // console and e-ticket show the real reference, not "finalising".
   const mine = listBookings(stored.id);
   try {
-    let any = false;
-    for (const b of mine) { if (await syncDuffelTicket(b)) { any = true; try { await emailBookingConfirmation(b); } catch { /* best-effort */ } } }
+    // Run the Duffel PNR pulls in PARALLEL (was serial) so a user with several
+    // freshly-issued live flights can never sum ~6s calls past the 30s function
+    // cap — wall-clock is now the slowest single call. syncDuffelTicket
+    // short-circuits already-synced bookings cheaply, so this stays light.
+    const synced = await Promise.all(mine.map((b) => syncDuffelTicket(b).catch(() => false)));
+    const any = synced.some(Boolean);
+    if (any) { for (let i = 0; i < mine.length; i++) { if (synced[i]) { try { await emailBookingConfirmation(mine[i]); } catch { /* best-effort */ } } } }
     if (any && IS_SERVERLESS && isEnabled()) await saveMerge(Object.fromEntries(mine.map((b) => [`bookings/${b.id}`, b])));
   } catch (e) { console.error('[console-ticket-sync]', e?.message || e); }
   res.json({ user, bookings: mine });
@@ -3962,10 +3967,18 @@ app.post('/api/pay/stripe/reconcile', safe(async (req, res) => {
     // guarded so one failure can't block the others or the response), so the
     // PNR/e-ticket + confirmation email actually issue AND the booking mutations
     // (fulfilment, ticketing status) are captured by the synchronous store flush.
-    try { await autoTicketFlight(updated); } catch (e) { console.error('[ticketing]', e?.message || e); }
-    try { await autoBookStays(updated); } catch (e) { console.error('[stays]', e?.message || e); }
-    try { await autoBookHotelbeds(updated); } catch (e) { console.error('[hotelbeds]', e?.message || e); }
-    try { await autoBookActivities(updated); } catch (e) { console.error('[activities]', e?.message || e); }
+    // PARALLEL (matching the webhook) — these fulfilment legs are independent and
+    // each mutates different booking fields, so running them together keeps the
+    // wall-clock at the slowest single call (HB now capped at 20s) instead of the
+    // sum, which on the customer-facing return path could otherwise blow the 30s
+    // function cap. Each is individually guarded; the email waits for them so it
+    // carries the real refs.
+    await Promise.allSettled([
+      autoTicketFlight(updated).catch((e) => console.error('[ticketing]', e?.message || e)),
+      autoBookStays(updated).catch((e) => console.error('[stays]', e?.message || e)),
+      autoBookHotelbeds(updated).catch((e) => console.error('[hotelbeds]', e?.message || e)),
+      autoBookActivities(updated).catch((e) => console.error('[activities]', e?.message || e)),
+    ]);
     try { await emailBookingConfirmation(updated); } catch (e) { console.error('[confirm-email]', e?.message || e); }
   }
   let paidPct = 0;
@@ -4848,7 +4861,10 @@ app.get('/api/visa/fees', safe((req, res) => {
 // ---- Visa support reservations (flight + hotel held for a visa file) --------
 // Storefront pricing (member-aware). Public so applicants see the price first.
 app.get('/api/visa/reservations/pricing', safe((req, res) => {
-  res.json(visaDocPricing({ memberActive: !!currentUser(req)?.membership?.active }));
+  // depositApplies is true only when hotels are auto-booked (a real sweepable
+  // room exists to hold a deposit against). On the manual desk path no deposit is
+  // taken, so the UI must not promise one.
+  res.json({ ...visaDocPricing({ memberActive: !!currentUser(req)?.membership?.active }), depositApplies: visaAutoHotelEnabled() });
 }));
 // FULFIL a PAID visa reservation: auto-hold the flight (Duffel), auto-book the
 // hotel (Hotelbeds, if enabled), and place the refundable room-deposit HOLD on
@@ -4875,8 +4891,14 @@ async function fulfilVisaReservation(rid) {
         if (hb?.ok && hb.providerRef) applyVisaHotelBooking(rec.id, hb);
       }
     }
-    // Refundable room deposit as a real HOLD on the card saved by the fee payment.
-    if (rec.roomDepositGbp > 0 && stripeEnabled() && !rec.depositAuthorized) {
+    // Refundable room deposit as a real HOLD — ONLY when the hotel was actually
+    // auto-booked with a sweepable Hotelbeds ref. That guarantees a code-driven
+    // release path (the cancel sweep releases the hold on clean cancellation).
+    // On the manual Visa Desk path there is no hotelbedsRef and thus no automatic
+    // release, so we must NOT hold a deposit we couldn't systematically return —
+    // holding a customer's £40–200 with no release path is worse than not holding.
+    const sweepableHotel = rec.items.find((i) => i.type === 'hotel' && i.hotelbedsRef && i.cancelBy);
+    if (rec.roomDepositGbp > 0 && sweepableHotel && stripeEnabled() && !rec.depositAuthorized) {
       const saved = rec.feePaymentIntent || userSavedCardIntent(rec.userId);
       if (saved) {
         const auth = await authorizeSavedCard({ originalPaymentIntentId: saved, amountMinor: Math.round(rec.roomDepositGbp * 100), description: `3JN visa room deposit (refundable hold) — ${rec.id}`, metadata: { kind: 'visa-deposit', reservationId: rec.id, userId: rec.userId }, idempotencyKey: `visa-deposit-${rec.id}` }).catch(() => ({ ok: false }));

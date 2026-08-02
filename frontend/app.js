@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v219';
+const APP_BUILD = 'v220';
 
 const state = {
   context: null,
@@ -4781,7 +4781,9 @@ async function renderVisaReservations() {
   window.updateVisaDeposit = () => {
     const note = $('#vresDepositNote'); if (!note) return;
     const kind = kindNow();
-    if (kind === 'flight') { note.innerHTML = ''; return; }
+    // No deposit on flight-only, and none unless hotels are auto-booked (the only
+    // path where a deposit is actually held) — never promise a hold we won't take.
+    if (kind === 'flight' || !pricing.depositApplies) { note.innerHTML = ''; return; }
     const n = Math.max(1, Math.min(90, Number($('#vresNights')?.value) || 1));
     const d = Math.min(dep.capGbp, Math.max(dep.minGbp, n * dep.perNightGbp));
     note.innerHTML = `<div class="pill" style="border-color:rgba(70,211,154,.35);font-size:12px">🏨 Refundable room deposit: <strong>£${d.toFixed(2)}</strong> <span class="muted">— a hold (not a charge) that secures the free-cancellation room; released once the booking is safely cancelled. You're only charged if you keep the room past its free-cancellation date (£${dep.perNightGbp}/night, min £${dep.minGbp}, cap £${dep.capGbp}).</span></div>`;

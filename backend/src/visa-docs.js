@@ -98,8 +98,18 @@ export function visaDocReference(prefix, seed) {
   return `${prefix}-${out}`;
 }
 
-// Validate an order payload → normalised trip, or an error.
-export function validateVisaDocOrder({ kind, destination, origin, departDate, returnDate, nights, travellers, applicantName } = {}) {
+// A real calendar date in YYYY-MM-DD (rejects malformed and impossible dates like
+// 2026-02-30, which would otherwise reach the airline as a passenger DoB / travel
+// date and be rejected there after the customer has already paid).
+export function isValidYMD(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s || ''))) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+// Validate an order payload → normalised trip, or an error. `today` is injectable
+// for tests; defaults to the current UTC date.
+export function validateVisaDocOrder({ kind, destination, origin, departDate, returnDate, nights, travellers, applicantName } = {}, { today } = {}) {
   if (!VISA_DOC_KINDS.includes(kind)) return { ok: false, error: 'invalid-kind', message: 'Choose a flight, hotel or combined reservation.' };
   const dest = String(destination || '').trim();
   if (!dest) return { ok: false, error: 'destination-required', message: 'Enter the destination country/city for your visa.' };
@@ -107,6 +117,18 @@ export function validateVisaDocOrder({ kind, destination, origin, departDate, re
   const needsHotel = kind === 'hotel' || kind === 'pack';
   if (needsFlight && !String(origin || '').trim()) return { ok: false, error: 'origin-required', message: 'Enter where you fly from for the flight reservation.' };
   if (!String(departDate || '').trim()) return { ok: false, error: 'depart-required', message: 'Enter your intended arrival/travel date.' };
+  // Dates must be real and deliverable: not malformed, not in the past, and a
+  // return (if given) not before departure — otherwise the airline hold can never
+  // issue and the customer has paid for something undeliverable.
+  const dep = String(departDate).slice(0, 10);
+  if (!isValidYMD(dep)) return { ok: false, error: 'invalid-date', message: 'Enter a valid travel date.' };
+  const todayYMD = String(today || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  if (dep < todayYMD) return { ok: false, error: 'date-in-past', message: 'Your travel date must be today or in the future.' };
+  const ret = returnDate ? String(returnDate).slice(0, 10) : null;
+  if (ret) {
+    if (!isValidYMD(ret)) return { ok: false, error: 'invalid-return-date', message: 'Enter a valid return date.' };
+    if (ret < dep) return { ok: false, error: 'return-before-depart', message: 'Your return date must be on or after your travel date.' };
+  }
   const pax = Math.max(1, Math.min(9, Number(travellers) || 1));
   const nts = needsHotel ? Math.max(1, Math.min(90, Number(nights) || 7)) : 0;
   return {
@@ -114,8 +136,7 @@ export function validateVisaDocOrder({ kind, destination, origin, departDate, re
     trip: {
       kind, needsFlight, needsHotel,
       destination: dest, origin: String(origin || '').trim() || null,
-      departDate: String(departDate).slice(0, 10),
-      returnDate: returnDate ? String(returnDate).slice(0, 10) : null,
+      departDate: dep, returnDate: ret,
       nights: nts, travellers: pax,
       applicantName: String(applicantName || '').trim() || null,
     },
