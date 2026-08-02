@@ -217,7 +217,15 @@ export async function saveMerge(flat) {
       if (slash > 0) {
         const coll = k.slice(0, slash);
         const id = k.slice(slash + 1);
-        if (!cur[coll] || typeof cur[coll] !== 'object' || Array.isArray(cur[coll])) cur[coll] = {};
+        if (!cur[coll] || typeof cur[coll] !== 'object') cur[coll] = {};
+        else if (Array.isArray(cur[coll])) {
+          // Migrate a legacy whole-ARRAY node (e.g. visaReservations) to an
+          // id-keyed object WITHOUT dropping its existing rows — otherwise the
+          // first per-record write would reset the node to {} and lose them.
+          const obj = {};
+          for (const r of cur[coll]) if (r && r.id) obj[r.id] = r;
+          cur[coll] = obj;
+        }
         cur[coll][id] = v;
       } else {
         cur[k] = v; // arrays + counter are written whole

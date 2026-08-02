@@ -849,6 +849,55 @@ test('persistence snapshot/hydrate round-trips the store', () => {
   assert.ok(findUserByEmail('snap@x.com'));
 });
 
+test('persistence: money arrays are per-record durable and survive concurrent appends', async () => {
+  const S = await import('../src/store.js');
+  const saved = JSON.parse(JSON.stringify(S.snapshot())); // save whole store to restore
+  try {
+    // 1. LEGACY whole-array durable shape still hydrates (backward compatible).
+    S.hydrate({ ...saved, visaReservations: [
+      { id: 'vres_A', userId: 'u1', paid: true },
+      { id: 'vres_B', userId: 'u1', paid: false },
+    ] });
+    assert.ok(S.getVisaReservation('vres_A') && S.getVisaReservation('vres_B'), 'legacy array shape hydrates');
+
+    // 2. flatSnapshot emits ONE PATH PER RECORD — not a clobber-prone whole node.
+    const flat = S.flatSnapshot();
+    assert.ok(flat['visaReservations/vres_A'] && flat['visaReservations/vres_B'], 'per-record paths emitted');
+    assert.equal(flat.visaReservations, undefined, 'no whole-array node emitted');
+
+    // 3. OBJECT (id-keyed) durable shape hydrates back into an array.
+    S.hydrate({ ...saved, visaReservations: { vres_A: { id: 'vres_A', userId: 'u1' }, vres_C: { id: 'vres_C', userId: 'u1' } } });
+    assert.ok(S.getVisaReservation('vres_A') && S.getVisaReservation('vres_C'), 'object shape hydrates');
+
+    // 4. MIXED integer + id keys (transitional Firebase node after the first
+    //    per-record write onto a still-array node) dedups by id — no duplicates,
+    //    and the canonical id-keyed copy wins.
+    S.hydrate({ ...saved, visaReservations: {
+      0: { id: 'vres_A', userId: 'u1', v: 'old' },
+      vres_A: { id: 'vres_A', userId: 'u1', v: 'new' },
+      1: { id: 'vres_D', userId: 'u1' },
+    } });
+    assert.equal(S.listVisaReservations().filter((r) => r.id === 'vres_A').length, 1, 'no duplicate from mixed keys');
+    assert.equal(S.getVisaReservation('vres_A').v, 'new', 'id-keyed copy wins over legacy integer key');
+    assert.ok(S.getVisaReservation('vres_D'), 'legacy integer-keyed record preserved');
+
+    // 5. CONCURRENT-APPEND: two instances each write a DIFFERENT new record via its
+    //    own per-record path — both survive (the whole-array clobber is gone).
+    const durable = { vres_A: { id: 'vres_A', userId: 'u1' } };
+    durable.vres_X = { id: 'vres_X', userId: 'u1' }; // instance X's per-record write
+    durable.vres_Y = { id: 'vres_Y', userId: 'u1' }; // instance Y's per-record write
+    S.hydrate({ ...saved, visaReservations: durable });
+    assert.ok(S.getVisaReservation('vres_X') && S.getVisaReservation('vres_Y') && S.getVisaReservation('vres_A'), 'concurrent per-record appends all survive');
+
+    // 6. hydrateMerge keeps BOTH a memory-only record and a durable-only record.
+    S.hydrate({ ...saved, visaReservations: [{ id: 'vres_mem', userId: 'u1' }] });
+    S.hydrateMerge({ visaReservations: { vres_dur: { id: 'vres_dur', userId: 'u1' } } });
+    assert.ok(S.getVisaReservation('vres_mem') && S.getVisaReservation('vres_dur'), 'merge keeps memory-only AND durable records');
+  } finally {
+    S.hydrate(saved); // restore the shared store for the rest of the suite
+  }
+});
+
 test('destination marketplace catalogue has from-prices + experiences', () => {
   const cat = destinationsCatalog();
   assert.ok(cat.length >= 5);

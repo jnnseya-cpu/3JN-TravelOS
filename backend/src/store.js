@@ -3381,6 +3381,36 @@ export function sponsoredPlacementRevenueGBP() {
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings', 'freeSearchIps'];
 const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'visaReservations', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
 
+// MONEY / integrity arrays persisted PER RECORD (as `${key}/${rec.id}` leaves)
+// instead of as one whole-array node. A whole-array write REPLACES the node, so
+// two instances appending concurrently lose one row (a paid reservation, a
+// ledger entry). Per-record leaves merge like the MAP collections do, so
+// concurrent appends to different ids never clobber. In memory these stay plain
+// arrays (no call-site change); only the durable (de)serialisation differs.
+// NOTE: kept to permanent, id-bearing, lower-frequency records — high-frequency
+// logs (audit/behaviour/…) stay whole, and the string-keyed processedStripeEvents
+// ledger stays whole (money paths carry their own reference dedup regardless).
+const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders']);
+
+// Rebuild an in-memory array from a durable value that may be: a plain array
+// (legacy whole-node), or an object of records keyed by id (new per-record form),
+// or a transitional MIX of both (legacy integer keys + new id keys, after the
+// first per-record write onto a still-array Firebase node). Dedup by the record's
+// OWN id so a legacy copy and its id-keyed update never appear twice.
+function keyedArrayFrom(v) {
+  if (Array.isArray(v)) return v.filter((x) => x && typeof x === 'object');
+  if (!v || typeof v !== 'object') return [];
+  const byId = new Map();
+  for (const [key, rec] of Object.entries(v)) {
+    if (!rec || typeof rec !== 'object') continue;
+    const rid = rec.id || key;
+    // Prefer the canonical entry whose stored key IS the record id (the per-record
+    // form) over a legacy integer-keyed copy of the same record.
+    if (!byId.has(rid) || key === rid) byId.set(rid, rec);
+  }
+  return [...byId.values()];
+}
+
 // A previously-persisted supportTickets node may be an ARRAY (old whole-array
 // format) or a Firebase object with integer keys. Re-key by the ticket's own id
 // so migration from the old format is lossless and idempotent. Mutates the loaded
@@ -3900,7 +3930,10 @@ export function wipeTransactionalData({ deleteNonOwnerUsers = false, ownerEmails
 export function snapshot() {
   const out = { counter };
   for (const k of MAP_KEYS) out[k] = Object.fromEntries(db[k]);
-  for (const k of ARRAY_KEYS) out[k] = db[k];
+  for (const k of ARRAY_KEYS) {
+    if (KEYED_ARRAY_KEYS.has(k)) { const o = {}; for (const r of db[k]) if (r && r.id) o[r.id] = r; out[k] = o; }
+    else out[k] = db[k];
+  }
   return out;
 }
 
@@ -3913,7 +3946,12 @@ export function flatSnapshot() {
   const out = {};
   out.counter = counter;
   for (const k of MAP_KEYS) for (const [id, v] of db[k]) out[`${k}/${id}`] = v;
-  for (const k of ARRAY_KEYS) out[k] = db[k];
+  for (const k of ARRAY_KEYS) {
+    // Money/integrity arrays emit one path PER RECORD so a merging write touches
+    // only the changed record, never the whole node → no concurrent-append loss.
+    if (KEYED_ARRAY_KEYS.has(k)) { for (const r of db[k]) if (r && r.id) out[`${k}/${r.id}`] = r; }
+    else out[k] = db[k];
+  }
   return out;
 }
 
@@ -3922,7 +3960,10 @@ export function hydrate(s) {
   normaliseTicketSnapshot(s);
   if (typeof s.counter === 'number') counter = Math.max(counter, s.counter);
   for (const k of MAP_KEYS) if (s[k]) db[k] = new Map(Object.entries(s[k]));
-  for (const k of ARRAY_KEYS) if (Array.isArray(s[k])) db[k] = s[k];
+  for (const k of ARRAY_KEYS) {
+    if (KEYED_ARRAY_KEYS.has(k)) { if (s[k] != null) db[k] = keyedArrayFrom(s[k]); }
+    else if (Array.isArray(s[k])) db[k] = s[k];
+  }
   return true;
 }
 
@@ -3943,13 +3984,19 @@ export function hydrateMerge(s) {
     for (const [id, v] of Object.entries(s[k])) db[k].set(id, v);
   }
   for (const k of ARRAY_KEYS) {
-    if (!Array.isArray(s[k])) continue;
+    // KEYED arrays may arrive as an object/mixed form — rebuild to an array first.
+    const incoming = KEYED_ARRAY_KEYS.has(k) ? (s[k] != null ? keyedArrayFrom(s[k]) : null) : (Array.isArray(s[k]) ? s[k] : null);
+    if (!incoming) continue;
     const cur = Array.isArray(db[k]) ? db[k] : [];
-    if (!cur.length) { db[k] = s[k]; continue; }
+    if (!cur.length) { db[k] = incoming; continue; }
     const seen = new Set();
     const keyOf = (x) => (x && (x.id || x.reference)) ? String(x.id || x.reference) : JSON.stringify(x);
     const out = [];
-    for (const item of [...cur, ...s[k]]) {
+    // For KEYED money records the durable (incoming) copy is authoritative for
+    // another instance's update, so it wins on an id clash; for append-only logs
+    // keep the existing memory-first order. Either way NO entry is dropped.
+    const order = KEYED_ARRAY_KEYS.has(k) ? [...incoming, ...cur] : [...cur, ...incoming];
+    for (const item of order) {
       const kk = keyOf(item);
       if (seen.has(kk)) continue;
       seen.add(kk); out.push(item);
