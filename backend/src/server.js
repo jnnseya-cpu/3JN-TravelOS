@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-02-launch-hardening-w3-v221';
+const BUILD_TAG = '2026-08-02-visa-autorecover-cron-v222';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3358,6 +3358,25 @@ app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
     results.push({ id: d.id, cancelled: !!out.ok });
   }
   res.json({ ok: true, due: due.length, cancelled: results.filter((r) => r.cancelled).length, results });
+}));
+// AUTO-RECOVERY cron: reconcile any visa reservation stuck at 'awaiting-payment'
+// against its stored Checkout session. Catches the rare case where BOTH the
+// webhook and the customer's return-reconcile missed — so at full-public scale a
+// paid customer can never stay stuck. Fail-closed (CRON_SECRET); idempotent.
+app.get('/api/cron/visa-reconcile', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  if (!stripeEnabled()) return res.json({ ok: true, checked: 0, issued: 0, note: 'Stripe not configured.' });
+  const pending = visaReservationsAwaitingPayment();
+  let issued = 0;
+  for (const rec of pending) {
+    const s = await retrieveCheckoutSession(rec.feeCheckoutSession).catch(() => ({ ok: false }));
+    if (s.ok && s.paid && s.metadata?.reservationId === rec.id && Number(s.amountTotal) >= Math.round((rec.feeGbp || 0) * 100)) {
+      const paid = markVisaReservationPaid(rec.id, { paymentRef: rec.feeCheckoutSession, paymentIntent: s.paymentIntent || null });
+      if (paid.ok && !paid.already) { await fulfilVisaReservation(rec.id); issued += 1; }
+    }
+  }
+  res.json({ ok: true, checked: pending.length, issued });
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved
