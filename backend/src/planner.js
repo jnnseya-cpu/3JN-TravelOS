@@ -583,6 +583,10 @@ function summariseScan(scan) {
       scanned: offers.length,
       verified: offers.filter((o) => o.verified).length,
       reliable: offers.filter((o) => o.reliabilityScore >= 70).length,
+      // `live` = at least one offer is a real, bookable supplier fare (not an
+      // estimator price). The UI must not present "verified/reliable" as if the
+      // hotels are real when they're indicative — this flag lets it say so.
+      live: offers.some((o) => o.live),
       // Empty category → no cheapest. Math.min(...[]) is Infinity, which would
       // report a bogus "cheapest" (and serialise to null anyway); be explicit.
       cheapestUSD: offers.length ? Math.min(...offers.map((o) => o.priceUSD)) : null,

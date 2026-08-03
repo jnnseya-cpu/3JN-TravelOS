@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v223';
+const APP_BUILD = 'v224';
 
 const state = {
   context: null,
@@ -1000,8 +1000,15 @@ function renderOptions(data) {
       ${data.routeRisk ? `<div class="pill" style="margin:14px 0 0" title="${esc(data.routeRisk.disclaimer)}"><span class="dot" style="background:${({ low: 'var(--green)', medium: 'var(--gold)', high: '#ff9f45', critical: '#ff6b6b' })[data.routeRisk.band] || 'var(--gold)'}"></span> Fare risk · <strong style="margin:0 4px">${esc(data.routeRisk.label)}</strong> · ${esc(data.routeRisk.action)}${(data.routeRisk.factors || []).length ? ` <span class="muted" style="font-size:11px">(${data.routeRisk.factors.map(esc).join(' · ')})</span>` : ''}</div>` : ''}
     </div>`;
 
-  const scanRows = Object.entries(data.scanSummary).map(([k, s]) =>
-    `<div class="ln"><span class="ok">●</span> ${k}: scanned ${s.scanned}, ${s.verified} verified, ${s.reliable} reliable</div>`).join('');
+  // Honest scan line: only claim "verified/reliable" when at least one offer is a
+  // real LIVE bookable fare. When the category fell back to the estimator, say so
+  // plainly — "verified/reliable" over indicative prices reads as real hotels and
+  // erodes trust (that's the "5 verified but it's an estimate" mismatch).
+  const scanRows = Object.entries(data.scanSummary).map(([k, s]) => (
+    s.live
+      ? `<div class="ln"><span class="ok">●</span> ${k}: scanned ${s.scanned} · ${s.verified} verified · ${s.reliable} reliable · <span style="color:var(--green)">live rates</span></div>`
+      : `<div class="ln"><span class="ok" style="opacity:.55">○</span> ${k}: scanned ${s.scanned} · <span class="muted">estimated — indicative price, live rates unavailable right now</span></div>`
+  )).join('');
   const scanCard = `<div class="card pad scanlog" style="margin-bottom:20px"><span class="eyebrow">Supplier scan</span>${scanRows}</div>`;
 
   // Deep Price Dive — the deep-thinking pass behind every funded search:

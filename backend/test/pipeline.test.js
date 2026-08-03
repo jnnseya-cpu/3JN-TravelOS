@@ -5385,6 +5385,11 @@ test('wave4 scanSummary: empty categories report null cheapest, never Infinity',
   const res = plan({ text: 'Barcelona from London in September for 4 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
   for (const [, s] of Object.entries(res.scanSummary || {})) {
     assert.ok(s.cheapestUSD === null || Number.isFinite(s.cheapestUSD), `cheapestUSD finite or null (${s.cheapestUSD})`);
+    // Honest-liveness flag present + a boolean. With no live provider configured
+    // in tests, every category is estimator-only → live must be false (so the UI
+    // says "estimated", never "verified/reliable" over indicative prices).
+    assert.equal(typeof s.live, 'boolean', 'scanSummary carries a live boolean');
+    assert.equal(s.live, false, 'estimator-only scan reports live:false');
   }
 });
 
