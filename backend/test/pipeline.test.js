@@ -4429,6 +4429,24 @@ test('Nottingham resolves to East Midlands (EMA) — never a fake "NOT" code', (
   assert.equal(resolveOriginBM('Cardiff').airport, 'CWL');
 });
 
+test('flight selection never swaps the requested departure city for a nearby airport', async () => {
+  const P = await import('../src/packager.js');
+  const mk = (originCode, stops, alt) => ({ type: 'flight', priceUSD: alt ? 200 : 300, details: { outbound: { stops, layovers: stops ? [{ minutes: 90, overnight: false }] : [] }, inbound: { stops, layovers: stops ? [{ minutes: 90, overnight: false }] : [] }, ...(alt ? { altOriginCode: originCode } : {}) } });
+  // Requested origin (BHX) only has a CONNECTING flight; a nearby airport (MAN)
+  // has a cheaper DIRECT flight. The customer asked to fly from Birmingham.
+  const bhxConnecting = mk('BHX', 1, false);
+  const manDirect = mk('MAN', 0, true);
+  const pool = [bhxConnecting, manDirect];
+  // Even with "direct only" ON, the requested-origin flight must be kept — a
+  // nearby city's direct must never silently become the booking.
+  const out = P.applyFlightPrefs(pool, { directOnly: true });
+  assert.ok(out.every((f) => !f.details.altOriginCode), 'no nearby-airport fare in the package pool');
+  assert.ok(out.includes(bhxConnecting), 'the requested-origin (Birmingham) flight is kept');
+  // Only when the requested origin returned NOTHING may a nearby fare stand in.
+  const nearbyOnly = P.applyFlightPrefs([manDirect], { directOnly: true });
+  assert.ok(nearbyOnly.includes(manDirect), 'nearby fare used only when the requested origin has none');
+});
+
 test('a leading article resolves the destination ("to the Algarve", "the Maldives")', async () => {
   const D = await import('../src/destinations.js');
   // Regression: "the" before a place is a stop word, so "to the Algarve" extracted

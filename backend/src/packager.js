@@ -178,11 +178,19 @@ function departHour(f) {
 }
 // Apply traveller flight preferences: "direct only" is a hard filter (kept only
 // when at least one non-stop exists), departure window is a soft preference.
-function applyFlightPrefs(pool, prefs) {
+export function applyFlightPrefs(pool, prefs) {
   let list = pool;
+  // ORIGIN is the HARDEST constraint. A nearby-airport (altOriginCode) fare is
+  // only ever a labelled suggestion — it must never become the default just
+  // because it's cheaper or the only direct option. If the requested origin
+  // returned ANY flights, build the package from those (a connection from the
+  // customer's own airport beats a direct from a different city they didn't ask
+  // for). Only when the requested origin returned nothing do nearby fares stand in.
+  const requested = list.filter((f) => !f.details?.altOriginCode);
+  if (requested.length) list = requested;
   if (prefs?.directOnly) {
     const direct = list.filter(isDirect);
-    if (direct.length) list = direct; // honour the toggle when possible
+    if (direct.length) list = direct; // honour the toggle within the requested origin
   }
   // Cabin preference — soft filter to the chosen cabin when the sweep found it
   // (the deep search already fetches economy / premium economy / business).
