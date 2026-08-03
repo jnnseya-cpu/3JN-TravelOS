@@ -1784,6 +1784,18 @@ const HB_METRO_CODE = {
   IAD: 'WAS', DCA: 'WAS',                                      // Washington
   ICN: 'SEL', GMP: 'SEL',                                      // Seoul
   KIX: 'OSA', ITM: 'OSA',                                      // Osaka
+  PEK: 'BJS', PKX: 'BJS', NAY: 'BJS',                          // Beijing
+  PVG: 'SHA',                                                  // Shanghai (SHA airport already = metro)
+  ARN: 'STO', BMA: 'STO', NYO: 'STO',                          // Stockholm
+  ORD: 'CHI', MDW: 'CHI',                                      // Chicago
+  IAH: 'HOU',                                                  // Houston (HOU airport already = metro)
+  DAL: 'DFW',                                                  // Dallas (DFW airport already = metro)
+  YUL: 'YMQ', YMX: 'YMQ',                                      // Montreal
+  OTP: 'BUH', BBU: 'BUH',                                      // Bucharest
+  CGK: 'JKT', HLP: 'JKT',                                      // Jakarta
+  DMK: 'BKK',                                                  // Bangkok (BKK airport already = metro)
+  SZB: 'KUL',                                                  // Kuala Lumpur (KUL airport already = metro)
+  IKA: 'THR',                                                  // Tehran (THR airport already = metro)
 };
 // The Hotelbeds destination code for a resolved place: an explicit override wins,
 // else the metro-code map, else the raw code/airport as-is.

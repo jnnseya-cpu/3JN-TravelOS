@@ -5400,6 +5400,11 @@ test('hotelbedsDestCode maps airport codes to Hotelbeds metropolitan city codes'
   assert.equal(LS.hotelbedsDestCode({ airport: 'ORY' }), 'PAR', 'Paris ORY → PAR');
   assert.equal(LS.hotelbedsDestCode({ code: 'LHR' }), 'LON', 'London LHR → LON');
   assert.equal(LS.hotelbedsDestCode({ code: 'JFK' }), 'NYC', 'New York JFK → NYC');
+  // A sample of the wider metro set.
+  assert.equal(LS.hotelbedsDestCode({ code: 'PEK' }), 'BJS', 'Beijing PEK → BJS');
+  assert.equal(LS.hotelbedsDestCode({ code: 'ARN' }), 'STO', 'Stockholm ARN → STO');
+  assert.equal(LS.hotelbedsDestCode({ code: 'ORD' }), 'CHI', 'Chicago ORD → CHI');
+  assert.equal(LS.hotelbedsDestCode({ code: 'YUL' }), 'YMQ', 'Montreal YUL → YMQ');
   // Barcelona already matched (single-airport metro) — must pass through unchanged.
   assert.equal(LS.hotelbedsDestCode({ code: 'BCN' }), 'BCN', 'Barcelona BCN passes through');
   // An unknown code passes through as-is (Hotelbeds returns 0 → estimator, no harm).
