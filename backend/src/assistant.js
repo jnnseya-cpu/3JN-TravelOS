@@ -288,6 +288,14 @@ export function assist(message, userId, history = []) {
       reply = 'Let’s find you a great deal. Tell me where you’d like to go, your dates and how many travellers, and I’ll build a transparent, all-in package across verified suppliers — with the real bookable price, not just an estimate.';
       resolved = true; break;
     }
+    case 'info': {
+      // A property/amenity/logistics question (parking, wifi, pool, how far…).
+      // We must NOT open a support ticket for this — point the customer to the
+      // property's own authoritative facilities (the hotel detail card pulls them
+      // live from the supplier via "ⓘ more"), and never invent an amenity.
+      reply = 'Good question. A property’s full facilities — parking, Wi-Fi, breakfast, pool, air-con, check-in times and how far it is from the centre — are on that hotel’s detail card: tap **ⓘ more** on the hotel to see the amenities and exact address pulled straight from the supplier. I don’t want to guess a specific hotel’s features from here, so that panel is the reliable place to check. Once you’ve looked, I can help with the dates, the price, or booking it.';
+      resolved = true; break;
+    }
     case 'greeting': {
       const hi = ctx.name ? `Hi ${ctx.name.split(' ')[0]}!` : 'Hi there!';
       reply = `${hi} I’m the 3JN Assistant. I can check your bookings, e-tickets, payments, visas and rewards — and sort most things on the spot. What do you need?`;

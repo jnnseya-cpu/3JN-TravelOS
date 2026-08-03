@@ -26,6 +26,11 @@ const INTENTS = [
   { key: 'payment', escalate: false, re: /\b(pay|payment|instal?ment|deposit|card declined|how (much|do i pay)|split the cost)\b/i },
   { key: 'visa', escalate: false, re: /\b(visa|passport|eta|evisa|entry requirement|do i need a visa)\b/i },
   { key: 'rewards', escalate: false, re: /\b(acu|acus|reward|rewards|refer|refers|referral|referrals|influencer|ambassador|points|loyalty|cashback|commission|earnings)\b/i },
+  // Property / amenity / logistics questions about a hotel in the results ("free
+  // car park?", "does it have wifi", "how far from the centre", "check-in time").
+  // Placed before booking_new so "does the hotel have parking" isn't swallowed by
+  // the generic \bhotel\b match — and it must NEVER escalate to a support ticket.
+  { key: 'info', escalate: false, re: /\b(car ?park|parking|wi-?fi|swimming pool|\bpool\b|\bgym\b|fitness cent|\bspa\b|sauna|pet(s)?\b|smoking|air[- ]?condition|balcony|sea ?view|shuttle|check[- ]?in time|check[- ]?out time|luggage storage|how far|walking distance|nearest (metro|station|airport|beach)|amenit(y|ies)|facilit(y|ies)|breakfast included|is breakfast)\b/i },
   { key: 'booking_new', escalate: false, re: /\b(book|quote|price|cheap|deal|holiday|flight|hotel|package|plan (a )?trip)\b/i },
   { key: 'greeting', escalate: false, re: /\b(hi|hello|hey|good (morning|afternoon|evening)|help|support)\b/i },
 ];
@@ -61,6 +66,8 @@ export function supportAnswer(intentKey, { name, booking } = {}) {
       return `Every trip earns Travel ACUs, and our Refer & Earn programme pays 250 ACUs per referred booking — refer 20 travellers and you unlock lifetime revenue share. Creators can join the Influencer Programme for up to 1% lifetime revenue share. Want your referral link?`;
     case 'booking_new':
       return `Let's find you a great deal. Tell me where you'd like to go, your dates and how many travellers, and I'll build a transparent, all-in package across verified suppliers — you'll see the real bookable price, not just an estimate.`;
+    case 'info':
+      return `A property's full facilities — parking, Wi-Fi, breakfast, pool, air-con, check-in times and how far it is from the centre — are on that hotel's detail card: tap **ⓘ more** on the hotel to see the amenities and exact address pulled straight from the supplier. I don't want to guess a specific hotel's features, so that panel is the reliable place to check. Then I can help with dates, price or booking it.`;
     // Escalation acknowledgements — warm, specific, then a human takes over.
     case 'refund':
       return `I'm sorry about the payment issue. Because this involves your money, I'm passing it straight to a 3JN specialist who can review the charge and sort out any refund securely. I've logged the details so you won't need to repeat yourself.`;

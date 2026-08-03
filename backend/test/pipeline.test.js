@@ -3359,6 +3359,13 @@ test('assistant resolves with the user\'s real system data before escalating', (
   const refund = assist('I want a refund', u.id);
   assert.equal(refund.escalate, true);
   assert.ok(refund.diagnostic && refund.diagnostic.id === b.id, 'escalation carries the booking diagnostic');
+
+  // A hotel AMENITY question must be answered, NOT escalated into a support ticket
+  // (the "free car park?" case that used to open a ticket).
+  const amenity = assist('does this hotel have a free car park?', u.id);
+  assert.equal(amenity.intent, 'info');
+  assert.equal(amenity.escalate, false, 'amenity question must not open a support ticket');
+  assert.equal(amenity.resolved, true);
 });
 
 test('admin can approve an influencer who has not formally applied yet', () => {
