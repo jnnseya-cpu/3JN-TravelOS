@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v222';
+const APP_BUILD = 'v223';
 
 const state = {
   context: null,
@@ -730,6 +730,25 @@ function composeFromStructured(s) {
   parts.push('cheapest reliable price.');
   return parts.join(' ');
 }
+// Mirror what the AI parsed from the free-text sentence back into the Precise
+// search fields, so the two views never disagree — the user can open Precise
+// search after a text search, see exactly what was understood, tweak one value
+// and re-run for an exact search. (origin lives at data.origin, not intent.)
+function syncStructuredFromPlan(data) {
+  const intent = data?.intent; if (!intent) return;
+  const set = (id, val) => { const el = $(id); if (el != null && val != null && val !== '') el.value = String(val); };
+  set('#psDest', intent.destination?.city);
+  set('#psOrigin', data.origin?.city);
+  set('#psCheckIn', intent.dates?.checkIn);
+  set('#psNights', intent.nights);
+  set('#psAdults', intent.travellers?.adults);
+  if (intent.travellers?.children != null && $('#psChildren')) $('#psChildren').value = String(intent.travellers.children);
+  if (Array.isArray(intent.travellers?.childAges) && intent.travellers.childAges.length) set('#psChildAges', intent.travellers.childAges.join(', '));
+  if (Array.isArray(intent.components) && intent.components.length) {
+    const want = new Set(intent.components);
+    document.querySelectorAll('.psComp').forEach((c) => { c.checked = want.has(c.value); });
+  }
+}
 async function runPlan(overrides = {}) {
   const { approveAcu, ...restOverrides } = overrides;
   const structured = collectStructured();
@@ -798,6 +817,7 @@ async function runPlan(overrides = {}) {
     // Show the small member cache-access fee so ACU movement is visible.
     if (data.cachedFee && data.acuCharged > 0) toast(`⚡ ${data.acuCharged} ACU · cached result · balance ${data.acuBalance.toLocaleString()}`);
   }
+  syncStructuredFromPlan(data);
   renderOptions(data);
 }
 
@@ -1115,10 +1135,26 @@ function renderOptions(data) {
     return `<div class="card pad" style="margin-bottom:16px;border-color:rgba(255,176,32,.5)"><span class="eyebrow">⚙️ Staff diagnostic — why these prices are estimated</span><p class="muted" style="font-size:12.5px;margin:6px 0 0">${esc(help)}</p></div>`;
   })() : '';
 
-  $('#plannerOut').innerHTML = staffLiveDiag + gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
-    `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
+  // No bookable options for the exact trip → a helpful empty state with next
+  // steps, instead of a blank grid under a "Your package options" heading.
+  const hasOptions = Array.isArray(data.packages.options) && data.packages.options.length > 0;
+  const dest = intent?.destination?.city ? esc(intent.destination.city) : 'your destination';
+  const onDate = intent?.dates?.checkIn ? ` on ${esc(intent.dates.checkIn)}` : '';
+  const optionsBlock = hasOptions
+    ? `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
       <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. ${(data.packages.options || []).some((o) => o.pricing?.feeBakedIn) ? 'Package prices are all-inclusive — the full price is shown before you pay. Flights-only carry a small 2% service fee (min £4.99, capped at £15).' : 'Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.'}</p></div>
-    <div class="opt-grid">${opts}</div>` + sponsoredStrip + compareCard(data, sym);
+    <div class="opt-grid">${opts}</div>`
+    : `<div class="card pad center" style="margin-top:8px">
+        <div style="font-size:34px;margin-bottom:6px">🧭</div>
+        <h3 style="margin:0 0 6px">No bookable options for ${dest}${onDate}</h3>
+        <p class="muted" style="max-width:460px;margin:0 auto 16px;font-size:13.5px">We couldn't build a reliable package for this exact trip — usually the dates, route or filters are too tight. Try nudging the dates a few days, a nearby airport, or loosening a filter (stars, direct-only, cabin).</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+          <button class="btn btn-gold" onclick="document.getElementById('preciseSearch').setAttribute('open','');document.getElementById('intentInput').focus()">Adjust your search</button>
+          <button class="btn btn-ghost" onclick="inspireMe()">✨ Inspire me instead</button>
+        </div>
+      </div>`;
+  $('#plannerOut').innerHTML = staffLiveDiag + gateBanner + modeNote + flightPrefNote + psNote + summary + scanCard + diveCard +
+    optionsBlock + (hasOptions ? sponsoredStrip + compareCard(data, sym) : '');
 
   // stash options for booking
   window.__options = {};
@@ -1423,6 +1459,18 @@ function fareSplitHTML(d, toLocal) {
 }
 
 // Detailed info + images for a selected flight or hotel.
+// Skeleton shown in the detail modal while a hotel's Content API record loads.
+function hotelDetailSkeleton() {
+  const line = (w) => `<div class="sk sk-line" style="width:${w}"></div>`;
+  return `<div class="sk-wrap" aria-busy="true" aria-label="Loading hotel details">
+    <div class="sk sk-photo"></div>
+    <div class="sk sk-title"></div>
+    ${line('85%')}${line('62%')}${line('72%')}
+    <div class="sk-chips">${Array.from({ length: 5 }, () => '<div class="sk sk-chip"></div>').join('')}</div>
+    ${line('90%')}${line('48%')}
+    <div class="sk-note muted">Loading hotel details…</div>
+  </div>`;
+}
 window.showComponentInfo = async (tier, idx) => {
   const o = window.__options?.[tier];
   const c = o?.components?.[idx];
@@ -1435,6 +1483,9 @@ window.showComponentInfo = async (tier, idx) => {
   // Cached server-side, so re-opening is instant. Fails silently → the search
   // fields (location + map) still show.
   if (c.type === 'hotel' && d.hotelId && /hotelbeds/i.test(c.sourcedVia || '') && !d._contentLoaded) {
+    // Instant feedback: show a skeleton modal NOW, while the Content API call is
+    // in flight (it can take a moment). The real hotel modal replaces it below.
+    modal(hotelDetailSkeleton());
     try {
       const r = await api(`/api/hotel/content?code=${encodeURIComponent(d.hotelId)}`, { silent: true });
       if (r?.content) {
