@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-leading-article-dest-v229';
+const BUILD_TAG = '2026-08-03-assistant-hotel-facilities-v230';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4432,14 +4432,14 @@ async function attemptAutoReissue(booking) {
   return { ok: true, collectedGbp: r.collected };
 }
 app.post('/api/support/chat', safe(async (req, res) => {
-  const { message, history } = req.body || {};
+  const { message, history, hotelContext } = req.body || {};
   if (message != null && typeof message !== 'string') return res.status(400).json({ error: 'message-must-be-string' });
   const user = currentUser(req);
   // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
   // e-tickets, wallet, rewards and visa rules; escalates only when a human must
   // authorise an action — and hands the human a full diagnostic. The recent
   // transcript keeps multi-turn requests (e.g. a booking change) coherent.
-  const out = assist(message, user?.id, Array.isArray(history) ? history.slice(-8) : []);
+  const out = assist(message, user?.id, Array.isArray(history) ? history.slice(-8) : [], { hotelContext });
   // EXACT TOTAL BEFORE CONFIRM: when the assistant just QUOTED a date change on a
   // real Duffel order, ask the airline for the true change price NOW and show the
   // customer the exact total (3JN fee + real airline fare difference) instead of

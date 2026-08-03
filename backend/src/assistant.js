@@ -104,15 +104,66 @@ export function gatherContext(message, userId, history = []) {
   };
 }
 
+// Answer an amenity/facility question about the hotel the customer is viewing,
+// straight from that property's OWN listed facilities — never invents one. Returns
+// a specific answer string, or null when we can't answer confidently (→ the caller
+// falls back to pointing at the detail panel).
+const AMENITY_Q = [
+  { ask: /\b(car ?park|parking)\b/i, label: 'parking', match: /park/i },
+  { ask: /\b(wi-?fi|internet|wireless)\b/i, label: 'Wi-Fi', match: /wi-?fi|internet|wireless/i },
+  { ask: /\b(swimming ?pool|pool)\b/i, label: 'a swimming pool', match: /pool/i },
+  { ask: /\b(gym|fitness)\b/i, label: 'a gym / fitness centre', match: /gym|fitness/i },
+  { ask: /\b(spa|sauna|wellness)\b/i, label: 'a spa / wellness area', match: /spa|sauna|wellness|massage/i },
+  { ask: /\b(pet|dog)s?\b/i, label: 'pets', match: /pet|dog/i },
+  { ask: /\b(air ?con(dition)?|a\/c)\b/i, label: 'air-conditioning', match: /air.?condition|a\/c/i },
+  { ask: /\b(shuttle|airport transfer)\b/i, label: 'an airport shuttle', match: /shuttle|transfer/i },
+  { ask: /\b(restaurant)\b/i, label: 'a restaurant', match: /restaurant/i },
+  { ask: /\b(bar)\b/i, label: 'a bar', match: /\bbar\b/i },
+  { ask: /\b(family room|connecting room|cot|crib)\b/i, label: 'family rooms', match: /family|connecting|cot|crib|children/i },
+];
+function answerHotelAmenity(message, hotel) {
+  if (!hotel || typeof hotel !== 'object') return null;
+  const name = String(hotel.name || 'this hotel').trim();
+  const facilities = Array.isArray(hotel.amenities) ? hotel.amenities.map((a) => String(a || '')).filter(Boolean) : [];
+  // Breakfast comes from the RATE (board), which is authoritative for this price.
+  if (/\bbreakfast\b/i.test(message)) {
+    return hotel.breakfastIncluded
+      ? `Yes — breakfast is included in the rate shown for ${name}.`
+      : `The rate shown for ${name} is room-only, so breakfast isn't in that price — some properties let you add it at checkout.`;
+  }
+  for (const q of AMENITY_Q) {
+    if (!q.ask.test(message)) continue;
+    if (!facilities.length) return null; // no facility data → generic guidance
+    const hit = facilities.find((f) => q.match.test(f));
+    if (hit) {
+      const isFree = /\bfree\b/i.test(hit);
+      return `Yes — ${name} lists ${isFree ? 'free ' : ''}${q.label}${isFree ? '' : ` (shown as “${hit}” — check whether it's free or paid on the detail card)`}.`;
+    }
+    return `I don't see ${q.label} in ${name}'s listed facilities. Tap **ⓘ more** on the hotel for the full supplier list — it may be there under a different name.`;
+  }
+  return null;
+}
+
 // ---- The agent: resolve with real data, escalate only when required --------
-export function assist(message, userId, history = []) {
+export function assist(message, userId, history = [], opts = {}) {
   const intent = classifySupport(message);
+  const hotelContext = opts.hotelContext || null;
   const ctx = gatherContext(message, userId, history);
   const money = (n) => `${ctx.booking?.symbol || '£'}${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   // The assistant is stateless per request, so a bare follow-up ("departure")
   // would otherwise re-classify to "unknown" and escalate. Read the recent
   // transcript so a reply is understood as part of the conversation in flight.
   const topic = recentTopic(history);
+
+  // ---- Viewing a hotel + asking about IT ----------------------------------
+  // If the customer has a hotel open and asks about its amenities (parking, wifi,
+  // breakfast, pool…) — and isn't asking to CHANGE a booking — answer straight
+  // from that property's facilities, BEFORE intent routing sends amenity words
+  // like "breakfast" down the booking-change path.
+  if (hotelContext && !/\b(add|change|amend|upgrade|remove|reschedul|cancel)\b/i.test(String(message || '')) && !/\b(my|the) booking\b/i.test(String(message || ''))) {
+    const direct = answerHotelAmenity(message, hotelContext);
+    if (direct) return { intent: 'info', reply: direct, resolved: true, escalate: false, reason: null, context: ctx, diagnostic: null };
+  }
 
   // ---- Operator actions: the assistant DOES what an operator does ----------
   // 1) A confirmation of a previously-quoted change/cancel → execute it now.
@@ -290,10 +341,12 @@ export function assist(message, userId, history = []) {
     }
     case 'info': {
       // A property/amenity/logistics question (parking, wifi, pool, how far…).
-      // We must NOT open a support ticket for this — point the customer to the
-      // property's own authoritative facilities (the hotel detail card pulls them
-      // live from the supplier via "ⓘ more"), and never invent an amenity.
-      reply = 'Good question. A property’s full facilities — parking, Wi-Fi, breakfast, pool, air-con, check-in times and how far it is from the centre — are on that hotel’s detail card: tap **ⓘ more** on the hotel to see the amenities and exact address pulled straight from the supplier. I don’t want to guess a specific hotel’s features from here, so that panel is the reliable place to check. Once you’ve looked, I can help with the dates, the price, or booking it.';
+      // First try to answer DIRECTLY from the hotel the customer is viewing — from
+      // that property's own listed facilities, never invented. Only if we can't
+      // answer confidently do we point them at the detail panel. Never a ticket.
+      const direct = answerHotelAmenity(message, hotelContext);
+      reply = direct
+        || 'Good question. A property’s full facilities — parking, Wi-Fi, breakfast, pool, air-con, check-in times and how far it is from the centre — are on that hotel’s detail card: tap **ⓘ more** on the hotel to see the amenities and exact address pulled straight from the supplier. I don’t want to guess a specific hotel’s features from here, so that panel is the reliable place to check. Once you’ve looked, I can help with the dates, the price, or booking it.';
       resolved = true; break;
     }
     case 'greeting': {

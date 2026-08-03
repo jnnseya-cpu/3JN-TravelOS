@@ -3366,6 +3366,17 @@ test('assistant resolves with the user\'s real system data before escalating', (
   assert.equal(amenity.intent, 'info');
   assert.equal(amenity.escalate, false, 'amenity question must not open a support ticket');
   assert.equal(amenity.resolved, true);
+
+  // With the viewed hotel's facilities in context, it answers DIRECTLY from them.
+  const ctxHotel = { name: 'Novotel Faro', amenities: ['Free parking', 'Outdoor swimming pool', 'Wi-Fi'], breakfastIncluded: true };
+  const yes = assist('does it have free parking?', u.id, [], { hotelContext: ctxHotel });
+  assert.match(yes.reply, /Novotel Faro/);
+  assert.match(yes.reply, /free .*parking/i);
+  assert.equal(yes.escalate, false);
+  const noGym = assist('is there a gym?', u.id, [], { hotelContext: ctxHotel });
+  assert.match(noGym.reply, /don't see .*gym/i);
+  const brek = assist('is breakfast included?', u.id, [], { hotelContext: ctxHotel });
+  assert.match(brek.reply, /breakfast is included/i);
 });
 
 test('admin can approve an influencer who has not formally applied yet', () => {

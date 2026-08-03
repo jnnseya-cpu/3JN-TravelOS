@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v229';
+const APP_BUILD = 'v230';
 
 const state = {
   context: null,
@@ -1505,6 +1505,17 @@ window.showComponentInfo = async (tier, idx) => {
       }
     } catch { /* keep the location we already have */ }
     d._contentLoaded = true;
+  }
+  // Remember the hotel the customer is looking at, so the assistant can answer
+  // amenity questions about it from the property's own facilities.
+  if (c.type === 'hotel' || c.type === 'host') {
+    window.__lastHotel = {
+      name: c.supplier || d.roomType || 'the hotel',
+      area: d.area || d.destinationName || '',
+      board: d.board || '', breakfastIncluded: !!d.breakfastIncluded,
+      amenities: Array.isArray(d.amenities) ? d.amenities.map((a) => (typeof a === 'string' ? a : (a?.description || a?.name || ''))).filter(Boolean).slice(0, 60) : [],
+      occupancy: d.occupancy || null,
+    };
   }
   if (c.type === 'flight') {
     // Connecting itineraries show the FULL plan: every flight number, the
@@ -7259,7 +7270,10 @@ window.addEventListener('appinstalled', () => {
     const history = transcript.slice(0, -1).slice(-8);
     const typing = bubble('…', 'bot');
     try {
-      const d = await api('/api/support/chat', { method: 'POST', body: JSON.stringify({ message: msg, history }) });
+      // Pass the hotel the customer last opened so the assistant can answer
+      // amenity questions ("free parking?", "does it have a pool?") from that
+      // property's own facilities instead of deflecting.
+      const d = await api('/api/support/chat', { method: 'POST', body: JSON.stringify({ message: msg, history, hotelContext: window.__lastHotel || null }) });
       typing.remove();
       bubble(d.reply, 'bot');
       if (d.escalated) bubble(`🎧 ${d.handoff || 'A 3JN specialist will follow up shortly.'}${d.ticketId ? ` (ref ${d.ticketId})` : ''}`, 'esc');
