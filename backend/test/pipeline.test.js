@@ -4445,6 +4445,11 @@ test('flight selection never swaps the requested departure city for a nearby air
   // Only when the requested origin returned NOTHING may a nearby fare stand in.
   const nearbyOnly = P.applyFlightPrefs([manDirect], { directOnly: true });
   assert.ok(nearbyOnly.includes(manDirect), 'nearby fare used only when the requested origin has none');
+  // Exception: home airport has ONLY an unusable red-eye (overnight 18h layover)
+  // while a nearby airport has a good direct → the nearby option may compete.
+  const bhxRedEye = { type: 'flight', priceUSD: 600, details: { outbound: { stops: 1, layovers: [{ minutes: 1120, overnight: true }] }, inbound: { stops: 1, layovers: [{ minutes: 90, overnight: false }] } } };
+  const out2 = P.applyFlightPrefs([bhxRedEye, manDirect], { directOnly: true });
+  assert.ok(out2.includes(manDirect), 'a good nearby direct beats an overnight red-eye from the home airport');
 });
 
 test('a leading article resolves the destination ("to the Algarve", "the Maldives")', async () => {

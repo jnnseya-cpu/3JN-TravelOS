@@ -187,7 +187,17 @@ export function applyFlightPrefs(pool, prefs) {
   // customer's own airport beats a direct from a different city they didn't ask
   // for). Only when the requested origin returned nothing do nearby fares stand in.
   const requested = list.filter((f) => !f.details?.altOriginCode);
-  if (requested.length) list = requested;
+  const requestedReasonable = requested.filter((f) => !hasBadLayover(f));
+  if (requestedReasonable.length) {
+    list = requested;                       // home airport has a sane routing → use it
+  } else if (requested.length) {
+    // Home airport has ONLY unusable routings (overnight / 8h+ layovers). Let a
+    // genuinely good (direct/short) NEARBY option compete — a 3h nearby direct
+    // beats a 20h+ overnight connection from home — rather than recommending an
+    // in-practice-unbookable red-eye. The nearby option stays clearly labelled.
+    const nearbyGood = list.filter((f) => f.details?.altOriginCode && !hasBadLayover(f));
+    list = nearbyGood.length ? [...requested, ...nearbyGood] : requested;
+  } // else: home airport returned nothing → keep full pool (nearby stands in)
   if (prefs?.directOnly) {
     const direct = list.filter(isDirect);
     if (direct.length) list = direct; // honour the toggle within the requested origin
