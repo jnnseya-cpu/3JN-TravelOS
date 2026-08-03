@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v238';
+const APP_BUILD = 'v239';
 
 const state = {
   context: null,
@@ -1823,6 +1823,37 @@ function priceZoneHTML(quote) {
       <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels. Deposits are non-refundable. If you've paid <strong>over 50%</strong> and no ticket has been issued, you're refunded less a <strong>£100 admin fee per passenger</strong>; once a ticket is issued the airline's rules govern the flight.</div>
       ${inst.risk?.requireIdCheck ? '<div style="font-size:11.5px;margin-top:4px;color:var(--gold)">🪪 Additional identity verification is required before this plan activates.</div>' : ''}
     </div>` : '';
+  // FLIGHT-SECURED SPLIT: the airline won't hold the fare, but the hotel is
+  // holdable — so the flight is paid in full today (ticketed + held) and the
+  // hotel is spread, interest-free. The e-ticket releases when the hotel is paid,
+  // or is kept by the customer if they cancel the hotel (the flight is paid).
+  if (inst.split?.flightSecured) {
+    const feePct = Math.round((inst.lateCancel?.pct || 0.2) * 100);
+    const feeCap = money2(inst.lateCancel?.cap || 100, sym);
+    const hotelRows = inst.schedule.map((s) => `<div class="kv"><span>${esc(ukDate(s.due))} <span class="muted" style="font-size:11px">· hotel</span></span><span>${money2(s.amount, sym)}</span></div>`).join('');
+    return `
+    <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
+    <div class="card pad" style="margin:10px 0;border-color:rgba(70,211,154,0.45);background:rgba(70,211,154,0.06)">
+      <strong>✈️ Flight secured now — hotel paid monthly</strong>
+      <div class="muted" style="font-size:12px;margin-top:4px">This airline needs the flight paid in full to ticket it, so you pay the <strong>flight today</strong> (${money2(inst.deposit, sym)}) and spread the <strong>hotel</strong> (${money2(inst.split.hotelLocal, sym)}) interest-free. Your flight is ticketed straight away and held on your account — your e-ticket releases the moment the hotel balance is paid. Cancel the hotel and you <strong>keep the flight you've paid for</strong> (a ${feePct}% hotel fee, capped ${feeCap}, applies within 7 days of departure).</div>
+    </div>
+    <div class="field" style="margin:10px 0 4px">
+      <label>How would you like to pay?</label>
+      <select id="payChoice" class="in" onchange="togglePayChoice()">
+        <option value="deposit">Pay the flight now + hotel monthly</option>
+        <option value="full">Pay everything in full now (${money2(option.pricing.local.total, sym)})</option>
+      </select>
+    </div>
+    <div id="depositSchedule">
+      <div class="kv" style="font-weight:700"><span>Pay today · flight secured &amp; ticketed</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
+      ${hotelRows}
+      <div class="muted" style="font-size:11.5px;margin-top:4px">${inst.schedule.length} interest-free hotel instalment${inst.schedule.length > 1 ? 's' : ''}, settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure). Pay the hotel early any time — your e-ticket releases as soon as it's clear.</div>
+    </div>
+    <div id="fullSchedule" style="display:none">
+      <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">One payment — flight ticketed and hotel confirmed, nothing more to pay.</div>
+    </div>`;
+  }
   // INSTANT-PAYMENT-ONLY FARE: the airline won't hold this fare, so instalments
   // aren't possible — the customer is told clearly and shown a single pay-in-full
   // option (no deposit choice), and the ticket issues immediately on payment.
@@ -2933,9 +2964,11 @@ function bookingCard(b) {
       ${progress}
       <div style="margin:10px 0">${sched}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        ${(b.fulfilment?.ticketing === 'issued' || (totalLocal > 0 && paidTotal + 0.01 >= totalLocal))
+        ${(b.fulfilment?.released !== false && (b.fulfilment?.ticketing === 'issued' || (totalLocal > 0 && paidTotal + 0.01 >= totalLocal)))
           ? `<button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>`
-          : `<button class="btn btn-ghost btn-sm" disabled title="Your price is locked now. Your e-ticket is issued and released the moment your balance reaches ${sym || '£'}0 — a deposit or part-payment never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket at ${sym || '£'}0 balance</button>`}
+          : b.fulfilment?.split && b.fulfilment?.ticketing === 'issued'
+            ? `<button class="btn btn-ghost btn-sm" disabled title="Your flight is paid in full and ticketed — the e-ticket is held on your account and releases the moment your hotel balance is paid (or if you cancel the hotel, since the flight is already paid)." style="opacity:.55;cursor:not-allowed">🎫 Flight ticketed · e-ticket held until hotel paid</button>`
+            : `<button class="btn btn-ghost btn-sm" disabled title="Your price is locked now. Your e-ticket is issued and released the moment your balance reaches ${sym || '£'}0 — a deposit or part-payment never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket at ${sym || '£'}0 balance</button>`}
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocs('${b.id}')">📄 Documents</button>

@@ -4773,7 +4773,105 @@ test('a paid LCC booking routes to the ops desk with the customer told honestly'
 });
 
 // ---- AI Smart Instalment Payment Engine --------------------------------------
-import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP } from '../src/instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, tierForDeparture, INSTALMENT_TIERS, daysUntil as instDaysUntil, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, buildFlightSecuredSplit, splitHotelCancelFee, SPLIT_LATE_CANCEL_CAP } from '../src/instalments.js';
+
+test('split-pay: flight is the deposit, hotel spreads to 7 days out, sums exactly', () => {
+  const currency = { code: 'GBP', symbol: '£' };
+  // 100 days out → Smart Plan band (has a schedule). Flight £1100 of a £1618 total.
+  const today = '2026-01-01';
+  const depart = '2026-04-11'; // 100 days later
+  const plan = buildFlightSecuredSplit({ totalLocal: 1618.01, flightLocal: 1100, currency, departISO: depart, todayISO: today });
+  assert.ok(plan, 'split plan built for a 100-day band');
+  assert.equal(plan.split.flightSecured, true);
+  assert.equal(plan.deposit, 1100, 'deposit is the flight, in full');
+  assert.equal(plan.split.hotelLocal, 518.01);
+  assert.equal(plan.ticketHeld, true);
+  // Every scheduled instalment funds the HOTEL and lands >= 7 days pre-departure.
+  assert.ok(plan.schedule.length >= 1);
+  assert.ok(plan.schedule.every((s) => s.component === 'hotel'));
+  assert.ok(plan.schedule.every((s) => s.daysBefore >= 7));
+  const scheduled = plan.schedule.reduce((s, x) => s + x.amount, 0);
+  assert.equal(Math.round((plan.deposit + scheduled) * 100) / 100, 1618.01, 'deposit + hotel instalments = total, to the penny');
+});
+
+test('split-pay: not splittable last-minute (empty schedule) or when flight >= total', () => {
+  const currency = { code: 'GBP', symbol: '£' };
+  // 3 days out → Instant Purchase tier, no schedule → cannot split.
+  assert.equal(buildFlightSecuredSplit({ totalLocal: 1000, flightLocal: 700, currency, departISO: '2026-01-04', todayISO: '2026-01-01' }), null);
+  // Flight is the whole package → nothing to spread.
+  assert.equal(buildFlightSecuredSplit({ totalLocal: 1000, flightLocal: 1000, currency, departISO: '2026-04-11', todayISO: '2026-01-01' }), null);
+});
+
+test('split-pay: hotel late-cancel fee = 20% capped, only inside the 7-day window', () => {
+  assert.equal(splitHotelCancelFee(500, 30), 0, 'plenty of runway → no fee');
+  assert.equal(splitHotelCancelFee(500, 7), 0, 'exactly 7 days → no fee (boundary)');
+  assert.equal(splitHotelCancelFee(300, 3), 60, '20% of £300 within the window');
+  assert.equal(splitHotelCancelFee(1000, 2), SPLIT_LATE_CANCEL_CAP, 'capped at the max');
+});
+
+test('split-pay endpoint: /api/quote emits a flight-secured split only when the flag is on', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const depart = new Date(Date.now() + 100 * 86400000).toISOString().slice(0, 10); // ~100-day band (has a schedule)
+  const option = {
+    tier: 'smart',
+    // Supplier cost (componentsUSD 1800) < the all-in total — commission on top,
+    // as it always is in reality; that's what makes the flight's share cover the fare.
+    pricing: { currency: 'GBP', symbol: '£', local: { total: 1618.01 }, lines: { totalUSD: 2048 }, rateFromUSD: 0.79 },
+    components: [
+      { type: 'flight', live: true, priceUSD: 1200, details: { requiresInstantPayment: true, offerId: 'off_test' } },
+      { type: 'hotel', live: true, priceUSD: 600, details: { hotelbedsRateKey: 'rk_test' } },
+    ],
+  };
+  const intent = { dates: { checkIn: depart }, destination: { code: 'FAO', city: 'Faro' }, travellers: { adults: 2 }, components: ['flights', 'hotel'] };
+  const quoteIt = () => fetch(`${baseUrl}/api/quote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ option: JSON.parse(JSON.stringify(option)), intent }) }).then((r) => r.json());
+  const prev = process.env.SPLIT_PAY_INSTANT_FARES;
+  try {
+    // Flag OFF → the instant fare stays pay-in-full (no split).
+    delete process.env.SPLIT_PAY_INSTANT_FARES;
+    const off = await quoteIt();
+    assert.equal(off.quote.instalment.instantOnly, true, 'flag off → pay in full');
+    assert.ok(!off.quote.instalment.split, 'no split when disabled');
+
+    // Flag ON → flight is the deposit, hotel spreads, ticket held.
+    process.env.SPLIT_PAY_INSTANT_FARES = 'true';
+    const on = await quoteIt();
+    const inst = on.quote.instalment;
+    assert.ok(inst.split?.flightSecured, 'flag on → split plan');
+    assert.equal(inst.ticketHeld, true);
+    // Deposit is the flight's cost-proportional share (1200/1800 of the total).
+    const expectFlight = Math.round(1618.01 * (1200 / 1800) * 100) / 100;
+    assert.equal(inst.deposit, expectFlight);
+    assert.ok(inst.deposit >= 1200 * 0.79, 'deposit covers the airline fare — 3JN never fronts cash');
+    const scheduled = inst.schedule.reduce((s, x) => s + x.amount, 0);
+    assert.equal(Math.round((inst.deposit + scheduled) * 100) / 100, 1618.01, 'plan sums to the total');
+    assert.ok(inst.schedule.every((s) => s.daysBefore >= 7), 'hotel settled by 7 days out');
+  } finally {
+    if (prev === undefined) delete process.env.SPLIT_PAY_INSTANT_FARES; else process.env.SPLIT_PAY_INSTANT_FARES = prev;
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('split-pay refund: flight kept (ticketed), hotel instalments refunded less any late fee', () => {
+  // Ticketed split booking; flight £1100 deposit + £200 of hotel instalments paid.
+  const booking = {
+    option: { pricing: { local: { total: 1618.01 } } },
+    fulfilment: { ticketing: 'issued', pnr: 'ABC123' },
+    payments: [{ type: 'deposit', amount: 1100 }, { type: 'instalment', amount: 200 }],
+    instalment: { engine: 'ai-smart', deposit: 1100, split: { flightSecured: true, flightLocal: 1100, hotelLocal: 518.01 }, departISO: '2026-04-11', schedule: [{ amount: 518.01 }] },
+  };
+  // Cancels with 30 days to go → no late fee → the £200 hotel money is refunded.
+  const early = refundOutcome(booking, { todayISO: '2026-03-12' });
+  assert.equal(early.basis, 'split-flight-kept');
+  assert.equal(early.lateCancelFee, 0);
+  assert.equal(early.refund, 200);
+  assert.equal(early.forfeitedDeposit, 1100, 'the flight (deposit) is retained — they keep the ticket');
+  // Cancels 3 days out → 20% of £518.01 hotel = £103.60 → capped at £100 → refund £100.
+  const late = refundOutcome(booking, { todayISO: '2026-04-08' });
+  assert.equal(late.lateCancelFee, SPLIT_LATE_CANCEL_CAP);
+  assert.equal(late.refund, Math.round((200 - SPLIT_LATE_CANCEL_CAP) * 100) / 100);
+});
 
 test('ticket-release GATE: an e-ticket is issued ONLY when the balance is £0 (anti-abuse)', () => {
   const mk = (paid) => ({ option: { pricing: { local: { total: 1000 } } }, payments: [{ type: 'deposit', amount: paid, status: 'paid' }] });

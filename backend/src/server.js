@@ -11,7 +11,7 @@ import { destinationsCatalog, findDestination, resolveOrigin, resolveDestination
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT, buildFlightSecuredSplit, splitHotelCancelFee } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
   getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund, redeemTravelCredit,
@@ -205,7 +205,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-share-a-trip-qr-attribution-v238';
+const BUILD_TAG = '2026-08-03-split-pay-flight-secured-v239';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -464,6 +464,11 @@ const isOwnerEmail = (email) => {
 // guests get cached results only, all AI actions are ACU-funded, and demo
 // account surfaces fail closed unless the staff PIN is configured AND supplied.
 const LIVE_MODE = () => process.env.LIVE_MODE === 'true';
+// FLIGHT-SECURED SPLIT PAY (staged): when a package's flight must be paid in
+// full at booking (instant-only fare) but the hotel is holdable, pay the flight
+// now (ticket held) and spread the hotel over instalments. OFF until proven with
+// a live test — set SPLIT_PAY_INSTANT_FARES=true to enable.
+const splitPayEnabled = () => process.env.SPLIT_PAY_INSTANT_FARES === 'true';
 function staffPinOk(req) {
   const pin = staffPin();
   if (!pin) return true; // gate not configured
@@ -536,6 +541,31 @@ const safe = (fn) => async (req, res) => {
 // so the ticket-release gate can be unit-tested independently of the server.
 function bookingFullyPaid(booking) {
   return isBookingFullyPaid(booking);
+}
+// FLIGHT-SECURED SPLIT helpers. In a split, the flight (= the deposit) is fully
+// paid at booking so it may be ticketed immediately; the ticket is HELD and only
+// released on full payment or on hotel-abandonment (the flight is already paid).
+function isSplitBooking(booking) { return !!booking?.instalment?.split?.flightSecured; }
+function flightPortionFunded(booking) {
+  const fl = Number(booking?.instalment?.split?.flightLocal);
+  return fl > 0 && planPaid(booking) + 0.01 >= fl;
+}
+// Has the customer's usable e-ticket been released? A held split ticket is
+// released once the booking is paid in full, or explicitly on abandonment.
+function ticketReleased(booking) {
+  return booking?.fulfilment?.released === true || bookingFullyPaid(booking);
+}
+// Release a HELD split e-ticket to the customer (full payment reached, or the
+// flight is being handed over on hotel-abandonment). Idempotent + notifies once.
+function releaseHeldTicket(booking, reason) {
+  const ful = booking?.fulfilment;
+  if (!ful || ful.ticketing !== 'issued' || ful.released === true) return;
+  ful.released = true;
+  ful.releasedAt = new Date().toISOString();
+  ful.releaseReason = reason || (bookingFullyPaid(booking) ? 'paid-in-full' : 'hotel-abandoned');
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.released', entity: 'booking', entityId: booking.id, summary: `held e-ticket released (${ful.releaseReason})` });
+  if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Your e-ticket is released', body: ful.releaseReason === 'hotel-abandoned' ? 'Your hotel booking was cancelled, but your flight was paid in full — your e-ticket is now available in your Console.' : 'Your balance is settled — your flight e-ticket is now available in your Console and on its way by email.' });
+  try { emailBookingConfirmation(booking); } catch {}
 }
 // Email the FULL branded booking document (the same printable, "Save as PDF"
 // record shown in the Console) once a booking is paid IN FULL — on top of the
@@ -707,6 +737,13 @@ async function autoTicketFlight(booking) {
   const flight = (booking.option?.components || []).find((c) => c.type === 'flight' && c.live && c.details?.offerId);
   if (!flight || !liveFlightsEnabled()) return;
   const ful = () => (booking.fulfilment = booking.fulfilment || {});
+  // FLIGHT-SECURED SPLIT: a held e-ticket is RELEASED when the hotel balance
+  // completes. This runs BEFORE the idempotency return below, because an already-
+  // issued split booking re-enters here on its final hotel instalment.
+  if (isSplitBooking(booking) && booking.fulfilment?.ticketing === 'issued') {
+    if (bookingFullyPaid(booking)) releaseHeldTicket(booking, 'paid-in-full');
+    return;
+  }
   // CONCURRENCY CLAIM: two redelivered webhooks can enter here at the same time;
   // the async createDuffelOrder means both could pass an 'issued' check that is
   // only set AFTER the await → double order/charge. Claim the booking
@@ -745,7 +782,14 @@ async function autoTicketFlight(booking) {
   const contactEmail = lt.email || acct?.email || '';
   const contactPhone = lt.phone || tp.mobile || tp.secondaryPhone || '';
   const passengers = duffelOrderPassengers(offerPax, lt, { departureDate: flight.details.outbound?.date, travellers: booking.travellers, contactEmail, contactPhone });
+  // FLIGHT-SECURED SPLIT: the flight portion (= the deposit) is paid at booking,
+  // so the flight may be ticketed now even though the whole booking (hotel) isn't
+  // paid. issueNow drives ticketing; the ticket is then HELD (released === false)
+  // until full payment or hotel-abandonment.
+  const split = isSplitBooking(booking);
+  const flightFunded = split && flightPortionFunded(booking);
   const fullyPaid = bookingFullyPaid(booking);
+  const issueNow = fullyPaid || flightFunded;
   // TICKETED BAGGAGE: bags the customer paid for at checkout are added to the
   // Duffel order (so they issue) and the airline is paid for them in the offer
   // currency alongside the fare. If the order/pay rejects with them, the whole
@@ -754,7 +798,9 @@ async function autoTicketFlight(booking) {
   const bagOfferAmt = bagServices.length ? (Number(booking.baggageOfferAmount) || 0) : 0;
 
   // --- INSTALMENT: hold the fare (once), issue later on completion ----------
-  if (!fullyPaid) {
+  // A flight-secured split with the flight funded skips this hold branch and
+  // goes straight to issuance below (the ticket is then held, not released).
+  if (!issueNow) {
     if (booking.fulfilment?.holdOrderId || booking.fulfilment?.ticketing === 'issued' || booking.fulfilment?.ticketing === 'holding') return;
     ful().ticketing = 'holding'; // claim before the await
     const check = await validateDuffelOffer(flight.details.offerId);
@@ -806,11 +852,12 @@ async function autoTicketFlight(booking) {
   // and wrongly flag a correctly-ticketed booking for refund.
   if (booking.fulfilment?.ticketing === 'issued') return;
   // MONEY-SAFETY + RELEASE GATE (the "paid 3/4, walk on the rest" abuse): NEVER
-  // issue a ticket until the booking balance is £0. A customer can't obtain a
-  // ticket worth more than they've paid and then abandon the rest, because no
-  // ticket exists until they've paid in full. Hard gate, belt-and-braces against
-  // any future refactor of the securing flow above.
-  if (!bookingFullyPaid(booking)) return;
+  // issue a ticket unless what's paid covers the flight. For a NORMAL booking
+  // that means the whole balance is £0. For a FLIGHT-SECURED SPLIT the flight IS
+  // fully paid (it's the deposit) even though the hotel isn't — so the flight may
+  // ticket, but the ticket is HELD (released only at full payment / abandonment).
+  // Either way, no ticket ever exists worth more than has been paid for it.
+  if (!issueNow) return;
   let order;
   if (booking.fulfilment?.holdOrderId) {
     // Pay off the held order → issues the ticket. Pay the HELD ORDER'S total
@@ -856,14 +903,26 @@ async function autoTicketFlight(booking) {
   booking.fulfilment.pnr = order.order.bookingReference;
   booking.fulfilment.ticketNumbers = order.order.ticketNumbers;
   booking.fulfilment.issuedAt = new Date().toISOString();
+  // FLIGHT-SECURED SPLIT: the flight is ticketed but the e-ticket is HELD until
+  // the hotel balance is paid (or released on abandonment). A normal booking
+  // (paid in full) releases immediately.
+  booking.fulfilment.split = split || undefined;
+  booking.fulfilment.released = !(split && !fullyPaid);
+  if (split && !fullyPaid) booking.fulfilment.heldReason = 'awaiting-hotel-balance';
   // Duffel may still be populating the PNR / e-ticket documents — flag it so a
   // later booking read re-syncs them onto the customer's record.
   booking.fulfilment.ticketSyncPending = !(order.order.bookingReference && (order.order.ticketNumbers || []).length);
-  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference || '(syncing)'} · ${(order.order.ticketNumbers || []).length} e-ticket(s)` });
+  recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `PNR ${order.order.bookingReference || '(syncing)'} · ${(order.order.ticketNumbers || []).length} e-ticket(s)${booking.fulfilment.released ? '' : ' · HELD (split, awaiting hotel balance)'}` });
+  const ref = order.order.bookingReference;
+  // HELD split ticket: confirm the flight is secured but DON'T hand over the
+  // e-ticket yet — it releases when the hotel balance is settled.
+  if (!booking.fulfilment.released) {
+    if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🔒', title: 'Flight secured & ticketed', body: `Your flight is paid in full and ticketed${ref ? ` (airline reference ${ref})` : ''}. Your e-ticket is held on your account and released the moment your hotel balance is paid — pay it early anytime.` });
+    return;
+  }
   // Only tell the customer "ticketed" with a REAL airline reference — never send
   // "reference: null". If Duffel hasn't populated the PNR yet, the booking-read
   // sync fires this once it lands (via the deferred confirmation).
-  const ref = order.order.bookingReference;
   if (ref) {
     if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎫', title: 'Ticket issued', body: `Your flight is ticketed — airline reference ${ref}. E-tickets are in your Console and on their way by email.` });
     if (booking.lead?.email) {
@@ -3144,7 +3203,14 @@ function smartPlanForRequest(req, option, intent) {
   // or hold. Force a full-payment plan so the deposit IS the whole fare and the
   // ticket issues instantly, no hold path.
   if (result && optionRequiresInstantPayment(option)) {
-    result = {
+    // FLIGHT-SECURED SPLIT (flagged): if the hotel/other components are holdable,
+    // pay the flight now (its proportional, fare-covering share) and spread the
+    // rest. Falls back to pay-in-full when disabled, not splittable (last-minute
+    // band, flight-only trip), or the risk engine declined instalments.
+    const split = splitPayEnabled()
+      ? buildFlightSecuredSplit({ totalLocal: cashTotal, flightLocal: flightLocalShare(option, cashTotal), currency, departISO, todayISO, risk })
+      : null;
+    result = split || {
       ...result,
       plan: 'Pay in full — this fare is not held by the airline',
       depositPct: 1,
@@ -3163,7 +3229,11 @@ function smartPlanForRequest(req, option, intent) {
   // Both are computed from the same cash base (no compounding) and the plan is
   // REBUILT on the locked total so the deposit + instalments the customer sees ARE
   // the locked, all-in price.
-  const hasInstalments = !!(result && !result.instantOnly && result.depositPct < 1 && Array.isArray(result.schedule) && result.schedule.length > 0);
+  // The pay-monthly uplift (lock margin + service fee) applies to a standard
+  // instalment plan only — NEVER a flight-secured split (the flight is paid now
+  // and ticketed; the short hotel tail carries no uplift), or the uplift rebuild
+  // would clobber the split schedule.
+  const hasInstalments = !!(result && !result.instantOnly && !result.split && result.depositPct < 1 && Array.isArray(result.schedule) && result.schedule.length > 0);
   const p = instalmentPricing(cashTotal);
   if (result && hasInstalments && p.uplift > 0) {
     result = buildPlan(p.lockedTotal) || result;
@@ -3181,6 +3251,17 @@ function smartPlanForRequest(req, option, intent) {
 // in full at booking). Drives the pay-in-full gate above and the hold guard below.
 function optionRequiresInstantPayment(option) {
   return (option?.components || []).some((c) => c.type === 'flight' && c.live && c.details?.requiresInstantPayment === true);
+}
+// The flight's proportional share of the ALL-IN local total (allocated by real
+// supplier cost). Because the total carries commission ON TOP of cost, the
+// flight's share is always ≥ the airline's actual fare — so paying it as the
+// deposit always covers what 3JN pays the airline (3JN never fronts cash).
+function flightLocalShare(option, totalLocal) {
+  const comps = option?.components || [];
+  const componentsUSD = comps.reduce((s, c) => s + (Number(c.priceUSD) || 0), 0);
+  const flightUSD = comps.filter((c) => c.type === 'flight').reduce((s, c) => s + (Number(c.priceUSD) || 0), 0);
+  if (!(componentsUSD > 0) || !(flightUSD > 0)) return 0;
+  return Math.round(totalLocal * (flightUSD / componentsUSD) * 100) / 100;
 }
 // AUTHORITATIVE instant-payment stamp. Duffel SEARCH offers frequently OMIT
 // payment_requirements, so the flag set in normalizeDuffelOffer can be missing —
@@ -3691,7 +3772,9 @@ app.post('/api/book/:id/cancel', safe(async (req, res) => {
       preview: true,
       policy: { adminFeePerPax: CANCEL_ADMIN_FEE_PER_PAX_GBP, thresholdPct: CANCEL_REFUND_THRESHOLD_PCT },
       outcome: preview, symbol: sym,
-      message: preview.basis === 'over-threshold-no-ticket'
+      message: preview.basis === 'split-flight-kept'
+        ? `Your flight is paid in full and ticketed — you keep it (non-refundable). Your hotel is cancelled${preview.lateCancelFee > 0 ? ` with a ${sym}${preview.lateCancelFee.toFixed(2)} late-cancellation fee (within ${FINAL_PAYMENT_DAYS} days of departure)` : ''}, and ${preview.refund > 0 ? `${sym}${preview.refund.toFixed(2)} of hotel payments would be refunded${preview.lateCancelFee > 0 ? ' after that fee' : ''}` : 'no hotel refund is due'}.`
+        : preview.basis === 'over-threshold-no-ticket'
         ? `You'd be refunded ${sym}${preview.refund.toFixed(2)} — your payments of ${sym}${preview.paid.toFixed(2)} less a ${sym}${preview.adminFee.toFixed(2)} admin fee (${sym}${CANCEL_ADMIN_FEE_PER_PAX_GBP.toFixed(2)} per passenger). No ticket has been issued.`
         : preview.basis === 'ticket-issued'
           ? `Your ticket is already issued, so the flight is non-refundable per the airline. ${preview.refund > 0 ? `${sym}${preview.refund.toFixed(2)} of unused, refundable components would be returned per supplier policy.` : 'No refundable balance remains.'}`
@@ -3703,6 +3786,14 @@ app.post('/api/book/:id/cancel', safe(async (req, res) => {
   const result = cancelBookingWithRefund(booking.id, { actor: user?.role === 'admin' ? 'admin' : 'customer', reason: (req.body?.reason || 'customer-cancellation') });
   if (!result.ok) return res.status(409).json({ error: result.error });
   const outcome = result.outcome;
+
+  // FLIGHT-SECURED SPLIT: the flight was paid in full and ticketed — the customer
+  // KEEPS it, so release the held e-ticket to them now. The hotel was reserved
+  // only (never committed to the supplier on a split), so it simply falls away;
+  // any <7-day late-cancel fee is already reflected in `outcome`.
+  if (isSplitBooking(booking) && booking.fulfilment?.ticketing === 'issued' && booking.fulfilment?.released !== true) {
+    releaseHeldTicket(booking, 'hotel-abandoned');
+  }
 
   // Cancel any live Viator tours booked as MERCHANT through the API (best-effort;
   // the customer's refund follows the booking policy above regardless). A failed
@@ -3818,6 +3909,16 @@ app.get('/api/book/:id/document', safe(async (req, res) => {
   const user = currentUser(req);
   // Only the owner (or an admin) may fetch a booking document.
   if (booking.userId && user?.id !== booking.userId && !requireRole(req, res, ['admin'])) return;
+  // FLIGHT-SECURED SPLIT: the e-ticket is HELD until the hotel balance is paid
+  // (or released on abandonment). Until then, return the held notice instead of
+  // the e-ticket document — the flight is paid and ticketed, just not handed over.
+  if (isSplitBooking(booking) && !ticketReleased(booking) && booking.fulfilment?.ticketing === 'issued') {
+    const sym = booking.option?.pricing?.symbol || '£';
+    const hotelLocal = booking.instalment?.split?.hotelLocal || 0;
+    const owed = Math.max(0, Math.round(((booking.option?.pricing?.local?.total || 0) - planPaid(booking)) * 100) / 100);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!doctype html><meta charset="utf-8"><title>E-ticket held — 3JN Travel OS</title><body style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px;margin:40px auto;padding:0 20px;color:#1a1205"><h2>✈️ Your flight is secured &amp; ticketed</h2><p>Your flight is <strong>paid in full and ticketed</strong> — you're confirmed on the flight. Your e-ticket document is <strong>held on your account</strong> and releases automatically the moment your hotel balance is settled.</p><p style="background:#fff8e6;border:1px solid #f4b71c;border-radius:10px;padding:12px 14px"><strong>Hotel balance:</strong> ${sym}${owed.toFixed(2)} of ${sym}${Number(hotelLocal).toFixed(2)} remaining. Pay it early any time in your Console and your e-ticket releases instantly. If you cancel the hotel, you keep the flight you've already paid for.</p></body>`);
+  }
   // Pull the real PNR/e-ticket before rendering the document (Duffel issues them
   // asynchronously), so the e-ticket never prints "finalising" once they exist.
   try { if (await syncDuffelTicket(booking) && IS_SERVERLESS && isEnabled()) await saveMerge({ [`bookings/${booking.id}`]: booking }); } catch { /* render with what we have */ }

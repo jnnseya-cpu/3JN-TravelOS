@@ -3909,6 +3909,12 @@ export function enforceInstalments(todayISO) {
       const outcome = defaultOutcome(b);
       b.status = 'cancelled-instalment-default';
       b.instalmentDefault = { at: nowISO(), ...outcome, missedDue: state.missedDue };
+      // FLIGHT-SECURED SPLIT: the flight was paid in full and ticketed, so the
+      // customer KEEPS it — release the held e-ticket (a data flag; the hotel was
+      // reserved only and never committed, so there's nothing to cancel supplier-side).
+      if (b.instalment?.split?.flightSecured && b.fulfilment?.ticketing === 'issued' && b.fulfilment.released !== true) {
+        b.fulfilment.released = true; b.fulfilment.releasedAt = nowISO(); b.fulfilment.releaseReason = 'hotel-abandoned';
+      }
       // A defaulted booking is cancelled and refunded down to the forfeited
       // deposit — so it must NOT pay partner/vendor commission (same as a manual
       // cancel). Reverse the revshare row(s) and kill any not-yet-paid vendor
@@ -3921,7 +3927,9 @@ export function enforceInstalments(todayISO) {
       recordAudit({ actor: 'system', role: 'system', action: 'instalment.defaulted', entity: 'booking', entityId: b.id, summary: `missed ${state.missedDue}; ${outcome.basis}; refund ${b.instalment.symbol}${outcome.refund} (retained ${b.instalment.symbol}${outcome.retained})` });
       if (b.userId) {
         const sym = b.instalment.symbol;
-        const body = outcome.basis === 'over-threshold-no-ticket'
+        const body = outcome.basis === 'split-flight-kept'
+          ? `The hotel instalments went unpaid past the grace period, so the hotel was cancelled${outcome.lateCancelFee > 0 ? ` with a ${sym}${outcome.lateCancelFee} late-cancellation fee` : ''}. Your flight was paid in full and is ticketed — you keep it, and your e-ticket is now available in your Console.${outcome.refund > 0 ? ` ${sym}${outcome.refund} of hotel payments is being refunded${outcome.lateCancelFee > 0 ? ' after that fee' : ''}.` : ''}`
+          : outcome.basis === 'over-threshold-no-ticket'
           ? `The grace period passed without payment, so the booking was cancelled. As you'd paid over 50% and no ticket was issued, ${sym}${outcome.refund} is being refunded — less a ${sym}${outcome.adminFee} admin fee (${sym}${(outcome.adminFee / outcome.passengers).toFixed(2)} per passenger), per the plan terms.`
           : `The grace period passed without payment, so the booking was cancelled per the plan terms. The deposit (${sym}${outcome.forfeitedDeposit}) is non-refundable; ${outcome.refundableBalance > 0 ? `${sym}${outcome.refundableBalance} is being refunded per supplier policy.` : 'no further balance was held.'}`;
         pushNotification(b.userId, { type: 'warning', icon: '❌', title: 'Booking cancelled — instalment unpaid', body });

@@ -104,6 +104,89 @@ export function assessInstalmentRisk({
   return { score, band, trusted, factors, adjustments };
 }
 
+// ---- Flight-secured split plan ----------------------------------------------
+// For a package whose FLIGHT must be paid in full at booking (the airline won't
+// hold the fare) but whose HOTEL is holdable: the flight portion is the deposit
+// (paid now, ticketed immediately but HELD), and the hotel portion is spread
+// over the date-band instalments. The e-ticket is released when the hotel is
+// fully paid — or kept by the customer if they abandon the hotel (the flight is
+// already paid). This unlocks pay-monthly on instant-only fares without 3JN ever
+// fronting cash: the flight's share of the all-in total always covers the fare.
+export const SPLIT_LATE_CANCEL_PCT = 0.20;   // hotel cancelled <7 days out
+export const SPLIT_LATE_CANCEL_CAP = Math.max(0, Number(_envLC()) || 100); // capped (booking currency, ~£100)
+function _envLC() { try { return (typeof process !== 'undefined' && process.env && process.env.SPLIT_HOTEL_CANCEL_CAP) || 100; } catch { return 100; } }
+
+// Fee charged when the HOTEL leg is cancelled inside the final-payment window
+// (< FINAL_PAYMENT_DAYS before departure): 20% of the hotel cost, capped.
+export function splitHotelCancelFee(hotelLocal, daysToDeparture) {
+  if (daysToDeparture == null || daysToDeparture >= FINAL_PAYMENT_DAYS) return 0;
+  return round2(Math.min(SPLIT_LATE_CANCEL_CAP, Math.max(0, Number(hotelLocal) || 0) * SPLIT_LATE_CANCEL_PCT));
+}
+
+export function buildFlightSecuredSplit({ totalLocal, flightLocal, currency, departISO, todayISO, risk = null }) {
+  const today = todayISO || new Date().toISOString().slice(0, 10);
+  const tier = tierForDeparture(departISO, today);
+  // Splittable only when: a valid future departure, a positive hotel remainder,
+  // a tier that actually HAS an instalment schedule to spread over, and the risk
+  // engine hasn't declined instalments. Otherwise the caller keeps pay-in-full.
+  if (!tier || !tier.schedule.length) return null;
+  if (!(totalLocal > 0) || !(flightLocal > 0) || flightLocal >= totalLocal) return null;
+  if (risk?.adjustments?.declined) return null;
+
+  const days = daysUntil(departISO, today);
+  const flight = round2(flightLocal);
+  const hotelLocal = round2(totalLocal - flight);
+  if (!(hotelLocal > 0)) return null;
+
+  // Spread the hotel remainder across the tier's instalment dates (weighted by
+  // the tier percentages). There is NO separate hotel deposit — the flight IS
+  // the deposit, exactly as specified ("pay the remaining for the hotel over
+  // the time"). The final instalment absorbs rounding so the plan sums exactly.
+  const depart = new Date(String(departISO) + 'T00:00:00Z');
+  const weightSum = tier.schedule.reduce((s, [, p]) => s + p, 0) || 1;
+  const schedule = [];
+  let allocated = 0;
+  tier.schedule.forEach(([daysBefore, pct], i) => {
+    const due = new Date(depart);
+    due.setUTCDate(due.getUTCDate() - daysBefore);
+    const last = i === tier.schedule.length - 1;
+    const amount = last ? round2(hotelLocal - allocated) : round2(hotelLocal * (pct / weightSum));
+    allocated = round2(allocated + amount);
+    schedule.push({ due: due.toISOString().slice(0, 10), daysBefore, pct, amount, final: last, status: 'scheduled', component: 'hotel' });
+  });
+  const finalDue = schedule.length ? schedule[schedule.length - 1].due : null;
+
+  return {
+    engine: 'ai-smart',
+    plan: 'Flight secured now — hotel paid monthly',
+    split: { flightSecured: true, flightLocal: flight, hotelLocal },
+    daysToDeparture: days,
+    departISO: departISO || null,
+    finalPaymentDays: FINAL_PAYMENT_DAYS,
+    currency: currency.code,
+    symbol: currency.symbol,
+    depositPct: round2(flight / totalLocal),
+    deposit: flight, // the flight, in full, paid at booking
+    depositNonRefundable: true,
+    remainder: hotelLocal,
+    months: schedule.length,
+    interestRate: 0,
+    schedule,
+    finalDue,
+    finalRule: `Hotel balance settled no later than ${FINAL_PAYMENT_DAYS} days before departure`,
+    payEarlyAnytime: true,
+    graceHours: INSTALMENT_GRACE_HOURS,
+    // The e-ticket is issued at booking but HELD: released on full payment, or
+    // kept by the customer if they abandon the hotel (flight already paid).
+    ticketHeld: true,
+    lateCancel: { pct: SPLIT_LATE_CANCEL_PCT, cap: SPLIT_LATE_CANCEL_CAP, appliesWithinDays: FINAL_PAYMENT_DAYS },
+    priceLock: { locked: true, badge: 'Flight ticketed', guarantee: 'Your flight is paid and ticketed at booking (held on your account), and your hotel price is held while your instalments are on time. Your e-ticket releases when the hotel balance is paid — and if you cancel the hotel, you keep the flight you\'ve already paid for.' },
+    autopay: { enabled: false, method: null, retry: { ...DEFAULT_RETRY_RULE } },
+    reminderOffsets: [...REMINDER_OFFSETS],
+    risk: risk ? { band: risk.band, score: risk.score, requireIdCheck: risk.adjustments.requireIdCheck, factors: risk.factors.map((f) => f.factor) } : null,
+  };
+}
+
 // ---- Plan builder ------------------------------------------------------------
 // Returns null when departure is unknown/past. For 0–7 days (or a declined risk
 // band) the plan is 'Instant Booking': 100% at booking, no instalments.
@@ -314,6 +397,25 @@ export function refundOutcome(booking, opts = {}) {
   const paidPct = total > 0 ? paid / total : 0;
 
   if (ticketIssued) {
+    // FLIGHT-SECURED SPLIT: the flight (= the deposit) is paid and ticketed, so
+    // the customer keeps it (non-refundable). The hotel was never booked to the
+    // supplier, so any hotel instalments paid are returned — LESS a late-cancel
+    // fee (20% of the hotel cost, capped) when the cancellation falls inside the
+    // final-payment window (< FINAL_PAYMENT_DAYS before departure).
+    if (inst?.split?.flightSecured) {
+      const today = opts.todayISO || new Date().toISOString().slice(0, 10);
+      const days = inst.departISO ? daysUntil(inst.departISO, today) : null;
+      const hotelPaid = round2(Math.max(0, paid - deposit)); // instalments toward the hotel
+      const lateFee = opts.lateFee != null ? round2(opts.lateFee) : splitHotelCancelFee(inst.split.hotelLocal, days);
+      const refund = round2(Math.max(0, hotelPaid - lateFee));
+      return {
+        basis: 'split-flight-kept', paid, total, passengers, adminFee: 0,
+        lateCancelFee: lateFee, hotelPaid,
+        forfeitedDeposit: round2(Math.min(paid, deposit)), refundableBalance: refund,
+        refund, retained: round2(paid - refund),
+        rule: `Flight paid and ticketed — you keep it (non-refundable). The hotel is cancelled${lateFee > 0 ? ` with a ${Math.round(SPLIT_LATE_CANCEL_PCT * 100)}% late-cancellation fee of ${lateFee.toFixed(2)} (within ${FINAL_PAYMENT_DAYS} days of departure)` : ''}; any hotel payments made are refunded${lateFee > 0 ? ' less that fee' : ''}.`,
+      };
+    }
     const refund = round2(Math.max(0, paid - deposit));
     return {
       basis: 'ticket-issued', paid, total, passengers, adminFee: 0,
