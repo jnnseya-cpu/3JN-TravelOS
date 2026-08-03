@@ -69,6 +69,7 @@ import { listNotifications, pushNotification, recordVisaApplication, govAnalytic
 import { processReferralOnPaidBooking, partnerDashboard, decideInfluencer } from '../src/store.js';
 import { createSupportTicket, supportTicketsForUser, resolveSupportTicket, recordPayment, completeReissue, listSupportTickets, hydrateMerge } from '../src/store.js';
 import { supportRespond } from '../src/chatbot.js';
+import { createSharedTrip, getSharedTrip, recordShareEvent, shareAttribution } from '../src/store.js';
 import { aiMarginReport, minAcuForMargin, pricedAcuForAction, MIN_AI_MARGIN } from '../src/ai-gateway.js';
 import { commissionSplit } from '../src/vendors.js';
 import { embassyProposal, visaDecisionLetter } from '../src/embassy.js';
@@ -1158,6 +1159,61 @@ test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU',
   const ok = spendAcu(u.id, 15, 'search');
   assert.equal(ok.ok, true);
   assert.equal(ok.balance, 1135);
+});
+
+test('share-a-trip: store round-trips the exact search + attributes by channel', () => {
+  const rec = createSharedTrip({ text: 'Faro from Birmingham for 7 nights, flights and hotel for 2 adults and a 9 year old', tier: 'smart', prefs: { directOnly: true } });
+  assert.ok(rec && rec.token && rec.token.length === 8, 'short token minted');
+  const got = getSharedTrip(rec.token);
+  assert.equal(got.text, rec.text, 'exact search reconstructs');
+  assert.equal(got.tier, 'smart');
+  assert.equal(got.prefs.directOnly, true);
+  assert.equal(getSharedTrip('nope-nope'), null, 'unknown token → null');
+  // Empty text is not shareable.
+  assert.equal(createSharedTrip({ text: '   ' }), null);
+  // Attribution: opens/searches/books tallied per channel, src sanitised.
+  recordShareEvent({ token: rec.token, src: 'WhatsApp!!', kind: 'open' });
+  recordShareEvent({ token: rec.token, src: 'whatsapp', kind: 'search' });
+  recordShareEvent({ token: rec.token, src: 'whatsapp', kind: 'book' });
+  recordShareEvent({ token: rec.token, src: 'qr', kind: 'open' });
+  const att = shareAttribution({});
+  const wa = att.channels.find((c) => c.src === 'whatsapp');
+  assert.ok(wa, 'whatsapp channel present (src sanitised to lowercase alnum)');
+  assert.equal(wa.opens, 1); assert.equal(wa.searches, 1); assert.equal(wa.books, 1);
+  assert.equal(wa.conversion, 100, 'books/opens = 100%');
+  assert.ok(att.totalBooks >= 1 && att.totalOpens >= 2);
+});
+
+test('share-a-trip: HTTP endpoints create, resolve (logging an open) and gate admin attribution', async () => {
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const jpost = (p, body, h = {}) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: JSON.stringify(body) });
+  try {
+    // Public: create a share link.
+    const shareRes = await jpost('/api/trip/share', { text: 'Dubai from London for 5 nights, flights and hotel', tier: 'smart' });
+    assert.equal(shareRes.status, 200);
+    const { token } = await shareRes.json();
+    assert.ok(token, 'token returned');
+    // Empty trip → 400.
+    assert.equal((await jpost('/api/trip/share', { text: '' })).status, 400);
+    // Resolve with ?src → returns the trip and logs an 'open'.
+    const openRes = await fetch(`${base}/api/trip/${token}?src=whatsapp`);
+    assert.equal(openRes.status, 200);
+    const openBody = await openRes.json();
+    assert.equal(openBody.trip.text, 'Dubai from London for 5 nights, flights and hotel');
+    // Unknown token → 404.
+    assert.equal((await fetch(`${base}/api/trip/zzzzzzzz`)).status, 404);
+    // Admin attribution is gated, and reflects the open we just logged.
+    assert.equal((await fetch(`${base}/api/admin/attribution`)).status, 403);
+    const admin = createUser({ name: 'AttribAdmin', role: 'admin', allAccess: true });
+    const adminRes = await fetch(`${base}/api/admin/attribution`, { headers: { 'x-user-id': admin.id } });
+    assert.equal(adminRes.status, 200);
+    const data = await adminRes.json();
+    assert.ok(data.channels.some((c) => c.src === 'whatsapp' && c.opens >= 1), 'open attributed to whatsapp');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('RBAC: admin & business areas reject the public and consumers, allow admins', async () => {

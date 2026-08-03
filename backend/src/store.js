@@ -73,6 +73,8 @@ const db = {
   deals: new Map(), // Curated real-product catalogue (admin-managed, really bookable)
   testimonials: new Map(), // First-party customer testimonials { id, name, location, rating, text, photo, bookingId, userId, consentPublic, status, at } — admin-moderated before public display
   settings: new Map(), // Operator-controlled settings, keyed (e.g. 'modules' -> { visaos, corporate, embassy }) — admin-toggleable feature flags
+  sharedTrips: new Map(), // "Share this trip" deep links: token -> { token, text, tier, prefs, createdAt } (reconstruct the exact search)
+  shareEvents: [], // Attribution log for shared trips: { id, token, src, kind: 'open'|'search'|'book', at } — per-channel breakdown
 };
 
 // Ring-buffer cap for the high-frequency append-only logs. Without this they
@@ -101,6 +103,84 @@ export function recordCommsDelivery({ event, name, channel, recipient, status, p
 export function listCommsDeliveries(limit = 50) {
   const all = [...db.commsDeliveries].reverse();
   return limit > 0 ? all.slice(0, limit) : all;
+}
+
+// ---- "Share this trip" deep links + per-channel attribution ----------------
+// A user shares a built trip; we store the exact search under a short token so
+// the link reconstructs it (fresh, live prices) rather than a stale snapshot.
+// Attribution events tag each open/search/book with the channel (?src=) so the
+// operator sees which channels actually convert — the "SubID" idea, for 3JN's
+// OWN funnel. shareEvents is per-record durable (KEYED_ARRAY) + capped.
+const SHARE_EVENT_CAP = 20000;
+const SHARED_TRIP_CAP = 20000;
+const SRC_CLEAN = (s) => String(s || 'link').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'link';
+
+// Short, URL/QR-friendly token. Not security-sensitive (a shared trip is public
+// by nature) — just needs to be unguessable enough to avoid casual enumeration.
+function shareToken() {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let t = '';
+  for (let i = 0; i < 8; i++) t += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return t;
+}
+
+export function createSharedTrip({ text, tier, prefs } = {}) {
+  const clean = String(text || '').slice(0, 600).trim();
+  if (!clean) return null;
+  let token = shareToken();
+  // Avoid a (vanishingly unlikely) collision.
+  for (let i = 0; i < 5 && db.sharedTrips.has(token); i++) token = shareToken();
+  const rec = {
+    token,
+    text: clean,
+    tier: typeof tier === 'string' ? tier.slice(0, 24) : null,
+    prefs: prefs && typeof prefs === 'object' ? prefs : null,
+    createdAt: new Date().toISOString(),
+  };
+  db.sharedTrips.set(token, rec);
+  // Bound the map (drop oldest by insertion order) so it can't grow unbounded.
+  if (db.sharedTrips.size > SHARED_TRIP_CAP) {
+    const drop = db.sharedTrips.size - SHARED_TRIP_CAP;
+    let i = 0;
+    for (const k of db.sharedTrips.keys()) { if (i++ >= drop) break; db.sharedTrips.delete(k); }
+  }
+  return rec;
+}
+
+export function getSharedTrip(token) {
+  return db.sharedTrips.get(String(token || '')) || null;
+}
+
+export function recordShareEvent({ token, src, kind } = {}) {
+  const rec = {
+    id: id('shev'),
+    token: token ? String(token).slice(0, 32) : null,
+    src: SRC_CLEAN(src),
+    kind: ['open', 'search', 'book'].includes(kind) ? kind : 'open',
+    at: new Date().toISOString(),
+  };
+  db.shareEvents.push(rec);
+  capArr(db.shareEvents, SHARE_EVENT_CAP);
+  return rec;
+}
+
+// Aggregate attribution by channel for the admin dashboard: opens, searches,
+// bookings and booked revenue per src. Optionally filtered to a since-timestamp.
+export function shareAttribution({ sinceMs = 0 } = {}) {
+  const bySrc = new Map();
+  let totalOpens = 0; let totalBooks = 0;
+  for (const e of db.shareEvents) {
+    if (sinceMs && (Date.parse(e.at) || 0) < sinceMs) continue;
+    const row = bySrc.get(e.src) || { src: e.src, opens: 0, searches: 0, books: 0 };
+    if (e.kind === 'open') { row.opens++; totalOpens++; }
+    else if (e.kind === 'search') row.searches++;
+    else if (e.kind === 'book') { row.books++; totalBooks++; }
+    bySrc.set(e.src, row);
+  }
+  const channels = [...bySrc.values()]
+    .map((r) => ({ ...r, conversion: r.opens ? Math.round((r.books / r.opens) * 1000) / 10 : 0 }))
+    .sort((a, b) => b.books - a.books || b.opens - a.opens);
+  return { channels, totalOpens, totalBooks, sharedTrips: db.sharedTrips.size };
 }
 
 // ---- Behavioural learning event stream ------------------------------------
@@ -3378,8 +3458,8 @@ export function sponsoredPlacementRevenueGBP() {
 // (its stale copy re-uploaded by another), and new tickets vanished under a stale
 // array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
 // resolve on any instance sticks and a new ticket can't be overwritten by a peer.
-const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings', 'freeSearchIps'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'visaReservations', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents'];
+const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings', 'freeSearchIps', 'sharedTrips'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'visaReservations', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents', 'shareEvents'];
 
 // MONEY / integrity arrays persisted PER RECORD (as `${key}/${rec.id}` leaves)
 // instead of as one whole-array node. A whole-array write REPLACES the node, so
@@ -3390,7 +3470,7 @@ const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys',
 // NOTE: kept to permanent, id-bearing, lower-frequency records — high-frequency
 // logs (audit/behaviour/…) stay whole, and the string-keyed processedStripeEvents
 // ledger stays whole (money paths carry their own reference dedup regardless).
-const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders']);
+const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders', 'shareEvents']);
 
 // Rebuild an in-memory array from a durable value that may be: a plain array
 // (legacy whole-node), or an object of records keyed by id (new per-record form),

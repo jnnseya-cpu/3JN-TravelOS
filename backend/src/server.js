@@ -56,6 +56,7 @@ import {
   listDeals, listDealsAdmin, dealTotalGBP, buildDealOption, createDealFulfilment,
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags, wipeTransactionalData, getFeaturedOverride, setFeaturedOverride,
+  createSharedTrip, getSharedTrip, recordShareEvent, shareAttribution,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS, syncAiraloPackages, airaloCatalogueStatus, hotelbedsActivitiesForScan, hotelbedsActivitiesEnabled } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -204,7 +205,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-perrecord-money-persistence-v237';
+const BUILD_TAG = '2026-08-03-share-a-trip-qr-attribution-v238';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2314,6 +2315,34 @@ app.get('/api/quote-requests', safe((req, res) => {
   if (!user) return res.status(401).json({ error: 'auth-required' });
   res.json({ requests: listQuoteRequests({ userId: user.id }) });
 }));
+
+// ---- "Share this trip" deep links + attribution ---------------------------
+// Create a short, shareable token for a built trip. Public: anyone who searched
+// can share their own trip. Stores the exact intent so the link reconstructs a
+// FRESH, live-priced search (not a stale snapshot).
+app.post('/api/trip/share', safe((req, res) => {
+  const { text, tier, prefs } = req.body || {};
+  const rec = createSharedTrip({ text, tier, prefs });
+  if (!rec) return res.status(400).json({ error: 'empty-trip', message: 'Nothing to share — run a search first.' });
+  res.json({ token: rec.token, createdAt: rec.createdAt });
+}));
+
+// Resolve a shared token → the search to rebuild. Logs an attribution 'open'
+// tagged with the channel (?src=) so the operator sees which channels convert.
+app.get('/api/trip/:token', safe((req, res) => {
+  const rec = getSharedTrip(req.params.token);
+  if (!rec) return res.status(404).json({ error: 'not-found', message: 'This shared trip link has expired or is invalid.' });
+  recordShareEvent({ token: rec.token, src: req.query.src, kind: 'open' });
+  res.json({ trip: { text: rec.text, tier: rec.tier, prefs: rec.prefs } });
+}));
+
+// Lightweight attribution beacon for the search step (fired when a shared link
+// actually runs a plan). Token optional; src is the channel.
+app.post('/api/trip/track', safe((req, res) => {
+  const { token, src, kind } = req.body || {};
+  recordShareEvent({ token, src, kind: kind === 'book' ? 'book' : kind === 'search' ? 'search' : 'open' });
+  res.json({ ok: true });
+}));
 // Admin: see and price every quote request.
 app.get('/api/admin/quote-requests', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
@@ -3421,7 +3450,7 @@ app.post('/api/book/:id/autopay', safe((req, res) => {
 
 // ---- Book: confirm + take deposit ----------------------------------------
 app.post('/api/book', safe(async (req, res) => {
-  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode, baggage, flexProfile } = req.body || {};
+  const { quoteId, option: bodyOption, intent: bodyIntent, months, depositPct, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection, vendorCode, baggage, flexProfile, src } = req.body || {};
   let quote = getQuote(quoteId);
   // SERVERLESS RESILIENCE: the quote may have been saved on a DIFFERENT instance
   // (or persistence isn't configured), so getQuote misses and the customer hits
@@ -3472,6 +3501,9 @@ app.post('/api/book', safe(async (req, res) => {
   if (instalment?.lockMargin?.applies || instalment?.instalmentFee?.applies) applyInstalmentPricing(quote.option, { hasInstalments: true });
 
   const booking = createBooking({ quoteId, option: quote.option, instalment, userId: user?.id, paymentMethod, lead, travellers, specialRequests, hotelRequests, payment, protection: protection ? protectionFee(quote.option.pricing.local.total) : null, vendorCode, stripeLive: stripeEnabled(), flexProfile });
+  // ATTRIBUTION: if this booking came from a shared-trip link, credit the channel
+  // (?src=) so the operator sees which shares actually convert to bookings.
+  if (src) { try { recordShareEvent({ src, kind: 'book' }); } catch {} }
   // FRAUD SIGNALS: capture the END TRAVELLER's device (IP + user agent) at booking
   // time and store it on the booking, so when we later call Duffel to create the
   // order / take payment / book the stay (often on the webhook, server-to-server),
@@ -5322,6 +5354,14 @@ app.get('/api/admin/bookings', safe((req, res) => {
 app.get('/api/admin/audit', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json({ audit: adminAudit(Number(req.query.limit) || 50) });
+}));
+
+// Per-channel breakdown of shared-trip performance (opens → searches → books).
+app.get('/api/admin/attribution', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const days = Math.min(365, Math.max(0, Number(req.query.days) || 0));
+  const sinceMs = days ? Date.now() - days * 86400000 : 0;
+  res.json(shareAttribution({ sinceMs }));
 }));
 
 // ---- Autosave drafts ------------------------------------------------------

@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v237';
+const APP_BUILD = 'v238';
 
 const state = {
   context: null,
@@ -542,6 +542,35 @@ function applyDeepLink() {
       toast('⚠ Payment NOT recorded — ' + why, 8000);
     })();
   }
+  // Shared-trip deep link: /?trip=<token>&src=<channel> → rebuild the exact
+  // search (fresh, live prices) and remember the channel for attribution.
+  const tripTok = payQ.get('trip');
+  if (tripTok) {
+    const src = (payQ.get('src') || 'link').slice(0, 40);
+    window.__attribSrc = src; // last-touch for this session (folded into any booking)
+    (async () => {
+      let data = null;
+      try { data = await api(`/api/trip/${encodeURIComponent(tripTok)}?src=${encodeURIComponent(src)}`, { silent: true }); } catch {}
+      nav('planner');
+      try { history.replaceState({}, '', '/'); } catch {} // drop the token from the URL
+      if (data && data.trip) {
+        const t = data.trip;
+        const inp = $('#intentInput'); if (inp) inp.value = t.text || '';
+        if (t.tier && $('#tierSelect')) $('#tierSelect').value = t.tier;
+        if (t.prefs) {
+          if ($('#directOnly')) $('#directOnly').checked = !!t.prefs.directOnly;
+          if ($('#departWindow') && t.prefs.departureWindow) $('#departWindow').value = t.prefs.departureWindow;
+          if ($('#cabinSelect') && t.prefs.cabin) $('#cabinSelect').value = t.prefs.cabin;
+        }
+        toast('✓ Trip loaded from a shared link — pricing it live…');
+        runPlan();
+        api('/api/trip/track', { method: 'POST', body: JSON.stringify({ token: tripTok, src, kind: 'search' }), silent: true }).catch(() => {});
+      } else {
+        toast('This shared trip link has expired — search fresh below.');
+      }
+    })();
+    return;
+  }
   const qv = new URLSearchParams(location.search).get('view');
   if (qv && views.has(qv)) target = qv;
   else {
@@ -787,6 +816,17 @@ async function runPlan(overrides = {}) {
   } catch { out.innerHTML = ''; return; }
 
   state.lastPlan = data;
+  // Remember exactly what produced this result so "Share this trip" can rebuild
+  // it (fresh, live-priced) from the intent alone — no stale snapshot to store.
+  state.lastSearch = {
+    text,
+    tier: $('#tierSelect')?.value || null,
+    prefs: {
+      directOnly: !!$('#directOnly')?.checked,
+      departureWindow: $('#departWindow')?.value || null,
+      cabin: $('#cabinSelect')?.value || null,
+    },
+  };
   // Meta Pixel: a completed search with results is a Search event.
   if (data.stage === 'options') metaTrack('Search', { search_string: text.slice(0, 100), content_category: data.intent?.destination?.city || '' });
   if (data.appliedDiveLever) {
@@ -994,6 +1034,7 @@ function renderOptions(data) {
         <div style="text-align:right">
           <div class="t-label">Components</div>
           <div style="font-size:13px">${intent.components.join(' · ')}</div>
+          <button class="btn btn-ghost btn-sm" style="margin-top:10px;font-size:12px" onclick="shareTrip()">🔗 Share this trip</button>
         </div>
       </div>
       ${data.visa?.ok ? `<div class="pill" style="margin:14px 0 0;cursor:pointer" onclick="nav('visaos')"><span class="dot" style="background:${data.visa.approvalProbability >= 85 ? 'var(--green)' : 'var(--gold)'}"></span> 3JN VisaOS · approval probability <strong style="margin:0 4px">${data.visa.approvalProbability}%</strong> · ${data.visa.visaRequired ? 'visa required' : 'visa-free'} · decision in ~${data.visa.typicalDecisionMinutes} min</div>` : ''}
@@ -2096,7 +2137,7 @@ window.confirmBooking = async () => {
     // Send the option INLINE as well as the quoteId — on serverless the quote may
     // have been saved on another instance, so this lets /api/book proceed without
     // a "quote not found" (payment integrity is still enforced at checkout).
-    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, option: state.lastQuote.option, intent: window.__intent, months: 3, depositPct: 0.2, paymentMethod, lead, travellers, baggage }) });
+    data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, option: state.lastQuote.option, intent: window.__intent, months: 3, depositPct: 0.2, paymentMethod, lead, travellers, baggage, src: window.__attribSrc || null }) });
   } catch { return; }
   if (data.user) setUser(data.user);
   closeModal();
@@ -3387,6 +3428,8 @@ async function renderAdmin() {
   try { uh = await api('/api/admin/users-hosts'); } catch { /* optional panel */ }
   let qr = null;
   try { qr = await api('/api/admin/quote-requests'); } catch { /* optional panel */ }
+  let att = null;
+  try { att = await api('/api/admin/attribution?days=30'); } catch { /* optional panel */ }
   let vend = null;
   try { vend = (await api('/api/admin/vendors')).vendors; } catch { /* optional panel */ }
   let vres = null;
@@ -3454,6 +3497,16 @@ async function renderAdmin() {
     </div>
     <div id="selfTestOut"></div>
     <div class="kpi-grid">${kpiCards}</div>
+    ${att ? (() => {
+      const rows = (att.channels || []).length
+        ? att.channels.map((c) => `<div class="kv"><span>${esc(c.src)}</span><span>${c.opens} opens · ${c.searches} searches · <strong style="color:var(--gold)">${c.books} booked</strong> · ${c.conversion}%</span></div>`).join('')
+        : '<div class="muted" style="font-size:13px">No shared-trip activity yet — share a trip from the planner to seed this.</div>';
+      return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Shared-trip attribution <span class="muted" style="font-size:13px;font-weight:400">· last 30 days</span></h2></div>
+        <div class="console-grid">
+          <div class="card pad"><span class="eyebrow">By channel — ${att.totalOpens} opens · ${att.totalBooks} booked · ${att.sharedTrips} links</span><div style="margin-top:10px">${rows}</div></div>
+          <div class="card pad"><span class="eyebrow">What this is</span><p class="muted" style="font-size:13px;margin-top:8px">Every "Share this trip" link tags its channel (<code>?src=</code>). This shows which channels turn a shared link into a booking — so you invest where it converts. WhatsApp and QR shares are tracked distinctly.</p></div>
+        </div>`;
+    })() : ''}
     ${uh ? (() => {
       const risk = (v) => v?.securityRisk === 'Low' ? '#79d99b' : v?.securityRisk === 'Medium' ? 'var(--gold)' : '#ff6b6b';
       const pend = (uh.pendingReview || []).map((l) => `
@@ -4269,6 +4322,55 @@ function shareButtons(p) {
     <a class="share" title="Copy link" onclick="copyText('${url}')">🔗</a>`;
 }
 window.copyText = (t) => { try { navigator.clipboard.writeText(t); } catch {} toast('✓ Link copied.'); };
+
+// ---- "Share this trip" — deep link + QR + per-channel attribution ----------
+// Turns a built trip into a shareable link that reopens the EXACT search
+// (fresh, live prices) — built for how 3JN grows: someone forwards a package to
+// their family on WhatsApp. Each channel tags ?src= so the admin sees which
+// channel converts.
+function tripShareUrl(token, src) { return `${location.origin}/?trip=${token}&src=${encodeURIComponent(src)}`; }
+window.shareTrip = async () => {
+  const ls = state.lastSearch;
+  if (!ls || !ls.text) { toast('Run a search first, then share it.'); return; }
+  let token;
+  try {
+    const r = await api('/api/trip/share', { method: 'POST', body: JSON.stringify({ text: ls.text, tier: ls.tier, prefs: ls.prefs }) });
+    token = r.token;
+  } catch { toast('Could not create a share link — try again.'); return; }
+  if (!token) { toast('Could not create a share link — try again.'); return; }
+  const copyUrl = tripShareUrl(token, 'copy');
+  const qrUrl = tripShareUrl(token, 'qr');
+  const waText = encodeURIComponent('Look at this trip I built on 3JN Travel OS — flights, hotel & more, one link:');
+  // QR (dependency-free, client-side). Themed to the card; falls back silently
+  // if the encoder isn't available.
+  let qr = '';
+  try { if (window.qrSvg) qr = window.qrSvg(qrUrl, { scale: 4, dark: '#0b0f1a', light: '#ffffff' }); } catch {}
+  const dest = state.lastPlan?.intent?.destination?.city || 'your trip';
+  modal(`
+    <span class="eyebrow">Share this trip</span>
+    <h2 style="margin:6px 0 4px;font-size:22px">${esc(dest)}</h2>
+    <p class="muted" style="font-size:13px;margin-bottom:14px">Anyone who opens this link gets the exact same search — re-priced live, ready to book. No login needed.</p>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <input class="in" id="tripShareLink" value="${esc(copyUrl)}" readonly style="flex:1;font-size:12px">
+      <button class="btn btn-gold btn-sm" onclick="copyText(document.getElementById('tripShareLink').value)">Copy</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text=${waText}%20${encodeURIComponent(tripShareUrl(token, 'whatsapp'))}">✆ WhatsApp</a>
+      <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=${waText}&url=${encodeURIComponent(tripShareUrl(token, 'x'))}">𝕏 Post</a>
+      <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(tripShareUrl(token, 'facebook'))}">f Share</a>
+      <button class="btn btn-ghost btn-sm" onclick="nativeShareTrip('${token}')">📤 More…</button>
+    </div>
+    ${qr ? `<div style="text-align:center">
+      <div class="t-label" style="margin-bottom:8px">Scan to open on a phone</div>
+      <div style="display:inline-block;background:#fff;padding:10px;border-radius:12px">${qr}</div>
+      <p class="muted" style="font-size:11px;margin-top:8px">Great for stories, videos, flyers and in-person shares.</p>
+    </div>` : ''}`);
+};
+window.nativeShareTrip = async (token) => {
+  const url = tripShareUrl(token, 'native');
+  if (navigator.share) { try { await navigator.share({ title: '3JN Travel OS', text: 'A trip I built on 3JN — take a look:', url }); return; } catch {} }
+  window.copyText(url);
+};
 // Inject/refresh Article + FAQPage JSON-LD so search engines and AI answer
 // engines can read the post's structured data — the dynamic-SEO payoff. Also
 // sets the page <title> + meta description to the post's own, so a shared
