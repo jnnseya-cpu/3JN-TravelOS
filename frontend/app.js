@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v235';
+const APP_BUILD = 'v236';
 
 const state = {
   context: null,
@@ -4269,25 +4269,76 @@ function shareButtons(p) {
     <a class="share" title="Copy link" onclick="copyText('${url}')">🔗</a>`;
 }
 window.copyText = (t) => { try { navigator.clipboard.writeText(t); } catch {} toast('✓ Link copied.'); };
+// Inject/refresh Article + FAQPage JSON-LD so search engines and AI answer
+// engines can read the post's structured data — the dynamic-SEO payoff. Also
+// sets the page <title> + meta description to the post's own, so a shared
+// /blog/<slug> link carries the right snippet. All values are the site's own
+// copy (no user HTML), so JSON.stringify escaping is sufficient here.
+function setBlogSeo(p) {
+  try {
+    const url = `${location.origin}/blog/${p.slug}`;
+    document.title = `${p.title} | 3JN Travel OS`;
+    let md = document.querySelector('meta[name="description"]');
+    if (!md) { md = document.createElement('meta'); md.setAttribute('name', 'description'); document.head.appendChild(md); }
+    md.setAttribute('content', p.metaDescription || p.excerpt || '');
+    const graph = [{
+      '@type': 'Article', headline: p.title, description: p.metaDescription || p.excerpt || '',
+      author: { '@type': 'Organization', name: p.author || '3JN AI Editorial' },
+      publisher: { '@type': 'Organization', name: '3JN Travel OS' },
+      datePublished: p.publishedAt, mainEntityOfPage: url, keywords: (p.tags || []).join(', '),
+    }];
+    if (Array.isArray(p.faq) && p.faq.length) {
+      graph.push({
+        '@type': 'FAQPage',
+        mainEntity: p.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+      });
+    }
+    let s = document.getElementById('blog-jsonld');
+    if (!s) { s = document.createElement('script'); s.type = 'application/ld+json'; s.id = 'blog-jsonld'; document.head.appendChild(s); }
+    s.textContent = JSON.stringify({ '@context': 'https://schema.org', '@graph': graph });
+  } catch {}
+}
+function clearBlogSeo() { const s = document.getElementById('blog-jsonld'); if (s) s.remove(); }
 window.openPost = async (slug) => {
   let data; try { data = await api(`/api/blog/${encodeURIComponent(slug)}`); } catch { return; }
   const p = data.post;
   if (!p) { toast('That post could not be found.'); return; }
   // Reflect the post in the URL so the browser back button and re-shares work.
   try { history.replaceState({}, '', `/blog/${p.slug}`); } catch {}
+  setBlogSeo(p);
+  const faqHtml = (Array.isArray(p.faq) && p.faq.length)
+    ? `<div class="blog-faq" style="margin-top:20px"><h3 style="margin-bottom:8px">Frequently asked</h3>${p.faq.map((f) => `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">${esc(f.q)}</summary><p class="muted" style="margin-top:6px">${esc(f.a)}</p></details>`).join('')}</div>`
+    : '';
+  const ctaHtml = (p.cta && p.cta.href)
+    ? `<a class="btn btn-gold" style="margin-top:16px;display:inline-block" href="${esc(p.cta.href)}" onclick="blogLink(event)">${esc(p.cta.label || 'Get started →')}</a>`
+    : '';
   modal(`
     <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)}</span>
     <h2 style="margin:6px 0 4px;font-size:24px">${esc(p.title)}</h2>
     <div class="muted" style="font-size:12px;margin-bottom:12px">${(p.tags || []).map((t) => '#' + esc(t)).join(' ')}</div>
     <div class="blog-body" onclick="blogLink(event)">${p.body}</div>
+    ${ctaHtml}
+    ${faqHtml}
     <div style="display:flex;gap:8px;margin-top:16px;align-items:center"><span class="muted" style="font-size:12px">Share:</span>${shareButtons(p)}</div>`);
 };
 // Intercept internal links inside a post so they navigate the SPA, not reload.
 window.blogLink = (e) => {
   const a = e.target.closest('a'); if (!a) return;
   const href = a.getAttribute('href') || '';
+  const [path, query] = href.split('?');
   const map = { '/planner': 'planner', '/marketplace': 'marketplace', '/visaos': 'visaos', '/membership': 'membership', '/blog': 'blog' };
-  if (map[href]) { e.preventDefault(); closeModal(); nav(map[href]); if (map[href] === 'planner') runPlan(); }
+  if (map[path]) {
+    e.preventDefault();
+    clearBlogSeo();
+    closeModal();
+    // Carry a ?to=<destination> deep link into the planner intent box.
+    if (path === '/planner' && query) {
+      const to = new URLSearchParams(query).get('to');
+      if (to) { const inp = $('#intentInput'); if (inp) inp.value = `I want to travel to ${to} for 7 nights with flights, hotel, transfers and eSIM — the cheapest reliable price.`; }
+    }
+    nav(map[path]);
+    if (map[path] === 'planner') runPlan();
+  }
 };
 
 // ---- Destination Marketplace ----------------------------------------------

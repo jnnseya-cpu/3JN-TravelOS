@@ -1693,6 +1693,35 @@ test('agents: blog/SEO/marketing publish autonomously once per day', () => {
   assert.ok(audit.some((a) => a.action === 'seo.sitemap.refreshed'));
 });
 
+test('agents: blog posts are intent-varied, data-grounded and carry FAQ + adaptive CTA (dynamic SEO)', () => {
+  const { createPost } = agentsModule;
+  // Publish one post per angle for the same destination — each MUST be unique
+  // (no stamped "doorway" pages) and carry the structured-data payload.
+  const angles = ['best-time', 'visa', 'family', 'cost', 'first-timer'];
+  const posts = angles.map((angle) => createPost({ destination: 'Dubai', angle }));
+  const titles = new Set(posts.map((p) => p.title));
+  const metas = new Set(posts.map((p) => p.metaDescription));
+  assert.equal(titles.size, angles.length, 'every angle yields a UNIQUE title');
+  assert.equal(metas.size, angles.length, 'every angle yields a UNIQUE meta description');
+  for (const p of posts) {
+    assert.ok(Array.isArray(p.faq) && p.faq.length >= 2, `${p.angle}: has an FAQ block`);
+    assert.ok(p.faq.every((f) => f.q && f.a), `${p.angle}: FAQ entries have q + a`);
+    assert.ok(p.cta && p.cta.href && p.cta.label, `${p.angle}: has an adaptive CTA`);
+    assert.ok(p.body.includes('/planner') || p.body.includes('/visaos'), `${p.angle}: body links to a product`);
+  }
+  // Adaptive CTA (the "Drive" idea): the visa angle routes to VisaOS, cost to a
+  // live quote, family to instalments — matching the reader's intent.
+  const byAngle = Object.fromEntries(posts.map((p) => [p.angle, p]));
+  assert.equal(byAngle.visa.cta.href, '/visaos');
+  assert.equal(byAngle.cost.cta.href, '/planner');
+  assert.equal(byAngle.family.cta.href, '/membership');
+  // Grounding: the Dubai post reflects the REAL UK visa rule from the catalogue,
+  // not an invented one (authenticity over keyword-stuffing).
+  assert.ok(/visa/i.test(byAngle.visa.body), 'visa post discusses the requirement');
+  // Internal-link cluster: body cross-links to sibling destinations.
+  assert.ok(byAngle.cost.body.includes('/planner?to='), 'body builds an internal destination cluster');
+});
+
 // ---- Post-booking flight fulfilment record ----------------------------------
 test('booking: flight bookings carry PNR, e-ticket, locators and rules', () => {
   const guest = createUser({ name: 'Pnr Guest', email: 'pnr@example.com' });
