@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v240';
+const APP_BUILD = 'v241';
 
 const state = {
   context: null,
@@ -1945,7 +1945,7 @@ window.openBooking = async (tier) => {
     <div style="margin-top:16px"><span class="eyebrow">Lead traveller${international ? ' (exact passport spelling)' : ''}</span></div>
     <div class="composer-row" style="margin-top:6px">
       <div class="field"><label>Full legal name</label><input class="in" id="bkName" placeholder="${international ? 'As on passport' : 'As on photo ID'}" value="${esc((state.user?.travelProfile?.fullLegalName) || state.user?.name || '')}"></div>
-      <div class="field"><label>Date of birth</label><input class="in" id="bkDob" type="date" value="${esc(state.user?.travelProfile?.dob || '')}"></div>
+      <div class="field"><label>Date of birth</label>${dmyDate('bkDob', { value: state.user?.travelProfile?.dob || '' })}</div>
       ${international ? `
       <div class="field"><label>Nationality</label><input class="in" id="bkNat" value="${esc(state.user?.travelProfile?.nationality || state.country || 'GB')}" style="width:90px"></div>
       <div class="field"><label>Passport number</label><input class="in" id="bkPass" placeholder="e.g. A1234567" value="${esc(state.user?.travelProfile?.passportNumber || '')}"></div>
@@ -1963,7 +1963,7 @@ window.openBooking = async (tier) => {
           <div class="t-label" style="margin-bottom:6px">${esc(p.label)}</div>
           <div class="composer-row">
             <div class="field"><label>Full legal name</label><input class="in" id="bkP${n}Name" placeholder="${international ? 'As on passport' : 'As on photo ID'}"></div>
-            <div class="field"><label>Date of birth</label><input class="in" id="bkP${n}Dob" type="date"${p.age != null ? ` title="child, age ${p.age}"` : ''}></div>
+            <div class="field"><label>Date of birth${p.age != null ? ` <span class="muted" style="font-size:10px">(child, age ${p.age})</span>` : ''}</label>${dmyDate('bkP' + n + 'Dob', {})}</div>
             ${international ? `<div class="field"><label>Passport number</label><input class="in" id="bkP${n}Pass" placeholder="e.g. A1234567"></div>
             <div class="field"><label>Passport expiry</label><input class="in" id="bkP${n}Exp" type="date"></div>` : ''}
           </div></div>`).join('')}</div>`;
@@ -2343,6 +2343,54 @@ async function renderConsoleInner() {
 // ---- Master Travel Profile — one account for visa, flight, hotel, holiday ---
 // Filled once here; every module (VisaOS application, booking, etc.) auto-fills
 // from it and writes new details back, so the user never re-types passport/DOB.
+// ---- Reusable Day / Month / Year date picker -------------------------------
+// The native <input type="date"> calendar only pages month-by-month — miserable
+// for a date far from today (a 1975 birthday = ~600 taps back). This renders
+// three type-ahead <select>s (type "1975" to jump) plus a HIDDEN input that
+// carries the ISO value under the SAME id, so every existing `#<id>.value` read
+// and `.tp`/`.vf` collector keeps working unchanged. Use for DoB and passport
+// dates; leave near-future travel dates on the native picker.
+const _DMY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function dmyDate(id, { value = '', minYear, maxYear, cls = '', req = false } = {}) {
+  const yNow = new Date().getFullYear();
+  const maxY = maxYear != null ? maxYear : yNow;          // default: today back 100y (DoB / passport issue)
+  const minY = minYear != null ? minYear : yNow - 100;
+  const years = [];
+  for (let y = maxY; y >= minY; y--) years.push(y);       // newest first — recent years at the top
+  const [vy, vm, vd] = String(value || '').split('-').map((n) => parseInt(n, 10));
+  const opt = (v, label, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${label}</option>`;
+  const days = Array.from({ length: 31 }, (_, i) => i + 1).map((d) => opt(d, d, d === vd)).join('');
+  const months = _DMY_MONTHS.map((m, i) => opt(i + 1, m, (i + 1) === vm)).join('');
+  const yearOpts = years.map((y) => opt(y, y, y === vy)).join('');
+  const hiddenAttrs = `${cls ? ` class="${cls}"` : ''}${req ? ' data-req="true"' : ''}`;
+  return `<div class="dmy" style="display:flex;gap:6px;flex-wrap:wrap">
+    <select class="in" id="${id}_d" aria-label="Day" onchange="syncDmy('${id}')" style="max-width:74px;flex:1;min-width:64px"><option value="">Day</option>${days}</select>
+    <select class="in" id="${id}_m" aria-label="Month" onchange="syncDmy('${id}')" style="max-width:90px;flex:1;min-width:74px"><option value="">Month</option>${months}</select>
+    <select class="in" id="${id}_y" aria-label="Year" onchange="syncDmy('${id}')" style="max-width:96px;flex:1;min-width:74px"><option value="">Year</option>${yearOpts}</select>
+    <input type="hidden" id="${id}"${hiddenAttrs} value="${esc(value || '')}">
+  </div>`;
+}
+// Assemble the three selects into the hidden ISO input and fire `change` so any
+// autosave / validation listener on the field runs exactly as before.
+window.syncDmy = (id) => {
+  const d = parseInt(document.getElementById(id + '_d')?.value, 10);
+  const m = parseInt(document.getElementById(id + '_m')?.value, 10);
+  const y = parseInt(document.getElementById(id + '_y')?.value, 10);
+  const el = document.getElementById(id); if (!el) return;
+  el.value = (d && m && y) ? `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` : '';
+  // Fire BOTH input + change (bubbling) so every listener — the visa gate binds on
+  // 'input', autosave/validation on 'change' — runs exactly as for a typed field.
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+};
+// Programmatically set a D/M/Y picker (e.g. prefill from a saved profile).
+window.setDmy = (id, iso) => {
+  const [y, m, d] = String(iso || '').split('-').map((n) => parseInt(n, 10));
+  const put = (suf, v) => { const s = document.getElementById(id + suf); if (s) s.value = v || ''; };
+  put('_y', y || ''); put('_m', m || ''); put('_d', d || '');
+  const el = document.getElementById(id); if (el) el.value = iso || '';
+};
+
 const TRAVEL_PROFILE_FIELDS = [
   // Identity — exact passport spelling drives every PNR.
   { key: 'title', label: 'Title', type: 'select', options: ['Mr', 'Mrs', 'Ms', 'Miss', 'Dr', 'Mx'], group: 'Identity' },
@@ -2400,6 +2448,13 @@ function renderTravelProfile() {
     const val = tp[f.key] != null ? String(tp[f.key]) : '';
     if (f.type === 'country') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">— select —</option>${countryOptions(val)}</select></div>`;
     if (f.type === 'select') return `<div class="field"><label>${f.label}</label><select class="in" id="${id}"><option value="">—</option>${f.options.map((o) => `<option${o === val ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    // Dates use the easy Day/Month/Year picker (no month-by-month paging). Passport
+    // expiry looks forward (up to +15y); DoB and passport issue look back (100y).
+    if (f.type === 'date') {
+      const yNow = new Date().getFullYear();
+      const range = f.key === 'passportExpiry' ? { minYear: yNow, maxYear: yNow + 15 } : { minYear: yNow - 100, maxYear: yNow };
+      return `<div class="field"><label>${f.label}</label>${dmyDate(id, { value: val, ...range })}</div>`;
+    }
     return `<div class="field"><label>${f.label}</label><input class="in" id="${id}" type="${f.type || 'text'}" value="${esc(val)}"></div>`;
   };
   const groups = [...new Set(TRAVEL_PROFILE_FIELDS.map((f) => f.group))];
@@ -4856,6 +4911,10 @@ function visaFieldHTML(f, val = '') {
   let input;
   if (f.type === 'country') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${countryOptions(v || (f.key === 'nationality' ? 'NG' : ''))}</select>`;
   else if (f.type === 'select') input = `<select class="in vf" id="${id}" data-req="${!!f.req}"><option value="">— select —</option>${f.options.map((o) => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
+  else if (f.type === 'date' && f.key === 'dob') { const yNow = new Date().getFullYear(); input = dmyDate(id, { value: v, minYear: yNow - 100, maxYear: yNow, cls: 'vf', req: !!f.req }); }
+  else if (f.type === 'date' && f.key === 'passportExpiry') { const yNow = new Date().getFullYear(); input = dmyDate(id, { value: v, minYear: yNow, maxYear: yNow + 15, cls: 'vf', req: !!f.req }); }
+  // Near-future travel dates (arrival/departure) keep the native picker — paging
+  // forward a few months is fine; the D/M/Y picker is for far-from-today dates.
   else input = `<input class="in vf" id="${id}" data-req="${!!f.req}" type="${f.type || 'text'}" value="${esc(v)}">`;
   return `<div class="field"><label>${esc(f.label)}${star}</label>${input}</div>`;
 }
