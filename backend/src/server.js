@@ -88,7 +88,7 @@ import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, pri
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
-import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop } from './agents.js';
+import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats } from './agents.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
@@ -205,7 +205,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-dmy-date-picker-v241';
+const BUILD_TAG = '2026-08-03-seo-autopilot-linkgraph-v242';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -5561,6 +5561,13 @@ app.get('/api/ai/status', safe((req, res) => {
 app.get('/api/agents/security', safe((req, res) => res.json({ report: securityReport() })));
 app.get('/api/agents/ops', safe((req, res) => res.json({ report: opsDiagnostics({ persistence: isEnabled(), email: isMailerEnabled() }) })));
 app.get('/api/agents/seo', safe((req, res) => res.json({ report: seoReport() })));
+// SEO Autopilot: run the autonomous cycle (publish-if-due + link-graph health)
+// and return the live state. Public GET is read-only-ish (it may publish the due
+// post, same as a blog read), so keep it available for the admin dashboard.
+app.get('/api/agents/seo/autopilot', safe((req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ autopilot: seoAutopilot(Date.now(), base), linkGraph: linkGraphStats() });
+}));
 app.get('/api/agents/marketing', safe((req, res) => res.json({ report: marketingPlan() })));
 
 // ---- Blog (AI-written, hyperlinked, shareable) ---------------------------
@@ -5571,7 +5578,9 @@ app.get('/api/blog', safe((req, res) => {
 app.get('/api/blog/:slug', safe((req, res) => {
   const post = getPost(req.params.slug);
   if (!post) return res.status(404).json({ error: 'not-found' });
-  res.json({ post });
+  // Attach the live "related posts" rail — dynamic internal links that keep the
+  // link graph dense as the catalogue grows (rendered under the article).
+  res.json({ post, related: relatedPosts(post, 6) });
 }));
 // Admin-only: the blog body is public HTML, so untrusted callers must never
 // reach the generator (stored-XSS vector). Content is also escaped in createPost.
@@ -5641,19 +5650,28 @@ app.post('/api/v1/search', safe((req, res) => {
   });
 }));
 
-// ---- SEO: robots.txt + dynamic sitemap.xml --------------------------------
+// ---- SEO: robots.txt + dynamic sitemap.xml + RSS feed ----------------------
 app.get('/robots.txt', (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
   res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`);
 });
 app.get('/sitemap.xml', (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
-  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/api-portal'];
-  const blogUrls = listPosts().map((p) => `/blog/${p.slug}`);
+  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/api-portal']
+    .map((u) => ({ u, changefreq: 'weekly', priority: u === '/' ? '1.0' : '0.7', lastmod: null }));
+  // Blog posts carry a real <lastmod> from their publish date + higher crawl
+  // priority — so search engines re-crawl fresh guides and index every one.
+  const blogUrls = listPosts().map((p) => ({ u: `/blog/${p.slug}`, changefreq: 'weekly', priority: '0.6', lastmod: (p.publishedAt || '').slice(0, 10) || null }));
   const urls = [...staticUrls, ...blogUrls]
-    .map((u) => `  <url><loc>${base}${u}</loc><changefreq>weekly</changefreq></url>`)
+    .map(({ u, changefreq, priority, lastmod }) => `  <url><loc>${base}${u}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}<changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`)
     .join('\n');
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
+});
+// RSS 2.0 feed for the journal — syndication channel (feed readers, aggregators,
+// auto-posters). Regenerated from db.blog on every request, so it's always live.
+app.get(['/blog.xml', '/rss.xml', '/feed.xml'], (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.type('application/rss+xml').send(blogRssFeed(base));
 });
 
 // Any unmatched /api/* route returns JSON (never HTML) so the frontend's JSON

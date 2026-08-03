@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v241';
+const APP_BUILD = 'v242';
 
 const state = {
   context: null,
@@ -4483,6 +4483,16 @@ function setBlogSeo(p) {
         mainEntity: p.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
       });
     }
+    // BreadcrumbList — helps search engines render the Home › Journal › Post trail
+    // and reinforces the internal hierarchy.
+    graph.push({
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: location.origin + '/' },
+        { '@type': 'ListItem', position: 2, name: 'Journal', item: location.origin + '/blog' },
+        { '@type': 'ListItem', position: 3, name: p.title, item: url },
+      ],
+    });
     let s = document.getElementById('blog-jsonld');
     if (!s) { s = document.createElement('script'); s.type = 'application/ld+json'; s.id = 'blog-jsonld'; document.head.appendChild(s); }
     s.textContent = JSON.stringify({ '@context': 'https://schema.org', '@graph': graph });
@@ -4502,6 +4512,12 @@ window.openPost = async (slug) => {
   const ctaHtml = (p.cta && p.cta.href)
     ? `<a class="btn btn-gold" style="margin-top:16px;display:inline-block" href="${esc(p.cta.href)}" onclick="blogLink(event)">${esc(p.cta.label || 'Get started →')}</a>`
     : '';
+  // Live "related travel guides" rail — dynamic internal links that get denser as
+  // the catalogue grows (the on-site SEO / topical-authority lever).
+  const rel = Array.isArray(data.related) ? data.related : [];
+  const relatedHtml = rel.length
+    ? `<div style="margin-top:22px"><h3 style="margin-bottom:8px">Related travel guides</h3><div style="display:grid;gap:6px">${rel.map((r) => `<a href="/blog/${esc(r.slug)}" onclick="openPost('${esc(r.slug)}');return false" style="color:var(--gold);font-size:13.5px;text-decoration:none">→ ${esc(r.title)}</a>`).join('')}</div></div>`
+    : '';
   modal(`
     <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)}</span>
     <h2 style="margin:6px 0 4px;font-size:24px">${esc(p.title)}</h2>
@@ -4509,6 +4525,7 @@ window.openPost = async (slug) => {
     <div class="blog-body" onclick="blogLink(event)">${p.body}</div>
     ${ctaHtml}
     ${faqHtml}
+    ${relatedHtml}
     <div style="display:flex;gap:8px;margin-top:16px;align-items:center"><span class="muted" style="font-size:12px">Share:</span>${shareButtons(p)}</div>`);
 };
 // Intercept internal links inside a post so they navigate the SPA, not reload.

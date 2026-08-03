@@ -1825,6 +1825,31 @@ test('agents: blog posts are intent-varied, data-grounded and carry FAQ + adapti
   assert.ok(/visa/i.test(byAngle.visa.body), 'visa post discusses the requirement');
   // Internal-link cluster: body cross-links to sibling destinations.
   assert.ok(byAngle.cost.body.includes('/planner?to='), 'body builds an internal destination cluster');
+  // Every post ends with the pillar-nav footer (dense internal links).
+  assert.ok(byAngle.cost.body.includes('/marketplace') && byAngle.cost.body.includes('/membership'), 'pillar footer links present');
+});
+
+test('SEO autopilot: dynamic related links, RSS feed, and link-graph health', () => {
+  const { createPost, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats } = agentsModule;
+  // Seed a tight cluster: several Dubai posts should relate to each other.
+  const a = createPost({ destination: 'Dubai', angle: 'visa' });
+  createPost({ destination: 'Dubai', angle: 'cost' });
+  createPost({ destination: 'Dubai', angle: 'family' });
+  const rel = relatedPosts(a, 6);
+  assert.ok(rel.length >= 2, 'related posts surfaced');
+  assert.ok(rel.every((r) => r.slug !== a.slug), 'never relates a post to itself');
+  assert.ok(rel.some((r) => r.destination === 'Dubai'), 'same-destination posts rank as related (internal backlinks)');
+  // RSS feed is well-formed and links every item to its canonical URL.
+  const rss = blogRssFeed('https://3jntravel.com');
+  assert.ok(rss.startsWith('<?xml'), 'RSS is XML');
+  assert.ok(rss.includes('<rss version="2.0"') && rss.includes(`https://3jntravel.com/blog/${a.slug}`), 'RSS links the post');
+  assert.ok(rss.includes('<link>https://3jntravel.com/blog</link>'), 'channel link present');
+  // Autopilot returns live health + resource URLs.
+  const status = seoAutopilot(Date.now(), 'https://3jntravel.com');
+  assert.equal(status.rss, 'https://3jntravel.com/blog.xml');
+  assert.equal(status.sitemap, 'https://3jntravel.com/sitemap.xml');
+  assert.ok(status.posts >= 3 && status.avgRelatedLinks > 0, 'link graph is dense');
+  assert.ok(Array.isArray(linkGraphStats().orphans), 'orphan report available');
 });
 
 // ---- Post-booking flight fulfilment record ----------------------------------

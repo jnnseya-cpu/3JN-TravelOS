@@ -272,7 +272,12 @@ export function createPost({ topic, destination, now, angle } = {}) {
   const title = String(topic || chosen.title(dest, facts)).slice(0, 160);
   const slug = slugify(title) + '-' + idx;
   const cta = chosen.cta;
-  const body = chosen.body(dh, facts, cta, links);
+  // Every post ends with a pillar-nav footer — a persistent internal-link block
+  // to the hub pages. Combined with the in-body cluster links and the live
+  // "related posts" rail, it makes the internal link graph dense (topical
+  // authority + crawl depth), which is the on-site SEO lever we actually control.
+  const pillarFooter = `<hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:20px 0 12px"><p class="muted" style="font-size:12.5px"><strong>Explore 3JN Travel OS:</strong> <a href="/planner">AI trip planner</a> · <a href="/marketplace">Destination marketplace</a> · <a href="/visaos">VisaOS approval check</a> · <a href="/membership">Pay-monthly membership</a> · <a href="/how-it-works">How it works</a> · <a href="/blog">More travel guides</a></p>`;
+  const body = chosen.body(dh, facts, cta, links) + pillarFooter;
   const faq = chosen.faq(dh, facts).map((f) => ({ q: String(f.q).slice(0, 200), a: String(f.a).slice(0, 500) }));
   const post = {
     id: 'blog_' + slug, slug, title, destination: dest,
@@ -298,6 +303,90 @@ export function ensureSeedPosts() {
 }
 export function listPosts() { return ensureSeedPosts().map(({ body, ...meta }) => meta); }
 export function getPost(slug) { ensureSeedPosts(); return db.blog.find((p) => p.slug === slug) || null; }
+
+// ---- Dynamic internal link graph (topical authority / internal backlinks) ---
+// Every post is linked FROM its most-related siblings and links back to them, so
+// link equity flows both ways. Computed LIVE (not baked at write time), so the
+// graph automatically gets denser as the catalogue grows — no rewriting old
+// posts. Same destination is the strongest signal, then shared tags, then angle.
+export function relatedPosts(slugOrPost, limit = 6) {
+  ensureSeedPosts();
+  const post = typeof slugOrPost === 'string' ? db.blog.find((p) => p.slug === slugOrPost) : slugOrPost;
+  if (!post) return [];
+  const tagSet = new Set(post.tags || []);
+  return db.blog
+    .filter((p) => p.slug !== post.slug)
+    .map((p) => {
+      let score = 0;
+      if (p.destination === post.destination) score += 5;
+      score += (p.tags || []).filter((t) => tagSet.has(t)).length;
+      if (p.angle && post.angle && p.angle === post.angle) score += 1;
+      return { p, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || (Date.parse(b.p.publishedAt) || 0) - (Date.parse(a.p.publishedAt) || 0))
+    .slice(0, limit)
+    .map(({ p }) => ({ slug: p.slug, title: p.title, destination: p.destination, angle: p.angle, readMins: p.readMins }));
+}
+
+// A simple density metric for the autopilot dashboard: average related links per
+// post (higher = tighter cluster) and any orphan posts (0 inbound relations).
+export function linkGraphStats() {
+  ensureSeedPosts();
+  const rels = db.blog.map((p) => relatedPosts(p, 6).length);
+  const total = rels.reduce((s, n) => s + n, 0);
+  const orphans = db.blog.filter((p, i) => rels[i] === 0).map((p) => p.slug);
+  return { posts: db.blog.length, avgRelatedLinks: db.blog.length ? Math.round((total / db.blog.length) * 10) / 10 : 0, orphans };
+}
+
+// RSS 2.0 feed — a real syndication channel (feed readers, aggregators, auto-
+// posters). Publishing everywhere is how legitimate EXTERNAL backlinks actually
+// form: you can't fabricate them, but you make the content maximally linkable.
+export function blogRssFeed(baseUrl = 'https://3jntravel.com') {
+  ensureSeedPosts();
+  const x = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const items = db.blog.slice(0, 50).map((p) => `    <item>
+      <title>${x(p.title)}</title>
+      <link>${baseUrl}/blog/${p.slug}</link>
+      <guid isPermaLink="true">${baseUrl}/blog/${p.slug}</guid>
+      <pubDate>${new Date(p.publishedAt).toUTCString()}</pubDate>
+      <description>${x(p.metaDescription || p.excerpt || '')}</description>
+${(p.tags || []).map((t) => `      <category>${x(t)}</category>`).join('\n')}
+    </item>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+    <title>3JN Travel OS — Journal</title>
+    <atom:link href="${baseUrl}/blog.xml" rel="self" type="application/rss+xml" />
+    <link>${baseUrl}/blog</link>
+    <description>AI-built cheapest-reliable travel guides: flights, hotels, visas and pay-monthly holidays.</description>
+    <language>en-gb</language>
+    <lastBuildDate>${new Date(db.blog.reduce((m, p) => Math.max(m, Date.parse(p.publishedAt) || 0), 0) || Date.now()).toUTCString()}</lastBuildDate>
+${items}
+</channel></rss>`;
+}
+
+// ---- SEO Autopilot ----------------------------------------------------------
+// One call that runs the whole autonomous SEO cycle: publish the due post, keep
+// the internal link graph dense (it's computed live, so it always is), and
+// report the state the operator watches. The sitemap + RSS regenerate from
+// db.blog on every request, so "refresh" is inherent — nothing to schedule.
+export function seoAutopilot(now = Date.now(), baseUrl = 'https://3jntravel.com') {
+  const publish = ensureDailyPublish(now);
+  const graph = linkGraphStats();
+  const status = {
+    ranAt: new Date(now).toISOString(),
+    published: publish.published,
+    newPost: publish.published ? publish.post : null,
+    posts: graph.posts,
+    avgRelatedLinks: graph.avgRelatedLinks,
+    orphans: graph.orphans,
+    sitemap: `${baseUrl}/sitemap.xml`,
+    rss: `${baseUrl}/blog.xml`,
+    nextPublishInMs: publish.nextDueInMs ?? null,
+  };
+  recordAudit({ actor: 'seo-agent', role: 'agent', action: 'seo.autopilot.ran', entity: 'seo', entityId: 'autopilot', summary: `${graph.posts} posts · ${graph.avgRelatedLinks} avg links · ${publish.published ? 'published' : 'no new post'}` });
+  return status;
+}
 
 export { slugify };
 
@@ -326,8 +415,8 @@ export function ensureDailyPublish(now = Date.now()) {
 // Start the in-process scheduler (no-op on platforms that recycle processes —
 // the lazy boot/read checks cover those). unref() keeps tests exiting cleanly.
 export function startPublishingLoop() {
-  ensureDailyPublish();
-  const t = setInterval(() => ensureDailyPublish(), 6 * 3600 * 1000);
+  seoAutopilot();
+  const t = setInterval(() => seoAutopilot(), 6 * 3600 * 1000);
   if (typeof t.unref === 'function') t.unref();
   return t;
 }
