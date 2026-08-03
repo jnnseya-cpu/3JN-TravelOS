@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v231';
+const APP_BUILD = 'v232';
 
 const state = {
   context: null,
@@ -1149,7 +1149,7 @@ function renderOptions(data) {
   const onDate = intent?.dates?.checkIn ? ` on ${esc(intent.dates.checkIn)}` : '';
   const optionsBlock = hasOptions
     ? `<div class="section-head left" style="margin-bottom:10px"><h2 style="font-size:24px">Your package options</h2>
-      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. ${(data.packages.options || []).some((o) => o.pricing?.feeBakedIn) ? 'Package prices are all-inclusive — the full price is shown before you pay. Flights-only carry a small 2% service fee (min £4.99, capped at £15).' : 'Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.'}</p></div>
+      <p>Recommended: <strong style="color:var(--gold)">${data.packages.recommendedTier}</strong> · Cheapest: <strong>${data.packages.cheapestTier}</strong>. ${(data.packages.options || []).some((o) => o.pricing?.feeBakedIn) ? 'Package prices include every fee — the full all-in price is shown before you pay (this is the price, not a meals-included board basis). Flights-only carry a small 2% service fee (min £4.99, capped at £15).' : 'Every fee is shown openly in the breakdown — a 2% service fee on flights-only (min £4.99, capped at £15), 10% on packages.'}</p></div>
     <div class="opt-grid">${opts}</div>`
     : `<div class="card pad center" style="margin-top:8px">
         <div style="font-size:34px;margin-bottom:6px">🧭</div>
@@ -1417,7 +1417,7 @@ function optionCard(o, sym, intent) {
       <table class="brk">
         ${bakeIn ? `
         ${p.local.loyaltyDiscount > 0.005 ? `<tr class="save"><td>${p.discountSource === 'member' ? 'Member' : 'Loyalty'} saving (${esc(p.loyaltyTier)})</td><td>included</td></tr>` : ''}
-        <tr class="total"><td>Package total · all-inclusive</td><td>${money2(p.local.total, sym)}</td></tr>
+        <tr class="total"><td>Package total <span class="muted" style="font-weight:400">· every fee included</span></td><td>${money2(p.local.total, sym)}</td></tr>
         ` : `
         <tr><td>Suppliers</td><td>${money2(p.local.suppliers, sym)}</td></tr>
         ${p.local.loyaltyDiscount > 0.005 ? `<tr class="save"><td>${p.discountSource === 'member' ? 'Member' : 'Loyalty'} discount (${esc(p.loyaltyTier)} · ${(p.loyaltyDiscountPct * 100).toFixed(0)}%)</td><td>-${money2(p.local.loyaltyDiscount, sym)}</td></tr>` : ''}
@@ -4386,7 +4386,7 @@ async function renderDeals() {
       </div>`;
   }).join('');
   out.innerHTML = `<div class="dest-grid">${cards}</div>
-    <p class="muted center" style="font-size:11.5px;margin-top:16px">Every deal is a real, all-inclusive price confirmed by our travel team. ${data.stripeReady ? 'Pay securely by card.' : 'Reserve now — our team confirms your booking and takes payment.'}</p>`;
+    <p class="muted center" style="font-size:11.5px;margin-top:16px">Every deal is a real, all-in price (every fee included) confirmed by our travel team. ${data.stripeReady ? 'Pay securely by card.' : 'Reserve now — our team confirms your booking and takes payment.'}</p>`;
 }
 window.openDealCheckout = (dealId) => {
   const d = __dealsCache[dealId];
