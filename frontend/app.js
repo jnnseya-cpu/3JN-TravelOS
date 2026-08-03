@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v227';
+const APP_BUILD = 'v228';
 
 const state = {
   context: null,
@@ -1639,6 +1639,7 @@ window.showComponentInfo = async (tier, idx) => {
         <div class="kv"><span>Beds</span><span>${esc(d.bedConfiguration || '—')}</span></div>
         <div class="kv"><span>Room size</span><span>${d.roomSizeSqm ? d.roomSizeSqm + ' m²' : '—'}</span></div>
         <div class="kv"><span>Sleeps</span><span>${d.maxOccupancy || d.sleeps || '—'}</span></div>
+        ${d.occupancy ? `<div class="kv"><span>For your party</span><span style="color:var(--green)">${(() => { const o = d.occupancy; const b = []; if (o.adults) b.push(`${o.adults} adult${o.adults > 1 ? 's' : ''}`); if (o.children) b.push(`${o.children} child${o.children > 1 ? 'ren' : ''}${(o.childAges && o.childAges.length) ? ` (age ${o.childAges.join(', ')})` : ''}`); return esc(b.join(' + ')); })()} · confirmed ✓</span></div>` : ''}
         <div class="kv"><span>Board</span><span>${esc(d.board || '')}</span></div>
         <div class="kv"><span>Breakfast</span><span>${esc(d.breakfastDetail || '—')}</span></div>
         <div class="kv"><span>Stay</span><span>${d.nights} nights · ${d.rooms} room${d.rooms > 1 ? 's' : ''}</span></div>

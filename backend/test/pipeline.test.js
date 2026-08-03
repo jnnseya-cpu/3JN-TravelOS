@@ -5420,6 +5420,20 @@ test('hotelbedsDestCode maps airport codes to Hotelbeds metropolitan city codes'
   assert.equal(LS.hotelbedsDestCode({ code: 'CDG', hotelbedsDest: 'pari' }), 'PARI', 'explicit override wins');
 });
 
+test('normalizeHotelbedsHotel captures the confirmed party occupancy', async () => {
+  const LS = await import('../src/live-suppliers.js');
+  const hotel = { name: 'Novotel Paris Est', code: '12345', categoryCode: '4EST', zoneName: 'La Villette' };
+  const rate = { net: 180, boardName: 'Room only', rateKey: 'rk_x', cancellationPolicies: [] };
+  const norm = LS.normalizeHotelbedsHotel(hotel, rate, 'Classic room double bed + sofa bed max 2 people', 220, 2, 1, { adults: 2, children: 1, childAges: [9] });
+  assert.ok(norm.details.occupancy, 'occupancy captured');
+  assert.equal(norm.details.occupancy.adults, 2);
+  assert.equal(norm.details.occupancy.children, 1);
+  assert.deepEqual(norm.details.occupancy.childAges, [9]);
+  // No occupancy passed → null (older callers unaffected).
+  const noOcc = LS.normalizeHotelbedsHotel(hotel, rate, 'Room', 220, 2, 1);
+  assert.equal(noOcc.details.occupancy, null);
+});
+
 test('wave4 one-way: a flights-only one-way search does not crash', () => {
   const res = plan({ text: 'one way flight from London to Barcelona on 15/08/2026 for 2 adults', context: GB, user: null, searchTier: 'smart' });
   assert.equal(res.stage, 'options');

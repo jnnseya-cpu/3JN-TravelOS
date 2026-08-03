@@ -1707,7 +1707,7 @@ function hbHotelAddress(h) {
   const loc = [h?.zoneName, h?.destinationName].filter(Boolean);
   return loc.length ? loc.join(', ') : null;
 }
-export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, rooms) {
+export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, rooms, occupancy = null) {
   const stars = Number(String(h.categoryCode || '').replace(/[^0-9]/g, '')) || Number((String(h.categoryName || '').match(/\d/) || [])[0]) || 0;
   const nightlyUSD = nights ? Math.round((priceUSD / nights) * 100) / 100 : priceUSD;
   // A rate with NO cancellation policy amounts is free-cancellation; a policy with
@@ -1733,6 +1733,11 @@ export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, roo
       promotions: Array.isArray(rate.promotions) ? rate.promotions.map((p) => p.name).filter(Boolean) : null,
       roomType: roomName || 'Standard Room',
       roomCode: rate.roomCode || null,
+      // The party this rate was PRICED + CONFIRMED for by Hotelbeds (availability
+      // is occupancy-filtered, so a returned room fits this exact party). Surfaced
+      // so a supplier room name like "…max 2 people" doesn't read as a mismatch
+      // when a child sleeps on the sofa bed within the room's occupancy rules.
+      occupancy: occupancy ? { adults: occupancy.adults || 0, children: occupancy.children || 0, childAges: Array.isArray(occupancy.childAges) ? occupancy.childAges : [] } : null,
       // LOCATION & ADDRESS — surface everything the availability gives us. The
       // full street address comes from the ContentAPI / the booking response
       // (captured on the voucher); here we show zone + city + a map pin so the
@@ -1869,7 +1874,7 @@ export async function fetchHotelbedsHotels(intent, dest) {
       if (bestBreakfast && bestBreakfast.net <= best.net * 1.15) best = bestBreakfast;
       const usd = await toUSD(best.net, currency);
       if (usd == null) continue;
-      out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, 1));
+      out.push(normalizeHotelbedsHotel(h, best.rate, best.roomName, usd, intent.nights, 1, { adults, children: childCount, childAges }));
     }
     const offers = out.length ? out : null;
     // Cache even a null so a repeat of an empty search doesn't re-spend quota.
