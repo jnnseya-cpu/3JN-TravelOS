@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v239';
+const APP_BUILD = 'v240';
 
 const state = {
   context: null,
@@ -2966,8 +2966,8 @@ function bookingCard(b) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         ${(b.fulfilment?.released !== false && (b.fulfilment?.ticketing === 'issued' || (totalLocal > 0 && paidTotal + 0.01 >= totalLocal)))
           ? `<button class="btn btn-gold btn-sm" onclick="viewEticket('${b.id}')">🎫 View e-ticket</button>`
-          : b.fulfilment?.split && b.fulfilment?.ticketing === 'issued'
-            ? `<button class="btn btn-ghost btn-sm" disabled title="Your flight is paid in full and ticketed — the e-ticket is held on your account and releases the moment your hotel balance is paid (or if you cancel the hotel, since the flight is already paid)." style="opacity:.55;cursor:not-allowed">🎫 Flight ticketed · e-ticket held until hotel paid</button>`
+          : b.fulfilment?.released === false && b.fulfilment?.ticketing === 'issued'
+            ? `<button class="btn btn-ghost btn-sm" disabled title="Your flight is ticketed and held on your account — it releases the moment your balance reaches ${sym || '£'}0.${b.fulfilment?.split ? ' Cancel the hotel and you keep the flight you have already paid for.' : ''}" style="opacity:.55;cursor:not-allowed">🎫 Flight ticketed · e-ticket held until ${sym || '£'}0 balance</button>`
             : `<button class="btn btn-ghost btn-sm" disabled title="Your price is locked now. Your e-ticket is issued and released the moment your balance reaches ${sym || '£'}0 — a deposit or part-payment never releases a ticket." style="opacity:.55;cursor:not-allowed">🎫 E-ticket at ${sym || '£'}0 balance</button>`}
         <button class="btn btn-ghost btn-sm" onclick="runGuard('${b.id}')">🔒 Check price lock</button>
         <button class="btn btn-ghost btn-sm" onclick="reviewFlow('${b.id}')">★ Review suppliers</button>

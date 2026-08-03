@@ -4873,6 +4873,30 @@ test('split-pay refund: flight kept (ticketed), hotel instalments refunded less 
   assert.equal(late.refund, Math.round((200 - SPLIT_LATE_CANCEL_CAP) * 100) / 100);
 });
 
+test('held ticket: the e-ticket document is withheld until released (auto-secured / split)', async () => {
+  const owner = createUser({ name: 'Held Ticket', email: 'held@example.com' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', code: 'GBP', local: { total: 800 } }, totalUSD: 1013, travellers: { total: 1 }, components: [{ type: 'flight', live: true, details: { outbound: { from: 'LHR', to: 'FAO', date: '2027-05-01' } } }] }, userId: owner.id });
+  // Simulate a ticket that was BOUGHT but is HELD (auto-secured early / split).
+  b.fulfilment = { ticketing: 'issued', released: false, pnr: 'HELD12', ticketNumbers: ['1257777777777'] };
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const url = `http://127.0.0.1:${server.address().port}/api/book/${b.id}/document`;
+  try {
+    const res = await fetch(url, { headers: { 'x-user-id': owner.id } });
+    const html = await res.text();
+    assert.equal(res.status, 200);
+    assert.ok(/held on your account/i.test(html), 'held notice returned, not the e-ticket');
+    assert.ok(!html.includes('1257777777777'), 'the real e-ticket number is NOT exposed while held');
+    // Once released, the full document (with the ticket) is served.
+    b.fulfilment.released = true;
+    const res2 = await fetch(url, { headers: { 'x-user-id': owner.id } });
+    const html2 = await res2.text();
+    assert.ok(!/held on your account/i.test(html2), 'released → full document, no held notice');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('ticket-release GATE: an e-ticket is issued ONLY when the balance is £0 (anti-abuse)', () => {
   const mk = (paid) => ({ option: { pricing: { local: { total: 1000 } } }, payments: [{ type: 'deposit', amount: paid, status: 'paid' }] });
   // The core abuse the gate defeats: 3/4 paid must NOT be releasable.

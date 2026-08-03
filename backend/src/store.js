@@ -3909,11 +3909,11 @@ export function enforceInstalments(todayISO) {
       const outcome = defaultOutcome(b);
       b.status = 'cancelled-instalment-default';
       b.instalmentDefault = { at: nowISO(), ...outcome, missedDue: state.missedDue };
-      // FLIGHT-SECURED SPLIT: the flight was paid in full and ticketed, so the
-      // customer KEEPS it — release the held e-ticket (a data flag; the hotel was
-      // reserved only and never committed, so there's nothing to cancel supplier-side).
-      if (b.instalment?.split?.flightSecured && b.fulfilment?.ticketing === 'issued' && b.fulfilment.released !== true) {
-        b.fulfilment.released = true; b.fulfilment.releasedAt = nowISO(); b.fulfilment.releaseReason = 'hotel-abandoned';
+      // HELD TICKET: if a ticket was issued but held (a split flight, or a holdable
+      // fare auto-secured early), the customer covered the fare and KEEPS the flight
+      // — release the held e-ticket (a data flag; nothing to cancel supplier-side).
+      if (b.fulfilment?.ticketing === 'issued' && b.fulfilment.released === false) {
+        b.fulfilment.released = true; b.fulfilment.releasedAt = nowISO(); b.fulfilment.releaseReason = b.instalment?.split?.flightSecured ? 'hotel-abandoned' : 'booking-cancelled';
       }
       // A defaulted booking is cancelled and refunded down to the forfeited
       // deposit — so it must NOT pay partner/vendor commission (same as a manual
