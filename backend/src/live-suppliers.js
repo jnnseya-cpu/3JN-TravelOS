@@ -1761,11 +1761,42 @@ export function normalizeHotelbedsHotel(h, rate, roomName, priceUSD, nights, roo
 // codes align with the common city codes for major markets). Cheapest bookable
 // NET rate per hotel; converts to USD via FX. Fails safe (null) on any miss so
 // the trip stays estimated rather than showing a fabricated live price.
+// Hotelbeds destinations use IATA METROPOLITAN city codes (PAR, LON, NYC), NOT
+// airport codes (CDG, LHR, JFK). Our dest.code is derived from the airport, so a
+// multi-airport metro resolves to an airport Hotelbeds doesn't recognise → 0
+// hotels → the search silently falls back to estimates (the "Paris is always
+// estimated" bug; single-airport Barcelona=BCN worked only by coincidence). Map
+// the known metro airports to the city code. An unmapped code passes through
+// unchanged; a wrong guess would merely return 0 (→ estimator), never another
+// city's hotels, because these are globally-unique standardised metro codes.
+const HB_METRO_CODE = {
+  CDG: 'PAR', ORY: 'PAR', BVA: 'PAR',                         // Paris
+  LHR: 'LON', LGW: 'LON', STN: 'LON', LTN: 'LON', LCY: 'LON', SEN: 'LON', // London
+  JFK: 'NYC', EWR: 'NYC', LGA: 'NYC',                          // New York
+  FCO: 'ROM', CIA: 'ROM',                                      // Rome
+  MXP: 'MIL', LIN: 'MIL', BGY: 'MIL',                          // Milan
+  NRT: 'TYO', HND: 'TYO',                                      // Tokyo
+  SVO: 'MOW', DME: 'MOW', VKO: 'MOW',                          // Moscow
+  GRU: 'SAO', CGH: 'SAO', VCP: 'SAO',                          // São Paulo
+  EZE: 'BUE', AEP: 'BUE',                                      // Buenos Aires
+  GIG: 'RIO', SDU: 'RIO',                                      // Rio de Janeiro
+  YYZ: 'YTO', YTZ: 'YTO',                                      // Toronto
+  IAD: 'WAS', DCA: 'WAS',                                      // Washington
+  ICN: 'SEL', GMP: 'SEL',                                      // Seoul
+  KIX: 'OSA', ITM: 'OSA',                                      // Osaka
+};
+// The Hotelbeds destination code for a resolved place: an explicit override wins,
+// else the metro-code map, else the raw code/airport as-is.
+export function hotelbedsDestCode(dest) {
+  if (dest?.hotelbedsDest) return String(dest.hotelbedsDest).toUpperCase();
+  const raw = String(dest?.code || dest?.airport || '').toUpperCase();
+  return HB_METRO_CODE[raw] || raw;
+}
 export async function fetchHotelbedsHotels(intent, dest) {
   if (!hotelbedsHotelsEnabled()) return null;
   const checkIn = intent?.dates?.checkIn, checkOut = intent?.dates?.checkOut;
   if (!checkIn || !checkOut) return null;
-  const destCode = String(dest?.hotelbedsDest || dest?.code || '').toUpperCase();
+  const destCode = hotelbedsDestCode(dest);
   if (!destCode) return null;
   // Quota cooldown: after a 403 we stop calling until the window passes, so a
   // burnt daily allowance doesn't keep hammering the API. Search falls back.

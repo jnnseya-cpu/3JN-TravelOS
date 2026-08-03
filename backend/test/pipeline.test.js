@@ -5393,6 +5393,21 @@ test('wave4 scanSummary: empty categories report null cheapest, never Infinity',
   }
 });
 
+test('hotelbedsDestCode maps airport codes to Hotelbeds metropolitan city codes', async () => {
+  const LS = await import('../src/live-suppliers.js');
+  // The reported bug: Paris resolves to airport CDG, but Hotelbeds wants PAR.
+  assert.equal(LS.hotelbedsDestCode({ code: 'CDG' }), 'PAR', 'Paris CDG → PAR');
+  assert.equal(LS.hotelbedsDestCode({ airport: 'ORY' }), 'PAR', 'Paris ORY → PAR');
+  assert.equal(LS.hotelbedsDestCode({ code: 'LHR' }), 'LON', 'London LHR → LON');
+  assert.equal(LS.hotelbedsDestCode({ code: 'JFK' }), 'NYC', 'New York JFK → NYC');
+  // Barcelona already matched (single-airport metro) — must pass through unchanged.
+  assert.equal(LS.hotelbedsDestCode({ code: 'BCN' }), 'BCN', 'Barcelona BCN passes through');
+  // An unknown code passes through as-is (Hotelbeds returns 0 → estimator, no harm).
+  assert.equal(LS.hotelbedsDestCode({ code: 'XYZ' }), 'XYZ', 'unmapped passes through');
+  // An explicit hotelbedsDest override always wins.
+  assert.equal(LS.hotelbedsDestCode({ code: 'CDG', hotelbedsDest: 'pari' }), 'PARI', 'explicit override wins');
+});
+
 test('wave4 one-way: a flights-only one-way search does not crash', () => {
   const res = plan({ text: 'one way flight from London to Barcelona on 15/08/2026 for 2 adults', context: GB, user: null, searchTier: 'smart' });
   assert.equal(res.stage, 'options');
