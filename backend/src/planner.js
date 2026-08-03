@@ -91,7 +91,15 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   if (S.adults != null || S.children != null || Array.isArray(S.childAges)) {
     const adults = Math.max(1, Number(S.adults) || intent.travellers?.adults || 1);
     const childAges = Array.isArray(S.childAges) ? S.childAges.map(Number).filter((n) => Number.isFinite(n) && n >= 0) : (intent.travellers?.childAges || []);
-    const children = Number.isFinite(Number(S.children)) ? Number(S.children) : childAges.length;
+    // A precise "Children: 0" is almost always the field's DEFAULT, not a
+    // deliberate contradiction of a child named in the sentence ("my 9-year-old
+    // son"). So a 0/blank count must NEVER drop a child the sentence parsed: take
+    // the GREATER of the structured count, the ages listed, and what the text
+    // already found. An explicit count > 0 still wins (and still covers its ages).
+    const structuredChildren = Number(S.children);
+    const children = Number.isFinite(structuredChildren) && structuredChildren > 0
+      ? Math.max(structuredChildren, childAges.length)
+      : Math.max(intent.travellers?.children || 0, childAges.length);
     intent.travellers = { ...intent.travellers, adults, children, childAges, total: adults + children };
   }
   if (Number.isFinite(Number(S.minStars)) && Number(S.minStars) >= 1 && Number(S.minStars) <= 5) intent.minStars = Number(S.minStars);

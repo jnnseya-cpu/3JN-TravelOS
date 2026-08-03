@@ -4429,6 +4429,23 @@ test('Nottingham resolves to East Midlands (EMA) — never a fake "NOT" code', (
   assert.equal(resolveOriginBM('Cardiff').airport, 'CWL');
 });
 
+test('parser understands relational family terms; a precise "0 children" never drops a stated child', async () => {
+  const { plan } = await import('../src/planner.js');
+  const GB = { currency: { code: 'GBP', symbol: '£', rate: 1 }, country: 'GB' };
+  // "my wife and my 9-year-old son" = 2 adults + 1 child (age 9), no "2 adults and
+  // 1 child" phrasing needed. And a precise Children:0 (the field default) must NOT
+  // wipe the child the sentence named.
+  const r = plan({ text: 'stay in Paris 2 nights with my wife and my 9-year-old son, hotel only', context: GB, user: null, searchTier: 'smart', overrides: { structured: { adults: 2, children: 0 } } });
+  const t = r.intent.travellers;
+  assert.equal(t.adults, 2, 'wife → 2 adults');
+  assert.equal(t.children, 1, 'son → 1 child (precise 0 did not drop it)');
+  assert.deepEqual(t.childAges, [9], '9-year-old → age 9');
+  // Explicit counts still win exactly.
+  const r2 = plan({ text: 'Faro with 2 adults and 3 children aged 16, 13 and 9', context: GB, user: null, searchTier: 'smart' });
+  assert.equal(r2.intent.travellers.children, 3);
+  assert.deepEqual(r2.intent.travellers.childAges, [16, 13, 9]);
+});
+
 test('flight selection never swaps the requested departure city for a nearby airport', async () => {
   const P = await import('../src/packager.js');
   const mk = (originCode, stops, alt) => ({ type: 'flight', priceUSD: alt ? 200 : 300, details: { outbound: { stops, layovers: stops ? [{ minutes: 90, overnight: false }] : [] }, inbound: { stops, layovers: stops ? [{ minutes: 90, overnight: false }] : [] }, ...(alt ? { altOriginCode: originCode } : {}) } });

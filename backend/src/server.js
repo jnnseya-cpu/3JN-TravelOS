@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-market-floor-every-search-v234';
+const BUILD_TAG = '2026-08-03-family-parse-hotelonly-floor-v235';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2835,7 +2835,8 @@ app.post('/api/plan', safe(async (req, res) => {
   // next to our price, whether ours is live or estimated. This is the honest
   // benchmark: it surfaces the low-cost/charter carriers we may not yet book, so
   // "are we competitive?" is answered on-screen instead of guessed.
-  if (result.stage === 'options' && result.journey && marketDataEnabled() && liveBudget.ok) {
+  if (result.stage === 'options' && result.journey && marketDataEnabled() && liveBudget.ok
+      && (result.intent?.components || []).includes('flights')) { // FLIGHT market floor — only when the trip includes flights (not a hotel-only search)
     try {
       const fares = await fetchMarketFares(result.intent, result.intent.destination, result.origin);
       if (fares && fares.length) {

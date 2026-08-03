@@ -71,8 +71,20 @@ function parseTravellers(text) {
   if (ageBlock) {
     childAges = (ageBlock[1].match(/\d{1,2}/g) || []).map(Number).filter((a) => a >= 0 && a <= 17);
   }
-  // If ages were listed but the count wasn't, infer the child count from them.
-  if (childAges.length && !childMatch) children = childAges.length;
+  // Loose "N-year-old" ages stated WITHOUT a child/aged keyword — "my 9-year-old
+  // son", "a 6 year old", "twins aged 4" — are children too. Capture them when the
+  // keyword-anchored block above found nothing.
+  if (!childAges.length) {
+    childAges = [...lower.matchAll(/\b(\d{1,2})[\s-]*(?:year|yr)s?[\s-]*old\b|\b(\d{1,2})\s*yo\b/g)]
+      .map((m) => Number(m[1] || m[2])).filter((a) => a >= 0 && a <= 17);
+  }
+  // RELATIONAL FAMILY TERMS: "with my wife and my 9-year-old son" must resolve to
+  // 2 adults + 1 child WITHOUT needing "2 adults and 1 child" phrasing. Each
+  // son/daughter is a child (a wife/husband/partner adds the second adult below).
+  const relChildren = (lower.match(/\b(sons?|daughters?)\b/g) || []).length;
+  // A child count is only INFERRED (never when the sentence gave an explicit "N
+  // children") — take the greatest signal so no child is dropped or double-counted.
+  if (!childMatch) children = Math.max(children, relChildren, childAges.length);
 
   if (!adultMatch && !childMatch) {
     // "family of 5", "group of 4", "party of 6" — an explicit headcount wins.
@@ -80,16 +92,16 @@ function parseTravellers(text) {
     const peopleMatch = lower.match(/(\d+)\s*(?:people|persons|pax|travellers|travelers|of us|of you)\b/);
     if (groupOf) {
       const n = Math.max(1, parseInt(groupOf[2], 10));
-      if (groupOf[1] === 'family') { adults = Math.min(2, n); children = Math.max(0, n - 2); } // 2 adults + the rest children
+      if (groupOf[1] === 'family') { adults = Math.min(2, n); children = Math.max(children, n - Math.min(2, n)); } // 2 adults + the rest children
       else { adults = n; }
     } else if (peopleMatch) {
       adults = Math.max(1, parseInt(peopleMatch[1], 10));
     } else if (/\bfamily\b/.test(lower)) {
       adults = 2;
-      children = 2;
-    } else if (/\bcouple\b|\bwife\b|\bhusband\b|\bpartner\b/.test(lower)) {
+      if (children === 0 && !childAges.length) children = 2; // an unspecified "family" → 2 children (don't override a child already found)
+    } else if (/\bcouple\b|\bwife\b|\bhusband\b|\bpartner\b|\bspouse\b|\bfianc/.test(lower)) {
       adults = 2;
-    } else if (/\bsolo\b|\balone\b|\bmyself\b/.test(lower)) {
+    } else if (/\bsolo\b|\balone\b|\bmyself\b|\bjust me\b/.test(lower)) {
       adults = 1;
     }
   }
