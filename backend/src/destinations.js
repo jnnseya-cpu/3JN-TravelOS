@@ -182,6 +182,10 @@ const CITY_AIRPORTS = {
   madrid: { airport: 'MAD', city: 'Madrid', country: 'ES' },
   barcelona: { airport: 'BCN', city: 'Barcelona', country: 'ES' },
   lisbon: { airport: 'LIS', city: 'Lisbon', country: 'PT' },
+  faro: { airport: 'FAO', city: 'Faro', country: 'PT' },
+  algarve: { airport: 'FAO', city: 'Faro', country: 'PT' }, // region → its gateway (Faro)
+  porto: { airport: 'OPO', city: 'Porto', country: 'PT' },
+  funchal: { airport: 'FNC', city: 'Funchal', country: 'PT' }, madeira: { airport: 'FNC', city: 'Funchal', country: 'PT' },
   rome: { airport: 'FCO', city: 'Rome', country: 'IT' },
   milan: { airport: 'MXP', city: 'Milan', country: 'IT' },
   zurich: { airport: 'ZRH', city: 'Zurich', country: 'CH' },
@@ -483,6 +487,11 @@ export function extractDestination(text) {
     const acc = [];
     for (const w of ws) {
       if (!w) continue;
+      // Skip a LEADING article — "to the Algarve", "to the Maldives", "to the
+      // Bahamas" are natural phrasing; treating "the" as a terminator (it's a stop
+      // word) extracted nothing and the whole search fell to "where would you like
+      // to go?". Only skip while nothing real has been collected yet.
+      if (!acc.length && /^(the|a|an)$/i.test(w)) continue;
       if (DEST_STOP.test(w) || /^\d/.test(w) || !/[A-Za-zÀ-ÿ]/.test(w)) break;
       acc.push(w);
       if (acc.length >= 3) break;

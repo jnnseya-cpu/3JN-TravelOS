@@ -4418,6 +4418,21 @@ test('Nottingham resolves to East Midlands (EMA) — never a fake "NOT" code', (
   assert.equal(resolveOriginBM('Cardiff').airport, 'CWL');
 });
 
+test('a leading article resolves the destination ("to the Algarve", "the Maldives")', async () => {
+  const D = await import('../src/destinations.js');
+  // Regression: "the" before a place is a stop word, so "to the Algarve" extracted
+  // nothing and the whole search fell to the clarify stage ("where would you like
+  // to go?"). A leading article must be skipped, not treated as a terminator.
+  const alg = D.resolveDestinationFromText('I want to travel to the Algarve from Birmingham for 7 nights');
+  assert.ok(alg, 'the Algarve resolves');
+  assert.equal(alg.city, 'Faro'); // region → its gateway airport
+  assert.equal(alg.airport || alg.code, 'FAO');
+  assert.ok(D.resolveDestinationFromText('holiday to the Maldives'), 'the Maldives resolves');
+  assert.ok(D.resolveDestinationFromText('trip to the Bahamas'), 'the Bahamas resolves');
+  // Control: a bare city name still resolves as before.
+  assert.ok(D.resolveDestinationFromText('trip to Barcelona'), 'Barcelona still resolves');
+});
+
 test('Brussels is a real catalogue destination with short-haul pricing and honest visa rules', () => {
   const d = findDestinationBM('trip to Brussels');
   assert.ok(d, 'Brussels found');
