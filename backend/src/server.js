@@ -204,7 +204,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-redeye-nearby-fallback-v233';
+const BUILD_TAG = '2026-08-03-market-floor-every-search-v234';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2830,14 +2830,33 @@ app.post('/api/plan', safe(async (req, res) => {
   }
   if (result && typeof result === 'object') result.liveOverlay = liveOverlay;
 
-  // REAL MARKET REFERENCE (Aviasales cache incl. Ryanair/Jet2): when our fare
-  // is still estimated, show what the market actually charges on this route —
-  // honest context beside our estimate, and it feeds the Price check box.
-  if (result.stage === 'options' && result.journey && result.priceSource?.flights !== 'live' && marketDataEnabled() && liveBudget.ok) {
+  // REAL MARKET FLOOR (Aviasales cache incl. Ryanair/Jet2/Wizz) on EVERY search —
+  // so the customer always sees what the market actually charges on this route
+  // next to our price, whether ours is live or estimated. This is the honest
+  // benchmark: it surfaces the low-cost/charter carriers we may not yet book, so
+  // "are we competitive?" is answered on-screen instead of guessed.
+  if (result.stage === 'options' && result.journey && marketDataEnabled() && liveBudget.ok) {
     try {
       const fares = await fetchMarketFares(result.intent, result.intent.destination, result.origin);
       if (fares && fares.length) {
         const cheapest = fares.reduce((a, b) => (a.priceGbp <= b.priceGbp ? a : b));
+        // Our cheapest FLIGHT per person, compared like-for-like against the market
+        // fares (Aviasales prices_for_dates are per-person, in GBP). A component
+        // carries only priceUSD, so convert with the option's own USD→local ratio;
+        // only compare when the customer's currency IS GBP (else units wouldn't match).
+        const gbp = String(result.context?.currency?.code || '').toUpperCase() === 'GBP';
+        const pax = Math.max(1, Number(result.intent?.travellers?.total) || 1);
+        let ourPerPerson = null;
+        if (gbp) {
+          for (const o of (result.packages?.options || [])) {
+            const fc = (o.components || []).find((c) => c.type === 'flight');
+            const ratio = (o.pricing?.local?.total && o.pricing?.lines?.totalUSD) ? (o.pricing.local.total / o.pricing.lines.totalUSD) : null;
+            if (fc && fc.priceUSD != null && ratio) {
+              const pp = Math.round(((fc.priceUSD * ratio) / pax) * 100) / 100;
+              if (ourPerPerson == null || pp < ourPerPerson) ourPerPerson = pp;
+            }
+          }
+        }
         result.marketLive = {
           source: 'Aviasales market data (7-day cache)',
           minGbp: cheapest.priceGbp,
@@ -2845,6 +2864,12 @@ app.post('/api/plan', safe(async (req, res) => {
           cheapestCarrier: cheapest.carrier,
           cheapestStops: cheapest.stopLabel,
           sampled: fares.length,
+          perPerson: true,
+          // Where WE sit vs the market floor (per person). Positive delta = we're
+          // above the market floor (a gap the customer sees, honestly).
+          ourPerPersonGbp: ourPerPerson,
+          vsFloorGbp: ourPerPerson != null ? Math.round((ourPerPerson - cheapest.priceGbp) * 100) / 100 : null,
+          ourIsLive: result.priceSource?.flights === 'live',
         };
       }
     } catch { /* market reference is best-effort */ }

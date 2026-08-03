@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v233';
+const APP_BUILD = 'v234';
 
 const state = {
   context: null,
@@ -1239,12 +1239,22 @@ function compareCard(data, sym) {
   if (!opts.length) return '';
   const rec = opts.find((o) => o.recommended) || opts[0];
   const our = rec.pricing.local.total;
-  const marketBlock = data.marketLive
+  const ml = data.marketLive;
+  // Where our flight sits vs the real market FLOOR (per person). A positive delta
+  // means we're above the cheapest carrier flying this route (often a low-cost we
+  // may not yet book) — shown honestly so the gap is visible, not hidden.
+  const floorCmp = ml && ml.vsFloorGbp != null
+    ? (ml.vsFloorGbp > 1
+        ? `<div class="pill" style="margin-top:10px;border-color:rgba(244,183,28,.45)">📊 Flights: yours ${money(ml.ourPerPersonGbp, '£')}pp vs market floor <strong>${money(ml.minGbp, '£')}pp</strong> (${esc(ml.cheapestCarrier || 'cheapest carrier')} ${esc(ml.cheapestStops || '')}) — <strong>${money(ml.vsFloorGbp, '£')}pp above</strong> the market. ${ml.ourIsLive ? 'Ours is a live bookable fare; the floor is often a low-cost carrier we don\'t yet book directly.' : 'Connect the low-cost/charter carriers to reach this floor.'}</div>`
+        : `<div class="pill" style="margin-top:10px;border-color:rgba(70,211,154,.45)">📊 Flights: yours ${money(ml.ourPerPersonGbp, '£')}pp — <strong>at or below</strong> the market floor (${money(ml.minGbp, '£')}pp, ${esc(ml.cheapestCarrier || 'cheapest')}). You're competitive on this route. ✓</div>`)
+    : '';
+  const marketBlock = ml
     ? `<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-        <div><div class="t-label">3JN all-in</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
-        <div><div class="t-label">Real market range (${esc(data.marketLive.cheapestCarrier || 'live cache')})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px">${money(data.marketLive.minGbp, '£')}<span class="muted" style="font-size:13px;font-weight:400"> – ${money(data.marketLive.maxGbp, '£')} · ${data.marketLive.sampled} fares</span></div></div>
+        <div><div class="t-label">3JN all-in (package)</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:30px;color:var(--gold)">${money(our, sym)}</div></div>
+        <div><div class="t-label">Real market floor · flights, per person (${esc(ml.cheapestCarrier || 'live cache')})</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:24px">${money(ml.minGbp, '£')}<span class="muted" style="font-size:13px;font-weight:400"> – ${money(ml.maxGbp, '£')} · ${ml.sampled} fares</span></div></div>
       </div>
-      <p class="muted" style="font-size:11.5px;margin-top:8px">Real fares travellers found on this route (${esc(data.marketLive.source)}). Cached prices aren't guaranteed bookable, so we only charge a live confirmed fare.</p>`
+      ${floorCmp}
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Real fares travellers found on this route (${esc(ml.source)}). Cached market prices aren't guaranteed bookable, so we only ever charge a live confirmed fare.</p>`
     : '';
   return `<div class="card pad" style="margin-top:26px;border-color:rgba(70,211,154,0.32)">
     <span class="eyebrow">Our Price-Match Promise</span>
