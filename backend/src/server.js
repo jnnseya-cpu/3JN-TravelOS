@@ -89,6 +89,7 @@ import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacemen
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats } from './agents.js';
+import { generateGrowthContent, GROWTH_TOOL_KEYS } from './growth.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
@@ -205,7 +206,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-seo-autopilot-linkgraph-v242';
+const BUILD_TAG = '2026-08-03-ai-growth-engine-live-v243';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4398,6 +4399,20 @@ app.get('/api/rewards/me', safe((req, res) => {
   const dash = partnerDashboard(user.id);
   if (!dash) return res.status(404).json({ error: 'not-found' });
   res.json({ dashboard: dash });
+}));
+// AI Growth Engine (§creator tools): generate a marketing asset personalised
+// with the creator's own referral link + live dashboard metrics. Signed-in only.
+app.post('/api/rewards/growth', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const { tool, destination, platform, tone, variant } = req.body || {};
+  if (!GROWTH_TOOL_KEYS.includes(tool)) return res.status(400).json({ error: 'unknown-tool', tools: GROWTH_TOOL_KEYS });
+  const dash = partnerDashboard(user.id) || {};
+  const ctx = { referralLink: dash.referralLink || `https://3jntravel.com/?ref=${user.referralCode || ''}`, referralCode: dash.referralCode || user.referralCode, name: user.name, followers: dash.followers, dashboard: dash };
+  const result = generateGrowthContent(tool, { destination, platform, tone, variant: Number(variant) || 0 }, ctx);
+  if (!result) return res.status(400).json({ error: 'generation-failed' });
+  recordAudit({ actor: user.id, role: 'partner', action: 'growth.generated', entity: 'growth', entityId: tool, summary: `${tool}${destination ? ' · ' + String(destination).slice(0, 40) : ''}` });
+  res.json({ result });
 }));
 // Apply to the influencer programme (§3).
 app.post('/api/rewards/influencer/apply', safe((req, res) => {

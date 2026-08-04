@@ -1829,6 +1829,37 @@ test('agents: blog posts are intent-varied, data-grounded and carry FAQ + adapti
   assert.ok(byAngle.cost.body.includes('/marketplace') && byAngle.cost.body.includes('/membership'), 'pillar footer links present');
 });
 
+test('AI Growth Engine: all 10 tools generate real, referral-personalised output', async () => {
+  const growth = await import('../src/growth.js');
+  const ctx = {
+    referralLink: 'https://3jntravel.com/?ref=3JN-TEST', referralCode: '3JN-TEST', name: 'Creator Cara',
+    followers: 8000,
+    dashboard: { totalReferrals: 4, activeTravellers: 1, acuEarned: 500, revenueGbp: 12.5, pendingCommissionGbp: 12.5, paidReferrals: 4, unlockReferrals: 20, followers: 8000, rank: 3 },
+  };
+  for (const key of growth.GROWTH_TOOL_KEYS) {
+    const r = growth.generateGrowthContent(key, { destination: 'Faro', platform: 'tiktok', tone: 'friendly' }, ctx);
+    assert.ok(r && typeof r.output === 'string' && r.output.length > 20, `${key}: produces output`);
+    assert.ok(typeof r.copyText === 'string' && r.copyText.length, `${key}: has copyable text`);
+  }
+  // The referral link is embedded wherever a call-to-action lives (that's the point).
+  for (const key of ['social_post', 'travel_advert', 'email_campaign', 'landing_page', 'video_script']) {
+    const r = growth.generateGrowthContent(key, { destination: 'Faro' }, ctx);
+    assert.ok(r.output.includes('3JN-TEST'), `${key}: embeds the creator's referral link`);
+  }
+  // Analytics/perf read the REAL dashboard metrics, not placeholders.
+  const analytics = growth.generateGrowthContent('campaign_analytics', {}, ctx);
+  assert.ok(analytics.output.includes('4') && /conversion/i.test(analytics.output), 'analytics reflects real referral count + conversion');
+  // Variants differ (so "another version" actually changes the copy).
+  const v0 = growth.generateGrowthContent('social_post', { destination: 'Faro', variant: 0 }, ctx).output;
+  const v1 = growth.generateGrowthContent('social_post', { destination: 'Faro', variant: 1 }, ctx).output;
+  assert.notEqual(v0, v1, 'a new variant produces different copy');
+  // Landing page is real HTML that can be previewed/hosted.
+  const lp = growth.generateGrowthContent('landing_page', { destination: 'Faro' }, ctx);
+  assert.ok(lp.isHtml && lp.output.includes('<!doctype html'), 'landing page is a full HTML document');
+  // Unknown tool → null (endpoint turns this into a 400).
+  assert.equal(growth.generateGrowthContent('nope', {}, ctx), null);
+});
+
 test('SEO autopilot: dynamic related links, RSS feed, and link-graph health', () => {
   const { createPost, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats } = agentsModule;
   // Seed a tight cluster: several Dubai posts should relate to each other.

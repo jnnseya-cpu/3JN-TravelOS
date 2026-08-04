@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v242';
+const APP_BUILD = 'v243';
 
 const state = {
   context: null,
@@ -3071,7 +3071,7 @@ async function renderRewards() {
   const unlockMsg = d.revshareUnlocked
     ? `<span style="color:var(--green)">✓ Lifetime revenue share active · ${(d.revshareRate * 100).toFixed(2)}% · up to ${g(d.capPerCustomerGbp)}/customer</span>`
     : `${d.paidReferrals}/${d.unlockReferrals} paid referrals — refer ${Math.max(0, d.unlockReferrals - d.paidReferrals)} more to unlock lifetime revenue share`;
-  const tools = (d.aiGrowthTools || []).map((t) => `<span class="chip" style="font-size:11px">${esc(t.label)}</span>`).join(' ');
+  const tools = (d.aiGrowthTools || []).map((t) => `<span class="chip" style="font-size:11px;cursor:pointer" onclick="openGrowthTool('${esc(t.key)}','${esc(t.label).replace(/'/g, '&#39;')}')">✨ ${esc(t.label)}</span>`).join(' ');
   const wd = (d.withdrawalHistory || []).slice(0, 5).map((w) => `<div class="kv"><span>${ukDate(w.at)} · ${esc(w.method)}</span><span>${g(w.amountGbp)} · <span class="muted">${esc(w.status)}</span></span></div>`).join('') || '<div class="muted" style="font-size:12px">No withdrawals yet.</div>';
 
   out.innerHTML = `
@@ -3140,6 +3140,71 @@ window.withdrawCommission = async (amount) => {
   try { const r = await api('/api/rewards/withdraw', { method: 'POST', body: JSON.stringify({ amountGbp: amount, method: 'bank' }) });
     if (r.ok) { toast('✓ Payout requested'); renderRewards(); } else { toast(r.error === 'insufficient-balance' ? 'Nothing available to withdraw yet.' : 'Could not request payout.'); }
   } catch { toast('Could not request payout.'); }
+};
+
+// ---- AI Growth Engine — the 10 creator tools, live -------------------------
+// Which inputs each tool needs (the rest read the creator's live dashboard).
+const GROWTH_INPUTS = {
+  social_post: { dest: 1, platform: 1, tone: 1 },
+  travel_advert: { dest: 1, tone: 1 },
+  email_campaign: { dest: 1, tone: 1 },
+  landing_page: { dest: 1, html: 1 },
+  hashtags: { dest: 1, platform: 1 },
+  video_script: { dest: 1, platform: 1 },
+  perf_recommendations: {},
+  audience_optimisation: { dest: 1 },
+  campaign_analytics: {},
+  best_time: { platform: 1 },
+};
+window.__growthVariant = 0;
+window.openGrowthTool = (key, label) => {
+  const cfg = GROWTH_INPUTS[key] || {};
+  const platforms = ['instagram', 'tiktok', 'facebook', 'x', 'youtube', 'whatsapp', 'linkedin'];
+  const tones = ['friendly', 'luxury', 'urgent', 'inspiring'];
+  const inputs = [
+    cfg.dest ? `<div class="field"><label>Destination</label><input class="in" id="gtDest" placeholder="e.g. Faro, Dubai, Lagos"></div>` : '',
+    cfg.platform ? `<div class="field"><label>Platform</label><select class="in" id="gtPlatform">${platforms.map((p) => `<option value="${p}">${p[0].toUpperCase() + p.slice(1)}</option>`).join('')}</select></div>` : '',
+    cfg.tone ? `<div class="field"><label>Tone</label><select class="in" id="gtTone">${tones.map((t) => `<option value="${t}">${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div>` : '',
+  ].filter(Boolean).join('');
+  window.__growthVariant = 0;
+  modal(`
+    <span class="eyebrow">AI Growth Engine</span>
+    <h2 style="margin:6px 0 10px;font-size:20px">✨ ${esc(label)}</h2>
+    ${inputs ? `<div class="composer-row">${inputs}</div>` : '<p class="muted" style="font-size:12.5px">This tool reads your live referral metrics — just generate.</p>'}
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-gold btn-sm" onclick="runGrowthTool('${esc(key)}')">Generate</button>
+      <button class="btn btn-ghost btn-sm" id="gtRegen" style="display:none" onclick="runGrowthTool('${esc(key)}', true)">↻ Another version</button>
+      <button class="btn btn-ghost btn-sm" id="gtCopy" style="display:none" onclick="copyGrowth()">📋 Copy</button>
+      <button class="btn btn-ghost btn-sm" id="gtPreview" style="display:none" onclick="previewGrowth()">👁 Preview</button>
+    </div>
+    <div id="gtOut" style="margin-top:12px"></div>`);
+};
+window.runGrowthTool = async (key, regen = false) => {
+  window.__growthVariant = regen ? (window.__growthVariant + 1) : 0;
+  const cfg = GROWTH_INPUTS[key] || {};
+  if (cfg.dest && !($('#gtDest')?.value || '').trim()) { toast('Enter a destination first.'); return; }
+  const out = $('#gtOut'); if (out) out.innerHTML = '<div class="muted" style="font-size:13px">✨ Generating…</div>';
+  let data;
+  try {
+    data = await api('/api/rewards/growth', { method: 'POST', body: JSON.stringify({
+      tool: key,
+      destination: $('#gtDest')?.value || '',
+      platform: $('#gtPlatform')?.value || '',
+      tone: $('#gtTone')?.value || '',
+      variant: window.__growthVariant,
+    }) });
+  } catch { if (out) out.innerHTML = '<div class="muted" style="font-size:13px;color:#ff8a8a">Could not generate — please try again.</div>'; return; }
+  const r = data.result || {};
+  window.__growthResult = r;
+  if (out) out.innerHTML = `<pre style="white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12.5px;font-family:inherit;max-height:340px;overflow:auto">${esc(r.output || '')}</pre>`;
+  ['gtRegen', 'gtCopy'].forEach((id) => { const b = $('#' + id); if (b) b.style.display = ''; });
+  const pv = $('#gtPreview'); if (pv) pv.style.display = r.isHtml ? '' : 'none';
+};
+window.copyGrowth = () => { const r = window.__growthResult; if (r) copyText(r.copyText || r.output || ''); };
+window.previewGrowth = () => {
+  const r = window.__growthResult; if (!r || !r.isHtml) return;
+  const w = window.open('', '_blank');
+  if (w) { w.document.open(); w.document.write(r.output); w.document.close(); }
 };
 
 // ---- Vendor Partner Programme (vendor portal) ------------------------------
