@@ -847,6 +847,19 @@ test('NO-FREE-AI-4: the AI assistant is metered (2 ACU) and gated; guests are bl
   assert.equal(guest.status, 401);
 });
 
+test('PARSE: /api/parse mirrors the sentence into structured fields (free, no account, no ACU)', async () => {
+  // No userId — parsing is a free UI convenience, not a metered AI search.
+  const r = await api('POST', '/api/parse', { body: { text: 'I want to travel to Dubai with my family in August for 7 nights, flights hotel visa activities esim transfer' } });
+  assert.equal(r.status, 200);
+  const s = r.json.structured;
+  assert.equal(s.destination, 'Dubai', 'destination mirrored from the sentence');
+  assert.equal(s.nights, 7);
+  assert.ok(s.components.includes('flights') && s.components.includes('hotel') && s.components.includes('visa'), 'components mirrored');
+  // Empty text → nothing to mirror.
+  const empty = await api('POST', '/api/parse', { body: { text: '   ' } });
+  assert.equal(empty.json.structured, null);
+});
+
 test('NO-FREE-AI-5: existing-booking support is FREE; general/pre-sales chat is charged', async () => {
   const u = mkUser(); // 50 ACU
   createBooking({ option: livePkgOption({ total: 1000 }), userId: u.id, lead: { fullName: 'QA', email: u.email } });

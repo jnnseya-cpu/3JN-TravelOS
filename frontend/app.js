@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v246';
+const APP_BUILD = 'v247';
 
 const state = {
   context: null,
@@ -700,6 +700,8 @@ function autosaveIntent() {
   }, 700);
 }
 $('#intentInput')?.addEventListener('input', autosaveIntent);
+// The sentence dictates everything → keep the Precise fields mirrored to it.
+$('#intentInput')?.addEventListener('input', syncPreciseFromText);
 // Restore any saved draft on load.
 (async () => {
   try {
@@ -741,15 +743,45 @@ function collectStructured() {
   if (comps.length) s.components = comps;
   return s;
 }
-// Empty every Precise-search field. The free-text sentence is the MAIN input, so
-// once a search runs these optional overrides are cleared (and their saved copy
-// wiped) — the section is always blank for the user to fill deliberately, never
-// auto-populated from what the AI parsed.
+// Empty every Precise-search field.
 function clearStructured() {
   ['#psDest', '#psOrigin', '#psCheckIn', '#psNights', '#psAdults', '#psChildren', '#psChildAges'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
   const stars = $('#psStars'); if (stars) stars.value = '';
   document.querySelectorAll('.psComp').forEach((c) => { c.checked = false; });
   try { localStorage.removeItem('3jn_precise'); } catch {}
+}
+// The free-text sentence DICTATES everything: mirror what it parses into the
+// Precise fields so they always match the CURRENT sentence (never stale), and the
+// user can complete any missing part before running the search. Sets what was
+// parsed and clears what wasn't, so an old destination/date never lingers.
+function fillPreciseFromParse(s) {
+  if (!s) return;
+  const set = (id, val) => { const el = $(id); if (el) el.value = (val == null || val === '') ? '' : String(val); };
+  set('#psDest', s.destination);
+  set('#psOrigin', s.origin);
+  set('#psCheckIn', s.checkIn);
+  set('#psNights', s.nights);
+  set('#psAdults', s.adults);
+  set('#psChildren', s.children != null ? s.children : '');
+  set('#psChildAges', Array.isArray(s.childAges) && s.childAges.length ? s.childAges.join(', ') : '');
+  set('#psStars', s.minStars);
+  const want = new Set(Array.isArray(s.components) ? s.components : []);
+  document.querySelectorAll('.psComp').forEach((c) => { c.checked = want.has(c.value); });
+  try { savePrecise(); } catch {}
+}
+// Debounced live parse of the free-text box → fills the Precise section. Cheap +
+// FREE server-side (no supplier calls, no ACU) — it's just structured extraction.
+let __parseT;
+function syncPreciseFromText() {
+  clearTimeout(__parseT);
+  const text = ($('#intentInput')?.value || '').trim();
+  if (!text) { clearStructured(); return; }
+  __parseT = setTimeout(async () => {
+    try {
+      const d = await api('/api/parse', { method: 'POST', body: JSON.stringify({ text, country: state.country }), silent: true });
+      if (d && d.structured) fillPreciseFromParse(d.structured);
+    } catch { /* parsing is a convenience — never block the search box */ }
+  }, 600);
 }
 // Build a clean canonical sentence from the precise fields, so a structured-only
 // search (no free text) still seeds the pipeline. The backend overrides make it
@@ -780,10 +812,6 @@ async function runPlan(overrides = {}) {
   // a clean canonical sentence so the pipeline runs (overrides make it exact).
   if (!text && (structured.destination || structured.components)) text = composeFromStructured(structured);
   if (!text) { toast('Describe your trip — or fill the Precise search fields, or tap ✨ Inspire me.'); return; }
-  // The free-text sentence is the main input — clear the optional Precise fields
-  // now the search is running (their values are already captured in `structured`),
-  // so the section is always empty afterwards for the user to fill deliberately.
-  clearStructured();
   const out = $('#plannerOut');
   out.innerHTML = scanAnimation();
 

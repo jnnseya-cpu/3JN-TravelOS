@@ -7,6 +7,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { detectContext, listCurrencies } from './geo.js';
+import { parseIntent } from './intent.js';
 import { destinationsCatalog, findDestination, resolveOrigin, resolveDestination, originForCountry, searchCities } from './destinations.js';
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
@@ -207,7 +208,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-support-exempt-v246';
+const BUILD_TAG = '2026-08-03-precise-mirrors-sentence-v247';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -3304,6 +3305,29 @@ async function baggageSurcharge(offerId, services, currency) {
   const bags = await getDuffelOfferBaggage(offerId).catch(() => []);
   return computeBaggageSurcharge(bags, services, currency?.rateFromUSD || 0.79);
 }
+// Cheap, FREE intent parse — NOT an AI search (no supplier calls, no generation,
+// no ACU). It only extracts the structured fields from the free-text sentence so
+// the UI can mirror them into the Precise-search boxes before a (metered) search,
+// letting the user see the interpretation and complete any missing part.
+app.post('/api/parse', safe((req, res) => {
+  const { text } = req.body || {};
+  if (typeof text !== 'string' || !text.trim()) return res.json({ structured: null });
+  const context = detectContext(req, { country: req.body?.country });
+  const intent = parseIntent(text.slice(0, 600), context);
+  res.json({
+    structured: {
+      destination: intent.destination?.city || null,
+      origin: intent.originCity || null,
+      checkIn: intent.dates?.checkIn || null,
+      nights: intent.nights || null,
+      adults: intent.travellers?.adults || null,
+      children: (intent.travellers?.children ?? null),
+      childAges: Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges : [],
+      minStars: intent.minStars || null,
+      components: Array.isArray(intent.components) ? intent.components : [],
+    },
+  });
+}));
 app.post('/api/quote', safe(async (req, res) => {
   const { option, intent, baggage } = req.body || {};
   if (!isValidOption(option)) return res.status(400).json({ error: 'invalid-option', message: 'A valid priced option (pricing.local.total + components[]) is required.' });
