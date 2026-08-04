@@ -90,7 +90,7 @@ import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, pri
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
-import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats } from './agents.js';
+import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats, regenerateBlog } from './agents.js';
 import { generateGrowthContent, GROWTH_TOOL_KEYS } from './growth.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
@@ -208,7 +208,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-precise-mirrors-sentence-v247';
+const BUILD_TAG = '2026-08-03-blog-migrate-varied-v248';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -5631,6 +5631,13 @@ app.get('/api/blog/:slug', safe((req, res) => {
 app.post('/api/blog/generate', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   res.json({ post: createPost(req.body || {}) });
+}));
+// Admin: wipe + rebuild the whole journal with fresh intent-varied posts (also
+// the manual trigger if the auto-migration hasn't run yet). Returns the new set.
+app.post('/api/blog/reseed', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  regenerateBlog();
+  res.json({ ok: true, posts: listPosts() });
 }));
 
 // ---- Public "white-label" partner endpoint (returns a package) -----------

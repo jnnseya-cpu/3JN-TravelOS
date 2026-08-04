@@ -298,7 +298,26 @@ export function createPost({ topic, destination, now, angle } = {}) {
 }
 
 export function ensureSeedPosts() {
-  if (db.blog.length === 0) DESTS.forEach((d) => createPost({ destination: d }));
+  if (db.blog.length === 0) { DESTS.forEach((d) => createPost({ destination: d })); return db.blog; }
+  // ONE-TIME MIGRATION: older builds seeded 10 near-identical templated posts
+  // (no `angle` field). Those were persisted, so the intent-varied generator never
+  // replaced them and the live journal reads "all the same". If ANY legacy post is
+  // present, rebuild the whole set with the varied generator. Self-heals on the
+  // next blog read/deploy; idempotent once every post carries an `angle`.
+  if (db.blog.some((p) => !p.angle)) {
+    db.blog.splice(0, db.blog.length);
+    blogCounter = 0;
+    DESTS.forEach((d) => createPost({ destination: d }));
+    recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.migrated', entity: 'blog', entityId: 'seed', summary: `replaced legacy templated posts with ${db.blog.length} intent-varied posts` });
+  }
+  return db.blog;
+}
+// Admin-forced regeneration — wipe and rebuild the journal with fresh, varied
+// posts (a new angle rotation), e.g. to refresh the catalogue on demand.
+export function regenerateBlog() {
+  db.blog.splice(0, db.blog.length);
+  DESTS.forEach((d) => createPost({ destination: d }));
+  recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.regenerated', entity: 'blog', entityId: 'all', summary: `regenerated ${db.blog.length} posts` });
   return db.blog;
 }
 export function listPosts() { return ensureSeedPosts().map(({ body, ...meta }) => meta); }

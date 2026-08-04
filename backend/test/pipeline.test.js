@@ -1860,6 +1860,27 @@ test('AI Growth Engine: all 10 tools generate real, referral-personalised output
   assert.equal(growth.generateGrowthContent('nope', {}, ctx), null);
 });
 
+test('blog migration: legacy identical (no-angle) posts are replaced by the varied set', async () => {
+  const store = await import('../src/store.js');
+  const { ensureSeedPosts } = agentsModule;
+  // Simulate the legacy state: templated posts with NO `angle` (pre-v236 seed).
+  store.db.blog.splice(0, store.db.blog.length);
+  for (const d of ['Dubai', 'Rome', 'Faro']) {
+    store.db.blog.push({ id: 'blog_legacy_' + d, slug: 'legacy-' + d.toLowerCase(), title: `Cheapest reliable ${d} holiday`, destination: d, body: '<p>same template</p>', tags: ['travel'], publishedAt: '2026-06-30T12:00:00.000Z' });
+  }
+  assert.ok(store.db.blog.every((p) => !p.angle), 'legacy posts have no angle');
+  // A blog read triggers the one-time migration.
+  const posts = ensureSeedPosts();
+  assert.ok(posts.length >= 5, 'rebuilt the full varied set');
+  assert.ok(posts.every((p) => p.angle), 'every post now carries an intent angle');
+  const titles = new Set(posts.map((p) => p.title));
+  assert.ok(titles.size >= 5, 'titles are varied, not identical');
+  // Idempotent: a second read does not re-migrate (all posts already have angles).
+  const before = posts.length;
+  const again = ensureSeedPosts();
+  assert.equal(again.length, before, 'no repeat migration once posts carry angles');
+});
+
 test('SEO autopilot: dynamic related links, RSS feed, and link-graph health', () => {
   const { createPost, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats } = agentsModule;
   // Seed a tight cluster: several Dubai posts should relate to each other.
