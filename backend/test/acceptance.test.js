@@ -847,6 +847,21 @@ test('NO-FREE-AI-4: the AI assistant is metered (2 ACU) and gated; guests are bl
   assert.equal(guest.status, 401);
 });
 
+test('NO-FREE-AI-5: existing-booking support is FREE; general/pre-sales chat is charged', async () => {
+  const u = mkUser(); // 50 ACU
+  createBooking({ option: livePkgOption({ total: 1000 }), userId: u.id, lead: { fullName: 'QA', email: u.email } });
+  // A customer asking about their booking (status/e-ticket) → exempt, 0 ACU.
+  const support = await api('POST', '/api/support/chat', { userId: u.id, body: { message: 'where is my e-ticket for my booking?' } });
+  assert.equal(support.status, 200);
+  assert.equal(support.json.acuCharged, 0, 'booking support is free');
+  // The same customer asking a general pre-sales question → charged 2 ACU.
+  const general = await api('POST', '/api/support/chat', { userId: u.id, body: { message: 'find me a cheap holiday deal to Rome' } });
+  assert.equal(general.json.acuCharged, 2, 'general/pre-sales chat is metered');
+  // Reaching a human is never charged, even with a booking.
+  const human = await api('POST', '/api/support/chat', { userId: u.id, body: { message: 'I want to speak to a human agent' } });
+  assert.equal(human.json.acuCharged, 0, 'human handoff is never charged');
+});
+
 test('FUNNEL-4: a paid member may choose any tier (not forced to standard)', async () => {
   const m = mkUser();
   subscribeMembership(m.id, 'plus');

@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v245';
+const APP_BUILD = 'v246';
 
 const state = {
   context: null,
@@ -7617,6 +7617,6 @@ window.addEventListener('appinstalled', () => {
       if (d.escalated) bubble(`🎧 ${d.handoff || 'A 3JN specialist will follow up shortly.'}${d.ticketId ? ` (ref ${d.ticketId})` : ''}`, 'esc');
       // The assistant is metered — keep the ACU balance in sync.
       if (typeof d.acuBalance === 'number' && state.user) setUser({ ...state.user, acuBalance: d.acuBalance });
-    } catch (e) { typing.remove(); bubble(e?.status === 401 ? 'Sign in to use the AI assistant — new accounts get free starter ACUs.' : e?.status === 402 ? 'You’re out of ACUs — top up to keep chatting with the assistant.' : 'Sorry — I couldn’t reach support just now. Please try again in a moment.', 'bot'); }
+    } catch (e) { typing.remove(); bubble(e?.status === 401 ? 'Sign in to use the AI assistant — new accounts get free starter ACUs.' : e?.status === 402 ? 'You’re out of ACUs for general questions (booking support is always free) — top up to continue.' : 'Sorry — I couldn’t reach support just now. Please try again in a moment.', 'bot'); }
   });
 })();

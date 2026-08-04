@@ -65,6 +65,7 @@ import { embassyProposal, visaDecisionLetter } from './embassy.js';
 import { VENDOR_TIERS, PLATFORM_FEE_RATE, commissionSplit } from './vendors.js';
 import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVSHARE_CAP_GBP, REFERRER_REVSHARE_UNLOCK, REFERRAL_ACU } from './rewards.js';
 import { assist } from './assistant.js';
+import { classifySupport } from './chatbot.js';
 import { bookingDocument, bookingPdf, includedServices } from './documents.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
 import { learnProfile, journeyDashboard } from './learning.js';
@@ -206,7 +207,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-no-free-ai-metered-v245';
+const BUILD_TAG = '2026-08-03-support-exempt-v246';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -4623,13 +4624,21 @@ app.post('/api/support/chat', safe(async (req, res) => {
   const { message, history, hotelContext } = req.body || {};
   if (message != null && typeof message !== 'string') return res.status(400).json({ error: 'message-must-be-string' });
   const user = currentUser(req);
-  // NO FREE AI: the assistant is metered + gated by ACU. Guests must sign in (new
-  // accounts get SIGNUP_STARTER_ACU); each message costs ACU (staff exempt).
+  // NO FREE AI — with a support exemption: general/pre-sales chat is metered, but
+  // EXISTING-BOOKING SUPPORT is free (never charge a customer to sort out a booking
+  // they've paid for, or to reach a human). Guests must still sign in.
   if (!user) return res.status(401).json({ error: 'auth-required', message: `Sign in to use the AI assistant — new accounts get ${SIGNUP_STARTER_ACU} free ACUs. Every AI action is funded by ACUs.` });
+  // Classify cheaply (regex, no AI spend) to decide chargeable-vs-support BEFORE
+  // doing the work, so we never run the AI for free when the balance can't cover it.
+  const cls = classifySupport(message || '');
+  const SUPPORT_INTENTS = new Set(['booking_status', 'change', 'cancel', 'refund', 'payment']);
+  const ALWAYS_FREE = new Set(['human', 'complaint', 'safety']); // human handoff / emergencies — never charged
+  const hasBooking = (() => { try { return listBookings(user.id).length > 0; } catch { return false; } })();
+  const supportExempt = cls.escalate || ALWAYS_FREE.has(cls.key) || (SUPPORT_INTENTS.has(cls.key) && hasBooking);
   let assistantAcu = 0; let assistantBalance = user.acuBalance;
-  if (!user.allAccess) {
+  if (!user.allAccess && !supportExempt) {
     const s = spendAcu(user.id, AI_ACTION_ACU.assistant, 'assistant');
-    if (!s.ok) return res.status(402).json({ error: 'insufficient-acu', acuNeeded: AI_ACTION_ACU.assistant, balance: typeof s.balance === 'number' ? s.balance : user.acuBalance, message: `The AI assistant costs ${AI_ACTION_ACU.assistant} ACU per message. Top up to continue.` });
+    if (!s.ok) return res.status(402).json({ error: 'insufficient-acu', acuNeeded: AI_ACTION_ACU.assistant, balance: typeof s.balance === 'number' ? s.balance : user.acuBalance, message: `The AI assistant costs ${AI_ACTION_ACU.assistant} ACU per message for general questions (booking support is free). Top up to continue.` });
     assistantAcu = AI_ACTION_ACU.assistant; assistantBalance = s.balance;
   }
   // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
