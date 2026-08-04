@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v243';
+const APP_BUILD = 'v244';
 
 const state = {
   context: null,
@@ -741,6 +741,16 @@ function collectStructured() {
   if (comps.length) s.components = comps;
   return s;
 }
+// Empty every Precise-search field. The free-text sentence is the MAIN input, so
+// once a search runs these optional overrides are cleared (and their saved copy
+// wiped) — the section is always blank for the user to fill deliberately, never
+// auto-populated from what the AI parsed.
+function clearStructured() {
+  ['#psDest', '#psOrigin', '#psCheckIn', '#psNights', '#psAdults', '#psChildren', '#psChildAges'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
+  const stars = $('#psStars'); if (stars) stars.value = '';
+  document.querySelectorAll('.psComp').forEach((c) => { c.checked = false; });
+  try { localStorage.removeItem('3jn_precise'); } catch {}
+}
 // Build a clean canonical sentence from the precise fields, so a structured-only
 // search (no free text) still seeds the pipeline. The backend overrides make it
 // exact regardless; this just gives the parser something well-formed to read.
@@ -759,25 +769,6 @@ function composeFromStructured(s) {
   parts.push('cheapest reliable price.');
   return parts.join(' ');
 }
-// Mirror what the AI parsed from the free-text sentence back into the Precise
-// search fields, so the two views never disagree — the user can open Precise
-// search after a text search, see exactly what was understood, tweak one value
-// and re-run for an exact search. (origin lives at data.origin, not intent.)
-function syncStructuredFromPlan(data) {
-  const intent = data?.intent; if (!intent) return;
-  const set = (id, val) => { const el = $(id); if (el != null && val != null && val !== '') el.value = String(val); };
-  set('#psDest', intent.destination?.city);
-  set('#psOrigin', data.origin?.city);
-  set('#psCheckIn', intent.dates?.checkIn);
-  set('#psNights', intent.nights);
-  set('#psAdults', intent.travellers?.adults);
-  if (intent.travellers?.children != null && $('#psChildren')) $('#psChildren').value = String(intent.travellers.children);
-  if (Array.isArray(intent.travellers?.childAges) && intent.travellers.childAges.length) set('#psChildAges', intent.travellers.childAges.join(', '));
-  if (Array.isArray(intent.components) && intent.components.length) {
-    const want = new Set(intent.components);
-    document.querySelectorAll('.psComp').forEach((c) => { c.checked = want.has(c.value); });
-  }
-}
 async function runPlan(overrides = {}) {
   const { approveAcu, ...restOverrides } = overrides;
   const structured = collectStructured();
@@ -789,6 +780,10 @@ async function runPlan(overrides = {}) {
   // a clean canonical sentence so the pipeline runs (overrides make it exact).
   if (!text && (structured.destination || structured.components)) text = composeFromStructured(structured);
   if (!text) { toast('Describe your trip — or fill the Precise search fields, or tap ✨ Inspire me.'); return; }
+  // The free-text sentence is the main input — clear the optional Precise fields
+  // now the search is running (their values are already captured in `structured`),
+  // so the section is always empty afterwards for the user to fill deliberately.
+  clearStructured();
   const out = $('#plannerOut');
   out.innerHTML = scanAnimation();
 
@@ -857,7 +852,9 @@ async function runPlan(overrides = {}) {
     // Show the small member cache-access fee so ACU movement is visible.
     if (data.cachedFee && data.acuCharged > 0) toast(`⚡ ${data.acuCharged} ACU · cached result · balance ${data.acuBalance.toLocaleString()}`);
   }
-  syncStructuredFromPlan(data);
+  // NOTE: we deliberately do NOT mirror the parsed plan back into the Precise
+  // fields — the free-text sentence is the main input, and the Precise section is
+  // left empty (cleared above) for the user to fill only when they want overrides.
   renderOptions(data);
 }
 
