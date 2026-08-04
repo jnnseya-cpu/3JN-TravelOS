@@ -13,6 +13,7 @@ Desk → Supplier doors**.
 | Flights (live) | Duffel | `DUFFEL_TOKEN` | duffel.com | ✅ already live |
 | Market fares (incl. Ryanair) | Travelpayouts | `TRAVELPAYOUTS_TOKEN` | travelpayouts.com → Tools → API | minutes, self-serve |
 | Hotels (live) | Amadeus | `AMADEUS_CLIENT_ID` + `AMADEUS_CLIENT_SECRET` | developers.amadeus.com | in progress |
+| Hotels (bedbank) | WebBeds (Distribution API / ex-Sunhotels/JacTravel) | `WEBBEDS_API_URL` + `WEBBEDS_USERNAME` + `WEBBEDS_PASSWORD` (or `WEBBEDS_API_KEY`) | webbeds.com → Partner/Distribution API | contract — request API pack + sandbox |
 | eSIM (auto-provision) | eSIM Access | `ESIMACCESS_API_KEY` | esimaccess.com | days, self-serve reseller |
 | Activities (global) | Viator | `VIATOR_API_KEY` | partnerresources.viator.com | days–week, open signup |
 | Transfers | Mozio | `MOZIO_API_KEY` | mozio.com/partners | weeks, application |
