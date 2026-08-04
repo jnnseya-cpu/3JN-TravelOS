@@ -798,38 +798,53 @@ test('PROFILE-2: an oversized image is reported, never silently dropped', async 
   assert.equal(patch.json.user.name, 'Kept Name', 'non-image fields still saved');
 });
 
-test('FUNNEL-1: guest gets exactly 2 free standard searches, then a signup wall', async () => {
+test('NO-FREE-AI-1: a guest gets NO free AI search — sign-in required immediately', async () => {
   const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
-  const search = (i) => api('POST', '/api/plan', { headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, trip ${ip}-${i}` } });
-  const stages = [];
-  for (let i = 0; i < 4; i++) { const r = await search(i); stages.push(r.json.stage); }
-  const frees = stages.filter((s) => s === 'options').length;
-  assert.equal(frees, 2, `exactly 2 free guest searches (got ${frees}: ${stages.join(',')})`);
-  const walled = await search(99);
-  assert.equal(walled.json.stage, 'signup-required');
-  assert.equal(walled.json.reason, 'guest-free-exhausted');
+  const r = await api('POST', '/api/plan', { headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, guest ${ip}` } });
+  assert.equal(r.json.stage, 'signup-required');
+  assert.equal(r.json.reason, 'ai-requires-account');
 });
 
-test('FUNNEL-2: after signup a member gets 2 more free, then a membership wall', async () => {
-  const u = mkUser();
+test('NO-FREE-AI-2: a signed-in search is ACU-metered — approval, charge, then a top-up wall (no free fallback)', async () => {
+  const u = mkUser(); // new accounts get SIGNUP_STARTER_ACU (50) to try
   const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
-  const search = (i) => api('POST', '/api/plan', { userId: u.id, headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, member ${u.id}-${i}` } });
-  const stages = [];
-  for (let i = 0; i < 4; i++) { const r = await search(i); stages.push(r.json.stage); }
-  const frees = stages.filter((s) => s === 'options').length;
-  assert.equal(frees, 2, `exactly 2 free post-signup searches (got ${frees}: ${stages.join(',')})`);
-  const walled = await search(99);
-  assert.equal(walled.json.stage, 'membership-required');
-  assert.equal(walled.json.reason, 'signup-free-exhausted');
+  const search = (i, approve) => api('POST', '/api/plan', { userId: u.id, headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, meter ${u.id}-${i}`, approveAcu: approve || undefined } });
+  // No free searches: the first fresh search needs ACU approval (cost > 0).
+  const q = await search(0, false);
+  assert.equal(q.json.stage, 'acu-approval-required');
+  assert.ok(q.json.acuNeeded > 0);
+  // Approve → served, ACU charged, balance drops below the 50 starter grant.
+  const r = await search(1, true);
+  assert.equal(r.json.stage, 'options');
+  assert.ok(r.json.acuCharged > 0, 'metered — ACU charged');
+  assert.ok(r.json.acuBalance < 50, 'balance dropped');
+  assert.ok(!r.json.freeSearch, 'no free-search grant exists anymore');
+  // Drain the balance → eventually a top-up wall, never a free fallback.
+  let walled = false;
+  for (let i = 2; i < 14; i++) { const x = await search(i, true); if (x.json.stage === 'topup-required') { walled = true; assert.equal(x.json.reason, 'insufficient-acu'); break; } }
+  assert.ok(walled, 'runs out of ACUs → top-up wall (no free search)');
 });
 
-test('FUNNEL-3: every customer search is forced to the STANDARD tier (no deep/concierge)', async () => {
-  const u = mkUser();
-  const ip = `198.51.100.${Math.floor(performance.now() % 200) + 1}`;
-  // Ask for concierge; a customer must still get a standard (free-granted) search.
-  const r = await api('POST', '/api/plan', { userId: u.id, headers: { 'x-forwarded-for': ip }, body: { text: `flights and hotel London to Rome for 2 adults, 5 nights, tier ${u.id}`, searchTier: 'concierge' } });
-  assert.equal(r.json.stage, 'options', 'customer gets a standard search, not a concierge gate');
-  assert.equal(r.json.freeSearch?.scope, 'member', 'served from the free-search allowance at standard tier');
+test('NO-FREE-AI-3: the AI Growth Engine is metered (5 ACU) and gated; guests are blocked', async () => {
+  const u = mkUser(); // 50 ACU
+  const r = await api('POST', '/api/rewards/growth', { userId: u.id, body: { tool: 'hashtags', destination: 'Faro' } });
+  assert.equal(r.json.result?.tool, 'hashtags');
+  assert.equal(r.json.acuCharged, 5, 'each generation costs 5 ACU');
+  assert.ok(r.json.acuBalance <= 45, 'balance debited');
+  // Guest (no account, no balance) → blocked entirely (no free AI action).
+  const guest = await api('POST', '/api/rewards/growth', { body: { tool: 'hashtags', destination: 'Faro' } });
+  assert.equal(guest.status, 401);
+});
+
+test('NO-FREE-AI-4: the AI assistant is metered (2 ACU) and gated; guests are blocked', async () => {
+  const u = mkUser(); // 50 ACU
+  const r = await api('POST', '/api/support/chat', { userId: u.id, body: { message: 'where is my e-ticket?' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.acuCharged, 2, 'each assistant message costs 2 ACU');
+  assert.ok(r.json.acuBalance <= 48, 'balance debited');
+  // Guest → sign-in required (no free AI action).
+  const guest = await api('POST', '/api/support/chat', { body: { message: 'hi' } });
+  assert.equal(guest.status, 401);
 });
 
 test('FUNNEL-4: a paid member may choose any tier (not forced to standard)', async () => {

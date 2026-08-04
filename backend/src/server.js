@@ -39,7 +39,7 @@ import {
   clientMoneyLedger, secureDeadlineSweep,
   createTravelPot, contributeToPot, listTravelPots, getTravelPot, convertPotToCredit, POT_DISCLOSURE, setPotWatch, recordPotFare, potsWithWatches, reviewHostListing, adminUserHostOverview,
   createQuoteRequest, confirmQuoteRequest, markQuoteRequestPaid, listQuoteRequests, getQuoteRequest, claimStripeEvent,
-  useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP,
+  useGuestFreeSearch, useMemberFreeSearch, guestFreeSearchStatus, FREE_SEARCHES_GUEST, FREE_SEARCHES_SIGNUP, SIGNUP_STARTER_ACU,
   searchToBookStats,
   earnAcu, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
@@ -206,7 +206,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-precise-search-clears-v244';
+const BUILD_TAG = '2026-08-03-no-free-ai-metered-v245';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -470,6 +470,10 @@ const LIVE_MODE = () => process.env.LIVE_MODE === 'true';
 // now (ticket held) and spread the hotel over instalments. OFF until proven with
 // a live test — set SPLIT_PAY_INSTANT_FARES=true to enable.
 const splitPayEnabled = () => process.env.SPLIT_PAY_INSTANT_FARES === 'true';
+// NO FREE AI ACTION: every AI action is metered + gated by the user's ACU balance.
+// Searches keep their per-tier cost (SEARCH_TIERS); these cover the smaller AI
+// actions. Guests (no balance) must sign in — new accounts get SIGNUP_STARTER_ACU.
+const AI_ACTION_ACU = { growth: 5, assistant: 2, cached: 1 };
 function staffPinOk(req) {
   const pin = staffPin();
   if (!pin) return true; // gate not configured
@@ -2863,9 +2867,9 @@ app.post('/api/plan', safe(async (req, res) => {
   // live-supplier call — we're going to send them to sign up / join anyway, so
   // never burn paid Duffel/AI quota on an over-limit user (read-only checks, no
   // allowance consumed). Members (funded) always get the live overlay.
-  const guestExhausted = !user && guestFreeSearchStatus(clientIp(req)).remaining <= 0;
-  const memberExhausted = user && !user.membership?.active && (user.freeSearchesUsed || 0) >= FREE_SEARCHES_SIGNUP;
-  const overLimitFree = !isStaffPlan && (guestExhausted || memberExhausted);
+  // NO FREE AI: a guest can't get AI results (they'll be sign-in-gated below), so
+  // never burn paid Duffel/AI quota on a guest search.
+  const overLimitFree = !isStaffPlan && !user;
   if (result.stage !== 'options') {
     liveOverlay.reason = 'not-options-stage';
   } else if (overLimitFree) {
@@ -2993,46 +2997,15 @@ app.post('/api/plan', safe(async (req, res) => {
     } catch { /* market reference is best-effort */ }
   }
 
-  // FREE-SEARCH FUNNEL (customer policy): an unknown user gets 2 free STANDARD
-  // searches for life → after signing up, 2 more → then a membership funds their
-  // searches (top-up later if needed). Staff/all-access are exempt. Cached results
-  // are always free and never consume a free-search allowance.
-  let freeGranted = false;
-  if (result.stage === 'options' && !result.cached && !isStaffPlan) {
-    // "Funded" = an ACTIVE MEMBERSHIP. The funnel is guest(2 free) → signup(2 free)
-    // → membership → top-up, so a NON-member always spends their 2 free searches
-    // first (starter ACU does not skip the funnel); only a member's searches are
-    // funded from their allowance (and they top up when it runs out).
-    const funded = user && user.membership?.active;
-    if (!funded) {
-      if (!user) {
-        // UNKNOWN USER — 2 free lifetime, counted per IP (abuse-hardened: the real
-        // wall is the human-checked, IP-capped signup that grants the next 2).
-        const gate = useGuestFreeSearch(clientIp(req), FREE_SEARCHES_GUEST);
-        if (!gate.allowed) {
-          return res.json({
-            stage: 'signup-required', reason: 'guest-free-exhausted',
-            freeUsed: gate.used, freeMax: gate.max, freeRemaining: 0,
-            message: `You've used your ${gate.max} free searches. Create a free account to get ${FREE_SEARCHES_SIGNUP} more — then a Travel+ membership funds your standard searches.`,
-          });
-        }
-        freeGranted = true;
-        result.freeSearch = { scope: 'guest', used: gate.used, remaining: gate.remaining, max: gate.max };
-      } else {
-        // SIGNED-IN, no membership, no ACU — 2 free lifetime, then membership.
-        const gate = useMemberFreeSearch(user.id, FREE_SEARCHES_SIGNUP);
-        if (!gate.allowed) {
-          return res.json({
-            stage: 'membership-required', reason: 'signup-free-exhausted',
-            freeUsed: gate.used, freeMax: gate.max, freeRemaining: 0, isMember: false,
-            message: `You've used your ${gate.max} free searches. Join Travel+ — your membership funds your standard searches (top up only if you run out).`,
-          });
-        }
-        freeGranted = true;
-        result.freeSearch = { scope: 'member', used: gate.used, remaining: gate.remaining, max: gate.max };
-      }
-      result.acuCharged = 0;
-    }
+  // NO FREE AI ACTION (customer policy): every AI search is funded by ACUs — there
+  // is no free-search allowance. Guests have no ACU balance, so an AI result
+  // requires an account; new accounts get SIGNUP_STARTER_ACU to try. Staff/
+  // all-access are exempt. Cached and fresh results are BOTH charged below.
+  if (result.stage === 'options' && !isStaffPlan && !user) {
+    return res.json({
+      stage: 'signup-required', reason: 'ai-requires-account',
+      message: `Sign in to run an AI search — new accounts get ${SIGNUP_STARTER_ACU} free ACUs to start. Every AI action is funded by ACUs.`,
+    });
   }
 
   // ACU enforcement: paid search tiers are funded by ACUs. A signed-in account
@@ -3050,17 +3023,22 @@ app.post('/api/plan', safe(async (req, res) => {
     // charge it. A genuine popular-cache hit never carries approveAcu (no prompt
     // was shown), so it stays free — EXCEPT active members, who pay a small
     // cache-access fee so their ACU keeps reflecting usage (see cachedSearchAcu).
-    const cacheFee = cachedSearchAcu(user);
-    if (cacheFee > 0) {
+    // NO FREE AI: a cached AI answer is metered too. Everyone (except staff/all-
+    // access) pays the nominal cached fee, gated by balance — no free cached search.
+    if (!user.allAccess) {
+      const cacheFee = AI_ACTION_ACU.cached;
       const s = spendAcu(user.id, cacheFee, 'search:cached');
-      // Never BLOCK a cached result over the nominal fee — charge it if the member
-      // can cover it, otherwise serve the cached answer free.
-      if (s.ok) { result.acuCharged = cacheFee; result.acuBalance = s.balance; result.cachedFee = true; }
-      else { result.acuCharged = 0; }
-    } else {
-      result.acuCharged = 0;
+      if (!s.ok) {
+        return res.json({
+          stage: 'topup-required', reason: 'insufficient-acu', tierName: 'Cached search',
+          acuNeeded: cacheFee, balance: typeof s.balance === 'number' ? s.balance : user.acuBalance,
+          isMember: !!user.membership?.active,
+          message: `A cached search costs ${cacheFee} ACU. Your balance is ${typeof s.balance === 'number' ? s.balance : user.acuBalance} ACU — top up to continue.`,
+        });
+      }
+      result.acuCharged = cacheFee; result.acuBalance = s.balance; result.cachedFee = true;
     }
-  } else if (result.stage === 'options' && user && !user.allAccess && !freeGranted) {
+  } else if (result.stage === 'options' && user && !user.allAccess) {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     // MEMBERS pay the AT-COST rate (their subscription is the margin); NON-MEMBERS
     // (top-up only) pay the full 3–10× commercial rate.
@@ -4407,12 +4385,19 @@ app.post('/api/rewards/growth', safe((req, res) => {
   if (!user) return res.status(401).json({ error: 'auth-required' });
   const { tool, destination, platform, tone, variant } = req.body || {};
   if (!GROWTH_TOOL_KEYS.includes(tool)) return res.status(400).json({ error: 'unknown-tool', tools: GROWTH_TOOL_KEYS });
+  // NO FREE AI: each generation is metered + gated by ACU balance (staff exempt).
+  let acuCharged = 0; let acuBalance = user.acuBalance;
+  if (!user.allAccess) {
+    const s = spendAcu(user.id, AI_ACTION_ACU.growth, `growth:${tool}`);
+    if (!s.ok) return res.status(402).json({ error: 'insufficient-acu', acuNeeded: AI_ACTION_ACU.growth, balance: typeof s.balance === 'number' ? s.balance : user.acuBalance, message: `Each AI Growth tool costs ${AI_ACTION_ACU.growth} ACU. Top up to continue.` });
+    acuCharged = AI_ACTION_ACU.growth; acuBalance = s.balance;
+  }
   const dash = partnerDashboard(user.id) || {};
   const ctx = { referralLink: dash.referralLink || `https://3jntravel.com/?ref=${user.referralCode || ''}`, referralCode: dash.referralCode || user.referralCode, name: user.name, followers: dash.followers, dashboard: dash };
   const result = generateGrowthContent(tool, { destination, platform, tone, variant: Number(variant) || 0 }, ctx);
   if (!result) return res.status(400).json({ error: 'generation-failed' });
   recordAudit({ actor: user.id, role: 'partner', action: 'growth.generated', entity: 'growth', entityId: tool, summary: `${tool}${destination ? ' · ' + String(destination).slice(0, 40) : ''}` });
-  res.json({ result });
+  res.json({ result, acuCharged, acuBalance });
 }));
 // Apply to the influencer programme (§3).
 app.post('/api/rewards/influencer/apply', safe((req, res) => {
@@ -4638,6 +4623,15 @@ app.post('/api/support/chat', safe(async (req, res) => {
   const { message, history, hotelContext } = req.body || {};
   if (message != null && typeof message !== 'string') return res.status(400).json({ error: 'message-must-be-string' });
   const user = currentUser(req);
+  // NO FREE AI: the assistant is metered + gated by ACU. Guests must sign in (new
+  // accounts get SIGNUP_STARTER_ACU); each message costs ACU (staff exempt).
+  if (!user) return res.status(401).json({ error: 'auth-required', message: `Sign in to use the AI assistant — new accounts get ${SIGNUP_STARTER_ACU} free ACUs. Every AI action is funded by ACUs.` });
+  let assistantAcu = 0; let assistantBalance = user.acuBalance;
+  if (!user.allAccess) {
+    const s = spendAcu(user.id, AI_ACTION_ACU.assistant, 'assistant');
+    if (!s.ok) return res.status(402).json({ error: 'insufficient-acu', acuNeeded: AI_ACTION_ACU.assistant, balance: typeof s.balance === 'number' ? s.balance : user.acuBalance, message: `The AI assistant costs ${AI_ACTION_ACU.assistant} ACU per message. Top up to continue.` });
+    assistantAcu = AI_ACTION_ACU.assistant; assistantBalance = s.balance;
+  }
   // Deep, system-aware agent: resolves with the user's REAL bookings, payments,
   // e-tickets, wallet, rewards and visa rules; escalates only when a human must
   // authorise an action — and hands the human a full diagnostic. The recent
@@ -4758,6 +4752,8 @@ app.post('/api/support/chat', safe(async (req, res) => {
     reason: out.reason,
     ticketId: ticket?.id || null,
     handoff: out.escalate ? 'A 3JN travel specialist will follow up shortly.' : null,
+    acuCharged: assistantAcu,
+    acuBalance: assistantBalance,
   });
 }));
 // My support tickets (customer view).

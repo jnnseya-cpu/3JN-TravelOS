@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v244';
+const APP_BUILD = 'v245';
 
 const state = {
   context: null,
@@ -870,26 +870,25 @@ function renderTopup(data) {
     <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:8px">
       <button class="btn btn-gold" onclick="buyAcuFlow()">Top up ACUs</button>
       ${data.isMember ? '<button class="btn btn-ghost" onclick="renewMembership()">Renew plan (+ACU)</button>' : '<button class="btn btn-ghost" data-nav="membership">Join a plan (10% funds ACU)</button>'}
-      <button class="btn btn-ghost" onclick="runFreeSearch()">Run free cached search</button>
     </div>
     <p class="muted" style="font-size:12px;margin-top:12px">£1 = 100 ACU. Members auto-fund ACUs from 10% of their subscription each month.</p>
   </div>`;
 }
 window.runFreeSearch = () => { const sel = $('#tierSelect'); if (sel) sel.value = 'free'; runPlan(); };
 
-// Free-search funnel walls. Guest used their 2 free searches → invite to sign up
-// for 2 more. Signed-in member used their 2 free → invite to join Travel+.
+// Sign-in gate: every AI action is funded by ACUs, so a guest must create an
+// account (new accounts get starter ACUs) before any AI search runs.
 function renderSignupWall(data) {
   const out = $('#plannerOut');
   out.innerHTML = `<div class="card pad center" style="max-width:560px;margin:0 auto;border-color:rgba(244, 183, 28,0.4)">
-    <div style="font-size:34px">🔍</div>
-    <h3 style="margin:10px 0 6px">You've used your free searches</h3>
-    <p class="muted" style="font-size:14px">${esc(data.message || 'Create a free account to keep searching.')}</p>
+    <div style="font-size:34px">🔑</div>
+    <h3 style="margin:10px 0 6px">Sign in to run an AI search</h3>
+    <p class="muted" style="font-size:14px">${esc(data.message || 'Every AI action is funded by ACUs. Create a free account to get started.')}</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px">
-      <button class="btn btn-gold" onclick="openAuth('signup')">Create a free account — ${(data.freeMax != null ? '2' : '')} more free searches</button>
-      <button class="btn btn-ghost" onclick="runFreeSearch()">See cached results (free)</button>
+      <button class="btn btn-gold" onclick="openAuth('signup')">Create a free account — get free starter ACUs</button>
+      <button class="btn btn-ghost" onclick="openAuth('login')">Sign in</button>
     </div>
-    <p class="muted" style="font-size:12px;margin-top:12px">After that, a Travel+ membership funds your standard searches.</p>
+    <p class="muted" style="font-size:12px;margin-top:12px">Your starter ACUs fund your first searches — top up or join Travel+ when they run low.</p>
   </div>`;
 }
 function renderMembershipWall(data) {
@@ -3190,7 +3189,12 @@ window.runGrowthTool = async (key, regen = false) => {
       tone: $('#gtTone')?.value || '',
       variant: window.__growthVariant,
     }) });
-  } catch { if (out) out.innerHTML = '<div class="muted" style="font-size:13px;color:#ff8a8a">Could not generate — please try again.</div>'; return; }
+  } catch { if (out) out.innerHTML = '<div class="muted" style="font-size:13px;color:#ff8a8a">Could not generate — check the message above (you may need to top up ACUs).</div>'; return; }
+  // Every generation is metered — reflect the ACU spend + new balance.
+  if (typeof data.acuBalance === 'number' && state.user) {
+    setUser({ ...state.user, acuBalance: data.acuBalance });
+    if (data.acuCharged > 0) toast(`⚡ ${data.acuCharged} ACU · balance ${data.acuBalance.toLocaleString()}`);
+  }
   const r = data.result || {};
   window.__growthResult = r;
   if (out) out.innerHTML = `<pre style="white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12.5px;font-family:inherit;max-height:340px;overflow:auto">${esc(r.output || '')}</pre>`;
@@ -7611,6 +7615,8 @@ window.addEventListener('appinstalled', () => {
       typing.remove();
       bubble(d.reply, 'bot');
       if (d.escalated) bubble(`🎧 ${d.handoff || 'A 3JN specialist will follow up shortly.'}${d.ticketId ? ` (ref ${d.ticketId})` : ''}`, 'esc');
-    } catch { typing.remove(); bubble('Sorry — I couldn’t reach support just now. Please try again in a moment.', 'bot'); }
+      // The assistant is metered — keep the ACU balance in sync.
+      if (typeof d.acuBalance === 'number' && state.user) setUser({ ...state.user, acuBalance: d.acuBalance });
+    } catch (e) { typing.remove(); bubble(e?.status === 401 ? 'Sign in to use the AI assistant — new accounts get free starter ACUs.' : e?.status === 402 ? 'You’re out of ACUs — top up to keep chatting with the assistant.' : 'Sorry — I couldn’t reach support just now. Please try again in a moment.', 'bot'); }
   });
 })();
