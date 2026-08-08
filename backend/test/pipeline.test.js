@@ -1860,6 +1860,23 @@ test('AI Growth Engine: all 10 tools generate real, referral-personalised output
   assert.equal(growth.generateGrowthContent('nope', {}, ctx), null);
 });
 
+test('flexible-date window: parser detects "cheapest anytime between today and <date>" without false positives', () => {
+  const today = new Date('2026-08-04T00:00:00Z');
+  // The Kinshasa case: the typed date is the window END, not the departure.
+  const flex = parseIntent('flights to Kinshasa from Birmingham next week for 30 days, cheapest price between today and 30/09/2026, travel anytime in that period', { country: 'GB' }, today);
+  assert.ok(flex.flexWindow, 'window detected');
+  assert.equal(flex.flexWindow.end, '2026-09-30', 'the typed date is the window END');
+  assert.equal(flex.flexWindow.start, '2026-08-04');
+  assert.notEqual(flex.dates.checkIn, '2026-09-30', 'departure is NOT the deadline');
+  assert.ok(flex.dates.checkIn > '2026-08-04' && flex.dates.checkIn <= '2026-09-30', 'provisional departure is inside the window');
+  // "anytime before <date>" also triggers it.
+  assert.ok(parseIntent('Rome anytime before 20/12/2026 for 5 nights', { country: 'GB' }, today).flexWindow, 'anytime-before triggers');
+  // A normal dated search must NOT be turned into a window (no false positive on "cheapest flight").
+  const normal = parseIntent('cheapest flight to Dubai on 15/08/2026 for 7 nights', { country: 'GB' }, today);
+  assert.equal(normal.flexWindow, null, 'a specific-date "cheapest flight" search is not a window');
+  assert.equal(normal.dates.checkIn, '2026-08-15', 'the specific date is honoured');
+});
+
 test('blog migration: legacy identical (no-angle) posts are replaced by the varied set', async () => {
   const store = await import('../src/store.js');
   const { ensureSeedPosts } = agentsModule;

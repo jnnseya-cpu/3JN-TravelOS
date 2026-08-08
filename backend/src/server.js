@@ -78,7 +78,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -208,7 +208,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-blog-migrate-varied-v248';
+const BUILD_TAG = '2026-08-03-flex-date-window-v249';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -2848,7 +2848,26 @@ app.post('/api/plan', safe(async (req, res) => {
   const isStaffPlan = !!(user && (user.allAccess || PRIVILEGED_ROLES.has(user.role)));
   const isMemberPlan = !!(user && user.membership?.active);
   const searchTier = (isStaffPlan || isMemberPlan) ? (reqTierKey || 'smart') : 'smart';
-  let result = plan({ text, context, user, searchTier, overrides, preferences: preferences || {}, usage: usageStats(user?.id) });
+  // FLEXIBLE-DATE WINDOW: when the sentence says "cheapest anytime between today
+  // and <date>", scan the window with cached market data for the cheapest
+  // DEPARTURE day and search THAT day — not the deadline the parser would grab.
+  // Best-effort: any miss (no market key, no fares, off-catalogue) falls straight
+  // through to the normal dated search. Uses no ACU (it's cached market data).
+  let effectiveOverrides = overrides;
+  let flexResult = null;
+  try {
+    const pre = parseIntent(String(text || ''), context);
+    if (pre?.flexWindow && marketDataEnabled() && pre.destination) {
+      const originR = (pre.originCity && resolveOrigin(String(pre.originCity))) || originForCountry(context.country) || { airport: 'LHR' };
+      const scan = await cheapestDepartureInWindow(pre, pre.destination, originR, pre.flexWindow);
+      if (scan?.dep) {
+        flexResult = { window: pre.flexWindow, chosenDate: scan.dep, returnDate: scan.ret || null, marketMinGbp: scan.min, scanned: scan.scanned };
+        effectiveOverrides = { ...(overrides || {}), structured: { ...((overrides && overrides.structured) || {}), checkIn: scan.dep, ...(pre.nights ? { nights: pre.nights } : {}) } };
+      }
+    }
+  } catch { /* flexible search is best-effort — normal search proceeds */ }
+  let result = plan({ text, context, user, searchTier, overrides: effectiveOverrides, preferences: preferences || {}, usage: usageStats(user?.id) });
+  if (flexResult) result.flexResult = flexResult;
 
   // Live provider pricing overlay: when flight/hotel provider keys are present
   // and reachable, fetch real offers and rebuild the packages from them. Any

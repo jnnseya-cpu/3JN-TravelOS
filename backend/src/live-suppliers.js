@@ -1038,6 +1038,41 @@ export async function fetchMarketFares(intent, dest, origin) {
   return fares.length ? fares : null;
 }
 
+// FLEXIBLE-DATE WINDOW SCAN: find the cheapest DEPARTURE day across [start, end]
+// using cached market data (prices_for_dates) — cheap, NOT a live search per date.
+// Samples a weekly cadence (capped at ~8 dates so one search can't fan out),
+// prices each candidate, and returns the cheapest { dep, ret, min, scanned }.
+// The planner then live-prices the winning day, so the customer gets a real
+// bookable fare on the cheapest date in their window — not their deadline.
+export async function cheapestDepartureInWindow(intent, dest, origin, window) {
+  if (!marketDataEnabled() || !window?.start || !window?.end) return null;
+  const originCode = origin?.airport;
+  const destCode = dest?.code || dest?.airport;
+  if (!originCode || !destCode) return null;
+  const nights = Math.max(1, Number(intent?.nights) || 7);
+  const oneWay = !!intent?.oneWay;
+  const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const todayISO = new Date().toISOString().slice(0, 10);
+  let d = window.start < todayISO ? todayISO : window.start;
+  const cands = [];
+  while (d <= window.end && cands.length < 8) { cands.push(d); d = addDays(d, 7); }
+  if (cands.length && cands[cands.length - 1] !== window.end && cands.length < 9) cands.push(window.end);
+  if (!cands.length) return null;
+  const priceFor = async (dep) => {
+    const ret = oneWay ? null : addDays(dep, nights);
+    const q = new URLSearchParams({ origin: originCode, destination: destCode, departure_at: dep, currency: 'gbp', sorting: 'price', limit: '1', one_way: ret ? 'false' : 'true', token: TRAVELPAYOUTS_TOKEN });
+    if (ret) q.set('return_at', ret);
+    const res = await httpJSON(`${TRAVELPAYOUTS_BASE}/aviasales/v3/prices_for_dates?${q}`, { headers: { Accept: 'application/json' } }).catch(() => null);
+    const item = Array.isArray(res?.data) && res.data.length ? res.data[0] : null;
+    const price = item && Number(item.price);
+    return (Number.isFinite(price) && price > 0) ? { dep, ret, min: Math.round(price * 100) / 100 } : null;
+  };
+  const results = (await Promise.all(cands.map(priceFor))).filter(Boolean);
+  if (!results.length) return null;
+  results.sort((a, b) => a.min - b.min);
+  return { ...results[0], scanned: cands.length, windowStart: window.start, windowEnd: window.end };
+}
+
 // Tag a batch of fares with deep-sweep provenance so the UI can badge them
 // ("departs Manchester instead", "1 day earlier") — never silently swap the
 // route the customer asked for.

@@ -462,6 +462,29 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     dates = buildDates(monthInfo, nights, today);
   }
 
+  // FLEXIBLE DEPARTURE WINDOW: "cheapest anytime between today and <date>",
+  // "travel any time in that period", "cheapest date". The typed date is the
+  // LATEST departure (the window END), NOT a fixed departure — the planner scans
+  // the window for the cheapest day. We keep the trip length and set a provisional
+  // near-term departure (≈ next week) so downstream stays valid until the day is
+  // chosen. Deliberately NOT triggered by the common "cheapest flight/ticket"
+  // phrasing — only explicit window language, so a normal dated search is unaffected.
+  let flexWindow = null;
+  const flexDepartCue = /\bany\s?time\b|\bany\s?day\b|\bany\s?date\b|\bwhenever\b|\bflexible\s+dates?\b/i.test(raw)
+    || /\bcheapest\s+(?:date|day)\b/i.test(raw)
+    || /\bbetween\s+(?:today|now|this\s+week|next\s+week)\b[^.]{0,40}\band\b/i.test(raw)
+    || /\bcheapest\b[^.]{0,50}\bbetween\b[^.]{0,30}\band\b/i.test(raw);
+  if (flexDepartCue && explicit && explicit.checkIn && !explicit.checkOut && !returnDeadline) {
+    const todayISO = today.toISOString().slice(0, 10);
+    const endISO = explicit.checkIn; // the typed date = the window's LATEST departure
+    if (endISO > todayISO) {
+      const prov = isoPlusNights(todayISO, 7); // ≈ next week, never past the window end
+      const checkIn = prov <= endISO ? prov : todayISO;
+      flexWindow = { start: todayISO, end: endISO };
+      dates = { checkIn, checkOut: isoPlusNights(checkIn, nights) };
+    }
+  }
+
   // Board basis — "all inclusive", "half board", "B&B", "room only"…
   const BOARD_PATTERNS = [
     [/(ultra[\s-]?all[\s-]?inclusive)/i, 'Ultra all inclusive'],
@@ -530,6 +553,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     month: monthInfo ? monthInfo.name : null,
     dates,
     oneWay, // single journey — no return leg is priced or fabricated
+    flexWindow, // flexible departure window { start, end } — planner scans for the cheapest day
     components: [...requested],
     minStars: parseMinStars(raw), // hotel star floor ("4 or 5 star") or null
     needComponents, // true → user named a place but no need; ask what they want
