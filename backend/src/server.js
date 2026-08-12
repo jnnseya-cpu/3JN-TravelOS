@@ -96,6 +96,7 @@ import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
+import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -191,6 +192,38 @@ app.use((req, res, next) => {
   next();
 });
 
+// ANTI-HACKING THREAT SHIELD — the active perimeter agent. Runs before any
+// route so an attack signature is stopped before it can touch application logic
+// or the persistence layer. Two gates:
+//   1. If this IP is already quarantined (tripped repeatedly), reject fast.
+//   2. Fingerprint THIS request (scanner UA, secret-file/traversal path probe,
+//      NoSQL/prototype-pollution operator in the JSON body shape). On a hit we
+//      log to the immutable audit trail, register the offence (which may
+//      quarantine the IP), and return a flat 403 — no app internals leak.
+// Deliberately conservative: it inspects paths, user-agents and JSON KEYS only,
+// never free-text values, so a normal human search/booking is never blocked.
+app.use((req, res, next) => {
+  const ip = clientIp(req) || 'unknown';
+  try {
+    if (isThreatBlocked(ip)) {
+      return res.status(403).json({ error: 'forbidden', message: 'Request blocked by the security perimeter.' });
+    }
+    const verdict = inspectRequest(req);
+    if (verdict.block) {
+      const quarantined = registerThreat(ip);
+      try {
+        recordAudit({
+          actor: 'security-agent', role: 'system', action: 'security.threat-blocked',
+          entity: 'request', entityId: ip,
+          summary: `${verdict.code}: ${verdict.reason} — ${req.method} ${String(req.path || req.url || '').slice(0, 120)}${quarantined ? ' · IP quarantined' : ''}`,
+        });
+      } catch { /* audit must never break the block */ }
+      return res.status(403).json({ error: 'forbidden', message: 'Request blocked by the security perimeter.' });
+    }
+  } catch { /* the shield must never take the app down — fail open on its own error */ }
+  next();
+});
+
 // LIVE persistence round-trip test — writes then reads a value through the real
 // backend and returns the ACTUAL reason if it fails (bad service-account JSON,
 // wrong DB URL, permissions, unreachable). Public + unauthenticated on purpose
@@ -208,7 +241,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-03-flex-date-window-v249';
+const BUILD_TAG = '2026-08-12-threat-shield-v250';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,

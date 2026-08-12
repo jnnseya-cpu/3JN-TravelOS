@@ -6949,3 +6949,104 @@ test('applyBaggageToOption: a null bag leaves the option untouched (no-bag path)
   applyBaggageToOption(option, null);
   assert.equal(JSON.stringify(option), before, 'no bag → option unchanged');
 });
+
+// ---- Anti-hacking Threat Shield -------------------------------------------
+import {
+  inspectRequest, registerThreat, isThreatBlocked, threatStats,
+  resetThreatShield, THREAT_CONFIG,
+} from '../src/threat-shield.js';
+
+const mkReq = ({ path = '/api/plan', method = 'POST', ua = 'Mozilla/5.0', body = {} } = {}) => ({
+  path, url: path, method, headers: { 'user-agent': ua }, body,
+});
+
+test('threat shield: a normal human search request is NOT blocked', () => {
+  resetThreatShield();
+  // Real one-sentence travel searches can contain quotes, "select", $, "proto".
+  const reqs = [
+    mkReq({ body: { text: 'flights to "New York" — select the cheapest, I want to $ave money' } }),
+    mkReq({ body: { text: 'proto smoothie bar near my hotel in Bali next month' } }),
+    mkReq({ path: '/api/hotels/search', body: { destination: 'Brussels', checkIn: '2026-09-01' } }),
+    mkReq({ path: '/app.js', method: 'GET', body: undefined }),
+    mkReq({ path: '/api/embassy/config', method: 'GET', body: undefined }),
+  ];
+  for (const r of reqs) assert.equal(inspectRequest(r).block, false, `should allow: ${r.path}`);
+});
+
+test('threat shield: blocks attack-tool user-agents', () => {
+  for (const ua of ['sqlmap/1.7', 'Nikto/2.1.6', 'Mozilla nmap scripting', 'nuclei - open-source']) {
+    const v = inspectRequest(mkReq({ ua, method: 'GET', body: undefined }));
+    assert.equal(v.block, true, `should block UA: ${ua}`);
+    assert.equal(v.code, 'scanner-ua');
+  }
+});
+
+test('threat shield: blocks path-traversal and secret-file probes', () => {
+  const paths = ['/../../etc/passwd', '/.env', '/.git/config', '/wp-login.php', '/phpmyadmin/index.php', '/vendor/phpunit/eval-stdin.php', '/app/${jndi:ldap://x}'];
+  for (const p of paths) {
+    const v = inspectRequest(mkReq({ path: p, method: 'GET', body: undefined }));
+    assert.equal(v.block, true, `should block path: ${p}`);
+    assert.equal(v.code, 'path-probe');
+  }
+});
+
+test('threat shield: blocks NoSQL / prototype-pollution operators in the body SHAPE (keys, not values)', () => {
+  // Bodies are built via JSON.parse to mirror EXACTLY what express.json produces
+  // on the wire — crucially, JSON.parse makes `__proto__` an OWN enumerable key
+  // (a bare JS object literal would not), which is how the real attack arrives.
+  const wire = [
+    '{"email":{"$ne":null},"password":{"$ne":null}}',   // NoSQL auth bypass
+    '{"profile":{"__proto__":{"admin":true}}}',          // prototype pollution
+    '{"filter":{"$where":"this.x==1"}}',                 // server-side JS
+    '{"nested":[{"deep":{"$regex":".*"}}]}',             // inside an array
+  ];
+  for (const raw of wire) {
+    const v = inspectRequest(mkReq({ body: JSON.parse(raw) }));
+    assert.equal(v.block, true, `should block key-injection: ${raw}`);
+    assert.equal(v.code, 'injection-key');
+  }
+});
+
+test('threat shield: dangerous WORD as a free-text value is allowed (no false positive)', () => {
+  // "$where" / "__proto__" typed as a VALUE, not a key, must pass.
+  const v = inspectRequest(mkReq({ body: { text: 'tell me $where to eat and about __proto__ genetics' } }));
+  assert.equal(v.block, false, 'dangerous words as values must not trip the shield');
+});
+
+test('threat shield: GET body is ignored (only mutating methods are shape-scanned)', () => {
+  const v = inspectRequest({ path: '/api/x', url: '/api/x', method: 'GET', headers: {}, body: { $ne: 1 } });
+  assert.equal(v.block, false, 'GET carries no JSON body — do not shape-scan it');
+});
+
+test('threat shield: repeated offences quarantine the IP, then it self-clears', () => {
+  resetThreatShield();
+  const ip = '203.0.113.9';
+  const t0 = 1_000_000;
+  assert.equal(isThreatBlocked(ip, t0), false, 'clean IP not blocked');
+  let quarantined = false;
+  for (let i = 0; i < THREAT_CONFIG.OFFENCE_THRESHOLD; i++) {
+    quarantined = registerThreat(ip, t0 + i);
+  }
+  assert.equal(quarantined, true, 'crossing the threshold quarantines');
+  assert.equal(isThreatBlocked(ip, t0 + 1000), true, 'IP is now blocked');
+  // After the quarantine window (measured from the last offence) it clears.
+  assert.equal(isThreatBlocked(ip, t0 + THREAT_CONFIG.QUARANTINE_MS + THREAT_CONFIG.OFFENCE_THRESHOLD + 1), false, 'quarantine self-expires');
+});
+
+test('threat shield: a single stray offence does NOT quarantine (humans fat-finger URLs)', () => {
+  resetThreatShield();
+  const ip = '203.0.113.10';
+  assert.equal(registerThreat(ip, 2_000_000), false, 'one offence is not enough');
+  assert.equal(isThreatBlocked(ip, 2_000_001), false, 'single offence → not blocked');
+});
+
+test('threat shield: threatStats reports tracked + quarantined counts', () => {
+  resetThreatShield();
+  const t0 = 3_000_000;
+  for (let i = 0; i < THREAT_CONFIG.OFFENCE_THRESHOLD; i++) registerThreat('198.51.100.7', t0 + i);
+  registerThreat('198.51.100.8', t0); // one stray offence, not quarantined
+  const stats = threatStats(t0 + 10);
+  assert.equal(stats.quarantined, 1, 'one IP quarantined');
+  assert.ok(stats.trackedIps >= 2, 'both IPs tracked');
+  assert.ok(stats.totalOffences >= THREAT_CONFIG.OFFENCE_THRESHOLD + 1, 'offences counted');
+});
