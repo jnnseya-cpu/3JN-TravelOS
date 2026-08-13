@@ -7203,3 +7203,55 @@ test('referral: destination + trust pages surface the refer-a-friend reward', ()
   assert.match(why, /Refer a friend/);
   assert.match(dubai, /open=signup/);
 });
+
+// ---- Programmatic route pages + GSC verification --------------------------
+import { renderRoutePage, renderRouteIndex, routeSlugs } from '../src/seo-render.js';
+
+test('SEO routes: a large high-intent origin→destination set renders', () => {
+  const slugs = routeSlugs();
+  assert.ok(slugs.length >= 200, `expected 200+ route pages, got ${slugs.length}`);
+  assert.ok(slugs.includes('london-to-lagos'), 'diaspora corridor present');
+  assert.ok(slugs.includes('new-york-to-accra'));
+});
+
+test('SEO routes: each route page is unique, data-grounded, with breadcrumb + capture + visa', () => {
+  const base = 'https://3jntravel.com';
+  const lon = renderRoutePage('london-to-lagos', base);
+  const nyc = renderRoutePage('new-york-to-accra', base);
+  assert.ok(lon && nyc);
+  const t = (h) => h.match(/<title>([^<]+)<\/title>/)[1];
+  assert.notEqual(t(lon), t(nyc), 'titles differ per route');
+  assert.match(lon, /London to Lagos/);
+  assert.match(lon, /"@type":"BreadcrumbList"/);
+  assert.match(lon, /Get cheapest-date alerts/);
+  assert.match(lon, /Visa for Lagos/);
+  assert.match(lon, /canonical" href="https:\/\/3jntravel\.com\/flights\/london-to-lagos"/);
+});
+
+test('SEO routes: nationality-aware visa line (UK vs US origin)', () => {
+  const base = 'https://3jntravel.com';
+  const uk = renderRoutePage('london-to-lagos', base);
+  const us = renderRoutePage('new-york-to-lagos', base);
+  // Both mention a visa; the origin nationality label differs.
+  assert.match(uk, /UK passport holders/);
+  assert.match(us, /US passport holders/);
+});
+
+test('SEO routes: unknown route renders null (route falls back to index)', () => {
+  assert.equal(renderRoutePage('nowhere-to-nothing', 'https://3jntravel.com'), null);
+});
+
+test('SEO routes: index groups routes by destination', () => {
+  const html = renderRouteIndex('https://3jntravel.com');
+  assert.match(html, /Flights to Lagos/);
+  assert.match(html, /\/flights\/london-to-lagos/);
+});
+
+test('SEO: google-site-verification meta only when env is set', () => {
+  const prev = process.env.GOOGLE_SITE_VERIFICATION;
+  delete process.env.GOOGLE_SITE_VERIFICATION;
+  assert.ok(!/google-site-verification/.test(renderRoutePage('london-to-lagos', 'https://3jntravel.com')), 'absent when unset');
+  process.env.GOOGLE_SITE_VERIFICATION = 'tok_abc';
+  assert.match(renderRoutePage('london-to-lagos', 'https://3jntravel.com'), /google-site-verification" content="tok_abc"/);
+  if (prev === undefined) delete process.env.GOOGLE_SITE_VERIFICATION; else process.env.GOOGLE_SITE_VERIFICATION = prev;
+});

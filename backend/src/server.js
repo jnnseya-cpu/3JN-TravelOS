@@ -98,7 +98,7 @@ import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, p
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT, leadWelcomeEmail, cheapestDateAlertEmail } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
-import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, renderWhy, destinationSlugs } from './seo-render.js';
+import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, renderWhy, renderRoutePage, renderRouteIndex, destinationSlugs, routeSlugs } from './seo-render.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -243,7 +243,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-13-trust-referral-v253';
+const BUILD_TAG = '2026-08-13-route-pages-gsc-v254';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -5867,7 +5867,10 @@ app.get('/sitemap.xml', (req, res) => {
   // is a real, data-grounded, indexable page targeting high-intent long-tail
   // demand ("cheap flights & hotels to <city>, pay monthly").
   const destUrls = destinationSlugs().map((s) => ({ u: `/destinations/${s}`, changefreq: 'weekly', priority: '0.7', lastmod: null }));
-  const urls = [...staticUrls, ...blogUrls, ...destUrls]
+  // Programmatic route pages (origin → destination) — the highest-intent tail.
+  const routeUrls = routeSlugs().map((s) => ({ u: `/flights/${s}`, changefreq: 'weekly', priority: '0.8', lastmod: null }));
+  const flightsIndex = [{ u: '/flights', changefreq: 'weekly', priority: '0.7', lastmod: null }];
+  const urls = [...staticUrls, ...flightsIndex, ...blogUrls, ...destUrls, ...routeUrls]
     .map(({ u, changefreq, priority, lastmod }) => `  <url><loc>${base}${u}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}<changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`)
     .join('\n');
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
@@ -5926,6 +5929,28 @@ app.get('/destinations/:slug', (req, res, next) => {
     if (html) return res.type('html').send(html);
     return res.status(404).type('html').send(renderDestinationIndex(seoBase(req)));
   } catch { next(); }
+});
+// Programmatic route pages (origin → destination) — highest-intent long-tail.
+app.get('/flights', (req, res, next) => {
+  try { res.type('html').send(renderRouteIndex(seoBase(req))); } catch { next(); }
+});
+app.get('/flights/:slug', (req, res, next) => {
+  try {
+    const html = renderRoutePage(req.params.slug, seoBase(req));
+    if (html) return res.type('html').send(html);
+    return res.status(404).type('html').send(renderRouteIndex(seoBase(req)));
+  } catch { next(); }
+});
+// Google Search Console HTML-file verification (the alternative to the meta
+// tag). Set GOOGLE_VERIFICATION_FILE to the exact filename Google gives you
+// (e.g. "google1234abcd.html") and this serves the body Google expects.
+app.get(/^\/google[0-9a-f]+\.html$/i, (req, res, next) => {
+  const want = String(process.env.GOOGLE_VERIFICATION_FILE || '').trim();
+  const file = req.path.replace(/^\//, '');
+  if (want && file.toLowerCase() === want.toLowerCase()) {
+    return res.type('text/plain').send(`google-site-verification: ${file}`);
+  }
+  next();
 });
 
 // ---- Static frontend ------------------------------------------------------

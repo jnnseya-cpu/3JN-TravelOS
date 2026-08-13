@@ -82,6 +82,24 @@ function bestMonths(d) {
   if (!m) return [];
   return m.map((n) => MONTHS[n - 1]).filter(Boolean).slice(0, 3);
 }
+// Search-engine site-verification meta tags — emitted only when the operator has
+// set the token in the environment (Google Search Console + Bing Webmaster).
+// The alternative HTML-file method is handled by a dedicated route in server.js.
+function verificationMeta() {
+  const parts = [];
+  const g = String(process.env.GOOGLE_SITE_VERIFICATION || '').trim();
+  const b = String(process.env.BING_SITE_VERIFICATION || '').trim();
+  if (g) parts.push(`\n<meta name="google-site-verification" content="${esc(g)}">`);
+  if (b) parts.push(`\n<meta name="msvalidate.01" content="${esc(b)}">`);
+  return parts.join('');
+}
+// A BreadcrumbList JSON-LD object (rich-result breadcrumbs).
+function breadcrumbLd(base, trail) {
+  return {
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: trail.map((t, i) => ({ '@type': 'ListItem', position: i + 1, name: t.name, item: t.url })),
+  };
+}
 
 // Slug ↔ destination index. Built once from the curated SEO city list, each
 // resolved through the live engine (catalogue entry where one exists, otherwise
@@ -124,7 +142,7 @@ function shell({ title, description, canonical, base, jsonLd = [], bodyHtml, ogT
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
 <link rel="canonical" href="${esc(canonical)}">
-<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="robots" content="index, follow, max-image-preview:large">${verificationMeta()}
 <meta property="og:type" content="${esc(ogType)}">
 <meta property="og:site_name" content="${esc(BRAND)}">
 <meta property="og:title" content="${esc(title)}">
@@ -340,7 +358,12 @@ ${faqHtml}
   return shell({
     title: `${p.title} | ${BRAND}`,
     description: p.metaDescription || p.excerpt || p.title,
-    canonical: url, base, ogType: 'article', jsonLd: [articleLd, faqLd].filter(Boolean), bodyHtml: body,
+    canonical: url, base, ogType: 'article', bodyHtml: body,
+    jsonLd: [articleLd, faqLd, breadcrumbLd(base, [
+      { name: 'Home', url: base + '/' },
+      { name: 'Guides', url: base + '/blog' },
+      { name: p.title, url },
+    ])].filter(Boolean),
   });
 }
 
@@ -406,7 +429,12 @@ ${referralBlock()}
   return shell({
     title: `Cheap flights & hotels to ${city}${countryLabel ? `, ${countryLabel}` : ''} — pay monthly | ${BRAND}`,
     description: `Book ${city} flights and hotels the smart way: 3JN's AI finds the cheapest reliable package${fromGbp ? ` from ~£${fromGbp}pp` : ''}, checks your visa, and lets you pay monthly.`,
-    canonical: url, base, ogType: 'website', jsonLd: [org(base), faqLd], bodyHtml: body,
+    canonical: url, base, ogType: 'website', bodyHtml: body,
+    jsonLd: [org(base), faqLd, breadcrumbLd(base, [
+      { name: 'Home', url: base + '/' },
+      { name: 'Destinations', url: base + '/destinations' },
+      { name: city, url },
+    ])],
   });
 }
 
@@ -447,5 +475,131 @@ ${referralBlock()}
     title: `Why trust 3JN Travel OS — price lock, secure payments, pay monthly`,
     description: 'How 3JN protects your money and your trip: locked prices, Stripe-secured payments, transparent pay-monthly, a savings guarantee and verified reviews.',
     canonical: base + '/why-3jn', base, ogType: 'website', jsonLd: org(base), bodyHtml: body,
+  });
+}
+
+// ---- Programmatic ROUTE pages (origin → destination) ----------------------
+// The highest-intent long-tail of all: someone searching "flights from London
+// to Lagos" is far closer to booking than someone searching "Lagos". Built as a
+// curated cross of diaspora-origin hubs × the destinations those communities
+// actually fly to — high intent, thin competition, real data.
+import { resolveOrigin as _resolveOrigin } from './destinations.js';
+
+const ROUTE_ORIGINS = [
+  { city: 'London', nat: 'GB' }, { city: 'Manchester', nat: 'GB' }, { city: 'Birmingham', nat: 'GB' },
+  { city: 'Glasgow', nat: 'GB' }, { city: 'New York', nat: 'US' }, { city: 'Washington', nat: 'US' },
+  { city: 'Atlanta', nat: 'US' }, { city: 'Toronto', nat: 'CA' }, { city: 'Paris', nat: 'FR' }, { city: 'Brussels', nat: 'BE' },
+];
+// The destinations that carry real search intent from those origins (diaspora
+// corridors first, then the obvious leisure hubs). Kept curated — not every
+// origin×destination pair — so each page is genuinely useful, not a doorway.
+const ROUTE_DESTINATIONS = [
+  'Lagos', 'Abuja', 'Accra', 'Nairobi', 'Kinshasa', 'Johannesburg', 'Cape Town', 'Cairo', 'Casablanca',
+  'Dakar', 'Addis Ababa', 'Kigali', 'Dar es Salaam', 'Zanzibar', 'Harare', 'Kampala', 'Freetown', 'Banjul',
+  'Kingston', 'Montego Bay', 'Bridgetown', 'Port of Spain',
+  'Delhi', 'Mumbai', 'Colombo', 'Dhaka', 'Karachi', 'Lahore', 'Islamabad',
+  'Dubai', 'Istanbul', 'Bangkok', 'Bali', 'New York',
+];
+
+let _routeIndex = null;
+function routeIndex() {
+  if (_routeIndex) return _routeIndex;
+  _routeIndex = new Map();
+  for (const o of ROUTE_ORIGINS) {
+    let origin;
+    try { origin = _resolveOrigin(o.city); } catch { origin = null; }
+    if (!origin?.airport) continue;
+    const oSlug = slugifyCity(o.city);
+    for (const destName of ROUTE_DESTINATIONS) {
+      const dSlug = slugifyCity(destName);
+      if (oSlug === dSlug) continue; // no London→London
+      const dest = destinationBySlug(dSlug);
+      if (!dest) continue;
+      _routeIndex.set(`${oSlug}-to-${dSlug}`, { origin: { ...origin, city: o.city, nat: o.nat }, dest });
+    }
+  }
+  return _routeIndex;
+}
+export function routeSlugs() { return [...routeIndex().keys()]; }
+
+export function renderRoutePage(slug, base) {
+  const r = routeIndex().get(String(slug || '').toLowerCase());
+  if (!r) return null;
+  const oCity = r.origin.city;
+  const dCity = r.dest.city;
+  const url = `${base}/flights/${slugifyCity(oCity)}-to-${slugifyCity(dCity)}`;
+  const fromGbp = indicativeFromGbp(r.dest);
+  const months = bestMonths(r.dest);
+  const visa = r.dest.visa ? (r.dest.visa[r.origin.nat] || r.dest.visa.DEFAULT) : null;
+  const natLabel = { GB: 'UK', US: 'US', CA: 'Canadian', FR: 'French', BE: 'Belgian' }[r.origin.nat] || '';
+  const q = encodeURIComponent(`flights from ${oCity} to ${dCity}`);
+  const facts = [
+    fromGbp ? `<li><strong>From ~£${fromGbp}pp</strong><br><span class="muted">flights + ~5 nights, indicative</span></li>` : '',
+    `<li><strong>Route</strong><br><span class="muted">${esc(r.origin.airport)} → ${esc(r.dest.airport || dCity)}</span></li>`,
+    months.length ? `<li><strong>Cheapest months</strong><br><span class="muted">${esc(months.join(', '))}</span></li>` : '',
+    `<li><strong>Pay monthly</strong><br><span class="muted">spread over weeks or months</span></li>`,
+  ].filter(Boolean).join('');
+  const visaSentence = visa
+    ? (visa.required
+      ? `${natLabel} passport holders need a visa for ${esc(dCity)} (${esc(visa.type || 'tourist visa')}). Check your approval odds with 3JN VisaOS before you book.`
+      : `Good news — ${natLabel} passport holders don't need a visa in advance for ${esc(dCity)} (${esc(visa.type || 'visa-free / on arrival')}).`)
+    : `Check your visa for ${esc(dCity)} with 3JN VisaOS before booking.`;
+  const faq = [
+    { q: `How much are flights from ${oCity} to ${dCity}?`, a: fromGbp ? `Indicatively from about £${fromGbp} per person including around five nights — 3JN refreshes real fares live at search time and can spread the cost monthly.` : `3JN prices ${oCity}–${dCity} live from multiple airlines and can spread the cost over monthly instalments.` },
+    { q: `What's the cheapest time to fly ${oCity} to ${dCity}?`, a: months.length ? `${months.join(', ')} are usually the cheaper months. Ask 3JN for "the cheapest dates" and the AI scans a whole window for the lowest fare.` : `Ask 3JN for "the cheapest dates from ${oCity} to ${dCity}" and the AI scans a date window for the lowest fare.` },
+    { q: `Can I pay monthly for ${oCity} to ${dCity} flights?`, a: `Yes — put down a deposit and spread the rest. The AI buys your ticket the moment the fare is covered and holds it until your balance clears.` },
+  ];
+  const faqLd = { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) };
+  const breadcrumb = {
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: base + '/' },
+      { '@type': 'ListItem', position: 2, name: 'Flights', item: base + '/flights' },
+      { '@type': 'ListItem', position: 3, name: `${oCity} to ${dCity}`, item: url },
+    ],
+  };
+  // Same-destination routes from other origins (internal linking).
+  const otherOrigins = ROUTE_ORIGINS.filter((o) => slugifyCity(o.city) !== slugifyCity(oCity))
+    .map((o) => routeIndex().get(`${slugifyCity(o.city)}-to-${slugifyCity(dCity)}`) ? `<a href="/flights/${slugifyCity(o.city)}-to-${slugifyCity(dCity)}">${esc(o.city)} → ${esc(dCity)}</a>` : '')
+    .filter(Boolean).slice(0, 6).join(' · ');
+  const body = `
+<p class="muted"><a href="/flights">← All routes</a> · <a href="/destinations/${slugifyCity(dCity)}">${esc(dCity)} guide</a></p>
+<h1>Cheap flights from ${esc(oCity)} to ${esc(dCity)} — pay monthly</h1>
+<p class="lede">3JN's AI finds the cheapest reliable ${esc(oCity)}–${esc(dCity)} fare, adds a hotel if you want one, checks your visa, and lets you pay over time.</p>
+<a class="cta" href="/?open=planner&amp;q=${q}">Find ${esc(oCity)} → ${esc(dCity)} deals →</a>
+<ul class="facts">${facts}</ul>
+${emailCapture(dCity, `route:${slugifyCity(oCity)}-to-${slugifyCity(dCity)}`)}
+<h2>Visa for ${esc(dCity)}</h2>
+<p>${visaSentence}</p>
+<h2>${esc(oCity)} to ${esc(dCity)} FAQ</h2>
+${faq.map((f) => `<h3>${esc(f.q)}</h3><p>${esc(f.a)}</p>`).join('')}
+${trustBlock({ compact: true })}
+${otherOrigins ? `<h2>Fly to ${esc(dCity)} from elsewhere</h2><p class="links">${otherOrigins}</p>` : ''}
+<p><a href="/destinations/${slugifyCity(dCity)}">Everything about ${esc(dCity)} →</a> · <a href="/why-3jn">Why trust 3JN →</a></p>`;
+  return shell({
+    title: `Cheap flights from ${oCity} to ${dCity} — pay monthly | ${BRAND}`,
+    description: `Book ${oCity} to ${dCity} flights the smart way: 3JN's AI finds the cheapest reliable fare${fromGbp ? ` from ~£${fromGbp}pp` : ''}, checks your visa, and lets you pay monthly.`,
+    canonical: url, base, ogType: 'website', jsonLd: [org(base), faqLd, breadcrumb], bodyHtml: body,
+  });
+}
+
+export function renderRouteIndex(base) {
+  const byDest = new Map();
+  for (const slug of routeSlugs()) {
+    const r = routeIndex().get(slug);
+    const d = r.dest.city;
+    if (!byDest.has(d)) byDest.set(d, []);
+    byDest.get(d).push({ slug, origin: r.origin.city });
+  }
+  const groups = [...byDest.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([dest, rows]) =>
+    `<h3 style="margin:.8em 0 .2em">Flights to ${esc(dest)}</h3><p class="links">${rows.map((x) => `<a href="/flights/${x.slug}">${esc(x.origin)} → ${esc(dest)}</a>`).join(' · ')}</p>`).join('');
+  const body = `
+<h1>Cheap flights — pay monthly</h1>
+<p class="lede">Popular routes 3JN's AI books for the cheapest reliable fare, with pay-monthly instalments and an instant visa check.</p>
+${groups}`;
+  return shell({
+    title: `Cheap flights on popular routes — pay monthly | ${BRAND}`,
+    description: 'Browse popular flight routes and let 3JN\'s AI find the cheapest reliable fare, check your visa, and spread the cost monthly.',
+    canonical: base + '/flights', base, ogType: 'website', jsonLd: org(base), bodyHtml: body,
   });
 }
