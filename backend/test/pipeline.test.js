@@ -7113,3 +7113,59 @@ test('SEO: destination index lists the cities with internal links', () => {
   assert.match(html, /\/destinations\/dubai/);
   assert.match(html, /\/destinations\/kinshasa/);
 });
+
+// ---- Email capture / lead funnel ------------------------------------------
+import {
+  captureLead, unsubscribeLead, listLeads, leadStats,
+  leadsDueForAlert, markLeadAlerted,
+} from '../src/store.js';
+
+test('lead funnel: captures a valid email, rejects a bad one', () => {
+  const ok = captureLead({ email: 'Traveller@Example.com', destination: 'Lagos', source: 'dest:lagos' });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.created, true);
+  assert.equal(ok.lead.email, 'traveller@example.com', 'email is normalised lower-case');
+  assert.ok(ok.lead.unsub, 'a lead carries an unsubscribe token');
+  const bad = captureLead({ email: 'not-an-email' });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error, 'invalid-email');
+});
+
+test('lead funnel: idempotent per (email + destination) — no duplicate spam', () => {
+  const a = captureLead({ email: 'dupe@example.com', destination: 'Dubai' });
+  const b = captureLead({ email: 'dupe@example.com', destination: 'Dubai' });
+  assert.equal(a.created, true);
+  assert.equal(b.created, false, 'second submit does not create a new lead');
+  // A different destination for the same person IS a distinct lead.
+  const c = captureLead({ email: 'dupe@example.com', destination: 'Lagos' });
+  assert.equal(c.created, true);
+});
+
+test('lead funnel: one-click unsubscribe flips status and stops alerts', () => {
+  const cap = captureLead({ email: 'leaving@example.com', destination: 'Rome' });
+  const r = unsubscribeLead(cap.lead.unsub);
+  assert.equal(r.ok, true);
+  assert.equal(r.email, 'leaving@example.com');
+  const active = listLeads({ status: 'active' }).map((l) => l.email);
+  assert.ok(!active.includes('leaving@example.com'), 'unsubscribed lead is not in the active list');
+  assert.equal(unsubscribeLead('bogus-token').ok, false);
+});
+
+test('lead funnel: leadsDueForAlert respects destination + cadence, markLeadAlerted advances it', () => {
+  const cap = captureLead({ email: 'watch@example.com', destination: 'Zanzibar' });
+  const due = leadsDueForAlert({ cadenceDays: 7 });
+  assert.ok(due.some((l) => l.id === cap.lead.id), 'a fresh dest lead is due');
+  markLeadAlerted(cap.lead.id);
+  const dueAfter = leadsDueForAlert({ cadenceDays: 7 });
+  assert.ok(!dueAfter.some((l) => l.id === cap.lead.id), 'not due again within the cadence window');
+  // A lead with no destination is never due (nothing to watch).
+  captureLead({ email: 'nodest@example.com' });
+  assert.ok(!leadsDueForAlert({ cadenceDays: 7 }).some((l) => l.email === 'nodest@example.com'));
+});
+
+test('lead funnel: stats count active, unsubscribed and destination leads', () => {
+  const s = leadStats();
+  assert.ok(s.total >= s.active, 'total includes unsubscribed');
+  assert.ok(s.withDestination >= 1);
+  assert.ok(typeof s.alertsSent === 'number');
+});

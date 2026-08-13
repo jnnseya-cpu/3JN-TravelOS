@@ -53,6 +53,7 @@ const db = {
   searchCache: new Map(), // popular routes/packages served before any paid AI call
   freeSearchIps: new Map(), // guest free-search lifetime counter, keyed by hashed IP { count, first, last }
   behaviour: [], // behavioural-learning event stream (searches, views, books…)
+  leads: [], // email-capture leads (cheapest-date alerts) — top of the acquisition funnel
   commsDeliveries: [], // communication-event delivery log (event × channel × recipient)
   aiRequestCosts: [], // ai_request_costs ledger — estimated vs actual AI spend per request
   searchDeposits: [], // refundable search deposits (deep £5 / luxury £20 / corporate £50)
@@ -210,6 +211,88 @@ export function recordBehaviour(userId, { event, destination, payload } = {}) {
 export function listBehaviour(userId, limit = 500) {
   const all = userId ? db.behaviour.filter((b) => b.userId === userId) : db.behaviour;
   return all.slice(-limit);
+}
+
+// ---- Email capture / lead funnel ------------------------------------------
+// Top of the acquisition funnel: a visitor who is NOT ready to buy leaves an
+// email for a "cheapest-date alert" on a destination. This turns anonymous
+// traffic (the 95% who don't convert on the first visit) into a list we can
+// re-engage — the single highest-ROI lever once the SEO pages start ranking.
+const LEADS_CAP = 50000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// A stable, unguessable one-click unsubscribe token per lead.
+function unsubToken() { return randomBytes(18).toString('hex'); }
+
+// Capture (or refresh) a lead. Idempotent per (email + destination): a repeat
+// submit updates the record instead of spamming the list. Returns the lead +
+// whether it was newly created (so the caller only sends ONE welcome email).
+export function captureLead({ email, destination, origin, source, ip, consent } = {}) {
+  const e = String(email || '').trim().toLowerCase().slice(0, 160);
+  if (!EMAIL_RE.test(e)) return { ok: false, error: 'invalid-email' };
+  const dest = destination ? String(destination).slice(0, 80) : null;
+  const key = `${e}|${(dest || '').toLowerCase()}`;
+  let lead = db.leads.find((l) => l.key === key);
+  const now = new Date().toISOString();
+  if (lead) {
+    lead.lastSeenAt = now;
+    lead.origin = origin ? String(origin).slice(0, 80) : lead.origin;
+    lead.source = source ? String(source).slice(0, 120) : lead.source;
+    if (lead.status === 'unsubscribed') { return { ok: true, lead: publicLead(lead), created: false, resubscribed: false }; }
+    return { ok: true, lead: publicLead(lead), created: false };
+  }
+  lead = {
+    id: id('lead'), key, email: e,
+    destination: dest,
+    origin: origin ? String(origin).slice(0, 80) : null,
+    source: source ? String(source).slice(0, 120) : 'landing',
+    ip: ip ? String(ip).slice(0, 64) : null,
+    consent: consent !== false,
+    status: 'active',
+    alerts: 0, lastAlertAt: null,
+    unsub: unsubToken(),
+    createdAt: now, lastSeenAt: now,
+  };
+  db.leads.push(lead);
+  if (db.leads.length > LEADS_CAP) db.leads.splice(0, db.leads.length - LEADS_CAP);
+  recordAudit({ actor: 'lead-agent', role: 'agent', action: 'lead.captured', entity: 'lead', entityId: lead.id, summary: `${e}${dest ? ' · ' + dest : ''} (${lead.source})` });
+  return { ok: true, lead: publicLead(lead), created: true };
+}
+function publicLead(l) {
+  return { id: l.id, email: l.email, destination: l.destination, origin: l.origin, source: l.source, status: l.status, alerts: l.alerts, createdAt: l.createdAt, unsub: l.unsub };
+}
+export function unsubscribeLead(token) {
+  const t = String(token || '');
+  if (!t) return { ok: false, error: 'no-token' };
+  const matches = db.leads.filter((l) => l.unsub === t);
+  if (!matches.length) return { ok: false, error: 'not-found' };
+  for (const l of matches) l.status = 'unsubscribed';
+  recordAudit({ actor: 'lead-agent', role: 'agent', action: 'lead.unsubscribed', entity: 'lead', entityId: matches[0].id, summary: matches[0].email });
+  return { ok: true, count: matches.length, email: matches[0].email };
+}
+export function listLeads({ status = 'active', limit = 1000 } = {}) {
+  const all = status ? db.leads.filter((l) => l.status === status) : db.leads;
+  return all.slice(-limit).map(publicLead);
+}
+export function leadStats() {
+  const total = db.leads.length;
+  const active = db.leads.filter((l) => l.status === 'active').length;
+  const withDest = db.leads.filter((l) => l.status === 'active' && l.destination).length;
+  const alertsSent = db.leads.reduce((s, l) => s + (l.alerts || 0), 0);
+  return { total, active, unsubscribed: total - active, withDestination: withDest, alertsSent };
+}
+// Active leads that are DUE a cheapest-date alert: have a destination, are
+// subscribed, and haven't been emailed within the cadence window. The lifecycle
+// agent (server scheduler tick) drains this list weekly.
+export function leadsDueForAlert({ cadenceDays = 7, limit = 200 } = {}) {
+  const cutoff = Date.now() - cadenceDays * 86400000;
+  return db.leads.filter((l) => l.status === 'active' && l.destination && (!l.lastAlertAt || new Date(l.lastAlertAt).getTime() < cutoff)).slice(0, limit);
+}
+export function markLeadAlerted(leadId) {
+  const l = db.leads.find((x) => x.id === leadId);
+  if (!l) return false;
+  l.alerts = (l.alerts || 0) + 1;
+  l.lastAlertAt = new Date().toISOString();
+  return true;
 }
 
 // ---- Supplier Contract Manager (Enterprise) -------------------------------
@@ -3459,7 +3542,7 @@ export function sponsoredPlacementRevenueGBP() {
 // array. Per-record `supportTickets/<id>` leaves merge instead of replacing, so a
 // resolve on any instance sticks and a new ticket can't be overwritten by a peer.
 const MAP_KEYS = ['users', 'quotes', 'bookings', 'drafts', 'supplierScores', 'influencerProfiles', 'vendorProfiles', 'embassyConfigs', 'deals', 'supportTickets', 'testimonials', 'settings', 'freeSearchIps', 'sharedTrips'];
-const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'visaReservations', 'esims', 'contracts', 'blog', 'behaviour', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents', 'shareEvents'];
+const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys', 'audit', 'paymentLinks', 'approvals', 'notifications', 'visaApps', 'visaReservations', 'esims', 'contracts', 'blog', 'behaviour', 'leads', 'commsDeliveries', 'hostListings', 'travelPots', 'aiRequestCosts', 'searchDeposits', 'visaChain', 'quoteRequests', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'benchmarks', 'fulfilmentOrders', 'sponsoredPlacements', 'processedStripeEvents', 'shareEvents'];
 
 // MONEY / integrity arrays persisted PER RECORD (as `${key}/${rec.id}` leaves)
 // instead of as one whole-array node. A whole-array write REPLACES the node, so

@@ -58,6 +58,7 @@ import {
   createTestimonial, listTestimonials, publicTestimonials, moderateTestimonial,
   getModuleFlags, setModuleFlags, wipeTransactionalData, getFeaturedOverride, setFeaturedOverride,
   createSharedTrip, getSharedTrip, recordShareEvent, shareAttribution,
+  captureLead, unsubscribeLead, listLeads, leadStats, leadsDueForAlert, markLeadAlerted,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS, syncAiraloPackages, airaloCatalogueStatus, hotelbedsActivitiesForScan, hotelbedsActivitiesEnabled } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -94,7 +95,7 @@ import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, l
 import { generateGrowthContent, GROWTH_TOOL_KEYS } from './growth.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
-import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
+import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT, leadWelcomeEmail, cheapestDateAlertEmail } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
 import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, destinationSlugs } from './seo-render.js';
@@ -242,7 +243,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-13-seo-ssr-landing-pages-v251';
+const BUILD_TAG = '2026-08-13-email-capture-lifecycle-v252';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -333,6 +334,7 @@ const IS_SERVERLESS = !!(
 // risky pre-handler load, so it is applied on its own condition.
 app.use(async (req, res, next) => {
   try { maybeRunFridayPayouts(); } catch { /* payouts must never break a request */ }
+  try { maybeRunLeadAlerts(req); } catch { /* lifecycle alerts must never break a request */ }
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     // Don't turn the user away while the store loads — WAIT for it (bounded).
     // The load settles in ~1-2s; awaiting it here means the write just proceeds
@@ -5657,6 +5659,101 @@ app.get('/api/ai/status', safe((req, res) => {
 // ---- Enterprise AI agents: Security, Ops, SEO, Marketing ------------------
 app.get('/api/agents/security', safe((req, res) => res.json({ report: securityReport() })));
 app.get('/api/agents/ops', safe((req, res) => res.json({ report: opsDiagnostics({ persistence: isEnabled(), email: isMailerEnabled() }) })));
+
+// ---- Email capture + lifecycle agent (acquisition funnel) -----------------
+// Top-of-funnel: capture an email for a "cheapest-date alert" on a destination.
+// Low-friction on purpose (no ACU, no login) but bot-guarded (honeypot + email
+// validation + per-IP rate limit; the Threat Shield already fronts every route).
+app.post('/api/leads/subscribe', safe(async (req, res) => {
+  const ip = clientIp(req) || 'unknown';
+  const rl = rateLimitAuth(ip);
+  if (!rl.ok) return res.status(429).json(rl);
+  const body = req.body || {};
+  // Honeypot: hidden fields only a bot fills in (the SSR form ships "company").
+  // Silently accept (200) so the bot learns nothing, but store nothing.
+  if (body.company || body.website || body.hp) return res.json({ ok: true, subscribed: true });
+  const email = String(body.email || '').trim().toLowerCase();
+  const destination = body.destination ? String(body.destination) : null;
+  const origin = body.origin ? String(body.origin) : null;
+  const source = body.source ? String(body.source) : 'landing';
+  const result = captureLead({ email, destination, origin, source, ip });
+  if (!result.ok) return res.status(400).json(result);
+  // Send ONE welcome email on first capture (async; never blocks the response).
+  if (result.created && isMailerEnabled()) {
+    (async () => {
+      try {
+        const base = `${req.protocol}://${req.get('host')}`;
+        const d = destination ? (findDestination(destination) || findDestination(`to ${destination}`)) : null;
+        const fromGbp = d ? Math.round((((Number(d.flightBaseUSD) || 0) + (Number(d.hotelNightBaseUSD) || 0) * 5) * 0.79) / 10) * 10 : null;
+        const planUrl = `${base}/?open=planner${destination ? `&q=${encodeURIComponent('flights and hotel to ' + destination)}` : ''}`;
+        const unsubUrl = `${base}/api/leads/unsubscribe?token=${result.lead.unsub}`;
+        const mail = leadWelcomeEmail({ destination, fromGbp, months: [], planUrl, unsubUrl });
+        await sendMail({ to: email, subject: mail.subject, html: mail.html, text: mail.text });
+      } catch { /* welcome email is best-effort */ }
+    })();
+  }
+  res.json({ ok: true, subscribed: true, created: result.created });
+}));
+// One-click unsubscribe (GET so it works straight from an email link).
+app.get('/api/leads/unsubscribe', safe((req, res) => {
+  const r = unsubscribeLead(req.query.token);
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Unsubscribed</title><body style="font-family:system-ui;max-width:520px;margin:60px auto;padding:0 20px;text-align:center"><h1>✈ 3JN Travel OS</h1><p>${r.ok ? "You've been unsubscribed. You won't receive cheapest-date alerts anymore." : 'This unsubscribe link is invalid or already used.'}</p><p><a href="/">Back to 3JN</a></p></body>`);
+}));
+// Admin: list + stats for the lead funnel.
+app.get('/api/admin/leads', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ stats: leadStats(), leads: listLeads({ status: req.query.status || 'active', limit: 2000 }) });
+}));
+// Lifecycle agent — send due cheapest-date alerts. Admin-triggerable; also runs
+// automatically on the weekly scheduler tick (below). Gated on the mailer.
+async function runLeadAlerts({ base, cadenceDays = 7, cap = 100 } = {}) {
+  if (!isMailerEnabled()) return { ok: false, skipped: 'mailer-disabled', sent: 0 };
+  const due = leadsDueForAlert({ cadenceDays, limit: cap });
+  let sent = 0;
+  for (const lead of due) {
+    try {
+      const d = findDestination(lead.destination) || findDestination(`to ${lead.destination}`);
+      if (!d) { markLeadAlerted(lead.id); continue; }
+      const fromGbp = Math.round((((Number(d.flightBaseUSD) || 0) + (Number(d.hotelNightBaseUSD) || 0) * 5) * 0.79) / 10) * 10;
+      let marketMinGbp = null; let cheapestDate = null;
+      // If live market data is on, try a real cheapest-window scan for this dest.
+      try {
+        if (marketDataEnabled()) {
+          const originR = resolveOrigin('London') || { airport: 'LHR' };
+          const start = new Date(); const end = new Date(Date.now() + 120 * 86400000);
+          const scan = await cheapestDepartureInWindow({ destination: lead.destination }, lead.destination, originR, { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) });
+          if (scan?.min) { marketMinGbp = Math.round(scan.min); cheapestDate = scan.dep; }
+        }
+      } catch { /* fall back to indicative price */ }
+      const planUrl = `${base}/?open=planner&q=${encodeURIComponent('flights and hotel to ' + lead.destination)}`;
+      const unsubUrl = `${base}/api/leads/unsubscribe?token=${lead.unsub}`;
+      const mail = cheapestDateAlertEmail({ destination: lead.destination, fromGbp, marketMinGbp, cheapestDate, planUrl, unsubUrl });
+      const r = await sendMail({ to: lead.email, subject: mail.subject, html: mail.html, text: mail.text });
+      markLeadAlerted(lead.id);
+      if (r.ok) sent += 1;
+    } catch { markLeadAlerted(lead.id); }
+  }
+  if (sent) recordAudit({ actor: 'lead-agent', role: 'agent', action: 'lead.alerts-sent', entity: 'lead', entityId: 'batch', summary: `${sent} cheapest-date alert(s) sent` });
+  return { ok: true, due: due.length, sent };
+}
+app.post('/api/agents/leads/run', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json(await runLeadAlerts({ base }));
+}));
+// Serverless-safe scheduler: the first request after the weekly window elapses
+// fires the lead-alert batch (fire-and-forget, self-throttled). No cron needed;
+// mirrors the Friday-payouts tick. Skipped entirely when the mailer is off.
+let lastLeadAlertAt = 0;
+const LEAD_ALERT_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+function maybeRunLeadAlerts(req) {
+  if (!isMailerEnabled()) return;
+  const now = Date.now();
+  if (now - lastLeadAlertAt < LEAD_ALERT_INTERVAL_MS) return;
+  lastLeadAlertAt = now; // claim the slot BEFORE the async work so we fire once
+  const base = `${req.protocol}://${req.get('host')}`;
+  runLeadAlerts({ base }).catch(() => { /* best-effort; next window retries */ });
+}
 app.get('/api/agents/seo', safe((req, res) => res.json({ report: seoReport() })));
 // SEO Autopilot: run the autonomous cycle (publish-if-due + link-graph health)
 // and return the live state. Public GET is read-only-ish (it may publish the due

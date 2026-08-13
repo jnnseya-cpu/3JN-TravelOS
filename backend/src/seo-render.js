@@ -191,6 +191,33 @@ ${bodyHtml}
 </html>`;
 }
 
+// Email-capture block — the top-of-funnel hook on every landing page. A visitor
+// who isn't ready to buy leaves an email for a cheapest-date alert. Includes a
+// honeypot ("company" — hidden from humans, catnip to bots) and posts JSON to
+// /api/leads/subscribe with the destination pre-filled. Progressive enhancement:
+// it's a real <form> that still submits without JS.
+function emailCapture(destination, source) {
+  const d = destination ? esc(destination) : '';
+  const label = destination ? `Get cheapest-date alerts for ${d}` : 'Get cheapest-date fare alerts';
+  return `
+<section style="margin:26px 0;padding:18px 20px;border:1px solid rgba(22,104,227,.35);border-radius:12px;background:rgba(22,104,227,.06)">
+<h2 style="margin:.1em 0 .3em;font-size:19px">✉ ${label}</h2>
+<p class="muted" style="margin:.2em 0 .8em">Not ready to book? We'll watch the fares and email you the moment ${destination ? `${d}` : 'your route'} gets cheaper. No spam, one-click unsubscribe.</p>
+<form id="lead-form" onsubmit="return jnLead(event)" style="display:flex;gap:8px;flex-wrap:wrap">
+<input type="email" name="email" required placeholder="you@email.com" aria-label="Email address" style="flex:1 1 220px;min-width:0;padding:11px 13px;border:1px solid rgba(128,128,128,.35);border-radius:9px;font-size:15px">
+<input type="text" name="company" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+<input type="hidden" name="destination" value="${d}">
+<input type="hidden" name="source" value="${esc(source || 'landing')}">
+<button type="submit" style="padding:11px 20px;background:#1668e3;color:#fff;border:0;border-radius:9px;font-weight:700;font-size:15px;cursor:pointer">Alert me</button>
+</form>
+<p id="lead-msg" style="margin:.7em 0 0;font-size:14px;color:#46a05a;display:none">✓ You're on the list — check your inbox.</p>
+<script>
+function jnLead(e){e.preventDefault();var f=e.target;var b={email:f.email.value,destination:f.destination.value,source:f.source.value,company:f.company.value};
+fetch('/api/leads/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()}).then(function(){var m=document.getElementById('lead-msg');m.style.display='block';f.style.display='none'}).catch(function(){});return false}
+</script>
+</section>`;
+}
+
 const org = (base) => ({
   '@context': 'https://schema.org', '@type': 'Organization', name: BRAND, url: base + '/',
   logo: base + '/logo.png',
@@ -319,6 +346,7 @@ export function renderDestinationPage(slug, base) {
 <p class="lede">Describe your ${esc(city)} trip in one sentence and 3JN's AI builds the cheapest reliable package — flights, hotel, transfers, visa and eSIM — with the option to pay over time.</p>
 <a class="cta" href="/?open=planner&amp;q=${q}">Find my ${esc(city)} trip →</a>
 <ul class="facts">${facts}</ul>
+${emailCapture(city, `dest:${slugifyCity(city)}`)}
 <h2>Visa for ${esc(city)}</h2>
 <p>${visaSentence}</p>
 <h2>How to get ${esc(city)} for less</h2>

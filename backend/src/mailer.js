@@ -69,3 +69,43 @@ export function bookingEmail(option, booking) {
     </div>`;
   return { subject: `Your 3JN booking is confirmed (${booking.id})`, html, text: `Booking ${booking.id} confirmed — ${option.tier}, ${p.symbol}${p.local.total}.` };
 }
+// ---- Lead funnel emails ----------------------------------------------------
+// Escaping — recipient-supplied destination text renders into HTML email.
+function mailEsc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function mailShell(inner) {
+  return `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;background:#0a1020;color:#eef2fb;padding:24px;border-radius:12px">
+    <h2 style="color:#d8b46a;margin:0 0 4px">3JN Travel OS</h2>
+    ${inner}
+    <p style="color:#6b7799;font-size:12px;margin-top:20px">Powered by Artificial Intelligence · Built for Better Travel.</p>
+  </div>`;
+}
+// Welcome / double-confirmation when someone asks for a cheapest-date alert.
+export function leadWelcomeEmail({ destination, fromGbp, months, planUrl, unsubUrl } = {}) {
+  const dest = mailEsc(destination || 'your next trip');
+  const priceLine = fromGbp ? `<p style="color:#46d39a">Trips to ${dest} are indicatively from <strong>£${fromGbp}pp</strong> right now — and you can spread it over monthly instalments.</p>` : '';
+  const monthLine = Array.isArray(months) && months.length ? `<p style="color:#9aa6c4">Cheaper months to fly: <strong>${mailEsc(months.join(', '))}</strong>.</p>` : '';
+  const html = mailShell(`
+    <p style="color:#9aa6c4;margin:0 0 16px">You're on the list ✈</p>
+    <p>We'll watch fares to <strong>${dest}</strong> and email you when the price is worth booking.</p>
+    ${priceLine}${monthLine}
+    <p style="margin:18px 0"><a href="${mailEsc(planUrl || 'https://3jntravel.com/?open=planner')}" style="background:#1668e3;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">Plan my ${dest} trip now →</a></p>
+    <p style="color:#6b7799;font-size:12px">Not interested? <a href="${mailEsc(unsubUrl || 'https://3jntravel.com/api/leads/unsubscribe')}" style="color:#6b7799">Unsubscribe</a>.</p>`);
+  return { subject: `Your cheapest-date watch for ${destination || 'your trip'} is on`, html, text: `You're on the list. We'll watch fares to ${destination || 'your trip'} and email you when to book. Plan now: ${planUrl || 'https://3jntravel.com'}` };
+}
+// The recurring cheapest-date alert the lifecycle agent sends.
+export function cheapestDateAlertEmail({ destination, fromGbp, cheapestDate, marketMinGbp, planUrl, unsubUrl } = {}) {
+  const dest = mailEsc(destination || 'your trip');
+  const price = marketMinGbp || fromGbp;
+  const dateLine = cheapestDate ? `<p>The cheapest dates we're seeing land around <strong>${mailEsc(cheapestDate)}</strong>.</p>` : '';
+  const html = mailShell(`
+    <p style="color:#9aa6c4;margin:0 0 16px">Fare watch · ${dest}</p>
+    <p>Good news — we've found a lower fare window for <strong>${dest}</strong>.</p>
+    ${price ? `<p style="color:#46d39a;font-size:20px;font-weight:800">from £${price}pp</p>` : ''}
+    ${dateLine}
+    <p style="color:#9aa6c4">Book now and spread it over monthly instalments — the AI buys your ticket the moment the fare is covered.</p>
+    <p style="margin:18px 0"><a href="${mailEsc(planUrl || 'https://3jntravel.com/?open=planner')}" style="background:#1668e3;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">See ${dest} deals →</a></p>
+    <p style="color:#6b7799;font-size:12px">To stop these alerts, <a href="${mailEsc(unsubUrl || 'https://3jntravel.com/api/leads/unsubscribe')}" style="color:#6b7799">unsubscribe</a>.</p>`);
+  return { subject: `Cheaper fares to ${destination || 'your trip'}${price ? ` — from £${price}pp` : ''}`, html, text: `Lower fares to ${destination || 'your trip'}${price ? ` from £${price}pp` : ''}. Book & pay monthly: ${planUrl || 'https://3jntravel.com'}` };
+}
