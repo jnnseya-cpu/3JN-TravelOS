@@ -98,7 +98,7 @@ import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, p
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT, leadWelcomeEmail, cheapestDateAlertEmail } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
-import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, destinationSlugs } from './seo-render.js';
+import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, renderWhy, destinationSlugs } from './seo-render.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -243,7 +243,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-13-email-capture-lifecycle-v252';
+const BUILD_TAG = '2026-08-13-trust-referral-v253';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -5858,7 +5858,7 @@ app.get('/robots.txt', (req, res) => {
 });
 app.get('/sitemap.xml', (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
-  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/destinations', '/api-portal']
+  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/destinations', '/why-3jn', '/api-portal']
     .map((u) => ({ u, changefreq: 'weekly', priority: u === '/' ? '1.0' : '0.7', lastmod: null }));
   // Blog posts carry a real <lastmod> from their publish date + higher crawl
   // priority — so search engines re-crawl fresh guides and index every one.
@@ -5911,6 +5911,10 @@ app.get('/blog/:slug', (req, res, next) => {
     if (html) return res.type('html').send(html);
   } catch { /* fall through */ }
   next();
+});
+// Trust page — real page for humans AND crawlers.
+app.get('/why-3jn', (req, res, next) => {
+  try { res.type('html').send(renderWhy(seoBase(req))); } catch { next(); }
 });
 // Destination landing pages — real pages for humans AND crawlers.
 app.get('/destinations', (req, res, next) => {

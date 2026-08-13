@@ -7169,3 +7169,37 @@ test('lead funnel: stats count active, unsubscribed and destination leads', () =
   assert.ok(s.withDestination >= 1);
   assert.ok(typeof s.alertsSent === 'number');
 });
+
+// ---- Trust surface + referral activation ----------------------------------
+import { renderWhy } from '../src/seo-render.js';
+
+test('trust: /why-3jn renders honest, non-fabricated trust signals', () => {
+  const html = renderWhy('https://3jntravel.com');
+  assert.match(html, /Why trust 3JN/);
+  assert.match(html, /price is locked/i);
+  assert.match(html, /Stripe/);
+  assert.match(html, /savings guarantee/i);
+  assert.match(html, /canonical" href="https:\/\/3jntravel\.com\/why-3jn"/);
+});
+
+test('trust: financial-protection badge is HIDDEN unless a real scheme is configured', () => {
+  const prev = process.env.MONEY_PROTECTION_SCHEME;
+  delete process.env.MONEY_PROTECTION_SCHEME;
+  const noBadge = renderWhy('https://3jntravel.com');
+  assert.ok(!/protected<\/p>/.test(noBadge.replace(/\s+/g, ' ')) || !/ATOL|TTA/.test(noBadge), 'no protection claim when unset');
+  process.env.MONEY_PROTECTION_SCHEME = 'ATOL';
+  process.env.MONEY_PROTECTION_NUMBER = '99999';
+  const withBadge = renderWhy('https://3jntravel.com');
+  assert.match(withBadge, /ATOL 99999 protected/);
+  // restore
+  if (prev === undefined) delete process.env.MONEY_PROTECTION_SCHEME; else process.env.MONEY_PROTECTION_SCHEME = prev;
+  delete process.env.MONEY_PROTECTION_NUMBER;
+});
+
+test('referral: destination + trust pages surface the refer-a-friend reward', () => {
+  const dubai = renderDestinationPage('dubai', 'https://3jntravel.com');
+  const why = renderWhy('https://3jntravel.com');
+  assert.match(dubai, /Refer a friend/);
+  assert.match(why, /Refer a friend/);
+  assert.match(dubai, /open=signup/);
+});

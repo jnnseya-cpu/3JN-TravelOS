@@ -218,6 +218,47 @@ fetch('/api/leads/subscribe',{method:'POST',headers:{'content-type':'application
 </section>`;
 }
 
+// ---- Trust surface --------------------------------------------------------
+// HONEST trust signals only. Every claim here is something 3JN genuinely does:
+// the price-lock, the savings guarantee, Stripe-secured payments, transparent
+// pay-monthly, one-trip management. The regulated financial-protection badge
+// (ATOL / TTA / trust account) appears ONLY when a real scheme is configured in
+// the environment — never claim cover you don't hold.
+function moneyProtectionBadge() {
+  const scheme = String(process.env.MONEY_PROTECTION_SCHEME || '').trim();
+  if (!scheme) return null;
+  const number = String(process.env.MONEY_PROTECTION_NUMBER || '').trim();
+  return `🛡 ${esc(scheme)}${number ? ` ${esc(number)}` : ''} protected`;
+}
+const TRUST_SIGNALS = [
+  { icon: '🔒', title: 'Your price is locked', body: 'Book and your total is fixed — no fare hikes or currency surcharges before you travel.' },
+  { icon: '💳', title: 'Secure payments', body: 'Card payments are processed by Stripe. 3JN never stores your card details.' },
+  { icon: '📅', title: 'Pay monthly, transparently', body: 'Spread the cost over weeks or months. The AI buys your ticket the moment the fare is covered and holds it for you.' },
+  { icon: '✅', title: 'Savings guarantee', body: 'If we can\'t beat or match your current quote, your search credits are refunded.' },
+];
+function trustBlock({ compact = false } = {}) {
+  const badge = moneyProtectionBadge();
+  const items = TRUST_SIGNALS.map((s) => `<li style="padding:12px 14px;border:1px solid rgba(128,128,128,.2);border-radius:10px"><strong>${s.icon} ${esc(s.title)}</strong><br><span class="muted">${esc(s.body)}</span></li>`).join('');
+  return `
+<section style="margin:26px 0">
+<h2 style="font-size:${compact ? '19' : '22'}px;margin:.2em 0 .5em">Why you can trust 3JN</h2>
+${badge ? `<p style="display:inline-block;padding:6px 12px;border-radius:8px;background:rgba(70,160,90,.14);border:1px solid rgba(70,160,90,.4);font-weight:700;font-size:14px">${badge}</p>` : ''}
+<ul style="list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:.6em 0">${items}</ul>
+${compact ? '<p><a href="/why-3jn">More on how 3JN protects you →</a></p>' : ''}
+</section>`;
+}
+// Referral activation — surfaces the (already-built) reward: a friend's first
+// paid trip earns the referrer real credit. Anonymous SSR visitors are pointed
+// to sign up (where their personal referral code lives).
+function referralBlock() {
+  return `
+<section style="margin:26px 0;padding:18px 20px;border:1px solid rgba(216,180,106,.4);border-radius:12px;background:rgba(216,180,106,.07)">
+<h2 style="margin:.1em 0 .3em;font-size:19px">👥 Refer a friend — you both win</h2>
+<p class="muted" style="margin:.2em 0 .8em">Share 3JN with friends and family. When someone you refer takes their first trip, <strong>you earn reward credit</strong> toward your own travel — and they get the cheapest reliable package too.</p>
+<a class="cta" href="/?open=signup" style="margin:4px 0">Create an account &amp; get your referral link →</a>
+</section>`;
+}
+
 const org = (base) => ({
   '@context': 'https://schema.org', '@type': 'Organization', name: BRAND, url: base + '/',
   logo: base + '/logo.png',
@@ -357,6 +398,8 @@ ${emailCapture(city, `dest:${slugifyCity(city)}`)}
 </ul>
 <h2>${esc(city)} travel FAQ</h2>
 ${faq.map((f) => `<h3>${esc(f.q)}</h3><p>${esc(f.a)}</p>`).join('')}
+${trustBlock({ compact: true })}
+${referralBlock()}
 <h2>Explore more destinations</h2>
 <p class="links">${related}</p>
 <p><a href="/blog">Read our travel guides →</a> · <a href="/visaos">Check your visa odds →</a></p>`;
@@ -380,5 +423,29 @@ export function renderDestinationIndex(base) {
     description: 'Browse destinations and let 3JN\'s AI build the cheapest reliable flight + hotel + visa package, payable monthly.',
     canonical: base + '/destinations', base, ogType: 'website',
     jsonLd: org(base), bodyHtml: body,
+  });
+}
+
+// "Why trust a new brand?" — the trust page. Honest, founder-voiced, and built
+// entirely from real guarantees (no fabricated badges). Served to everyone.
+export function renderWhy(base) {
+  const badge = moneyProtectionBadge();
+  const body = `
+<h1>Why trust 3JN with your trip?</h1>
+<p class="lede">A fair question — we're a new name. Here's exactly how your money and your trip are protected, in plain English.</p>
+${badge ? `<p style="display:inline-block;padding:8px 14px;border-radius:8px;background:rgba(70,160,90,.14);border:1px solid rgba(70,160,90,.4);font-weight:700">${badge}</p>` : ''}
+${trustBlock({ compact: false })}
+<h2>How pay-monthly actually works</h2>
+<p>You put down a deposit and spread the rest over weeks or months. Your price is locked the day you book. Our AI keeps watching your fare, and the moment your payments cover the ticket, it buys it and holds it safely in your account — released to you as soon as your balance reaches zero. No interest, no surprises.</p>
+<h2>What happens if something goes wrong</h2>
+<p>Your total is fixed at booking — no fare increases, no currency surcharges. Card payments run through Stripe, so 3JN never touches your card number. If our savings guarantee isn't met, your search credits come back to you.${badge ? ' Your package is financially protected under the scheme shown above.' : ''}</p>
+<h2>Real reviews, not paid ones</h2>
+<p>After every trip we invite you — through Trustpilot's verified system — to leave an honest review. We'd rather earn a real reputation slowly than fake one.</p>
+${referralBlock()}
+<p style="margin-top:24px"><a class="cta" href="/?open=planner">Plan my trip →</a></p>`;
+  return shell({
+    title: `Why trust 3JN Travel OS — price lock, secure payments, pay monthly`,
+    description: 'How 3JN protects your money and your trip: locked prices, Stripe-secured payments, transparent pay-monthly, a savings guarantee and verified reviews.',
+    canonical: base + '/why-3jn', base, ogType: 'website', jsonLd: org(base), bodyHtml: body,
   });
 }
