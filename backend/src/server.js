@@ -97,6 +97,7 @@ import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, p
 import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
+import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, destinationSlugs } from './seo-render.js';
 import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -241,7 +242,7 @@ app.get('/api/persistence-test', async (req, res) => {
 // Build marker — lets an operator confirm WHICH build is actually live (deploys
 // can lag or silently fail). If /api/health shows an older `build` than the code
 // you just pushed, your deployment is STALE — redeploy.
-const BUILD_TAG = '2026-08-12-threat-shield-v250';
+const BUILD_TAG = '2026-08-13-seo-ssr-landing-pages-v251';
 // Health check for Cloud Run / Firebase / load balancers.
 app.get('/api/health', (req, res) => res.json({
   ok: true, service: '3jn-travel-os', build: BUILD_TAG,
@@ -5760,12 +5761,16 @@ app.get('/robots.txt', (req, res) => {
 });
 app.get('/sitemap.xml', (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
-  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/api-portal']
+  const staticUrls = ['/', '/how-it-works', '/membership', '/visaos', '/marketplace', '/blog', '/destinations', '/api-portal']
     .map((u) => ({ u, changefreq: 'weekly', priority: u === '/' ? '1.0' : '0.7', lastmod: null }));
   // Blog posts carry a real <lastmod> from their publish date + higher crawl
   // priority — so search engines re-crawl fresh guides and index every one.
   const blogUrls = listPosts().map((p) => ({ u: `/blog/${p.slug}`, changefreq: 'weekly', priority: '0.6', lastmod: (p.publishedAt || '').slice(0, 10) || null }));
-  const urls = [...staticUrls, ...blogUrls]
+  // Programmatic destination landing pages — the organic-acquisition net. Each
+  // is a real, data-grounded, indexable page targeting high-intent long-tail
+  // demand ("cheap flights & hotels to <city>, pay monthly").
+  const destUrls = destinationSlugs().map((s) => ({ u: `/destinations/${s}`, changefreq: 'weekly', priority: '0.7', lastmod: null }));
+  const urls = [...staticUrls, ...blogUrls, ...destUrls]
     .map(({ u, changefreq, priority, lastmod }) => `  <url><loc>${base}${u}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}<changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`)
     .join('\n');
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
@@ -5781,6 +5786,45 @@ app.get(['/blog.xml', '/rss.xml', '/feed.xml'], (req, res) => {
 // parsing never breaks on an error page.
 app.all('/api/*', (req, res) => {
   res.status(404).json({ error: 'not-found', path: req.path });
+});
+
+// ---- SEO server-side rendering (get found on Google) ----------------------
+// The app is a client-rendered SPA, so a crawler fetching the raw HTML of an
+// SPA route would see an empty shell with a duplicate <title> on every URL —
+// nothing indexes. These routes render REAL HTML (unique title/description,
+// canonical, Open Graph, JSON-LD, the actual body + internal links):
+//   • For SPA routes (/, /blog, /blog/:slug) we serve the rendered page ONLY to
+//     crawlers/social scrapers; humans fall through to the SPA (next()).
+//   • Destination landing pages (/destinations[/:slug]) are real, data-grounded
+//     pages served to EVERYONE — hundreds of high-intent, interlinked pages that
+//     the SPA never had. (Served to human + crawler alike = not cloaking.)
+const seoBase = (req) => `${req.protocol}://${req.get('host')}`;
+app.get('/', (req, res, next) => {
+  if (!isCrawler(req)) return next();
+  try { res.type('html').send(renderHome(seoBase(req))); } catch { next(); }
+});
+app.get('/blog', (req, res, next) => {
+  if (!isCrawler(req)) return next();
+  try { res.type('html').send(renderBlogIndex(seoBase(req))); } catch { next(); }
+});
+app.get('/blog/:slug', (req, res, next) => {
+  if (!isCrawler(req)) return next();
+  try {
+    const html = renderBlogPost(req.params.slug, seoBase(req));
+    if (html) return res.type('html').send(html);
+  } catch { /* fall through */ }
+  next();
+});
+// Destination landing pages — real pages for humans AND crawlers.
+app.get('/destinations', (req, res, next) => {
+  try { res.type('html').send(renderDestinationIndex(seoBase(req))); } catch { next(); }
+});
+app.get('/destinations/:slug', (req, res, next) => {
+  try {
+    const html = renderDestinationPage(req.params.slug, seoBase(req));
+    if (html) return res.type('html').send(html);
+    return res.status(404).type('html').send(renderDestinationIndex(seoBase(req)));
+  } catch { next(); }
 });
 
 // ---- Static frontend ------------------------------------------------------

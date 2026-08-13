@@ -7050,3 +7050,66 @@ test('threat shield: threatStats reports tracked + quarantined counts', () => {
   assert.ok(stats.trackedIps >= 2, 'both IPs tracked');
   assert.ok(stats.totalOffences >= THREAT_CONFIG.OFFENCE_THRESHOLD + 1, 'offences counted');
 });
+
+// ---- SEO server-side rendering (get found on Google) ----------------------
+import {
+  isCrawler, renderHome, renderBlogIndex, renderDestinationPage,
+  renderDestinationIndex, destinationSlugs,
+} from '../src/seo-render.js';
+
+test('SEO: crawler detection matches search + social bots, not humans', () => {
+  const bot = (ua) => isCrawler({ headers: { 'user-agent': ua } });
+  assert.equal(bot('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'), true);
+  assert.equal(bot('facebookexternalhit/1.1'), true);
+  assert.equal(bot('WhatsApp/2.22'), true);
+  assert.equal(bot('Twitterbot/1.0'), true);
+  assert.equal(bot('Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120 Safari/537'), false, 'real browser is not a crawler');
+});
+
+test('SEO: home render has a unique title, meta description, canonical and JSON-LD', () => {
+  const html = renderHome('https://3jntravel.com');
+  assert.match(html, /<title>[^<]+<\/title>/);
+  assert.match(html, /<meta name="description"/);
+  assert.match(html, /<link rel="canonical" href="https:\/\/3jntravel\.com\/">/);
+  assert.match(html, /application\/ld\+json/);
+  assert.match(html, /"@type":"WebSite"/);
+});
+
+test('SEO: a large programmatic destination set renders (100+ pages)', () => {
+  const slugs = destinationSlugs();
+  assert.ok(slugs.length >= 100, `expected 100+ destination pages, got ${slugs.length}`);
+  assert.ok(slugs.includes('kinshasa'), 'includes under-served diaspora routes');
+  assert.ok(slugs.includes('lagos') && slugs.includes('kingston'), 'includes the wedge markets');
+});
+
+test('SEO: each destination page is data-grounded and unique (title, visa, FAQ, canonical)', () => {
+  const base = 'https://3jntravel.com';
+  const dubai = renderDestinationPage('dubai', base);
+  const lagos = renderDestinationPage('lagos', base);
+  assert.ok(dubai && lagos);
+  // Unique per city.
+  const t = (h) => h.match(/<title>([^<]+)<\/title>/)[1];
+  assert.notEqual(t(dubai), t(lagos), 'titles differ per destination');
+  assert.match(dubai, /canonical" href="https:\/\/3jntravel\.com\/destinations\/dubai"/);
+  // Real content: a visa section, an FAQ with schema, and a planner CTA.
+  assert.match(lagos, /Visa for Lagos/);
+  assert.match(lagos, /"@type":"FAQPage"/);
+  assert.match(lagos, /open=planner/);
+});
+
+test('SEO: destination country label is not redundant with the city (Kinshasa)', () => {
+  const html = renderDestinationPage('kinshasa', 'https://3jntravel.com');
+  const title = html.match(/<title>([^<]+)<\/title>/)[1];
+  assert.ok(!/Kinshasa,\s*Congo\s*-\s*Kinshasa/i.test(title), 'title should not repeat the city as the country');
+  assert.match(title, /Kinshasa/);
+});
+
+test('SEO: unknown destination slug renders null (route will fall back)', () => {
+  assert.equal(renderDestinationPage('not-a-real-place-xyz', 'https://3jntravel.com'), null);
+});
+
+test('SEO: destination index lists the cities with internal links', () => {
+  const html = renderDestinationIndex('https://3jntravel.com');
+  assert.match(html, /\/destinations\/dubai/);
+  assert.match(html, /\/destinations\/kinshasa/);
+});
