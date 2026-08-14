@@ -49,4 +49,4 @@ Product direction · competitive intelligence baseline · AI-agent architecture 
 
 ## Where each pillar already lives
 
-`docs/REVENUE-PROTECTION-SPEC.md` (monetisation) · `docs/VISAOS-MODULE.md` (border intelligence) · `docs/GO-LIVE-STACK.md` (technical stack, phases 1–3) · `docs/AI-OS-MASTER-BLUEPRINT.md` (architecture) · `backend/src/revenue.js` `POSITIONING` (locked positioning + pillars) · diaspora engine (`planner.diaspora`) · pots/instalments (fintech) · host marketplace (supplier extranet) · learning agents (CRM/repeat-travel intelligence).
+`docs/REVENUE-PROTECTION-SPEC.md` (monetisation) · `docs/VISAOS-MODULE.md` (border intelligence) · `docs/GO-LIVE.md` (go-live runbook + technical stack, phases 1–3) · `docs/AI-OS-MASTER-BLUEPRINT.md` (architecture) · `backend/src/revenue.js` `POSITIONING` (locked positioning + pillars) · diaspora engine (`planner.diaspora`) · pots/instalments (fintech) · host marketplace (supplier extranet) · learning agents (CRM/repeat-travel intelligence).
