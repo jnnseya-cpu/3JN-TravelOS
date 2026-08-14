@@ -7255,3 +7255,48 @@ test('SEO: google-site-verification meta only when env is set', () => {
   assert.match(renderRoutePage('london-to-lagos', 'https://3jntravel.com'), /google-site-verification" content="tok_abc"/);
   if (prev === undefined) delete process.env.GOOGLE_SITE_VERIFICATION; else process.env.GOOGLE_SITE_VERIFICATION = prev;
 });
+
+// ---- Feature-led "money page" blog cluster --------------------------------
+import { ensureSeedPosts, ensureFeaturePosts, featurePostCount, getPost as getBlogPost, listPosts as listBlogPosts } from '../src/agents.js';
+
+test('feature blog: all feature money-pages seed with stable slugs', () => {
+  ensureSeedPosts();
+  const posts = listBlogPosts();
+  const feats = posts.filter((p) => p.angle && p.angle.startsWith('feature:'));
+  assert.equal(feats.length, featurePostCount(), 'every feature post is seeded');
+  assert.ok(feats.some((p) => p.slug === 'pay-monthly-flights-and-holidays-uk'));
+  assert.ok(feats.some((p) => p.slug === 'check-visa-approval-odds-before-you-book'));
+  // Stable slug — no numeric counter suffix (so rankings/links don't churn).
+  assert.ok(feats.every((p) => !/-\d+$/.test(p.slug)), 'feature slugs are stable');
+});
+
+test('feature blog: ensureFeaturePosts is idempotent (no duplicates on re-run)', () => {
+  ensureSeedPosts();
+  const before = listBlogPosts().filter((p) => p.angle?.startsWith('feature:')).length;
+  const added = ensureFeaturePosts();
+  const after = listBlogPosts().filter((p) => p.angle?.startsWith('feature:')).length;
+  assert.equal(added, 0, 'nothing re-added when already present');
+  assert.equal(before, after);
+});
+
+test('feature blog: each post is densely + dynamically interlinked', () => {
+  ensureSeedPosts();
+  const p = getBlogPost('pay-monthly-flights-and-holidays-uk');
+  assert.ok(p, 'post exists');
+  const links = [...p.body.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(links.length >= 12, `dense internal linking (got ${links.length})`);
+  assert.ok(links.some((l) => l.startsWith('/destinations/')), 'links to destination pages');
+  assert.ok(links.some((l) => l.startsWith('/flights/')), 'links to route pages');
+  assert.ok(links.some((l) => l.startsWith('/blog/') && l !== '/blog/pay-monthly-flights-and-holidays-uk'), 'cross-links sibling features');
+  assert.ok(p.faq.length >= 2, 'has FAQ for rich results');
+});
+
+test('feature blog: the link ribbons vary across the cluster (dynamic, not stamped)', () => {
+  ensureSeedPosts();
+  const feats = listBlogPosts().filter((p) => p.angle?.startsWith('feature:'));
+  const destsOf = (p) => [...(getBlogPost(p.slug).body).matchAll(/\/destinations\/([a-z-]+)/g)].map((m) => m[1]).sort().join(',');
+  const distinct = new Set(feats.map(destsOf));
+  // Across 10 posts the destination ribbons should take several distinct shapes,
+  // proving the internal-link graph is varied rather than one stamped block.
+  assert.ok(distinct.size >= 4, `expected varied link ribbons across the cluster, got ${distinct.size} distinct`);
+});
