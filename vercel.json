@@ -29,6 +29,8 @@
     { "source": "/destinations/(.*)", "destination": "/api" },
     { "source": "/flights", "destination": "/api" },
     { "source": "/flights/(.*)", "destination": "/api" },
+    { "source": "/blog", "destination": "/api" },
+    { "source": "/blog/(.*)", "destination": "/api" },
     { "source": "/:file(google[a-f0-9]+\\.html)", "destination": "/api" },
     { "source": "/", "destination": "/landing.html" },
     { "source": "/app", "destination": "/index.html" },
@@ -39,9 +41,7 @@
     { "source": "/admin", "destination": "/index.html" },
     { "source": "/business", "destination": "/index.html" },
     { "source": "/visaos", "destination": "/index.html" },
-    { "source": "/marketplace", "destination": "/index.html" },
-    { "source": "/blog", "destination": "/index.html" },
-    { "source": "/blog/(.*)", "destination": "/index.html" }
+    { "source": "/marketplace", "destination": "/index.html" }
   ],
   "headers": [
     {

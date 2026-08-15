@@ -27,6 +27,7 @@ function isSeoPassthrough(pathOnly) {
     pathOnly === '/why-3jn' ||
     pathOnly === '/destinations' || pathOnly.startsWith('/destinations/') ||
     pathOnly === '/flights' || pathOnly.startsWith('/flights/') ||
+    pathOnly === '/blog' || pathOnly.startsWith('/blog/') ||
     /^\/google[0-9a-f]+\.html$/i.test(pathOnly)
   );
 }

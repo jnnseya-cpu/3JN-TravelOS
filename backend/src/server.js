@@ -5893,27 +5893,33 @@ app.all('/api/*', (req, res) => {
 // SPA route would see an empty shell with a duplicate <title> on every URL —
 // nothing indexes. These routes render REAL HTML (unique title/description,
 // canonical, Open Graph, JSON-LD, the actual body + internal links):
-//   • For SPA routes (/, /blog, /blog/:slug) we serve the rendered page ONLY to
-//     crawlers/social scrapers; humans fall through to the SPA (next()).
-//   • Destination landing pages (/destinations[/:slug]) are real, data-grounded
-//     pages served to EVERYONE — hundreds of high-intent, interlinked pages that
-//     the SPA never had. (Served to human + crawler alike = not cloaking.)
+//   • The home route (/) serves the rendered page ONLY to crawlers/social
+//     scrapers; humans fall through to the SPA landing (next()).
+//   • Blog (/blog[/:slug]), destination (/destinations[/:slug]) and route
+//     (/flights[/:slug]) pages are real, data-grounded pages served to EVERYONE
+//     — hundreds of high-intent, interlinked pages the SPA never had. (Served to
+//     human + crawler alike = not cloaking, and the only Vercel-safe way to get
+//     the SSR to Googlebot, whose rewrites can't branch on user-agent.)
 const seoBase = (req) => `${req.protocol}://${req.get('host')}`;
 app.get('/', (req, res, next) => {
   if (!isCrawler(req)) return next();
   try { res.type('html').send(renderHome(seoBase(req))); } catch { next(); }
 });
+// Blog index + posts are real, server-rendered pages served to EVERYONE (human
+// and crawler alike) — same as the destination/route landing pages. This is the
+// only way the SSR reaches Googlebot on Vercel, where /blog* is routed to this
+// function (crawler-gating here would be invisible to Vercel's UA-blind rewrites
+// and humans would get the empty SPA shell). An unknown slug renders the blog
+// index rather than falling through to a disk read (which isn't Vercel-safe).
 app.get('/blog', (req, res, next) => {
-  if (!isCrawler(req)) return next();
   try { res.type('html').send(renderBlogIndex(seoBase(req))); } catch { next(); }
 });
 app.get('/blog/:slug', (req, res, next) => {
-  if (!isCrawler(req)) return next();
   try {
     const html = renderBlogPost(req.params.slug, seoBase(req));
     if (html) return res.type('html').send(html);
-  } catch { /* fall through */ }
-  next();
+    return res.status(404).type('html').send(renderBlogIndex(seoBase(req)));
+  } catch { next(); }
 });
 // Trust page — real page for humans AND crawlers.
 app.get('/why-3jn', (req, res, next) => {
