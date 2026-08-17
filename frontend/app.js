@@ -4,7 +4,7 @@
 // Client build tag. Shown in the admin console so you can instantly tell whether
 // your browser is running the freshest code or a stale cached copy. Bump this in
 // lockstep with server BUILD_TAG + sw.js CACHE_VERSION on every deploy.
-const APP_BUILD = 'v249';
+const APP_BUILD = 'v255';
 
 const state = {
   context: null,
@@ -3664,6 +3664,7 @@ async function renderAdmin() {
       ${buildBadge}
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="runSelfTest()">🚦 Launch readiness check</button>
       <button class="btn btn-ghost btn-sm" onclick="sendTestEmail()">✉️ Send test email</button>
+      <button class="btn btn-ghost btn-sm" onclick="openNewsletter()">📣 Newsletter</button>
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
       <button class="btn btn-ghost btn-sm" onclick="runBotSweep()" title="Quarantines accounts with machine-generated names AND zero activity. Any real activity = immune. Flagged accounts can be restored in one click.">🧹 Bot sweep</button>
@@ -4228,6 +4229,45 @@ window.sendTestEmail = async () => {
   try { r = await api('/api/admin/test-email', { method: 'POST', body: JSON.stringify({ to: (to || '').trim() }) }); }
   catch { toast('Could not send — are you signed in as admin (with the staff PIN)?'); return; }
   toast(r.ok ? `✅ ${r.message}` : `⚠ ${r.message}`);
+};
+// Admin: weekly feature-newsletter tile — audience count + on-demand send. The
+// send is idempotent server-side (per-user 7-day cadence), so re-clicking never
+// double-mails anyone; it also runs automatically via the Monday cron.
+window.openNewsletter = async () => {
+  let d;
+  try { d = await api('/api/admin/newsletter'); } catch { toast('Admin only.'); return; }
+  const a = d.audience || {};
+  const stat = (v, k, color) => `<div class="card pad" style="flex:1 1 120px;text-align:center"><div style="font-size:24px;font-weight:700;color:${color}">${Number(v || 0).toLocaleString()}</div><div class="muted" style="font-size:11.5px;margin-top:4px">${k}</div></div>`;
+  modal(`
+    <span class="eyebrow">📣 Weekly feature newsletter</span>
+    <h3 style="margin:6px 0 4px">Audience &amp; send</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">A densely-linked feature round-up emailed to every registered user. It sends automatically each Monday — use this to send on demand. Idempotent: nobody receives it twice in the same week.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${stat(a.total, 'Registered', 'var(--gold)')}
+      ${stat(a.optedIn, 'Subscribed', '#7fe0a5')}
+      ${stat(a.optedOut, 'Opted out', '#9aa6c4')}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-gold btn-sm" id="nlSendBtn" onclick="newsletterSendNow()">📤 Send now</button>
+      <span class="muted" style="font-size:11.5px">Only users not mailed in the last 7 days receive it.</span>
+    </div>
+    <div id="nlResult" style="margin-top:12px"></div>`);
+};
+window.newsletterSendNow = async () => {
+  if (!confirm('Send the weekly newsletter now to all due registered users?')) return;
+  const btn = $('#nlSendBtn'); const box = $('#nlResult');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+  let r;
+  try { r = await api('/api/agents/newsletter/run', { method: 'POST', body: '{}' }); }
+  catch { if (btn) { btn.disabled = false; btn.textContent = '📤 Send now'; } toast('Could not send — signed in as admin (with staff PIN)?'); return; }
+  if (btn) { btn.disabled = false; btn.textContent = '📤 Send now'; }
+  if (r.skipped === 'mailer-disabled') {
+    if (box) box.innerHTML = `<div class="card pad" style="border-color:rgba(255,138,138,.4)"><strong style="color:#ff8a8a">⚠ Email is off</strong><div class="muted" style="font-size:12px;margin-top:4px">Set <strong>SMTP_PASS</strong> in your environment and redeploy to enable sending.</div></div>`;
+    toast('⚠ Mailer disabled — set SMTP_PASS.');
+    return;
+  }
+  if (box) box.innerHTML = `<div class="card pad" style="border-color:rgba(127,224,165,.4)"><strong style="color:#7fe0a5">✅ Newsletter run complete</strong><div class="muted" style="font-size:12.5px;margin-top:4px">${Number(r.sent || 0)} sent · ${Number(r.due || 0)} were due this run.</div></div>`;
+  toast(`✅ ${Number(r.sent || 0)} newsletter(s) sent`);
 };
 // Admin: grant ACU + set membership level for any user (run the business; test tiers).
 const MEMBERSHIP_OPTIONS = [
