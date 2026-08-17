@@ -59,6 +59,7 @@ import {
   getModuleFlags, setModuleFlags, wipeTransactionalData, getFeaturedOverride, setFeaturedOverride,
   createSharedTrip, getSharedTrip, recordShareEvent, shareAttribution,
   captureLead, unsubscribeLead, listLeads, leadStats, leadsDueForAlert, markLeadAlerted,
+  usersDueForNewsletter, markUserNewslettered, unsubscribeUserNewsletter, newsletterAudience,
 } from './store.js';
 import { supplierDoors, viatorEnabled, viatorActivitiesForScan, viatorMerchantEnabled, bookViatorTour, viatorCancellationQuote, cancelViatorBooking, mozioEnabled, mozioTransfersForScan, cartrawlerEnabled, cartrawlerWebhookSecret, cartrawlerWebhookOptions, cartrawlerWebhookInspect, cartrawlerWebhookUpdate, CARTRAWLER_EVENT_STATUS, syncAiraloPackages, airaloCatalogueStatus, hotelbedsActivitiesForScan, hotelbedsActivitiesEnabled } from './extras-suppliers.js';
 import { botSignupVerdict } from './bot-defence.js';
@@ -95,7 +96,7 @@ import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, l
 import { generateGrowthContent, GROWTH_TOOL_KEYS } from './growth.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
-import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT, leadWelcomeEmail, cheapestDateAlertEmail } from './mailer.js';
+import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT, leadWelcomeEmail, cheapestDateAlertEmail, featureNewsletterEmail } from './mailer.js';
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
 import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, renderWhy, renderRoutePage, renderRouteIndex, destinationSlugs, routeSlugs } from './seo-render.js';
@@ -3529,6 +3530,16 @@ app.get('/api/cron/instalments', safe(async (req, res) => {
   const results = await runInstalmentEnforcement();
   res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing, potWatches: results.potWatches });
 }));
+// Weekly feature newsletter to every registered user (Vercel cron → GET, weekly).
+// Protected by CRON_SECRET when set. Idempotent: each user carries a
+// lastNewsletterAt, so a retry (or the admin trigger firing the same day) never
+// double-sends within the cadence window.
+app.get('/api/cron/newsletter', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json(await runFeatureNewsletter({ base }));
+}));
 // Airalo eSIM catalogue sync (Vercel cron → GET, hourly). Airalo require partners
 // to pull GET /v2/packages at least once per hour so the local catalogue stays in
 // step with their live inventory/pricing. Protected by CRON_SECRET when set. On
@@ -5754,6 +5765,44 @@ function maybeRunLeadAlerts(req) {
   const base = `${req.protocol}://${req.get('host')}`;
   runLeadAlerts({ base }).catch(() => { /* best-effort; next window retries */ });
 }
+// ---- Weekly feature newsletter (to registered users) ----------------------
+// Sends the densely-hyperlinked feature round-up to every registered user who is
+// due (real email, opted in, not mailed within the cadence). Mirrors the lead
+// agent: mailer-gated, capped per run, and idempotent via markUserNewslettered.
+async function runFeatureNewsletter({ base, cadenceDays = 7, cap = 500 } = {}) {
+  if (!isMailerEnabled()) return { ok: false, skipped: 'mailer-disabled', sent: 0 };
+  const due = usersDueForNewsletter({ cadenceDays, limit: cap });
+  let posts = [];
+  try { posts = listPosts().slice(0, 4); } catch { /* blog optional */ }
+  let sent = 0;
+  for (const u of due) {
+    try {
+      const unsubUrl = `${base}/api/newsletter/unsubscribe?token=${u.unsub}`;
+      const mail = featureNewsletterEmail({ name: u.name, base, referralCode: u.referralCode, unsubUrl, posts });
+      const r = await sendMail({ to: u.email, subject: mail.subject, html: mail.html, text: mail.text });
+      markUserNewslettered(u.id); // mark regardless — a bad address waits for next week, never a retry storm
+      if (r.ok) sent += 1;
+    } catch { markUserNewslettered(u.id); }
+  }
+  if (sent) recordAudit({ actor: 'newsletter-agent', role: 'agent', action: 'newsletter.sent', entity: 'user', entityId: 'batch', summary: `${sent} weekly feature newsletter(s) sent` });
+  return { ok: true, due: due.length, sent };
+}
+// Admin: fire the newsletter now (manual trigger, same idempotency as the cron).
+app.post('/api/agents/newsletter/run', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json(await runFeatureNewsletter({ base, cap: Number(req.body?.cap) || 500 }));
+}));
+// Admin: newsletter audience stats.
+app.get('/api/admin/newsletter', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ audience: newsletterAudience() });
+}));
+// One-click newsletter unsubscribe (GET so it works straight from an email link).
+app.get('/api/newsletter/unsubscribe', safe((req, res) => {
+  const r = unsubscribeUserNewsletter(req.query.token);
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Unsubscribed</title><body style="font-family:system-ui;max-width:520px;margin:60px auto;padding:0 20px;text-align:center"><h1>✈ 3JN Travel OS</h1><p>${r.ok ? "You've been unsubscribed from the weekly newsletter. Your account and booking emails are unaffected." : 'This unsubscribe link is invalid or already used.'}</p><p><a href="/">Back to 3JN</a></p></body>`);
+}));
 app.get('/api/agents/seo', safe((req, res) => res.json({ report: seoReport() })));
 // SEO Autopilot: run the autonomous cycle (publish-if-due + link-graph health)
 // and return the live state. Public GET is read-only-ish (it may publish the due

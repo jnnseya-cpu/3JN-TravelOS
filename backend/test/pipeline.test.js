@@ -7300,3 +7300,40 @@ test('feature blog: the link ribbons vary across the cluster (dynamic, not stamp
   // proving the internal-link graph is varied rather than one stamped block.
   assert.ok(distinct.size >= 4, `expected varied link ribbons across the cluster, got ${distinct.size} distinct`);
 });
+
+import { createUser as nlCreateUser, usersDueForNewsletter, markUserNewslettered, unsubscribeUserNewsletter, newsletterAudience } from '../src/store.js';
+import { featureNewsletterEmail } from '../src/mailer.js';
+
+test('Newsletter: weekly feature email targets registered users, is densely linked, opt-out + idempotent', () => {
+  const real = nlCreateUser({ email: `nl-${Date.now()}@example.com`, name: 'Grace Hopper' });
+  nlCreateUser({ name: 'Guest Traveller' }); // guest -> @guest.3jn, must be excluded
+
+  // Due list: real account present, guests never included, carries a token.
+  const due = usersDueForNewsletter();
+  const mine = due.find((d) => d.id === real.id);
+  assert.ok(mine, 'a registered user with a real email is due');
+  assert.ok(!due.some((d) => /@guest\.3jn$/i.test(d.email)), 'guests are never mailed');
+  assert.ok(mine.unsub && mine.referralCode, 'due entry carries an unsubscribe token and referral code');
+
+  // Email content: sells features with MANY working hyperlinks, an unsubscribe
+  // link and the reader's personal referral link; recipient text is escaped.
+  const unsubUrl = `https://3jntravel.com/api/newsletter/unsubscribe?token=${mine.unsub}`;
+  const mail = featureNewsletterEmail({ name: mine.name, base: 'https://3jntravel.com', referralCode: mine.referralCode, unsubUrl, posts: [{ slug: 'pay-monthly-flights', title: 'Pay Monthly Flights' }] });
+  const hrefs = (mail.html.match(/href="/g) || []).length;
+  assert.ok(hrefs >= 8, `expected many hyperlinks, got ${hrefs}`);
+  assert.match(mail.html, /\/api\/newsletter\/unsubscribe/);
+  assert.match(mail.html, /\/\?ref=/);
+  assert.match(mail.html, /\/visaos|\/marketplace|\/how-it-works/);
+  assert.ok(!/<script/i.test(mail.html), 'no unescaped markup');
+  assert.ok(mail.subject && mail.text.includes('https://3jntravel.com'), 'has subject + plaintext part with links');
+
+  // Idempotent: once mailed this cadence window, no longer due.
+  markUserNewslettered(real.id);
+  assert.ok(!usersDueForNewsletter().some((d) => d.id === real.id), 'not re-sent within the cadence window');
+
+  // One-click unsubscribe removes them from the audience.
+  const optedInBefore = newsletterAudience().optedIn;
+  assert.equal(unsubscribeUserNewsletter(mine.unsub).ok, true);
+  assert.ok(newsletterAudience().optedIn < optedInBefore || newsletterAudience().optedOut >= 1, 'unsubscribe reflected in audience');
+  assert.equal(unsubscribeUserNewsletter('bogus-token').ok, false, 'invalid token rejected');
+});

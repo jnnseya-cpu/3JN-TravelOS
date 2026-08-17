@@ -978,6 +978,12 @@ export function createUser({ email, name, referredByCode, role, avatar, bio, all
     referralCode,
     referredByCode: referredByCode || null,
     referrals: 0,
+    // Weekly feature newsletter: opted in by default with a stable one-click
+    // unsubscribe token. lastNewsletterAt gates the cadence (idempotent sends).
+    newsletter: true,
+    newsletterUnsub: unsubToken(),
+    lastNewsletterAt: null,
+    newsletters: 0,
     createdAt: nowISO(),
   };
   db.users.set(userId, user);
@@ -1034,6 +1040,57 @@ export function getUserRaw(userId) {
 export function findUserByEmail(email) {
   const u = [...db.users.values()].find((x) => x.email.toLowerCase() === (email || '').toLowerCase());
   return u ? publicUser(u) : null;
+}
+
+// ---- Weekly feature newsletter (to registered users) -----------------------
+// Audience = real registered accounts (guests carry an @guest.3jn address and are
+// skipped, as is anyone who opted out). Idempotent by design: a user with a
+// lastNewsletterAt inside the cadence window is not returned, so a cron retry or
+// a second tick can never double-send within the week. Missing fields on legacy
+// accounts (created/hydrated before this feature) are treated as opted-in and get
+// a one-click unsubscribe token lazily.
+function isRealRecipient(u) { return u && u.email && !/@guest\.3jn$/i.test(u.email); }
+export function usersDueForNewsletter({ cadenceDays = 7, limit = 500 } = {}) {
+  const cutoff = Date.now() - cadenceDays * 86400000;
+  const due = [];
+  for (const u of db.users.values()) {
+    if (!isRealRecipient(u)) continue;
+    if (u.newsletter === false) continue; // explicit opt-out
+    const last = u.lastNewsletterAt ? Date.parse(u.lastNewsletterAt) : 0;
+    if (last && last > cutoff) continue; // already sent this cadence window
+    if (!u.newsletterUnsub) u.newsletterUnsub = unsubToken(); // lazy, persisted
+    due.push({ id: u.id, email: u.email, name: u.name, referralCode: u.referralCode, unsub: u.newsletterUnsub });
+    if (due.length >= limit) break;
+  }
+  return due;
+}
+export function markUserNewslettered(userId) {
+  const u = db.users.get(userId);
+  if (!u) return null;
+  u.lastNewsletterAt = nowISO();
+  u.newsletters = (u.newsletters || 0) + 1;
+  return true;
+}
+export function unsubscribeUserNewsletter(token) {
+  const t = String(token || '').trim();
+  if (!t) return { ok: false };
+  for (const u of db.users.values()) {
+    if (u.newsletterUnsub === t) {
+      u.newsletter = false;
+      recordAudit({ actor: 'newsletter-agent', role: 'agent', action: 'newsletter.unsubscribed', entity: 'user', entityId: u.id, summary: u.email });
+      return { ok: true, email: u.email };
+    }
+  }
+  return { ok: false };
+}
+export function newsletterAudience() {
+  let total = 0, optedIn = 0, optedOut = 0;
+  for (const u of db.users.values()) {
+    if (!isRealRecipient(u)) continue;
+    total += 1;
+    if (u.newsletter === false) optedOut += 1; else optedIn += 1;
+  }
+  return { total, optedIn, optedOut };
 }
 
 export function addPoints(userId, points) {

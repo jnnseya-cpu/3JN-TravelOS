@@ -94,6 +94,52 @@ export function leadWelcomeEmail({ destination, fromGbp, months, planUrl, unsubU
     <p style="color:#6b7799;font-size:12px">Not interested? <a href="${mailEsc(unsubUrl || 'https://3jntravel.com/api/leads/unsubscribe')}" style="color:#6b7799">Unsubscribe</a>.</p>`);
   return { subject: `Your cheapest-date watch for ${destination || 'your trip'} is on`, html, text: `You're on the list. We'll watch fares to ${destination || 'your trip'} and email you when to book. Plan now: ${planUrl || 'https://3jntravel.com'}` };
 }
+// ---- Weekly feature newsletter --------------------------------------------
+// Sent to every registered user: a feature round-up that SELLS the platform,
+// densely hyperlinked so each line is a one-tap jump into the product. Blog
+// highlights and the reader's own referral link are injected dynamically.
+export function featureNewsletterEmail({ name, base = 'https://3jntravel.com', referralCode, unsubUrl, posts = [] } = {}) {
+  const b = String(base).replace(/\/$/, '');
+  const hi = name && !/guest/i.test(name) ? mailEsc(String(name).split(' ')[0]) : 'traveller';
+  const link = (path, label) => `<a href="${mailEsc(b + path)}" style="color:#8fb8e6;text-decoration:none;font-weight:600">${mailEsc(label)}</a>`;
+  const feature = (emoji, title, path, desc) => `
+    <tr><td style="padding:11px 0;border-bottom:1px solid #1c2740">
+      <div style="font-size:15px;font-weight:700;color:#eef2fb">${emoji} ${link(path, title)}</div>
+      <div style="font-size:13px;color:#9aa6c4;margin-top:2px">${desc}</div>
+    </td></tr>`;
+  const postLinks = (Array.isArray(posts) ? posts : []).slice(0, 4)
+    .map((p) => `<li style="margin:5px 0">${link('/blog/' + p.slug, p.title)}</li>`).join('');
+  const refUrl = referralCode ? `${b}/?ref=${encodeURIComponent(referralCode)}` : `${b}/`;
+  const inner = `
+    <p style="color:#9aa6c4;margin:0 0 12px">This week at 3JN · Hi ${hi} 👋</p>
+    <p style="margin:0 0 16px">Everything your 3JN account can already do — tap any feature to jump straight in:</p>
+    <table role="presentation" width="100%" style="border-collapse:collapse">
+      ${feature('🔎', 'AI cheapest-date search', '/?open=planner', 'Give it a month and it scans every date for the lowest fare.')}
+      ${feature('💳', 'Pay monthly, price locked', '/how-it-works', 'Small deposit, spread the rest interest-free — your price frozen from day one.')}
+      ${feature('🛡️', 'Price-Lock &amp; savings guarantee', '/why-3jn', 'No fare hikes or currency surcharges before you travel. See how it works.')}
+      ${feature('🛂', 'VisaOS — instant visa check', '/visaos', 'Know if you&rsquo;ll be approved before you book, plus real cancellable reservations.')}
+      ${feature('🏝️', 'Curated deals &amp; marketplace', '/marketplace', 'Hand-picked, all-in packages you can book and pay monthly.')}
+      ${feature('📶', 'Travel eSIM', '/how-it-works', 'Land with mobile data already working — no roaming bills.')}
+      ${feature('🌍', 'Destination &amp; route guides', '/destinations', 'Real fares, best months and pay-monthly plans for your city.')}
+      ${feature('🎁', 'Membership &amp; rewards', '/membership', 'More AI credit, member fares and perks that pay for the plan.')}
+    </table>
+    ${postLinks ? `<p style="margin:20px 0 6px;font-weight:700;color:#eef2fb">Fresh from the journal</p><ul style="color:#9aa6c4;padding-left:18px;margin:0">${postLinks}</ul>` : ''}
+    <p style="margin:22px 0"><a href="${mailEsc(b + '/?open=planner')}" style="background:#1668e3;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Plan a trip now →</a></p>
+    <p style="background:#0f1830;border:1px solid #1c2740;border-radius:10px;padding:12px 14px;color:#9aa6c4;font-size:13px;margin:0">💛 Love 3JN? <a href="${mailEsc(refUrl)}" style="color:#46d39a;font-weight:700;text-decoration:none">Share your referral link</a> — earn ACU credit and revenue share when a friend books.</p>
+    <p style="color:#6b7799;font-size:12px;margin-top:16px">You're receiving this because you have a 3JN account. <a href="${mailEsc(unsubUrl || (b + '/api/newsletter/unsubscribe'))}" style="color:#6b7799">Unsubscribe from the newsletter</a>.</p>`;
+  const text = `This week at 3JN, ${name || 'traveller'}.\n\n`
+    + `AI cheapest-date search: ${b}/?open=planner\n`
+    + `Pay monthly, price locked: ${b}/how-it-works\n`
+    + `Price-Lock & savings guarantee: ${b}/why-3jn\n`
+    + `VisaOS instant visa check: ${b}/visaos\n`
+    + `Curated deals & marketplace: ${b}/marketplace\n`
+    + `Destination & route guides: ${b}/destinations\n`
+    + `Membership & rewards: ${b}/membership\n\n`
+    + `Plan a trip now: ${b}/?open=planner\n`
+    + `Share your referral link: ${refUrl}\n\n`
+    + `Unsubscribe: ${unsubUrl || (b + '/api/newsletter/unsubscribe')}`;
+  return { subject: 'This week at 3JN — pay-monthly flights, instant visa checks & more', html: mailShell(inner), text };
+}
 // The recurring cheapest-date alert the lifecycle agent sends.
 export function cheapestDateAlertEmail({ destination, fromGbp, cheapestDate, marketMinGbp, planUrl, unsubUrl } = {}) {
   const dest = mailEsc(destination || 'your trip');
