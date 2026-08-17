@@ -394,6 +394,9 @@ function detectDevice() {
 
 async function boot() {
   renderStatic();
+  // App shell is painted — dismiss the boot splash now (the inline fallback in
+  // index.html also hides it on `load`/timeout, so it can never get stuck).
+  try { window.__hideAppSplash && window.__hideAppSplash(); } catch { /* non-fatal */ }
   const device = detectDevice();
   try {
     state.context = await api('/api/context');
