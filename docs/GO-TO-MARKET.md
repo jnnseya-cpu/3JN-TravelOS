@@ -210,13 +210,51 @@ below.)*
 
 ---
 
-## 7. The budget — real figures (90-day launch)
+## 7. The 30 / 60 / 90 sprint
+
+Three lanes every phase: **Demand** (get customers), **Supply** (be able to
+fulfil), **Product/Ops** (make it real and legal). Each phase has one number that
+defines success.
+
+### Days 0–30 — Ignition — *goal: first 25 paid · 500 emails*
+
+- **Demand:** switch on email capture (SMTP); submit the sitemap in Search
+  Console; post to 5–8 Nigerian diaspora groups + concierge-close 50 warm
+  contacts; brief Marketwaros, stand up tracking + first test campaigns.
+- **Supply:** activate Duffel + Hotelbeds + Stripe live keys, or launch Curated
+  Deals to sell immediately; **apply to TTA today**; send the TBO enablement email.
+- **Product/Ops:** set `CRON_SECRET`; verify the pay → ticket → email loop
+  end-to-end; line up 2–3 community gatekeepers + 1 remittance partner; print
+  flyers + QR.
+
+### Days 31–60 — Traction — *goal: 60 paid · CAC baseline · 3 creators live*
+
+- **Demand:** turn on the referral push (ask at booking); launch 3–5 creator
+  pilots on rev-share; scale the first paid campaigns with Marketwaros, find 1
+  winning channel; weekly newsletter live.
+- **Supply:** move a flight supplier to production, negotiate net rates; add eSIM
+  + transfers as checkout attach; start the ATOL application in parallel with TTA.
+- **Product/Ops:** publish 10+ new route/destination pages toward the best
+  markets; collect verified Trustpilot reviews; tighten funnel drop-off.
+
+### Days 61–90 — Scale — *goal: 100+ paid · positive unit economics · repeat signal*
+
+- **Demand:** pour budget into the channel(s) that cleared payback; launch the
+  group/association programme (organiser = 10–50 seats); prime the December wave.
+- **Supply:** secure TTA/ATOL → flip on the protection badge site-wide; broaden
+  supply (WebBeds/Amadeus) on volume; earn credit terms from top suppliers.
+- **Product/Ops:** double down on the 2–3 best routes; measure repeat & referral
+  rate (the real health signal); document the playbook for the next 1,000.
+
+---
+
+## 8. The budget — real figures (90-day launch)
 
 > All figures are **planning estimates in GBP** — validate against live vendor
 > quotes. Ranges reflect a **lean** (bootstrapped) to **standard** (funded) launch.
 > "Float" is recyclable working capital, **not** sunk spend.
 
-### 7.1 — 90-day launch budget
+### 8.1 — 90-day launch budget
 
 | Category | Line item | Days 0–30 | Days 31–60 | Days 61–90 | 90-day total |
 |---|---|---:|---:|---:|---:|
@@ -239,7 +277,7 @@ range used here for planning. Replace with their actual quote.*
 paid work in-house), or **~£13k–£20k with a growth agency** running paid. Plus
 ~£0.5k–£2k of recyclable supplier float.
 
-### 7.2 — Unit economics (worked model)
+### 8.2 — Unit economics (worked model)
 
 *Assumptions — adjust to your real mix:*
 
@@ -254,7 +292,7 @@ paid work in-house), or **~£13k–£20k with a growth agency** running paid. Pl
 | **Blended CAC target** | **£30–£50** | Organic + referral pull the average down |
 | **CAC payback** | **< 60 days** | First trip's contribution covers acquisition |
 
-### 7.3 — Does 100 bookings pay for itself?
+### 8.3 — Does 100 bookings pay for itself?
 
 - 100 bookings × ~£85 contribution ≈ **£8,500 gross contribution** in 90 days.
 - Against ~£10k–£11k lean cash spend → **roughly cash-neutral in the first 90
@@ -270,7 +308,7 @@ paid work in-house), or **~£13k–£20k with a growth agency** running paid. Pl
 
 ---
 
-## 8. The scoreboard — what you watch every Monday
+## 9. The scoreboard — what you watch every Monday
 
 North star: **paid bookings**. Everything else explains it.
 
@@ -289,7 +327,7 @@ North star: **paid bookings**. Everything else explains it.
 
 ---
 
-## 9. Risks & why we win anyway
+## 10. Risks & why we win anyway
 
 **The real risks**
 
