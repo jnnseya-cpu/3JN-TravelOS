@@ -10,7 +10,7 @@ flights at ~zero margin as customer acquisition and earn on everything else.
 
 | Basket | 3JN take | Why |
 |---|---|---|
-| **Flights only** | **flat £4.99** (`FLIGHT_ONLY_FEE_GBP`) — **FREE for active Travel+ members** | Level with metasearch prices; the flight becomes break-even customer acquisition (the fee covers Duffel's ~£2.20 + 1%). |
+| **Flights only** | **2%** of flight value, **min £4.99, cap £15** (`FLIGHT_ONLY_FEE_RATE` / `FLIGHT_ONLY_FEE_GBP` / `FLIGHT_ONLY_FEE_CAP_GBP`) — **flat £4.99 for active Travel+ members** (`FLIGHT_ONLY_MEMBER_FEE_GBP`; not free) | Level with metasearch prices; the flight becomes break-even customer acquisition (the fee covers Duffel's ~£2.20 + 1%). |
 | Hotels, packages, extras | **10%** (`COMMISSION_RATE`) | Where the margin genuinely lives, inside bundles that beat DIY totals. |
 | Ancillaries, insurance, eSIM, transfers, visa, ACU/AI, membership | supplier commissions & markups | High-margin attach on the customer the flight acquired. |
 
@@ -26,7 +26,7 @@ Partners are paid from what 3JN **actually earns** — the industry standard
 (Booking.com pays affiliates 25–40% of ITS commission, never of booking value):
 
 - **Packages/hotels/extras**: unchanged — 3–4% of sale carved from our 10%.
-- **Flights-only**: `FLIGHT_ONLY_PARTNER_SHARE` (40%) of the flat flight fee
+- **Flights-only**: `FLIGHT_ONLY_PARTNER_SHARE` (30%) of the flight fee
   (~£2/ticket). Structurally, no sale can ever pay out more than it brings in.
 - **Lifetime attribution**: the partner who brings a customer is stored on
   the customer (`user.attributedVendor`, set on the first attributed paid
@@ -49,5 +49,5 @@ first-time customers a new brand can't win any other way.
 ## Changing the numbers
 
 All three levers are constants in `shared/constants.js`:
-`FLIGHT_ONLY_FEE_GBP` (4.99) · `FLIGHT_ONLY_MEMBER_FREE` (true) ·
-`FLIGHT_ONLY_PARTNER_SHARE` (0.40). One-line edits, fully test-covered.
+`FLIGHT_ONLY_FEE_GBP` (4.99) · `FLIGHT_ONLY_MEMBER_FREE` (false) ·
+`FLIGHT_ONLY_MEMBER_FEE_GBP` (4.99) · `FLIGHT_ONLY_PARTNER_SHARE` (0.30). One-line edits, fully test-covered.

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { parseIntent } from '../src/intent.js';
 import { detectContext } from '../src/geo.js';
 import { plan } from '../src/planner.js';
-import { priceBreakdown, instalmentPlan, tierForPoints } from '../src/pricing.js';
+import { priceBreakdown, instalmentPlan, tierForPoints, isFlightOnlyFeeModel } from '../src/pricing.js';
 import { costProtectionGate, whiteLabelPayout, SEARCH_TIERS, cachedSearchAcu, CACHED_SEARCH_ACU_MEMBER } from '../src/revenue.js';
 import {
   createUser, createBooking, saveQuote, updateUser, seedAllRoles,
@@ -5266,13 +5266,21 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   const opt2 = r2.packages.options[0];
   assert.equal(opt2.pricing.feeModel, 'commission-10');
   assert.ok(opt2.pricing.lines.commissionUSD > feeUSD * 3, 'package commission is the real margin');
-  // Active Travel+ member: flights are FREE of the 3JN service fee — a core
-  // membership benefit (non-members pay the 2% / £4.99 min / £15 cap).
+  // Active Travel+ member: flights carry the flat £4.99 fee (NOT free) — the
+  // membership perk vs the non-member 2% / £4.99 min / £15 cap.
   const member = createUser({ name: 'Member Flyer', email: 'member.flyer@example.com' });
   subscribeMembership(member.id, 'plus');
   const r3 = plan({ text: 'Flights only to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: findUserByEmail('member.flyer@example.com'), searchTier: 'smart' });
   const opt3 = r3.packages.options[0];
   assert.equal(opt3.pricing.feeModel, 'flight-flat-member');
+  // REGRESSION GUARD: the fee model a MEMBER flights-only booking produces must be
+  // recognised as flights-only by the shared predicate — a drifted literal in
+  // store.js (`flight-flat-member-free`, never produced) previously made this
+  // false, so member flights-only bookings were carved as 10% packages in vendor
+  // attribution (overpaying partners). Tie producer → consumer here.
+  assert.ok(isFlightOnlyFeeModel(opt3.pricing.feeModel), 'member flights-only fee model is recognised as flights-only');
+  assert.ok(isFlightOnlyFeeModel('flight-service-fee'), 'non-member flights-only recognised');
+  assert.equal(isFlightOnlyFeeModel('commission-10'), false, 'a 10% package is NOT flights-only');
   assert.ok(Math.abs(opt3.pricing.lines.commissionUSD - 4.99 / 0.79) < 0.05, 'Travel+ members pay the flat £4.99 flight fee (never £0)');
   assert.ok(opt3.pricing.lines.commissionUSD <= feeUSD + 0.02, 'member flat fee never above the non-member fee (saves on fares over the floor)');
 });

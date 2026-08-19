@@ -3,7 +3,7 @@
 // could be swapped out. All state lives for the lifetime of the process.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { SIGNUP_BONUS_POINTS, tierForPoints } from './pricing.js';
+import { SIGNUP_BONUS_POINTS, tierForPoints, isFlightOnlyFeeModel } from './pricing.js';
 import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD, TRAVEL_CREDIT_RATE } from '../../shared/constants.js';
 import {
   REWARD_ACTIONS, REDEEM_CATEGORIES, acuForAction, PARTNER_TIERS, tierForFollowers,
@@ -2149,7 +2149,7 @@ export function recordPayment(bookingId, payment) {
     if (b.vendorCode && !b.vendorSaleProcessed) {
       const vendor = findVendorByCode(b.vendorCode);
       if (vendor && vendor.userId !== b.userId) {
-        const flightsOnly = b.option?.pricing?.feeModel === 'flight-service-fee' || b.option?.pricing?.feeModel === 'flight-flat-member-free';
+        const flightsOnly = isFlightOnlyFeeModel(b.option?.pricing?.feeModel);
         // The vendor carve is 3-4% of the FEE-EXCLUSIVE supplier base, so 10%
         // of it equals 3JN's actual commission and the 7% keep-floor holds.
         // (Carving off the fee-inclusive total overpaid vendors and dropped

@@ -13,6 +13,16 @@ import {
 
 export { COMMISSION_RATE, SAVINGS_SHARE_RATE, LOYALTY_TIERS, POINTS_PER_USD, SIGNUP_BONUS_POINTS, FLIGHT_ONLY_FEE_RATE, FLIGHT_ONLY_FEE_GBP, FLIGHT_ONLY_FEE_CAP_GBP };
 
+// The fee-model tag a priced basket carries (`pricing.feeModel`). A flights-only
+// basket uses a flight-fee model — 'flight-service-fee' (non-member 2% min/cap) or
+// 'flight-flat-member' (Travel+ flat £4.99); everything else is 'commission-10'.
+// SINGLE SOURCE OF TRUTH: every consumer must test membership of this set via the
+// predicate, not a hard-coded literal. A drifted literal ('flight-flat-member-free',
+// which is never produced) once made a member flights-only booking count as a 10%
+// package in vendor attribution — overpaying the partner and risking the keep-floor.
+export const FLIGHT_ONLY_FEE_MODELS = ['flight-service-fee', 'flight-flat-member'];
+export function isFlightOnlyFeeModel(feeModel) { return FLIGHT_ONLY_FEE_MODELS.includes(feeModel); }
+
 // AUTO-MARGIN FLIGHT FEE — the smallest flights-only service fee (USD) that still
 // clears, after 100%(target) margin, the card fee charged on the WHOLE amount the
 // customer pays (ticket + fee), plus a per-booking AI+infra allowance. Because the
