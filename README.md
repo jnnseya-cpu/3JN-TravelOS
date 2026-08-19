@@ -51,11 +51,11 @@ Type a sentence like:
 | **Reviews & supplier scoring** | `backend/src/reviews.js` | Post-trip reviews feed live supplier scores that blend back into future reliability rankings. |
 | **Revenue model** | `backend/src/revenue.js` | 15+ streams: 10% fee, ACU packs, deposits, supplier commissions, savings-share, subscriptions, corporate, group, marketplace, white-label, API, finance. |
 
-## Pages (frontend in `public/`)
+## Pages (frontend in `frontend/`)
 
 - **Landing** — *Stop Searching. Start Saving.* hero, the "Travel Search Is
-  Broken" problem split, featured Dubai holiday, the 10-agent AI Core, the four
-  **Travel+** membership tiers (Nomad / Family / Executive / Elite), and the
+  Broken" problem split, featured Dubai holiday, the 10-agent AI Core, the two
+  **Travel+** membership tiers (Travel+ and Travel+ Family), and the
   *Future of Travel is Intelligent* CTA.
 - **Plan a Trip** — the working planner: one-sentence input → live supplier scan
   → tiered package comparison → quote → instalments → booking.
@@ -95,7 +95,8 @@ Beyond the core travel pipeline, the OS includes these working modules:
   `allAccess` capability, loyalty + referrals.
 - **AI Gateway** (`backend/src/ai-gateway.js`) — Model Router across Claude /
   OpenAI / Gemini / Cohere, anchored to the platform system prompt
-  (`docs/MASTER_AI_PROMPT.md`), ACU-metered, local fallback with no keys.
+  (`docs/MASTER_AI_PROMPT.md`), ACU-metered. Runs the local deterministic engine
+  today (the live-provider call is a stub — wire it in `callProvider`).
 - **Notifications**, **autosave + audit log**, **i18n** (EN/FR/SW/LN/AR, RTL),
   and **device-based language/currency auto-detection**.
 
@@ -140,7 +141,7 @@ POST /api/v1/search               white-label partner search endpoint
 ├── backend/             # Node/Express API + engine
 │   ├── src/             #   server.js + intent, geo, destinations, suppliers, packager,
 │   │                    #   pricing, revenue, monitor, reviews, store, planner, partners
-│   └── test/            #   node:test suite (12 tests)
+│   └── test/            #   node:test suite (547 tests)
 ├── shared/              # Single source of truth imported by backend + served to frontend
 │   └── constants.js     #   commission, loyalty tiers, membership plans, ACU economy, reliability floor
 ├── docs/
@@ -177,5 +178,7 @@ so the browser reads the same constants — frontend and backend never drift.
 
 Node.js + Express, vanilla JS frontend (Space Grotesk + Inter), zero build step. The **AI Gateway**
 (`backend/src/ai-gateway.js`) is a provider-agnostic Model Router that shares work across Claude /
-OpenAI / Gemini / Cohere by task, meters ACU, and falls back to the local deterministic engine when
-no API keys are present — so the platform runs fully offline yet is live-provider ready.
+OpenAI / Gemini / Cohere by task, meters ACU, and runs the local deterministic engine as the
+default — the platform runs fully offline. The live-provider call (`callProvider`) is a single
+stubbed integration point; wire the provider SDK there to enable real LLM routing (today every task
+uses the local engine regardless of keys).

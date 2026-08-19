@@ -2,8 +2,12 @@
 
 Every supply channel is an env-gated "door": start the signup today, and the
 moment the key lands in Vercel → Environment Variables, that lane goes live
-with **zero code changes**. Until then, fulfilment runs through the Ops
-Fulfilment Desk (below). Live tracker: **Admin console → 🛠 Ops Fulfilment
+with **zero code changes** — **for the suppliers that already have an adapter**
+(Duffel, Hotelbeds, Amadeus, TBO, Kiwi/Tequila, Airalo, Viator, Mozio). A few
+doors listed below are **not yet wired** and need their adapter built first —
+setting their env vars alone does nothing: **WebBeds**, **RateHawk**, CarTrawler
+car-hire and Distribusion rail. Until a lane is live, fulfilment runs through the
+Ops Fulfilment Desk (below). Live tracker: **Admin console → 🛠 Ops Fulfilment
 Desk → Supplier doors**.
 
 ## Start these signups today
