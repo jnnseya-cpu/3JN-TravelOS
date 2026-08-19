@@ -1627,6 +1627,15 @@ const HB_BOOK_TIMEOUT_MS = Math.min(20000, Number(env.HOTELBEDS_BOOK_TIMEOUT_MS)
 // must always go through). Booking is exempt because a paid room must confirm.
 const HB_AVAIL_TTL_MS = Number(env.HOTELBEDS_AVAIL_TTL_MS) || 15 * 60 * 1000; // 15 min
 const HB_QUOTA_COOLDOWN_MS = Number(env.HOTELBEDS_QUOTA_COOLDOWN_MS) || 60 * 60 * 1000; // 1h
+// Hotels legitimately take longer to price than flights — bedbank availability
+// fans out across many properties — so they get their OWN, more generous
+// deadline. Borrowing the tight 9s flight timeout was a major cause of hotels
+// intermittently dropping to "estimated" under normal load. Env-tunable, and a
+// single retry (below) covers a transient blip. Runs in parallel with flights,
+// so this does not add to flight latency. Worst case (12s + 9s) stays well
+// under the serverless function budget.
+const HOTEL_TIMEOUT_MS = Number(env.LIVE_HOTELS_TIMEOUT_MS) || 12000;
+const HOTEL_RETRY_TIMEOUT_MS = Number(env.LIVE_HOTELS_RETRY_TIMEOUT_MS) || 9000;
 const _hbAvailCache = new Map(); // key → { at, offers }
 let _hbAvailQuotaBlockedUntil = 0;
 function hbAvailKey(destCode, checkIn, checkOut, occ) { return `${destCode}|${checkIn}|${checkOut}|${occ.rooms}-${occ.adults}-${occ.children}-${(occ.paxes || []).map((p) => p.age).join('.')}`; }
@@ -1878,9 +1887,14 @@ export async function fetchHotelbedsHotels(intent, dest) {
     // Cert §3.6: sourceMarket unlocks market-specific pricing (3JN sells to the
     // UK market by default; override via HOTELBEDS_SOURCE_MARKET).
     const body = { sourceMarket: HB_SOURCE_MARKET, stay: { checkIn, checkOut }, occupancies: [occ], destination: { code: destCode } };
-    const res = await hbRequest(`${HB_BASE}/hotel-api/1.0/hotels`, {
-      method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: FLIGHT_TIMEOUT_MS,
-    });
+    const hbOpts = { method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body) };
+    let res = await hbRequest(`${HB_BASE}/hotel-api/1.0/hotels`, { ...hbOpts, timeoutMs: HOTEL_TIMEOUT_MS });
+    // hbRequest returns null ONLY on a transient miss (timeout / network / bad
+    // body); a 403 quota or any HTTP error comes back as { __status }. So retry
+    // exactly once on null — the blip that was silently turning a live hotel
+    // result into an "estimated" one — and NEVER on a real 403 or a valid empty
+    // response (retrying those just burns the daily allowance for nothing).
+    if (res == null) res = await hbRequest(`${HB_BASE}/hotel-api/1.0/hotels`, { ...hbOpts, timeoutMs: HOTEL_RETRY_TIMEOUT_MS });
     // 403 = daily quota exhausted (or key not yet cleared). Back off for the
     // cooldown so we preserve whatever allowance remains tomorrow.
     if (res && res.__status === 403) { _hbAvailQuotaBlockedUntil = Date.now() + HB_QUOTA_COOLDOWN_MS; return null; }
