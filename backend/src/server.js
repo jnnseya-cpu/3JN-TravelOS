@@ -4288,6 +4288,16 @@ app.post('/api/webhooks/duffel', safe(async (req, res) => {
   // Duffel sends a ping when the webhook is created/tested — acknowledge it so the
   // dashboard accepts the endpoint.
   if (/ping/i.test(type) || !type) return res.json({ ok: true, pong: true });
+  // FAIL CLOSED: with no signing secret we cannot prove a real event came from
+  // Duffel, so we must not act on it — an unsigned POST could otherwise raise a
+  // forged "your airline changed your flight" alert to a real customer or spam the
+  // ops desk. The ping above still works (endpoint registration), but every real
+  // event is ignored until DUFFEL_WEBHOOK_SECRET is set. Matches the Stripe
+  // webhook, which always verifies.
+  if (!duffelWebhookConfigured()) {
+    console.warn('[duffel-webhook] event ignored — DUFFEL_WEBHOOK_SECRET is not set, cannot verify authenticity');
+    return res.status(202).json({ ok: false, ignored: 'unverified', reason: 'DUFFEL_WEBHOOK_SECRET not set' });
+  }
   try {
     // The reference id lives under a few shapes across Duffel event payloads
     // (flight order id, stays booking id, etc.).
@@ -5235,7 +5245,14 @@ app.post('/api/visa/reservations', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
   const body = req.body || {};
-  const result = orderVisaReservation(user.id, body, { awaitingPayment: stripeEnabled() });
+  // FAIL CLOSED in production: a fee'd visa reservation must NEVER auto-issue for
+  // free. Normally the fee is charged via Stripe Checkout (awaiting-payment). If a
+  // production/LIVE_MODE deploy runs with Stripe misconfigured, stripeEnabled()
+  // would be false and the simulation path would mark the order paid and queue
+  // issuance with no money taken. Forcing awaitingPayment in LIVE_MODE makes the
+  // order simply wait (unpayable until Stripe is fixed) instead of issuing free.
+  const liveMode = process.env.LIVE_MODE === 'true';
+  const result = orderVisaReservation(user.id, body, { awaitingPayment: stripeEnabled() || liveMode });
   if (!result.ok) return res.status(400).json(result);
   const rec = result.reservation;
   if (result.awaitingPayment) {

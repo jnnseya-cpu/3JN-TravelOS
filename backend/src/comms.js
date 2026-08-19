@@ -266,8 +266,15 @@ export function emit(eventKey, { userId, recipient, vars = {}, optOuts = [] } = 
     // Mandatory notices bypass user opt-outs.
     if (!e.mandatory && optOuts.includes(channel)) continue;
     const live = channelLive(channel);
-    let status = live ? 'sent' : 'logged';
-    let provider = { email: live ? (process.env.RESEND_API_KEY ? 'resend' : 'smtp') : 'sandbox', inapp: 'in-app', sms: live ? 'sms' : 'sandbox', push: live ? 'push' : 'sandbox', whatsapp: live ? 'whatsapp' : 'sandbox' }[channel];
+    // Only channels with a REAL dispatch path may report 'sent': email (via
+    // sendMail below, and only with a recipient) and inapp (pushNotification,
+    // set below). SMS, push and WhatsApp have NO send implementation yet, so they
+    // must NEVER record 'sent' even when a *_PROVIDER_KEY is set — that would
+    // silently drop a possibly-critical notice while the ledger claims it was
+    // delivered. They stay 'logged' until a provider send path is wired. (email
+    // always sends via SMTP; RESEND_API_KEY is a label, not a send path.)
+    let status = (channel === 'email' && live && recipient) ? 'sent' : 'logged';
+    let provider = { email: live ? 'smtp' : 'sandbox', inapp: 'in-app', sms: 'unwired', push: 'unwired', whatsapp: 'unwired' }[channel];
     if (channel === 'inapp' && userId) {
       pushNotification(userId, { type: e.severity === 'critical' ? 'warning' : e.severity, icon: severityIcon(e.severity), title: e.name, body: subject });
       status = 'sent';
