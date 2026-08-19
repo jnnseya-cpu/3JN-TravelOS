@@ -100,7 +100,20 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     const children = Number.isFinite(structuredChildren) && structuredChildren > 0
       ? Math.max(structuredChildren, childAges.length)
       : Math.max(intent.travellers?.children || 0, childAges.length);
-    intent.travellers = { ...intent.travellers, adults, children, childAges, total: adults + children };
+    // Keep the party CONSISTENT: exactly one age per child. When the precise
+    // "ages" field lists fewer ages than the child count (e.g. "3 children" but
+    // "16, 14"), don't leave a 3-child party carrying 2 ages — that shows the
+    // wrong party ("aged 16, 14") and makes flights + hotel silently assume an
+    // age for the missing child. Backfill each missing age from what the SENTENCE
+    // already parsed (recovering an age the shorter precise field overrode — e.g.
+    // the "9" in "16, 14, and 9"), then pad any still-missing with the age-8 child
+    // band that the Duffel/Hotelbeds builders also default to. Trim any excess.
+    const textAges = Array.isArray(intent.travellers?.childAges) ? intent.travellers.childAges : [];
+    let reconciled = childAges.slice(0, children);
+    for (let i = reconciled.length; i < children; i++) {
+      reconciled.push(Number.isFinite(textAges[i]) && textAges[i] >= 0 && textAges[i] <= 17 ? textAges[i] : 8);
+    }
+    intent.travellers = { ...intent.travellers, adults, children, childAges: reconciled, total: adults + children };
   }
   if (Number.isFinite(Number(S.minStars)) && Number(S.minStars) >= 1 && Number(S.minStars) <= 5) intent.minStars = Number(S.minStars);
   if (S.checkIn && /^\d{4}-\d{2}-\d{2}$/.test(String(S.checkIn))) {

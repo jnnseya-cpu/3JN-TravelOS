@@ -259,6 +259,22 @@ test('accuracy: real airport codes, UK date range, child ages and hotel area are
   assert.match(hotel.details.area, /sheikh zayed road/i);
 });
 
+test('party: a precise ages field shorter than the child count recovers the sentence age (Faro case)', () => {
+  // Sentence states three ages (16, 14, 9); the precise "ages" field lists only
+  // two. The 3-child party must NOT end up carrying 2 ages ("aged 16, 14") — the
+  // dropped age is recovered from the sentence, never silently assumed.
+  const text = 'travel from Birmingham to Faro with my family (2 adults and 3 children (16, 14, and 9)) at the end of October for 7 nights, flights and a hotel';
+  const r = plan({ text, context: GB, user: null, searchTier: 'smart', overrides: { structured: { children: 3, childAges: [16, 14] } } });
+  assert.equal(r.intent.travellers.children, 3, 'three children');
+  assert.deepEqual(r.intent.travellers.childAges, [16, 14, 9], 'sentence age 9 recovered, party stays consistent');
+});
+
+test('party: a child with no age anywhere pads to the age-8 band, keeping ages == children', () => {
+  const r = plan({ text: 'Barcelona for a family holiday, flights and hotel', context: GB, user: null, searchTier: 'smart', overrides: { structured: { children: 2, childAges: [] } } });
+  assert.equal(r.intent.travellers.children, 2);
+  assert.equal(r.intent.travellers.childAges.length, 2, 'ages always match the child count');
+});
+
 test('accuracy: only a carrier that truly operates the route flies it non-stop', () => {
   // Birmingham→Dubai: Emirates is the only real non-stop operator; BA/Lufthansa
   // route via their own hubs. The direct-only pick must be a genuine non-stop.

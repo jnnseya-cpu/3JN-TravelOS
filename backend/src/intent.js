@@ -66,8 +66,11 @@ function parseTravellers(text) {
   // Child ages — "children 16,13 and 9 years old", "aged 16, 13, 9", and the
   // common typo "aged 16.13 and 9" (period instead of comma). The separator class
   // includes '.' so a mistyped list still captures every age, not just the first.
+  // The separator is repeatable ((?:...)+): an Oxford-comma list "16, 14, and 9"
+  // puts TWO separator tokens (", and") between the last two ages, which the old
+  // single-token separator couldn't cross — so it silently dropped the final age.
   let childAges = [];
-  const ageBlock = lower.match(/(?:child|children|kid|kids|aged?|ages)[^.\d]*?((?:\d{1,2}\s*(?:,|and|&|\/|\.|\s)\s*){1,}\d{1,2}|\d{1,2})\s*(?:year|yr|yo|y\.?o\.?|years?\s*old)?/);
+  const ageBlock = lower.match(/(?:child|children|kid|kids|aged?|ages)[^.\d]*?((?:\d{1,2}\s*(?:,|and|&|\/|\.|\s)+\s*){1,}\d{1,2}|\d{1,2})\s*(?:year|yr|yo|y\.?o\.?|years?\s*old)?/);
   if (ageBlock) {
     childAges = (ageBlock[1].match(/\d{1,2}/g) || []).map(Number).filter((a) => a >= 0 && a <= 17);
   }
