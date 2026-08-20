@@ -3283,7 +3283,7 @@ async function renderVendors() {
       <div class="card pad center" style="margin-top:22px;border-color:rgba(244, 183, 28,.35)">
         <div style="font-size:34px;margin-bottom:6px">🕓</div>
         <h3 style="margin:0 0 8px">Application under review</h3>
-        <p class="muted" style="max-width:560px;margin:0 auto">Thanks for applying — your application has passed the automated risk screen and is now with our compliance team for a final decision. <strong>No sell code or commission is active yet.</strong> We'll notify you the moment you're approved, and your portal, sell link and weekly payouts unlock here automatically.</p>
+        <p class="muted" style="max-width:560px;margin:0 auto">Thanks for applying — your application has been screened and is now with our compliance team for a final decision. <strong>No sell code or commission is active yet.</strong> We'll email you the moment a decision is made, and once approved your portal, sell link and weekly payouts unlock here automatically.</p>
       </div>`;
     if (s === 'rejected') return `
       <div class="card pad center" style="margin-top:22px;border-color:rgba(255,107,107,.4)">
@@ -3388,11 +3388,50 @@ window.confirmVendorJob = async (id) => {
     renderVendors();
   } catch { toast('Could not confirm the job.'); }
 };
-window.applyVendorFlow = async (tier) => {
+// Real application form — the applicant actually submits their details and
+// attestations. We NEVER fabricate the KYC flags: identity/address/documents are
+// the applicant's own checkboxes, so the risk agent screens real inputs (an empty
+// or unattested application is correctly referred, not auto-"passed").
+window.applyVendorFlow = (tier) => {
+  const registered = tier === 'registered';
+  const email = (state.user && state.user.email) || '';
+  modal(`
+    <span class="eyebrow">🤝 Vendor Partner application</span>
+    <h3 style="margin:6px 0 4px">Apply as ${registered ? 'a Registered Agent (4%)' : 'an Individual (3%)'}</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">Real details only. Your application is screened and reviewed by our compliance team — no sell code or commission is active until you're approved.</p>
+    <div class="field"><label>Business / display name *</label><input class="in" id="vaName" placeholder="e.g. Ada's Travel"></div>
+    <div class="field"><label>Contact email</label><input class="in" id="vaEmail" value="${esc(email)}" placeholder="you@email.com"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:120px"><label>Phone</label><input class="in" id="vaPhone" placeholder="+44…"></div>
+      <div class="field" style="flex:1;min-width:120px"><label>Country</label><input class="in" id="vaCountry" placeholder="United Kingdom"></div>
+    </div>
+    <div class="field"><label>Website or main social handle</label><input class="in" id="vaWeb" placeholder="https://… or @handle"></div>
+    ${registered ? `<div class="field"><label>Company registration number *</label><input class="in" id="vaReg" placeholder="e.g. 12345678"></div>` : ''}
+    <label class="tick" style="display:flex;gap:9px;align-items:flex-start;margin:8px 0;font-size:13px"><input type="checkbox" id="vaId" style="margin-top:3px"> I can provide government-issued ID on request</label>
+    <label class="tick" style="display:flex;gap:9px;align-items:flex-start;margin:8px 0;font-size:13px"><input type="checkbox" id="vaAddr" style="margin-top:3px"> I can provide proof of address on request</label>
+    ${registered ? `<label class="tick" style="display:flex;gap:9px;align-items:flex-start;margin:8px 0;font-size:13px"><input type="checkbox" id="vaDocs" style="margin-top:3px"> I can provide company registration, tax registration, director ID and bank proof</label>` : ''}
+    <label class="tick" style="display:flex;gap:9px;align-items:flex-start;margin:8px 0;font-size:13px"><input type="checkbox" id="vaConsent" style="margin-top:3px"> I agree to the partner terms and KYC checks, and confirm the above is accurate *</label>
+    <button class="btn btn-gold" style="margin-top:10px" onclick="vendorApplySubmit('${tier}')">Submit application</button>`);
+};
+window.vendorApplySubmit = async (tier) => {
+  const val = (id) => ($('#' + id)?.value || '').trim();
+  const chk = (id) => !!$('#' + id)?.checked;
+  const registered = tier === 'registered';
+  const displayName = val('vaName');
+  if (!displayName) { toast('Enter your business or display name.'); return; }
+  if (!chk('vaConsent')) { toast('Please confirm the terms & KYC checkbox.'); return; }
+  const website = val('vaWeb');
+  const documents = registered && chk('vaDocs') ? ['company-registration', 'tax-registration', 'director-id', 'bank-proof'] : [];
   try {
-    const r = await api('/api/vendors/apply', { method: 'POST', body: JSON.stringify({ tier, identityDoc: true, addressProof: true, socialHandles: ['pending-verification'], businessHistory: tier === 'registered', documents: tier === 'registered' ? ['company-registration', 'tax-registration', 'director-id', 'bank-proof'] : [] }) });
-    if (r.ok) { toast(r.profile.status === 'rejected' ? 'Application could not be approved (compliance screening).' : '✓ Application received — our compliance team will review it and notify you.'); renderVendors(); }
-    else toast('Could not submit application.');
+    const r = await api('/api/vendors/apply', { method: 'POST', body: JSON.stringify({
+      tier, displayName, contactEmail: val('vaEmail'), phone: val('vaPhone'), country: val('vaCountry'),
+      website, companyReg: registered ? val('vaReg') : '',
+      identityDoc: chk('vaId'), addressProof: chk('vaAddr'),
+      socialHandles: website ? [website] : [], businessHistory: registered, documents,
+      consent: chk('vaConsent'),
+    }) });
+    if (r.ok) { closeModal(); toast(r.profile.status === 'rejected' ? 'Application could not be approved (compliance screening).' : '✓ Application received — we\'ve emailed you and our compliance team will review it.'); renderVendors(); }
+    else toast(r.message || 'Could not submit application.');
   } catch { toast('Could not submit application.'); }
 };
 

@@ -7391,3 +7391,19 @@ test('TBO Air ticketing fails closed when unconfigured (no live call, never thro
   assert.deepEqual(await bookTboAirFlight({ traceId: 't1', resultIndex: 5, manifest: [{ fullName: 'Ada Lovelace' }] }), { ok: false, error: 'not-configured' });
   assert.equal((await bookTboAirFlight({})).ok, false, 'missing everything → ok:false, no throw');
 });
+
+import { vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail } from '../src/mailer.js';
+test('vendor: lifecycle emails render; risk agent assesses REAL attestations (no fabricated pass)', () => {
+  for (const m of [vendorApplicationEmail({ name: 'Ada', tierLabel: 'Individual' }), vendorApprovedEmail({ name: 'Ada', sellCode: 'VND-1234', commissionPct: '3', portalUrl: 'https://3jntravel.com/' }), vendorDeclinedEmail({ name: 'Ada' })]) {
+    assert.ok(m.subject && m.html && m.text, 'subject/html/text present');
+    assert.ok(!/<script/i.test(m.html), 'no unescaped markup');
+  }
+  // Integrity: an application with NO identity/address attestation must be
+  // REFERRED (KYC incomplete), never "passed" on fabricated flags.
+  const v = createUser({ name: 'No Docs', email: `nd-${Date.now()}@example.com` });
+  const bare = applyVendor(v.id, { tier: 'independent', displayName: 'Bare Co', identityDoc: false, addressProof: false });
+  assert.equal(bare.ok, true);
+  assert.equal(bare.profile.status, 'pending-review', 'never auto-approved');
+  assert.equal(bare.review.kycIncomplete, true, 'no ID/address attested → KYC incomplete');
+  assert.match(bare.review.recommendation, /REFER/, 'agent refers an unattested application');
+});

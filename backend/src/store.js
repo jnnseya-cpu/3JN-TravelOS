@@ -16,6 +16,8 @@ import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS, visaHotelDeposit, isValidYMD } from './visa-docs.js';
 import { benchmarkVerdict } from './benchmark.js';
+import { sendMail, vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail } from './mailer.js';
+const VENDOR_PORTAL_URL = process.env.SITE_URL || 'https://3jntravel.com/';
 import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
@@ -2813,11 +2815,21 @@ const VENDOR_GBP_TO_USD = 1 / GBP_ANCHOR;
 
 // §4 — apply. The AI risk review runs immediately; a clean pass auto-approves,
 // a sanctions hit rejects, anything else goes to manual compliance review.
-export function applyVendor(userId, { tier = 'independent', identityDoc, addressProof, socialHandles, businessHistory, documents, flags } = {}) {
+export function applyVendor(userId, { tier = 'independent', displayName, businessName, contactEmail, phone, country, website, companyReg, identityDoc, addressProof, socialHandles, businessHistory, documents, flags } = {}) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'auth-required' };
+  // The applicant's submitted display/business name, falling back to the account
+  // name for internal callers. The API route (/api/vendors/apply) is what enforces
+  // that a real display name + consent are actually SUBMITTED by the applicant —
+  // and the KYC attestations THEY provide (identity/address/docs) drive the honest
+  // risk review below, so an empty/unattested application is correctly referred,
+  // never auto-"passed" on fabricated flags.
+  const name = String(displayName || businessName || u.name || '').trim() || 'Applicant';
   const t = VENDOR_TIERS[tier] || VENDOR_TIERS.independent;
-  const review = vendorRiskReview({ name: u.name, email: u.email, tier: t.key, identityDoc, addressProof, socialHandles, businessHistory, documents, flags });
+  const cleanSocials = Array.isArray(socialHandles)
+    ? socialHandles.map((s) => String(s).trim()).filter(Boolean).slice(0, 6)
+    : (website ? [String(website).trim()] : []);
+  const review = vendorRiskReview({ name, email: contactEmail || u.email, tier: t.key, identityDoc: !!identityDoc, addressProof: !!addressProof, socialHandles: cleanSocials, businessHistory: !!businessHistory, documents, flags });
   // APPROVAL PROCESS (never weaken): an application is NEVER auto-approved. The
   // AI risk review is a RECOMMENDATION that routes the application to a human —
   // it does not grant the partnership itself. A sanctions/blacklist hit is the
@@ -2829,6 +2841,17 @@ export function applyVendor(userId, { tier = 'independent', identityDoc, address
   const p = {
     userId, tier: t.key, status,
     vendorCode: 'VND-' + userId.slice(-4).toUpperCase(), // minted now, INERT until approved
+    // Applicant-submitted details — stored so a human reviewer sees the REAL thing
+    // (not fabricated flags), and attestations record what the applicant actually
+    // confirmed (an attestation, verified later by the compliance team, not a
+    // system-asserted truth).
+    businessName: name,
+    contactEmail: String(contactEmail || u.email || '').trim() || null,
+    phone: String(phone || '').trim() || null,
+    country: String(country || '').trim() || null,
+    website: String(website || '').trim() || null,
+    companyReg: String(companyReg || '').trim() || null,
+    attested: { identity: !!identityDoc, address: !!addressProof },
     riskReview: review, documents: (documents || []).slice(0, 12),
     aiRecommendation: review.recommendation, overallRisk: review.overallRisk,
     appliedAt: nowISO(), decidedAt: status === 'rejected' ? nowISO() : null,
@@ -2837,12 +2860,18 @@ export function applyVendor(userId, { tier = 'independent', identityDoc, address
   };
   db.vendorProfiles.set(userId, p);
   recordAudit({ actor: userId, role: u.role, action: 'vendor.applied', entity: 'vendor', entityId: userId, summary: `${t.key} · risk ${review.overallRisk} · ${review.recommendation} → ${status}` });
+  const to = p.contactEmail || u.email;
+  const tierLabel = t.label || t.key;
   if (status === 'rejected') {
     pushNotification(userId, { type: 'warning', icon: '🤝', title: 'Vendor Partner application declined', body: 'We were unable to approve your Vendor Partner application following compliance screening. If you believe this is an error, contact support.' });
+    const m = vendorDeclinedEmail({ name, reason: 'compliance screening' });
+    sendMail({ to, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
   } else {
     pushNotification(userId, { type: 'info', icon: '🤝', title: 'Application received — under review', body: 'Thanks for applying to the Vendor Partner Programme. Our compliance team is reviewing your application; you\'ll be notified as soon as a decision is made. No code or commission is active until you\'re approved.' });
+    const m = vendorApplicationEmail({ name, tierLabel });
+    sendMail({ to, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
   }
-  return { ok: true, profile: p };
+  return { ok: true, profile: p, review };
 }
 export function getVendorProfile(userId) { return db.vendorProfiles.get(userId) || null; }
 export function findVendorByCode(code) {
@@ -2866,11 +2895,18 @@ export function decideVendor(userId, { approve, tier, status, by = 'admin', reas
   p.decidedBy = by;
   if (reason) p.decisionReason = reason;
   const t = VENDOR_TIERS[p.tier] || VENDOR_TIERS.independent;
+  const vu = db.users.get(userId);
+  const vTo = p.contactEmail || vu?.email;
+  const vName = p.businessName || vu?.name;
   if (next === 'approved' && prev !== 'approved') {
     p.approvedAt = nowISO();
     pushNotification(userId, { type: 'success', icon: '🤝', title: 'Vendor Partner approved', body: `Welcome to the Vendor Partner Programme! Your code is ${p.vendorCode}. You earn ${(t.commissionRate * 100).toFixed(0)}% on every eligible sale, paid every Friday.` });
+    const m = vendorApprovedEmail({ name: vName, tierLabel: t.label || t.key, sellCode: p.vendorCode, commissionPct: (t.commissionRate * 100).toFixed(0), portalUrl: VENDOR_PORTAL_URL });
+    sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
   } else if (next === 'rejected' && prev !== 'rejected') {
     pushNotification(userId, { type: 'warning', icon: '🤝', title: 'Vendor Partner application declined', body: reason ? `After review we can't approve your application at this time: ${reason} You're welcome to reapply with updated details.` : 'After review we weren\'t able to approve your Vendor Partner application at this time. You\'re welcome to reapply with updated details.' });
+    const m = vendorDeclinedEmail({ name: vName, reason });
+    sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
   } else if (next === 'suspended' && prev !== 'suspended') {
     pushNotification(userId, { type: 'warning', icon: '⛔', title: 'Vendor Partner suspended', body: reason ? `Your Vendor Partner account has been suspended: ${reason}` : 'Your Vendor Partner account has been suspended pending review. Contact support for details.' });
   }

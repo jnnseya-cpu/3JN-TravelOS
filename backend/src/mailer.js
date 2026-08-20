@@ -155,3 +155,36 @@ export function cheapestDateAlertEmail({ destination, fromGbp, cheapestDate, mar
     <p style="color:#6b7799;font-size:12px">To stop these alerts, <a href="${mailEsc(unsubUrl || 'https://3jntravel.com/api/leads/unsubscribe')}" style="color:#6b7799">unsubscribe</a>.</p>`);
   return { subject: `Cheaper fares to ${destination || 'your trip'}${price ? ` — from £${price}pp` : ''}`, html, text: `Lower fares to ${destination || 'your trip'}${price ? ` from £${price}pp` : ''}. Book & pay monthly: ${planUrl || 'https://3jntravel.com'}` };
 }
+
+// ---- Vendor / Partner programme lifecycle emails ---------------------------
+export function vendorApplicationEmail({ name, tierLabel } = {}) {
+  const who = name ? mailEsc(String(name).split(' ')[0]) : 'there';
+  const html = mailShell(`
+    <p style="color:#9aa6c4;margin:0 0 12px">Application received 🤝</p>
+    <p>Hi ${who}, thanks for applying to the <strong>3JN Vendor Partner Programme</strong>${tierLabel ? ` (${mailEsc(tierLabel)})` : ''}.</p>
+    <p>Your application has passed our automated risk screen and is now with our compliance team for a final decision. <strong>No sell code or commission is active yet</strong> — we never activate a partnership until a human has reviewed it.</p>
+    <p style="color:#9aa6c4">We'll email you the moment a decision is made. Once approved, your portal, sell link and weekly payouts unlock automatically in your account.</p>
+    <p style="color:#6b7799;font-size:12px">Questions? Reply to this email or contact info@3jntravel.com.</p>`);
+  return { subject: "We received your 3JN Vendor Partner application", html, text: `Hi ${name || 'there'}, we received your 3JN Vendor Partner application${tierLabel ? ` (${tierLabel})` : ''}. It passed the automated risk screen and is with our compliance team. No sell code or commission is active until you are approved — we will email you the decision.` };
+}
+export function vendorApprovedEmail({ name, tierLabel, sellCode, commissionPct, portalUrl } = {}) {
+  const who = name ? mailEsc(String(name).split(' ')[0]) : 'there';
+  const url = mailEsc(portalUrl || 'https://3jntravel.com/');
+  const html = mailShell(`
+    <p style="color:#46d39a;margin:0 0 12px">You're approved ✅</p>
+    <p>Welcome to the <strong>3JN Vendor Partner Programme</strong>${tierLabel ? ` (${mailEsc(tierLabel)})` : ''}, ${who}!</p>
+    ${sellCode ? `<p>Your sell code is <strong style="color:#d8b46a;font-size:18px">${mailEsc(sellCode)}</strong>.</p>` : ''}
+    ${commissionPct ? `<p>You earn <strong>${mailEsc(String(commissionPct))}%</strong> on every eligible sale, paid every <strong>Friday</strong> once each trip completes.</p>` : ''}
+    <p style="margin:18px 0"><a href="${url}" style="background:#1668e3;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">Open your partner portal →</a></p>
+    <p style="color:#9aa6c4">Your portal, sell link and payout dashboard are now live in your account. Share your link and start earning.</p>`);
+  return { subject: "You are approved — your 3JN partner portal is live", html, text: `You are approved for the 3JN Vendor Partner Programme${tierLabel ? ` (${tierLabel})` : ''}!${sellCode ? ` Sell code: ${sellCode}.` : ''}${commissionPct ? ` You earn ${commissionPct}% on every eligible sale, paid weekly.` : ''} Open your portal: ${portalUrl || 'https://3jntravel.com/'}` };
+}
+export function vendorDeclinedEmail({ name, reason } = {}) {
+  const who = name ? mailEsc(String(name).split(' ')[0]) : 'there';
+  const html = mailShell(`
+    <p style="color:#9aa6c4;margin:0 0 12px">Application update</p>
+    <p>Hi ${who}, thank you for your interest in the 3JN Vendor Partner Programme.</p>
+    <p>After review, we are unable to approve your application at this time${reason ? `: ${mailEsc(reason)}` : '.'} You are welcome to reapply with updated details.</p>
+    <p style="color:#6b7799;font-size:12px">If you believe this is an error, reply to this email or contact info@3jntravel.com.</p>`);
+  return { subject: "Your 3JN Vendor Partner application", html, text: `Hi ${name || 'there'}, after review we are unable to approve your 3JN Vendor Partner application at this time${reason ? `: ${reason}` : '.'} You are welcome to reapply.` };
+}

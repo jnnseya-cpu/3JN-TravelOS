@@ -4598,8 +4598,14 @@ app.get('/api/vendors/programme', safe((req, res) => {
 app.post('/api/vendors/apply', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
-  const { tier, identityDoc, addressProof, socialHandles, businessHistory, documents } = req.body || {};
-  res.json(applyVendor(user.id, { tier, identityDoc, addressProof, socialHandles, businessHistory, documents }));
+  const { tier, displayName, contactEmail, phone, country, website, companyReg, identityDoc, addressProof, socialHandles, businessHistory, documents, consent } = req.body || {};
+  // Enforce a REAL application at the boundary: the applicant must submit a display
+  // name and consent to the terms/KYC. This is what stops an empty one-click
+  // submission the risk agent would then "assess" on fabricated inputs.
+  if (!String(displayName || '').trim()) return res.status(400).json({ ok: false, error: 'incomplete', message: 'Enter your business or display name to apply.' });
+  if (!consent) return res.status(400).json({ ok: false, error: 'consent-required', message: 'Please confirm you agree to the partner terms and KYC checks.' });
+  const r = applyVendor(user.id, { tier, displayName, contactEmail, phone, country, website, companyReg, identityDoc, addressProof, socialHandles, businessHistory, documents });
+  res.status(r.ok ? 200 : 400).json(r);
 }));
 // My vendor portal (§5).
 app.get('/api/vendors/me', safe((req, res) => {
