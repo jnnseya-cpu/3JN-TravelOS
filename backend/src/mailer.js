@@ -188,3 +188,21 @@ export function vendorDeclinedEmail({ name, reason } = {}) {
     <p style="color:#6b7799;font-size:12px">If you believe this is an error, reply to this email or contact info@3jntravel.com.</p>`);
   return { subject: "Your 3JN Vendor Partner application", html, text: `Hi ${name || 'there'}, after review we are unable to approve your 3JN Vendor Partner application at this time${reason ? `: ${reason}` : '.'} You are welcome to reapply.` };
 }
+export function vendorSuspendedEmail({ name, reason } = {}) {
+  const who = name ? mailEsc(String(name).split(' ')[0]) : 'there';
+  const html = mailShell(`
+    <p style="color:#e0824c;margin:0 0 12px">Account suspended ⛔</p>
+    <p>Hi ${who}, your 3JN Vendor Partner account has been <strong>suspended</strong>${reason ? `: ${mailEsc(reason)}` : ' pending review'}.</p>
+    <p style="color:#9aa6c4">Your sell link and new commission are paused while this is reviewed. Any commission already earned on completed trips is unaffected.</p>
+    <p style="color:#6b7799;font-size:12px">Questions or think this is a mistake? Reply to this email or contact info@3jntravel.com.</p>`);
+  return { subject: "Your 3JN Vendor Partner account has been suspended", html, text: `Hi ${name || 'there'}, your 3JN Vendor Partner account has been suspended${reason ? `: ${reason}` : ' pending review'}. Your sell link and new commission are paused. Contact info@3jntravel.com with any questions.` };
+}
+export function vendorReinstatedEmail({ name, portalUrl } = {}) {
+  const who = name ? mailEsc(String(name).split(' ')[0]) : 'there';
+  const url = mailEsc(portalUrl || 'https://3jntravel.com/');
+  const html = mailShell(`
+    <p style="color:#46d39a;margin:0 0 12px">You're back 🎉</p>
+    <p>Good news ${who} — your 3JN Vendor Partner account has been <strong>reinstated</strong>. Your sell link and weekly payouts are active again.</p>
+    <p style="margin:18px 0"><a href="${url}" style="background:#1668e3;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">Open your partner portal →</a></p>`);
+  return { subject: "Your 3JN Vendor Partner account is reinstated", html, text: `Good news ${name || 'there'} — your 3JN Vendor Partner account has been reinstated. Your sell link and weekly payouts are active again. Portal: ${portalUrl || 'https://3jntravel.com/'}` };
+}

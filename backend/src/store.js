@@ -16,7 +16,7 @@ import { resolveEmbassyConfig } from './embassy.js';
 import { sanitizeListingDetails } from './host-listing.js';
 import { visaDocFee, visaReservationValidity, visaDocReference, validateVisaDocOrder, VISA_DOC_PRODUCTS, visaHotelDeposit, isValidYMD } from './visa-docs.js';
 import { benchmarkVerdict } from './benchmark.js';
-import { sendMail, vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail } from './mailer.js';
+import { sendMail, vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail, vendorSuspendedEmail, vendorReinstatedEmail } from './mailer.js';
 const VENDOR_PORTAL_URL = process.env.SITE_URL || 'https://3jntravel.com/';
 import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
 import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
@@ -2900,15 +2900,25 @@ export function decideVendor(userId, { approve, tier, status, by = 'admin', reas
   const vName = p.businessName || vu?.name;
   if (next === 'approved' && prev !== 'approved') {
     p.approvedAt = nowISO();
-    pushNotification(userId, { type: 'success', icon: '🤝', title: 'Vendor Partner approved', body: `Welcome to the Vendor Partner Programme! Your code is ${p.vendorCode}. You earn ${(t.commissionRate * 100).toFixed(0)}% on every eligible sale, paid every Friday.` });
-    const m = vendorApprovedEmail({ name: vName, tierLabel: t.label || t.key, sellCode: p.vendorCode, commissionPct: (t.commissionRate * 100).toFixed(0), portalUrl: VENDOR_PORTAL_URL });
-    sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
+    if (prev === 'suspended') {
+      // Reinstatement — the account already existed and had its code; this is
+      // a "you're back" moment, not a first welcome.
+      pushNotification(userId, { type: 'success', icon: '🎉', title: 'Vendor Partner reinstated', body: `Your Vendor Partner account is active again. Your sell link and weekly payouts have resumed.` });
+      const m = vendorReinstatedEmail({ name: vName, portalUrl: VENDOR_PORTAL_URL });
+      sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
+    } else {
+      pushNotification(userId, { type: 'success', icon: '🤝', title: 'Vendor Partner approved', body: `Welcome to the Vendor Partner Programme! Your code is ${p.vendorCode}. You earn ${(t.commissionRate * 100).toFixed(0)}% on every eligible sale, paid every Friday.` });
+      const m = vendorApprovedEmail({ name: vName, tierLabel: t.label || t.key, sellCode: p.vendorCode, commissionPct: (t.commissionRate * 100).toFixed(0), portalUrl: VENDOR_PORTAL_URL });
+      sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
+    }
   } else if (next === 'rejected' && prev !== 'rejected') {
     pushNotification(userId, { type: 'warning', icon: '🤝', title: 'Vendor Partner application declined', body: reason ? `After review we can't approve your application at this time: ${reason} You're welcome to reapply with updated details.` : 'After review we weren\'t able to approve your Vendor Partner application at this time. You\'re welcome to reapply with updated details.' });
     const m = vendorDeclinedEmail({ name: vName, reason });
     sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
   } else if (next === 'suspended' && prev !== 'suspended') {
     pushNotification(userId, { type: 'warning', icon: '⛔', title: 'Vendor Partner suspended', body: reason ? `Your Vendor Partner account has been suspended: ${reason}` : 'Your Vendor Partner account has been suspended pending review. Contact support for details.' });
+    const m = vendorSuspendedEmail({ name: vName, reason });
+    sendMail({ to: vTo, subject: m.subject, html: m.html, text: m.text }).catch(() => {});
   }
   recordAudit({ actor: by, role: 'admin', action: 'vendor.decided', entity: 'vendor', entityId: userId, summary: `${p.tier} · ${prev} → ${p.status}${reason ? ' · ' + reason : ''}` });
   return { ok: true, profile: p };

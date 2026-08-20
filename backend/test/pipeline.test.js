@@ -7392,12 +7392,15 @@ test('TBO Air ticketing fails closed when unconfigured (no live call, never thro
   assert.equal((await bookTboAirFlight({})).ok, false, 'missing everything → ok:false, no throw');
 });
 
-import { vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail } from '../src/mailer.js';
+import { vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail, vendorSuspendedEmail, vendorReinstatedEmail } from '../src/mailer.js';
 test('vendor: lifecycle emails render; risk agent assesses REAL attestations (no fabricated pass)', () => {
-  for (const m of [vendorApplicationEmail({ name: 'Ada', tierLabel: 'Individual' }), vendorApprovedEmail({ name: 'Ada', sellCode: 'VND-1234', commissionPct: '3', portalUrl: 'https://3jntravel.com/' }), vendorDeclinedEmail({ name: 'Ada' })]) {
+  for (const m of [vendorApplicationEmail({ name: 'Ada', tierLabel: 'Individual' }), vendorApprovedEmail({ name: 'Ada', sellCode: 'VND-1234', commissionPct: '3', portalUrl: 'https://3jntravel.com/' }), vendorDeclinedEmail({ name: 'Ada' }), vendorSuspendedEmail({ name: 'Ada', reason: 'chargeback spike' }), vendorReinstatedEmail({ name: 'Ada', portalUrl: 'https://3jntravel.com/' })]) {
     assert.ok(m.subject && m.html && m.text, 'subject/html/text present');
     assert.ok(!/<script/i.test(m.html), 'no unescaped markup');
   }
+  // A reason with markup must be escaped into the suspended email, never injected.
+  const susp = vendorSuspendedEmail({ name: 'Ada', reason: '<b>x</b>' });
+  assert.ok(!/<b>x<\/b>/.test(susp.html), 'suspension reason is HTML-escaped');
   // Integrity: an application with NO identity/address attestation must be
   // REFERRED (KYC incomplete), never "passed" on fabricated flags.
   const v = createUser({ name: 'No Docs', email: `nd-${Date.now()}@example.com` });
