@@ -3277,7 +3277,7 @@ async function renderVendors() {
   // status card instead — no code or commission is active until approved.
   const approvedPortal = () => `
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:22px">
-      ${[['Status', mine.status], ['Rate', mine.commissionRatePct + '%' + (mine.topSellerBonusActive ? ' 🏆' : '')], ['Sales', mine.totalSales], ['Earned', '£' + mine.commissionEarnedGbp.toLocaleString()], ['Held until travel', '£' + (mine.heldUntilTravelGbp || 0).toLocaleString()], ['Ready for Friday', '£' + mine.pendingPayoutGbp.toLocaleString()]]
+      ${[['Status', mine.status], ['Rate', mine.commissionRatePct + '%' + (mine.topSellerBonusActive ? ' 🏆' : '')], ['Sales', mine.totalSales], ['Earned', '£' + mine.commissionEarnedGbp.toLocaleString()], ['Held until travel', '£' + (mine.heldUntilTravelGbp || 0).toLocaleString()], ['Ready for Friday', '£' + mine.pendingPayoutGbp.toLocaleString()], ['Converted to ACU', '⚡' + Math.round((mine.convertedToAcuGbp || 0) * ACU_PER_GBP).toLocaleString()]]
         .map(([l, v]) => `<div class="card pad" style="text-align:center"><div class="t-label">${l}</div><div style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--gold)">${v}</div></div>`).join('')}
     </div>
     <div class="card pad" style="margin-top:14px"><span class="eyebrow">Your sell link</span>
@@ -3295,7 +3295,7 @@ async function renderVendors() {
         <input id="vfeAmt" type="number" min="5" step="1" placeholder="£ amount (blank = all)" style="width:190px;background:var(--navy-700);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13px" />
         <button class="btn btn-sm" ${mine.pendingPayoutGbp < 5 ? 'disabled title="You need at least £5 in cleared commission"' : ''} onclick="vendorConvertEarnings()">Convert to ACU</button>
       </div>
-      ${mine.convertedToAcuGbp ? `<p class="muted" style="font-size:12px;margin-top:10px">Converted to ACU so far: <strong style="color:var(--gold)">£${mine.convertedToAcuGbp.toLocaleString()}</strong>.</p>` : ''}
+      ${mine.convertedToAcuGbp ? `<p class="muted" style="font-size:12px;margin-top:10px">Converted to ACU so far: <strong style="color:var(--gold)">⚡${Math.round(mine.convertedToAcuGbp * ACU_PER_GBP).toLocaleString()} ACU</strong> <span style="opacity:.75">(£${mine.convertedToAcuGbp.toLocaleString()})</span>.</p>` : ''}
     </div>`;
 
   const statusCard = () => {
