@@ -5992,7 +5992,33 @@ window.decideApproval = async (id, decision) => {
 };
 
 // ---- ACU / account --------------------------------------------------------
-window.buyAcuFlow = () => {
+// Friendly label + credit/debit sign for one ACU ledger row.
+function acuTxnLabel(t) {
+  const r = String(t.reason || '');
+  if (t.type === 'USAGE') return { label: r.startsWith('search') ? 'AI search' : (r || 'AI action'), credit: false };
+  if (t.type === 'REWARD' && r === 'vendor-earnings-topup') return { label: '⚡ Commission → ACU', credit: true };
+  if (t.type === 'REWARD') return { label: 'Reward', credit: true };
+  if (t.type === 'REFUND') return { label: 'Refund', credit: true };
+  if (t.type === 'BONUS') return { label: /membership/.test(r) ? 'Membership ACU' : 'Bonus', credit: true };
+  if (t.type === 'PURCHASE') return { label: 'Top-up', credit: true };
+  return { label: t.type || 'ACU', credit: (Number(t.amount) || 0) >= 0 };
+}
+window.buyAcuFlow = async () => {
+  // Pull the wallet ledger so the modal doubles as the ACU history (top-ups,
+  // rewards, and vendor commission→ACU conversions all show here).
+  let history = '';
+  if (state.user) {
+    try {
+      const w = await api(`/api/account/${state.user.id}/wallet`, { silent: true });
+      const txns = (w.transactions || []).slice(0, 8);
+      if (txns.length) {
+        history = `<div style="margin-top:16px"><span class="eyebrow">Recent ACU activity</span>
+          ${txns.map((t) => { const { label, credit } = acuTxnLabel(t); const amt = Math.abs(Number(t.amount) || 0);
+            return `<div class="kv"><span>${esc(label)} <span class="muted" style="font-size:11px">· ${ukDate(t.date)}</span></span><span style="color:${credit ? 'var(--green)' : 'var(--text)'}">${credit ? '+' : '−'}${amt.toLocaleString()} ACU</span></div>`; }).join('')}
+          <p class="muted" style="font-size:11px;margin-top:6px">Balance ${Number(w.wallet?.currentBalance || 0).toLocaleString()} ACU · ${Number(w.wallet?.lifetimeEarned || 0).toLocaleString()} earned lifetime.</p></div>`;
+      }
+    } catch { /* history is best-effort — never block the top-up UI */ }
+  }
   modal(`
     <span class="eyebrow">ACU Marketplace · bigger packs earn bonus ACUs</span>
     <h3 style="margin:6px 0">Top up AI Compute Units</h3>
@@ -6000,7 +6026,8 @@ window.buyAcuFlow = () => {
     ${[['top5', '£5', '500', ''], ['top10', '£10', '1,100', '+10% bonus'], ['top15', '£15', '1,800', '+20% bonus']]
       .map(([id, gbp, acu, bonus]) => `<div class="kv"><span>${acu} ACU ${bonus ? `<span style="color:var(--green);font-size:11px">${bonus}</span>` : ''}</span><button class="btn ${id === 'top15' ? 'btn-gold' : 'btn-ghost'} btn-sm" onclick="buyAcu('${id}')">${gbp}</button></div>`).join('')}
     <div class="kv" style="opacity:.8"><span>Family · 4,000 ACU</span><button class="btn btn-ghost btn-sm" onclick="buyAcu('family')">£29</button></div>
-    <div class="kv"><span>Enterprise · custom volume</span><a class="btn btn-ghost btn-sm" href="mailto:sales@3jntravel.com">Contact sales</a></div>`);
+    <div class="kv"><span>Enterprise · custom volume</span><a class="btn btn-ghost btn-sm" href="mailto:sales@3jntravel.com">Contact sales</a></div>
+    ${history}`);
 };
 window.buyAcu = async (pack) => {
   if (!state.user) { const u = await api('/api/account', { method: 'POST', body: JSON.stringify({ humanCheck: humanCheckPayload(false) }) }); setUser(u.user); }

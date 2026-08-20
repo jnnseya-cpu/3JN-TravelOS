@@ -4207,6 +4207,12 @@ test('vendor fund-from-earnings: cleared commission converts to ACU and is not a
   const dash = vendorDashboard(v.id);
   assert.equal(dash.convertedToAcuGbp, 30);
   assert.equal(dash.pendingPayoutGbp, 0, 'converted earnings are no longer pending a bank payout');
+  // It lands in the ACU wallet ledger (what the wallet-history UI renders).
+  const { acuTransactions } = await import('../src/store.js');
+  const led = acuTransactions(v.id).find((t) => t.reason === 'vendor-earnings-topup');
+  assert.ok(led, 'conversion is recorded in the ACU ledger');
+  assert.equal(led.type, 'REWARD');
+  assert.equal(led.amount, 3000);
   // Below-minimum is rejected; nothing left to convert now anyway.
   const again = convertVendorEarningsToAcu(v.id, 10);
   assert.equal(again.ok, false);
