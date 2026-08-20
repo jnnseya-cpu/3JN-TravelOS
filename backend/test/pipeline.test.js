@@ -701,6 +701,24 @@ test('cost-protection gate blocks unfunded deep search and downgrades', () => {
   assert.equal(starterSmart.allowed, true, 'free starter still runs the cheap Smart search');
 });
 
+test('vendor ACU incentive: approved vendors self-fund but at the member rate (x2, not x4)', () => {
+  const memberRate = SEARCH_TIERS.smart.acuMember; // 16 — 2× provider cost
+  const fullRate = SEARCH_TIERS.smart.acu;         // 26 — full commercial rate
+  assert.ok(memberRate < fullRate, 'member rate is cheaper than the commercial rate');
+  // A vendor holding exactly the member-rate balance is FUNDED and charged the
+  // member rate — they spend their OWN ACU, just at the discounted price.
+  const vend = costProtectionGate({ tier: 'smart', user: { acuBalance: memberRate }, vendorActive: true, expectedBookingUSD: 0 });
+  assert.equal(vend.allowed, true, 'vendor funded at the member rate');
+  assert.equal(vend.acu, memberRate, 'charged the discounted member rate');
+  assert.equal(vend.chargeAcu, true, 'still spends their own ACU (self-funded, not comped)');
+  // A NON-vendor, NON-member with the same balance can't afford the full rate.
+  const consumer = costProtectionGate({ tier: 'smart', user: { acuBalance: memberRate }, vendorActive: false, expectedBookingUSD: 0 });
+  assert.equal(consumer.allowed, false, 'a consumer pays the full rate and is short here');
+  // A vendor with ZERO ACU is NOT funded — the incentive is a price, not a subsidy.
+  const brokeVendor = costProtectionGate({ tier: 'smart', user: { acuBalance: 0 }, vendorActive: true, expectedBookingUSD: 0 });
+  assert.equal(brokeVendor.allowed, false, 'no free searches — vendors self-fund');
+});
+
 test('white-label payout is 90/10 split', () => {
   const p = whiteLabelPayout(100000, 0.10);
   assert.equal(p.commissionUSD, 10000);

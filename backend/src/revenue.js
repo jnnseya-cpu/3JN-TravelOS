@@ -142,7 +142,7 @@ export function searchAbuseScore({ searchesWithoutBooking = 0, repeatedSearches 
   return { score, band, level, signals: ABUSE_SIGNALS };
 }
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false, multipleAccounts = false }) {
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false, multipleAccounts = false, vendorActive = false }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -193,7 +193,12 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // t.acu made a member with, say, 90 ACU fail a 56-ACU (member) Concierge search
   // because 90 < the 91-ACU non-member price — "the system refused to take ACUs".
   const isMember = !!(user && user.membership?.active);
-  const userAcuCost = (isMember && t.acuMember) ? t.acuMember : t.acu;
+  // SELLER INCENTIVE: an approved Vendor Partner still funds their OWN ACU, but
+  // pays the discounted MEMBER rate (≈2× provider cost) instead of the full
+  // commercial rate (≈4×) — a preferential price for the people selling 3JN,
+  // NOT a subsidy (they still spend their own balance; nothing is comped).
+  const memberRate = isMember || vendorActive;
+  const userAcuCost = (memberRate && t.acuMember) ? t.acuMember : t.acu;
   const smartAcu = (SEARCH_TIERS.smart || {}).acu || 5;
   const hasStarterAcu = !!(user && user.acuBalance >= smartAcu);
   // Only bites when the user has the free starter ACU (can afford Smart) but has

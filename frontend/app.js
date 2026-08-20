@@ -3815,7 +3815,7 @@ async function renderAdmin() {
             <button class="btn btn-ghost btn-sm" onclick="vendorDecide('${esc(v.userId)}','reject')" style="color:#ff8a8a">✕ Reject</button>
           </div>
         </div>`).join('') || '<div class="muted" style="font-size:13px">No applications awaiting review.</div>';
-      const others = vend.filter((v) => v.status !== 'pending-review').map((v) => `<div class="kv"><span>${esc(v.name || v.userId)} <span class="muted">· ${tierLabel(v.tier)}</span></span><span style="color:${v.status === 'approved' ? '#79d99b' : v.status === 'rejected' ? '#ff6b6b' : 'var(--gold)'}">${esc(v.status)}${v.status === 'approved' ? ' · ' + esc(v.vendorCode) : ''}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No decided vendors yet.</div>';
+      const others = vend.filter((v) => v.status !== 'pending-review').map((v) => `<div class="kv"><span>${esc(v.name || v.userId)} <span class="muted">· ${tierLabel(v.tier)}</span>${v.convertedToAcuGbp ? ` <span class="muted" style="font-size:11px">· ⚡${Math.round(v.convertedToAcuGbp * ACU_PER_GBP).toLocaleString()} ACU from earnings</span>` : ''}</span><span style="color:${v.status === 'approved' ? '#79d99b' : v.status === 'rejected' ? '#ff6b6b' : 'var(--gold)'}">${esc(v.status)}${v.status === 'approved' ? ' · ' + esc(v.vendorCode) : ''}</span></div>`).join('') || '<div class="muted" style="font-size:13px">No decided vendors yet.</div>';
       return `<div class="section-head left" style="margin:24px 0 10px"><h2 style="font-size:20px">Vendor Partner applications</h2></div>
         <div class="console-grid">
           <div class="card pad"><span class="eyebrow">Awaiting your decision (${pending.length})</span><div style="margin-top:10px">${pend}</div></div>

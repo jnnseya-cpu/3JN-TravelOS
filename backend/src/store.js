@@ -3113,6 +3113,10 @@ export function listVendors(status) {
   // admin can decide without a second lookup. Returns copies (read-only view).
   return list.map((v) => {
     const u = db.users.get(v.userId);
+    // Commission this vendor took as ACU (fund-from-earnings), for the admin view.
+    const convertedToAcuGbp = round2(db.vendorSales
+      .filter((s) => s.vendorId === v.userId && !s.refunded && !s.chargeback && !s.fraudFlag)
+      .reduce((t, s) => t + (s.acuConvertedGbp || 0), 0));
     return {
       ...v,
       name: u?.name || null, email: u?.email || null,
@@ -3120,6 +3124,7 @@ export function listVendors(status) {
       overallRisk: v.overallRisk ?? v.riskReview?.overallRisk ?? null,
       kycIncomplete: !!v.riskReview?.kycIncomplete,
       sanctionsHit: !!v.riskReview?.sanctionsHit,
+      convertedToAcuGbp,
     };
   });
 }
@@ -5235,5 +5240,9 @@ export function usageStats(userId) {
   // sibling accounts? Feeds the abuse throttle (downgrades their searches to cached).
   const me = db.users.get(userId);
   const multipleAccounts = !!(me?.signupIp) && accountsFromIpToday(me.signupIp) > MAX_STARTER_GRANTS_PER_IP_DAY;
-  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu, multipleAccounts };
+  // Approved Vendor Partners spend their OWN ACU (self-funded) but at the
+  // discounted member RATE (x2 provider cost, not x4) as a seller incentive.
+  const vp = db.vendorProfiles.get(userId);
+  const vendorActive = !!(vp && vp.status === 'approved');
+  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu, multipleAccounts, vendorActive };
 }

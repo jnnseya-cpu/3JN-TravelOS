@@ -301,6 +301,8 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     hasPurchasedAcu: !!usage.hasPurchasedAcu,
     // Anti-farming: several accounts from one IP → throttle to cached.
     multipleAccounts: !!usage.multipleAccounts,
+    // Approved Vendor Partner: self-funds, but spends ACU at the member rate.
+    vendorActive: !!usage.vendorActive,
   });
 
   const effectiveTier = gate.allowed ? searchTier : (gate.downgradeTo || 'free');
