@@ -2964,6 +2964,61 @@ export function flagVendorSale(saleId, flag) {
   return { ok: true, sale: s };
 }
 
+// FUND-FROM-EARNINGS — a Vendor Partner turns their OWN cleared commission into
+// ACU to power their working searches. This is self-funding from what they've
+// already earned, NOT a platform subsidy: only PAYABLE earnings convert (exactly
+// the bank-payout bar — trip completed, payment cleared, no refund/chargeback/
+// hold), so we never issue ACU for money that could still be clawed back. The
+// converted portion is recorded per sale (acuConvertedGbp) and is subtracted
+// from that sale's Friday bank payout, so a pound is paid EITHER as ACU OR to the
+// bank, never both. £1 = ACU_PER_GBP.
+export const VENDOR_ACU_CONVERT_MIN_GBP = 5;
+export function convertVendorEarningsToAcu(userId, amountGbp) {
+  const p = db.vendorProfiles.get(userId);
+  if (!p) return { ok: false, error: 'not-a-vendor' };
+  if (p.status !== 'approved') return { ok: false, error: 'vendor-not-approved', message: 'Only approved Vendor Partners can convert earnings to ACU.' };
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'not-found' };
+  const todayISO = nowISO().slice(0, 10);
+  const remainingOf = (s) => round2((s.vendorGbp || 0) - (s.acuConvertedGbp || 0));
+  // Payable, not-yet-taken commission, oldest first (same ordering the weekly
+  // bank payout releases in — convert the oldest cleared money first).
+  const payable = db.vendorSales
+    .filter((s) => s.vendorId === userId && saleIsPayable(s, todayISO) && remainingOf(s) > 0)
+    .sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+  const available = round2(payable.reduce((t, s) => t + remainingOf(s), 0));
+  if (available < VENDOR_ACU_CONVERT_MIN_GBP) {
+    return { ok: false, error: 'insufficient-earnings', availableGbp: available, minGbp: VENDOR_ACU_CONVERT_MIN_GBP,
+      message: `You have £${available.toFixed(2)} in cleared commission ready to convert; the minimum is £${VENDOR_ACU_CONVERT_MIN_GBP.toFixed(2)}.` };
+  }
+  // Default: convert ALL available. Otherwise clamp the request to [MIN, available].
+  let want = amountGbp == null ? available : Number(amountGbp);
+  if (!Number.isFinite(want) || want <= 0) return { ok: false, error: 'invalid-amount', message: 'Enter a valid amount to convert.' };
+  want = Math.min(round2(want), available);
+  if (want < VENDOR_ACU_CONVERT_MIN_GBP) {
+    return { ok: false, error: 'below-min', minGbp: VENDOR_ACU_CONVERT_MIN_GBP,
+      message: `Convert at least £${VENDOR_ACU_CONVERT_MIN_GBP.toFixed(2)} of earnings at a time.` };
+  }
+  // Consume sales oldest-first, raising acuConvertedGbp. A fully-taken sale is
+  // marked paidOut(method:acu) so it leaves the bank-payout pool entirely.
+  let need = want; const saleIds = [];
+  for (const s of payable) {
+    if (need <= 0.0049) break;
+    const take = Math.min(remainingOf(s), need);
+    if (take <= 0) continue;
+    s.acuConvertedGbp = round2((s.acuConvertedGbp || 0) + take);
+    saleIds.push(s.id);
+    if (remainingOf(s) <= 0.0049) { s.paidOut = true; s.payoutMethod = 'acu'; }
+    need = round2(need - take);
+  }
+  const convertedGbp = round2(want - Math.max(0, need));
+  const acu = Math.round(convertedGbp * ACU_PER_GBP);
+  creditAcu(userId, acu, 'vendor-earnings-topup', 'REWARD');
+  recordAudit({ actor: userId, role: 'vendor', action: 'vendor.earnings.acu', entity: 'vendor', entityId: userId, summary: `£${convertedGbp.toFixed(2)} earnings → ${acu} ACU` });
+  pushNotification(userId, { type: 'success', icon: '⚡', title: 'Earnings converted to ACU', body: `£${convertedGbp.toFixed(2)} of your commission is now ${acu} ACU, funding your searches. Any remaining balance still pays out to your bank on Friday.` });
+  return { ok: true, convertedGbp, acuCredited: acu, acuBalance: u.acuBalance, remainingAvailableGbp: round2(available - convertedGbp), saleIds };
+}
+
 // §3 — the automatic weekly payout run (Fridays). Releases every payable sale
 // per vendor as one batch. Idempotent: paid sales never pay twice.
 export function runWeeklyVendorPayouts() {
@@ -2976,7 +3031,8 @@ export function runWeeklyVendorPayouts() {
   }
   const batches = [];
   for (const [vendorId, sales] of byVendor) {
-    const amount = Math.round(sales.reduce((t, s) => t + s.vendorGbp, 0) * 100) / 100;
+    // Pay the bank only the portion NOT already taken as ACU (fund-from-earnings).
+    const amount = Math.round(sales.reduce((t, s) => t + (s.vendorGbp - (s.acuConvertedGbp || 0)), 0) * 100) / 100;
     if (amount <= 0) continue;
     sales.forEach((s) => { s.paidOut = true; });
     const batch = { id: id('vpo'), vendorId, amountGbp: amount, saleIds: sales.map((s) => s.id), status: 'paid', method: 'bank', at: nowISO() };

@@ -3287,6 +3287,15 @@ async function renderVendors() {
       </div>
       <p class="muted" style="font-size:12px;margin-top:8px">Code <strong style="color:var(--gold)">${esc(mine.vendorCode)}</strong> · Every eligible sale through your link earns ${mine.commissionRatePct}% — paid automatically every Friday. ${mine.leaderboardRank ? `Leaderboard: #${mine.leaderboardRank}.` : ''} Top seller each month earns +1% the following month.</p>
       ${(mine.payoutHistory || []).length ? `<div style="margin-top:10px"><span class="eyebrow">Recent payouts</span>${mine.payoutHistory.map((p) => `<div class="kv"><span>${ukDate(p.at)}</span><span>£${p.amountGbp.toLocaleString()} · <span class="muted">${esc(p.status)}</span></span></div>`).join('')}</div>` : ''}
+    </div>
+    <div class="card pad" style="margin-top:14px"><span class="eyebrow">⚡ Fund your searches from earnings</span>
+      <p class="muted" style="font-size:12.5px;margin:8px 0 12px">Turn your cleared commission into ACU to power your own searches — self-funding from what you've earned, no top-up needed. £1 = 100 ACU. Anything you don't convert still pays to your bank on Friday as usual.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:13px">Available now: <strong style="color:var(--gold)">£${mine.pendingPayoutGbp.toLocaleString()}</strong></span>
+        <input id="vfeAmt" type="number" min="5" step="1" placeholder="£ amount (blank = all)" style="width:190px;background:var(--navy-700);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13px" />
+        <button class="btn btn-sm" ${mine.pendingPayoutGbp < 5 ? 'disabled title="You need at least £5 in cleared commission"' : ''} onclick="vendorConvertEarnings()">Convert to ACU</button>
+      </div>
+      ${mine.convertedToAcuGbp ? `<p class="muted" style="font-size:12px;margin-top:10px">Converted to ACU so far: <strong style="color:var(--gold)">£${mine.convertedToAcuGbp.toLocaleString()}</strong>.</p>` : ''}
     </div>`;
 
   const statusCard = () => {
@@ -3389,6 +3398,17 @@ window.addVendorSvc = async () => {
 };
 window.removeVendorSvc = async (id) => {
   try { await api(`/api/vendors/services/${id}`, { method: 'DELETE' }); toast('Removed.'); renderVendors(); } catch { toast('Could not remove.'); }
+};
+// Fund-from-earnings: convert cleared commission to ACU (blank amount = convert all).
+window.vendorConvertEarnings = async () => {
+  const raw = ($('#vfeAmt')?.value || '').trim();
+  const body = raw ? { amountGbp: Number(raw) } : {};
+  try {
+    const r = await api('/api/vendors/earnings/convert', { method: 'POST', body: JSON.stringify(body) });
+    toast(`✓ £${Number(r.convertedGbp).toLocaleString()} converted → ${Number(r.acuCredited).toLocaleString()} ACU`);
+    if (state.user) state.user.acuBalance = r.acuBalance; // reflect the new wallet balance
+    renderVendors();
+  } catch { /* api() already surfaced the reason */ }
 };
 window.confirmVendorJob = async (id) => {
   const ref = $(`#vjref-${id}`)?.value?.trim();

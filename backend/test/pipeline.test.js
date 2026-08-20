@@ -4183,6 +4183,60 @@ test('vendor lifecycle: application → admin approval → attributed sale → F
   assert.equal(runWeeklyVendorPayouts().batches.filter((x) => x.vendorId === v.id).length, 0, 'never pays twice');
 });
 
+test('vendor fund-from-earnings: cleared commission converts to ACU and is not also bank-paid', async () => {
+  const { convertVendorEarningsToAcu } = await import('../src/store.js');
+  const v = createUser({ email: `vfe-${Date.now()}@x.co`, name: 'Freelance Vendor' });
+  const code = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true }).profile.vendorCode;
+  decideVendor(v.id, { approve: true, by: 'admin-fe' });
+  // Can't convert with nothing earned.
+  const empty = convertVendorEarningsToAcu(v.id, 10);
+  assert.equal(empty.ok, false);
+  assert.equal(empty.error, 'insufficient-earnings');
+  // A cleared £30 commission (immediately-payable: no travel dates on the booking).
+  const cust = createUser({ email: `vfe-c-${Date.now()}@x.co`, name: 'C' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1100 }, lines: { netSuppliersUSD: 1265.82 }, revenue: { commissionUSD: 126.58 } }, totalUSD: 1392, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: cust.id, vendorCode: code });
+  recordPayment(b.id, { type: 'deposit', amount: 200 });
+  assert.equal(vendorDashboard(v.id).pendingPayoutGbp, 30, '£30 cleared and payable');
+  const acuBefore = getUserById(v.id).acuBalance;
+  // Convert all of it: £30 → 3000 ACU (£1 = 100 ACU).
+  const c = convertVendorEarningsToAcu(v.id); // omit amount → convert all
+  assert.equal(c.ok, true);
+  assert.equal(c.convertedGbp, 30);
+  assert.equal(c.acuCredited, 3000);
+  assert.equal(getUserById(v.id).acuBalance, acuBefore + 3000, 'ACU credited to the vendor wallet');
+  const dash = vendorDashboard(v.id);
+  assert.equal(dash.convertedToAcuGbp, 30);
+  assert.equal(dash.pendingPayoutGbp, 0, 'converted earnings are no longer pending a bank payout');
+  // Below-minimum is rejected; nothing left to convert now anyway.
+  const again = convertVendorEarningsToAcu(v.id, 10);
+  assert.equal(again.ok, false);
+  // CRITICAL: the Friday bank run must NOT also pay the converted £30.
+  const run = runWeeklyVendorPayouts();
+  assert.equal(run.batches.filter((x) => x.vendorId === v.id).length, 0, 'no bank payout for money already taken as ACU');
+});
+
+test('vendor fund-from-earnings: partial convert leaves the remainder to bank; gates block unapproved', async () => {
+  const { convertVendorEarningsToAcu } = await import('../src/store.js');
+  // Unapproved applicant cannot convert.
+  const pend = createUser({ email: `vfe-p-${Date.now()}@x.co`, name: 'Pending V' });
+  applyVendor(pend.id, { tier: 'independent' });
+  assert.equal(convertVendorEarningsToAcu(pend.id, 10).error, 'vendor-not-approved');
+  // Approved vendor with £30 cleared, converts only £20 → £10 still bank-payable.
+  const v = createUser({ email: `vfe-p2-${Date.now()}@x.co`, name: 'Partial V' });
+  const code = applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true }).profile.vendorCode;
+  decideVendor(v.id, { approve: true, by: 'admin-fe2' });
+  const cust = createUser({ email: `vfe-p2c-${Date.now()}@x.co`, name: 'C2' });
+  const b = createBooking({ option: { tier: 'Standard', pricing: { symbol: '£', local: { total: 1100 }, lines: { netSuppliersUSD: 1265.82 }, revenue: { commissionUSD: 126.58 } }, totalUSD: 1392, travellers: { total: 1 }, components: [{ type: 'flight', supplier: 'BA', live: true }] }, userId: cust.id, vendorCode: code });
+  recordPayment(b.id, { type: 'deposit', amount: 200 });
+  const c = convertVendorEarningsToAcu(v.id, 20);
+  assert.equal(c.ok, true);
+  assert.equal(c.convertedGbp, 20);
+  assert.equal(c.acuCredited, 2000);
+  assert.equal(vendorDashboard(v.id).pendingPayoutGbp, 10, 'remaining £10 still pays to bank');
+  const run = runWeeklyVendorPayouts();
+  assert.ok(run.batches.some((x) => x.vendorId === v.id && x.amountGbp === 10), 'bank pays only the £10 remainder');
+});
+
 test('per-booking margin readout: gross fee − perks − vendor carve = net kept, floor holds', async () => {
   const { bookingMarginBreakdown, getBooking } = await import('../src/store.js');
   const vend = createUser({ email: 'vmr@x.co', name: 'Margin Vendor' });

@@ -45,7 +45,7 @@ import {
   earnAcu, applyInfluencer, decideInfluencer, partnerDashboard,
   rewardsLeaderboard, requestWithdrawal,
   createSupportTicket, listSupportTickets, supportTicketsForUser, resolveSupportTicket, completeReissue,
-  applyVendor, decideVendor, vendorDashboard, vendorLeaderboard,
+  applyVendor, decideVendor, vendorDashboard, vendorLeaderboard, convertVendorEarningsToAcu,
   addVendorService, removeVendorService, recordVendorServiceJob,
   listVendors, runWeeklyVendorPayouts, awardTopSellerBonus, flagVendorSale, maybeRunFridayPayouts,
   getEmbassyConfig, saveEmbassyConfig, redactVisaForApplicant, releaseVisaDecision,
@@ -4614,6 +4614,15 @@ app.get('/api/vendors/me', safe((req, res) => {
   const dash = vendorDashboard(user.id);
   if (!dash) return res.status(404).json({ error: 'not-a-vendor' });
   res.json({ dashboard: dash });
+}));
+// FUND-FROM-EARNINGS: an approved vendor converts their own cleared commission
+// into ACU to fund their working searches. Omit amountGbp to convert all of it.
+app.post('/api/vendors/earnings/convert', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const r = convertVendorEarningsToAcu(user.id, req.body?.amountGbp);
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
 }));
 app.get('/api/vendors/leaderboard', safe((req, res) => {
   // SECURITY: never expose the raw vendorId (a real user id = a bearer credential

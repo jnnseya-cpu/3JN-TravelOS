@@ -213,6 +213,9 @@ export function deriveVendorMetrics({ sales = [], payouts = [], tier = 'independ
   const eligible = sales.filter((s) => !s.refunded && !s.chargeback && !s.fraudFlag);
   const earned = round2(eligible.reduce((s, x) => s + (x.vendorGbp || 0), 0));
   const paid = round2(payouts.filter((p) => p.status === 'paid').reduce((s, p) => s + (p.amountGbp || 0), 0));
+  // Commission the vendor took as ACU (fund-from-earnings) instead of a bank
+  // payout — earned money, paid in a different form; nets out of what's payable.
+  const convertedToAcu = round2(eligible.reduce((s, x) => s + (x.acuConvertedGbp || 0), 0));
   // Held until the trip completes (departure/checkout not yet passed).
   const held = round2(eligible.filter((s) => !s.paidOut && s.serviceDate && todayISO && s.serviceDate >= todayISO)
     .reduce((s, x) => s + (x.vendorGbp || 0), 0));
@@ -227,7 +230,8 @@ export function deriveVendorMetrics({ sales = [], payouts = [], tier = 'independ
     salesValueGbp: round2(eligible.reduce((s, x) => s + (x.saleGbp || 0), 0)),
     commissionEarnedGbp: earned,
     commissionPaidGbp: paid,
-    pendingPayoutGbp: round2(Math.max(0, earned - paid - held)),
+    convertedToAcuGbp: convertedToAcu, // taken as ACU to fund their own searches
+    pendingPayoutGbp: round2(Math.max(0, earned - paid - held - convertedToAcu)),
     heldUntilTravelGbp: held, // releases the first Friday after the trip completes
     thisMonthSalesGbp: round2(thisMonth.reduce((s, x) => s + (x.saleGbp || 0), 0)),
     leaderboardRank: rank,
