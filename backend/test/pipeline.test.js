@@ -7361,3 +7361,25 @@ test('Newsletter: weekly feature email targets registered users, is densely link
   assert.ok(newsletterAudience().optedIn < optedInBefore || newsletterAudience().optedOut >= 1, 'unsubscribe reflected in audience');
   assert.equal(unsubscribeUserNewsletter('bogus-token').ok, false, 'invalid token rejected');
 });
+
+test('persistence: a null keyed leaf never resurrects as a live record (delete-on-trim durability)', () => {
+  // A per-record leaf set to null is how delete-on-trim removes a trimmed keyed
+  // record from the durable store. It must NEVER hydrate back as a live record —
+  // that orphan-resurrection was the bug (e.g. a trimmed visa reservation
+  // re-queued for fulfilment / a payout re-paid).
+  hydrateMerge({ visaReservations: { keep_me_vr: { id: 'keep_me_vr', kind: 'flight', status: 'processing' }, gone_orphan_vr: null } });
+  const flat = flatSnapshot();
+  assert.ok(flat['visaReservations/keep_me_vr'] && flat['visaReservations/keep_me_vr'].id === 'keep_me_vr', 'a real record hydrates');
+  assert.ok(!('visaReservations/gone_orphan_vr' in flat), 'the null orphan leaf never becomes a live record');
+});
+
+test('persistence: capArr trimming a keyed array flushes a null delete leaf for the evicted record', () => {
+  const first = recordShareEvent({ src: 'trim-probe-first' });
+  // Overflow SHARE_EVENT_CAP (20000) so `first` is evicted from memory. Do NOT
+  // call flatSnapshot() mid-loop — it flushes AND clears the pending deletes.
+  for (let i = 0; i < 20005; i++) recordShareEvent({ src: 'trim-probe' });
+  const flat = flatSnapshot();
+  // The evicted keyed record is flushed as a null (delete) leaf, so the durable
+  // store drops it instead of keeping an orphan that would re-hydrate.
+  assert.strictEqual(flat[`shareEvents/${first.id}`], null, 'evicted keyed record is flushed as a null delete leaf');
+});

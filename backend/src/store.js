@@ -91,7 +91,22 @@ const PRICE_EVENT_CAP = 5000;
 const VISA_APP_CAP = 10000;
 const QUOTE_REQ_CAP = 5000;
 const SUPPORT_TICKET_CAP = 5000;
-const capArr = (arr, cap) => { if (Array.isArray(arr) && arr.length > cap) arr.splice(0, arr.length - cap); };
+// KEYED-array leaves whose durable copy must be DELETED because capArr trimmed
+// them from memory. Under per-record persistence, splicing the array in memory
+// left the record's leaf alive in Firebase/KV, so it re-hydrated as an orphan —
+// a trimmed visa reservation could resurrect and be re-queued for fulfilment.
+// flatSnapshot() flushes these as null leaves (null deletes the node in Firebase's
+// ref.update, and saveMerge removes it from the KV store). Pass the collection key
+// to capArr for any KEYED_ARRAY so its trims are tracked; non-keyed arrays don't
+// persist per-record and need no key.
+const _leafDeletes = new Set();
+const capArr = (arr, cap, key) => {
+  if (!Array.isArray(arr) || arr.length <= cap) return;
+  const removed = arr.splice(0, arr.length - cap);
+  if (key && KEYED_ARRAY_KEYS.has(key)) {
+    for (const r of removed) if (r && r.id) _leafDeletes.add(`${key}/${r.id}`);
+  }
+};
 
 // ---- Communication event delivery log -------------------------------------
 const COMMS_CAP = 2000;
@@ -161,7 +176,7 @@ export function recordShareEvent({ token, src, kind } = {}) {
     at: new Date().toISOString(),
   };
   db.shareEvents.push(rec);
-  capArr(db.shareEvents, SHARE_EVENT_CAP);
+  capArr(db.shareEvents, SHARE_EVENT_CAP, 'shareEvents');
   return rec;
 }
 
@@ -525,7 +540,7 @@ export function orderVisaReservation(userId, payload = {}, { awaitingPayment = f
     paid: !deferPay, feePaymentIntent: null, paymentRef: deferPay ? null : id('vpay'), items, validUntil, createdAt: nowISO(), deliveredAt: null,
   };
   db.visaReservations.push(rec);
-  capArr(db.visaReservations, 500);
+  capArr(db.visaReservations, 500, 'visaReservations');
   recordAudit({ actor: userId, role: u.role, action: 'visa.reservation.ordered', entity: 'visa-reservation', entityId: rid, summary: `${trip.kind} · ${trip.origin || ''}→${trip.destination} · £${fee.feeGbp}` });
   // Queue the Visa Desk fulfilment job (ops or an automated hold issues it).
   db.fulfilmentOrders.push({
@@ -3425,7 +3440,7 @@ export function createQuoteRequest({ userId = null, option, intent, contact = {}
     createdAt: nowISO(),
   };
   db.quoteRequests.push(req);
-  capArr(db.quoteRequests, QUOTE_REQ_CAP);
+  capArr(db.quoteRequests, QUOTE_REQ_CAP, 'quoteRequests');
   recordAudit({ actor: userId || 'guest', role: 'consumer', action: 'quote.requested', entity: 'quoteRequest', entityId: req.id, summary: `${req.tier} · ${req.destination} · est ${req.symbol}${est}` });
   if (userId) pushNotification(userId, { type: 'info', icon: '📝', title: 'Exact quote requested', body: `We're confirming the live bookable price for your ${req.tier} ${req.destination} trip. You'll get the exact amount to approve — no charge until you do.` });
   return { ok: true, request: req };
@@ -4180,6 +4195,12 @@ export function flatSnapshot() {
     if (KEYED_ARRAY_KEYS.has(k)) { for (const r of db[k]) if (r && r.id) out[`${k}/${r.id}`] = r; }
     else out[k] = db[k];
   }
+  // Delete-on-trim: emit a null leaf for every keyed record capArr dropped, so the
+  // durable copy is removed and can't re-hydrate as an orphan. Skip a path that a
+  // live record already occupies (same id re-added). Cleared once flushed here — a
+  // save immediately follows every flatSnapshot() in the persistence flush paths.
+  for (const path of _leafDeletes) if (!(path in out)) out[path] = null;
+  _leafDeletes.clear();
   return out;
 }
 

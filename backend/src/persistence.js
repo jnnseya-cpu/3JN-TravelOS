@@ -226,7 +226,8 @@ export async function saveMerge(flat) {
           for (const r of cur[coll]) if (r && r.id) obj[r.id] = r;
           cur[coll] = obj;
         }
-        cur[coll][id] = v;
+        if (v === null) delete cur[coll][id]; // delete-on-trim leaf (matches Firebase null-delete)
+        else cur[coll][id] = v;
       } else {
         cur[k] = v; // arrays + counter are written whole
       }
