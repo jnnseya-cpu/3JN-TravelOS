@@ -1361,12 +1361,24 @@ function flightItinBlock(c, o, sym, intent) {
       ${l.stops ? `<div style="font-size:11.5px;margin-top:3px;color:var(--green)">🔗 Protected connection${via ? ' · via ' + via : ''} — one ticket, bags checked through, and the carrier rebooks you at no extra fare if a delay breaks the connection</div>` : ''}
     </div>`;
   };
-  // DEEP SEARCH: this fare was surfaced from a nearby airport or a flexed date —
-  // badge it clearly so the alternative airport/date shown in the legs is never a
-  // surprise (we never silently swap what you searched for).
-  const deepBadge = (d.altAirport || d.dateFlex)
-    ? `<div style="font-size:11px;margin:0 0 5px"><span class="chip" style="border-color:rgba(70,211,154,.4);color:#79d99b">💡 Cheaper option — ${d.altAirport ? 'a nearby airport (see the cities below)' : (d.dateFlex < 0 ? `${Math.abs(d.dateFlex)} day earlier` : `${d.dateFlex} day later`) + ' (see the date below)'}</span></div>`
-    : '';
+  // ORIGIN HONESTY: when the only fare we can actually book departs a NEARBY
+  // airport (not the one searched), we say so unmistakably — a prominent amber
+  // notice that names the real departure city + code and the airport it
+  // replaces. A nearby DEPARTURE is never allowed to hide behind a soft green
+  // "cheaper option" chip: the customer must see, BEFORE booking, that the trip
+  // leaves from a different city than the one they asked for. A flexed DATE
+  // (same airport) keeps the lighter "cheaper option" treatment.
+  let deepBadge = '';
+  if (d.altAirport) {
+    const fromCity = d.outbound?.fromCity || d.outbound?.from || d.altOriginCode || 'a nearby airport';
+    const fromCode = d.altOriginCode ? ` (${esc(d.altOriginCode)})` : '';
+    const reqCity = intent?.origin?.city || intent?.originCity;
+    const reqCode = d.requestedOriginCode || '';
+    const reqRef = reqCity ? `${esc(reqCity)}${reqCode ? ` (${esc(reqCode)})` : ''}` : (reqCode ? esc(reqCode) : 'the airport you searched');
+    deepBadge = `<div style="font-size:11.5px;margin:0 0 7px"><span style="display:inline-block;background:rgba(224,130,76,.12);border:1px solid rgba(224,130,76,.45);color:#e6a15c;border-radius:7px;padding:4px 9px;line-height:1.5">✈ <strong>Departs ${esc(fromCity)}${fromCode}</strong> — a nearby airport, not ${reqRef}. This is the best bookable fare we could confirm for these dates; note the trip leaves from ${esc(fromCity)}, not ${reqRef}.</span></div>`;
+  } else if (d.dateFlex) {
+    deepBadge = `<div style="font-size:11px;margin:0 0 5px"><span class="chip" style="border-color:rgba(70,211,154,.4);color:#79d99b">💡 Cheaper option — ${d.dateFlex < 0 ? `${Math.abs(d.dateFlex)} day earlier` : `${d.dateFlex} day later`} (see the date below)</span></div>`;
+  }
   return `<div style="margin:6px 0 2px">
     ${deepBadge}${legRow(d.outbound, 'Outbound')}${legRow(d.inbound, 'Return')}
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;padding:7px 0 2px;border-top:1px dashed rgba(223,229,238,.12);font-size:11.5px">
