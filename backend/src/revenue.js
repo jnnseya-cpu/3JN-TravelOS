@@ -117,15 +117,6 @@ export function aiCostCap(expectedProfitUSD) {
 // no deep agent comparison, negotiation, booking hold or custom itineraries.
 export const FREE_DAILY_SEARCH_LIMIT = 5;
 
-// Vendor Partners are freelancers who SELL 3JN trips — every search they run is
-// commercial work that earns 3JN a commission when it converts, so the platform
-// funds their working searches (Smart/Deep) rather than making them top up ACU
-// like a consumer. This is a funding SOURCE, not a free-for-all: it is limited
-// to APPROVED vendors, never covers Concierge (speculative human-expert time),
-// and is capped at a daily fair-use ceiling — beyond which the vendor falls back
-// to the normal funding rules (ACU / deposit / expected revenue), never blocked.
-export const VENDOR_DAILY_FUNDED_SEARCHES = 40;
-
 // ---- Search Abuse Detection Engine (spec §15) -------------------------------
 // Seven tracked signals scored 0–100. The gate throttles on an elevated score;
 // the fraud engine (bookingRiskScore) covers the booking-time equivalents.
@@ -151,7 +142,7 @@ export function searchAbuseScore({ searchesWithoutBooking = 0, repeatedSearches 
   return { score, band, level, signals: ABUSE_SIGNALS };
 }
 
-export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false, multipleAccounts = false, vendorActive = false }) {
+export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, subscriptionActive = false, expectedBookingUSD = 0, advertisingCreditUSD = 0, recentSearches = 0, priorBookings = 0, intentStrong = null, searchesToday = 0, sameDestinationRepeats = 0, corporateContract = false, whiteLabelContract = false, hasPurchasedAcu = false, multipleAccounts = false }) {
   const t = SEARCH_TIERS[tier] || SEARCH_TIERS.smart;
 
   // Free/cached always allowed.
@@ -159,18 +150,10 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
     return { allowed: true, tier, reason: 'cached-free', aiCostUSD: 0, acu: 0 };
   }
 
-  // VENDOR-PARTNER FUNDING (funding source 8): an APPROVED vendor's working
-  // searches are funded by the platform — they are a commission partner, not a
-  // consumer topping up ACU. Bounded: Smart/Deep only (never Concierge's human
-  // time), and only within the daily fair-use ceiling; past it the vendor falls
-  // through to the normal funding checks below (never hard-blocked for working).
-  const vendorFunded = !!vendorActive && tier !== 'concierge' && searchesToday < VENDOR_DAILY_FUNDED_SEARCHES;
-
   // Free-tier daily cap: without ACUs, a deposit or a subscription, paid
   // depth stops after the daily allowance — cached prices continue free.
-  // A funded vendor is exempt (their work is platform-funded, not free-tier).
   const isFreeUser = !subscriptionActive && !hasDeposit && !(user && user.acuBalance > 0);
-  if (isFreeUser && !vendorFunded && searchesToday >= FREE_DAILY_SEARCH_LIMIT) {
+  if (isFreeUser && searchesToday >= FREE_DAILY_SEARCH_LIMIT) {
     return {
       allowed: false, downgradeTo: 'free', tier, reason: 'free-daily-limit', aiCostUSD: t.aiCostUSD,
       requirement: { message: `Free plan: ${FREE_DAILY_SEARCH_LIMIT} searches/day. Cached prices stay free — buy ACUs, pay a refundable deposit or subscribe for unlimited deep search.` },
@@ -216,7 +199,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // Only bites when the user has the free starter ACU (can afford Smart) but has
   // NOT committed — then Deep downgrades to Smart. A user with no ACU falls
   // through to the normal funding checks below (which downgrade to cached/free).
-  if (tier === 'deep' && !committed && !vendorFunded && hasStarterAcu) {
+  if (tier === 'deep' && !committed && hasStarterAcu) {
     return {
       allowed: false, downgradeTo: 'smart', tier, reason: 'free-starter-limited-to-smart', aiCostUSD: t.aiCostUSD,
       requirement: {
@@ -246,7 +229,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   });
   const softThrottle = abuse.level === 'throttle' || recentSearches > 20 || sameDestinationRepeats > 10;
   const throttleBites = abuse.level === 'block' || (softThrottle && !acuFunded);
-  if (throttleBites && priorBookings === 0 && !committed && !vendorFunded) {
+  if (throttleBites && priorBookings === 0 && !committed) {
     return {
       allowed: false, downgradeTo: 'free', tier, reason: 'abuse-throttle', aiCostUSD: t.aiCostUSD, abuse,
       requirement: { message: 'To continue deep AI price hunting, please add ACUs or place a refundable booking deposit.' },
@@ -264,7 +247,6 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // revenue, 6) corporate contract, or 7) white-label contract. If none exist:
   // downgrade, request payment, or block.
   const fundingReasons = [];
-  if (vendorFunded) fundingReasons.push('vendor-partner');
   if (acuCovers) fundingReasons.push('acu-balance');
   if (hasDeposit) fundingReasons.push('search-deposit');
   if (subscriptionActive) fundingReasons.push('subscription');
@@ -285,10 +267,8 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
       tier,
       reason: fundingReasons.join('+'),
       aiCostUSD: t.aiCostUSD,
-      // A funded vendor's working search is on the platform — never debit their
-      // own ACU for it, even if they happen to hold a balance.
-      acu: (acuCovers && !vendorFunded) ? userAcuCost : 0, // debit the price the user pays (member rate for members)
-      chargeAcu: acuCovers && !vendorFunded && !subscriptionActive && !hasDeposit,
+      acu: acuCovers ? userAcuCost : 0, // debit the price the user pays (member rate for members)
+      chargeAcu: acuCovers && !subscriptionActive && !hasDeposit,
       // The 8-question gate checklist (spec part 16), answered.
       checklist: gateChecklist({ acuCovers, hasDeposit, subscriptionActive, revenueCovers, recentSearches, priorBookings, intentStrong }),
     };

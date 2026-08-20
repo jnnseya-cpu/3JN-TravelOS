@@ -6,7 +6,7 @@ import { parseIntent } from '../src/intent.js';
 import { detectContext } from '../src/geo.js';
 import { plan } from '../src/planner.js';
 import { priceBreakdown, instalmentPlan, tierForPoints, isFlightOnlyFeeModel } from '../src/pricing.js';
-import { costProtectionGate, whiteLabelPayout, SEARCH_TIERS, cachedSearchAcu, CACHED_SEARCH_ACU_MEMBER, VENDOR_DAILY_FUNDED_SEARCHES } from '../src/revenue.js';
+import { costProtectionGate, whiteLabelPayout, SEARCH_TIERS, cachedSearchAcu, CACHED_SEARCH_ACU_MEMBER } from '../src/revenue.js';
 import {
   createUser, createBooking, saveQuote, updateUser, seedAllRoles,
   createApiKey, listApiKeys, revokeApiKey, useApiKey, adminOverview,
@@ -699,32 +699,6 @@ test('cost-protection gate blocks unfunded deep search and downgrades', () => {
   assert.equal(starterDeep.downgradeTo, 'smart');
   const starterSmart = costProtectionGate({ tier: 'smart', user: { acuBalance: 50 }, expectedBookingUSD: 0, hasPurchasedAcu: false });
   assert.equal(starterSmart.allowed, true, 'free starter still runs the cheap Smart search');
-});
-
-test('vendor-partner funding: an approved vendor works Smart/Deep on the platform, capped, never Concierge', () => {
-  // A freelance vendor with NO ACU, no deposit, no subscription, no expected
-  // revenue — a consumer here would be downgraded. The vendor's WORKING search
-  // is platform-funded, and their own ACU is never debited for it.
-  const broke = { acuBalance: 0 };
-  const smart = costProtectionGate({ tier: 'smart', user: broke, expectedBookingUSD: 0, vendorActive: true, searchesToday: 3 });
-  assert.equal(smart.allowed, true, 'approved vendor runs Smart on the platform');
-  assert.match(smart.reason, /vendor-partner/);
-  const deep = costProtectionGate({ tier: 'deep', user: broke, expectedBookingUSD: 0, vendorActive: true, searchesToday: 3 });
-  assert.equal(deep.allowed, true, 'approved vendor runs Deep on the platform');
-  assert.match(deep.reason, /vendor-partner/);
-  assert.equal(deep.chargeAcu, false, 'never debits the vendor for platform-funded work');
-  assert.equal(deep.acu, 0);
-  // Concierge (human-expert time) is NEVER funded speculatively by vendor status.
-  const conc = costProtectionGate({ tier: 'concierge', user: broke, expectedBookingUSD: 0, vendorActive: true, searchesToday: 3 });
-  assert.equal(conc.allowed, false, 'vendor funding excludes Concierge');
-  // Fair use: past the daily ceiling the vendor falls back to the normal rules
-  // (here: unfunded → downgrade), never a free-for-all.
-  const overCap = costProtectionGate({ tier: 'deep', user: broke, expectedBookingUSD: 0, vendorActive: true, searchesToday: VENDOR_DAILY_FUNDED_SEARCHES });
-  assert.equal(overCap.allowed, false, 'beyond the daily ceiling vendor funding stops');
-  assert.ok(!/vendor-partner/.test(overCap.reason || ''));
-  // A non-approved (pending) applicant gets NO funding — the flag is approved-only.
-  const notVendor = costProtectionGate({ tier: 'deep', user: broke, expectedBookingUSD: 0, vendorActive: false, searchesToday: 3 });
-  assert.equal(notVendor.allowed, false, 'without approval, no vendor funding');
 });
 
 test('white-label payout is 90/10 split', () => {

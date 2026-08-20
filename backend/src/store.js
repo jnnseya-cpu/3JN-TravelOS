@@ -5179,9 +5179,5 @@ export function usageStats(userId) {
   // sibling accounts? Feeds the abuse throttle (downgrades their searches to cached).
   const me = db.users.get(userId);
   const multipleAccounts = !!(me?.signupIp) && accountsFromIpToday(me.signupIp) > MAX_STARTER_GRANTS_PER_IP_DAY;
-  // Approved Vendor Partners are freelancers reselling 3JN trips — the gate funds
-  // their working searches (see costProtectionGate / VENDOR_DAILY_FUNDED_SEARCHES).
-  const vp = db.vendorProfiles.get(userId);
-  const vendorActive = !!(vp && vp.status === 'approved');
-  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu, multipleAccounts, vendorActive };
+  return { searchesToday: today.length, recentSearches: week.length, priorBookings, sameDestinationRepeats, hasDeposit: !!activeSearchDeposit(userId), hasPurchasedAcu, multipleAccounts };
 }
