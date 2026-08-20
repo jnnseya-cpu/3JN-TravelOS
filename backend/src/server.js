@@ -80,7 +80,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -767,6 +767,39 @@ async function autoTicketFlight(booking) {
       if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '🎟️', title: 'Seats reserved — pay the balance to ticket', body: `Your ${tboFlight.supplier} fare is reserved at the price you locked. Your e-ticket is issued the moment the balance is paid in full.` });
       return;
     }
+    // FULLY PAID — attempt live ticketing via TBO (FareQuote → Book → Ticket).
+    // On ANY failure we fall through to the ops desk, so a paid fare is never left
+    // silently unticketed. Never ticket with placeholder names (denied boarding):
+    // require a real name for every seat, exactly like the Duffel path.
+    ful.ticketing = 'issuing';
+    const acct = booking.userId ? getUser(booking.userId) : null;
+    const tp = acct?.travelProfile || {};
+    const named = (Array.isArray(booking.travellers) ? booking.travellers : [])
+      .filter((t) => t && String(t.fullName || `${t.firstName || ''} ${t.lastName || ''}`).trim());
+    if (!named.length && (tp.fullLegalName || acct?.name)) {
+      named.push({ fullName: tp.fullLegalName || [tp.firstName, tp.middleName, tp.lastName].filter(Boolean).join(' ') || acct.name, dob: tp.dob, gender: tp.gender, passportNumber: tp.passportNumber, passportExpiry: tp.passportExpiry, nationality: tp.nationality });
+    }
+    const paxTotal = tboFlight.details.passengers || named.length || 1;
+    const lead = booking.leadTraveller || booking.lead || {};
+    const contactEmail = lead.email || acct?.email || tp.email || '';
+    const contactPhone = lead.phone || tp.mobile || tp.secondaryPhone || '';
+    if (named.length >= paxTotal && tboAirEnabled()) {
+      const r = await bookTboAirFlight({
+        traceId: tboFlight.details.tboTraceId, resultIndex: tboFlight.details.tboResultIndex,
+        isLCC: tboFlight.details.tboIsLCC === true, manifest: named, contactEmail, contactPhone,
+        maxAmountUSD: tboFlight.priceUSD || null,
+      }).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+      if (r.ok) {
+        ful.ticketing = 'issued'; ful.source = 'tbo-air'; ful.ticketedAt = new Date().toISOString();
+        ful.pnr = r.pnr || null; ful.ticketNumbers = r.ticketNumbers || []; ful.tboBookingId = r.bookingId ?? null;
+        recordAudit({ actor: 'system', role: 'system', action: 'ticketing.issued', entity: 'booking', entityId: booking.id, summary: `${tboFlight.supplier} via TBO Air — PNR ${r.pnr || 'n/a'}` });
+        if (booking.userId) pushNotification(booking.userId, { type: 'success', icon: '🎟️', title: 'E-ticket issued', body: `Your ${tboFlight.supplier} ticket is issued${r.pnr ? ` — PNR ${r.pnr}` : ''}. Your e-ticket is in your Console.` });
+        return;
+      }
+      recordAudit({ actor: 'system', role: 'system', action: 'ticketing.tbo-fallback', entity: 'booking', entityId: booking.id, summary: `${tboFlight.supplier} TBO auto-ticket failed (${r.error}) → ops desk` });
+    }
+    // FALLBACK: ops desk issues via the TBO portal (auto-ticket off, not enough
+    // real names, or a TBO failure). Paid-but-unticketed is impossible — queued.
     ful.ticketing = 'ops-queue';
     ful.queuedAt = new Date().toISOString();
     createSupportTicket({

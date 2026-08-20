@@ -7383,3 +7383,11 @@ test('persistence: capArr trimming a keyed array flushes a null delete leaf for 
   // store drops it instead of keeping an orphan that would re-hydrate.
   assert.strictEqual(flat[`shareEvents/${first.id}`], null, 'evicted keyed record is flushed as a null delete leaf');
 });
+
+import { bookTboAirFlight } from '../src/live-suppliers.js';
+test('TBO Air ticketing fails closed when unconfigured (no live call, never throws)', async () => {
+  // With no TBO credentials the adapter must refuse cleanly so autoTicketFlight
+  // ops-queues instead — a paid fare is never charged-but-unticketed.
+  assert.deepEqual(await bookTboAirFlight({ traceId: 't1', resultIndex: 5, manifest: [{ fullName: 'Ada Lovelace' }] }), { ok: false, error: 'not-configured' });
+  assert.equal((await bookTboAirFlight({})).ok, false, 'missing everything → ok:false, no throw');
+});

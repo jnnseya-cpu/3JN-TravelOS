@@ -1165,6 +1165,7 @@ const TBO_AIR_CLIENT_ID = env.TBO_AIR_CLIENT_ID || '';
 const TBO_AIR_USER = env.TBO_AIR_USERNAME || env.TBO_HOTEL_USERNAME || '';
 const TBO_AIR_PASS = env.TBO_AIR_PASSWORD || env.TBO_HOTEL_PASSWORD || '';
 const TBO_AIR_IP = env.TBO_AIR_END_USER_IP || '1.1.1.1'; // TBO requires an EndUserIp
+const TBO_BOOK_TIMEOUT_MS = Math.min(30000, Number(env.TBO_AIR_BOOK_TIMEOUT_MS) || 25000); // ticketing is slower than search
 export function tboAirEnabled() { return !!(TBO_AIR_CLIENT_ID && TBO_AIR_USER && TBO_AIR_PASS) && typeof fetch === 'function'; }
 let _tboAirToken = null; // { tokenId, at }
 async function tboAirToken() {
@@ -1271,6 +1272,112 @@ export async function fetchTboAirFlights(intent, originCode, destCode) {
     return out.length ? out : null;
   } catch { return null; }
 }
+// ---- TBO Air ticketing — FareQuote → (Book for GDS) → Ticket ---------------
+// The consolidator equivalent of the Duffel order path, called from
+// autoTicketFlight on a PAID TBO fare. Returns
+//   { ok:true, pnr, ticketNumbers[], bookingId, amountUSD }  or  { ok:false, error }.
+// FAIL-CLOSED: any missing field, non-2xx, price jump or thrown error returns
+// ok:false so the caller ops-queues the ticket — a paid fare is NEVER left
+// silently unticketed, and 3JN never books materially above what the customer
+// paid. The v10 request/response field names below follow the TBO/TekTravels Air
+// API spec and MUST be re-verified against live sandbox responses at
+// certification (same rule as the Duffel Stays / Hotelbeds booking lanes).
+const TBO_JSONH = { 'Content-Type': 'application/json', Accept: 'application/json' };
+function tboGender(g) { return /^m|male|mr|master/i.test(String(g || '')) ? 1 : 2; } // 1 male, 2 female
+function tboTitle(p) {
+  const t = String(p.title || '').trim();
+  if (t) return t;
+  return tboGender(p.gender) === 1 ? 'Mr' : 'Ms';
+}
+function tboSplitName(p) {
+  const first = String(p.firstName || '').trim();
+  const last = String(p.lastName || '').trim();
+  if (first || last) return { first: first || last, last: last || first };
+  const parts = String(p.fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
+  return { first: parts[0] || 'Guest', last: parts[0] || 'Traveller' };
+}
+// Build one TBO passenger. The LEAD pax carries the FareQuote Fare object (TBO
+// requires it); ages drive PaxType (1 adult / 2 child(2–11) / 3 infant(<2)).
+function tboAirPassenger(p, isLead, fareObj, email, phone) {
+  const { first, last } = tboSplitName(p);
+  const age = Number(p.age);
+  const paxType = Number.isFinite(age) ? (age < 2 ? 3 : age < 12 ? 2 : 1) : 1;
+  const pax = {
+    Title: tboTitle(p), FirstName: first, LastName: last, PaxType: paxType,
+    DateOfBirth: p.dob ? `${String(p.dob).slice(0, 10)}T00:00:00` : undefined,
+    Gender: tboGender(p.gender),
+    PassportNo: p.passportNumber || undefined,
+    PassportExpiry: p.passportExpiry ? `${String(p.passportExpiry).slice(0, 10)}T00:00:00` : undefined,
+    AddressLine1: p.address || 'N/A', City: p.city || 'London', CountryCode: p.countryCode || 'GB',
+    CountryName: p.countryName || 'United Kingdom', Nationality: p.nationality || p.countryCode || 'GB',
+    ContactNo: (isLead ? phone : '') || phone || '', Email: (isLead ? email : '') || email || '',
+    IsLeadPax: !!isLead,
+    // Fare is REQUIRED by TBO on the lead pax (the FareQuote fare); others echo a
+    // zeroed shape. Re-verify the exact per-pax fare split at certification.
+    Fare: isLead ? fareObj : { Currency: fareObj?.Currency || 'GBP', BaseFare: 0, Tax: 0, YQTax: 0, TransactionFee: 0, PublishedFare: 0, OfferedFare: 0 },
+  };
+  return pax;
+}
+// Extract PNR + e-ticket numbers from a Ticket/Book response, fail-closed.
+function tboTicketResult(resp, amountUSD, base = {}) {
+  const R = resp?.Response;
+  const err = R?.Error?.ErrorMessage || (R?.Error?.ErrorCode ? `TBO error ${R.Error.ErrorCode}` : null);
+  const status = R?.Response?.Status ?? R?.Status;
+  const info = R?.Response || R || {};
+  const pnr = base.pnr || info.PNR || null;
+  const bookingId = base.bookingId ?? info.BookingId ?? null;
+  // Ticket numbers live under FlightItinerary.Passenger[].Ticket.TicketNumber.
+  const pax = info.FlightItinerary?.Passenger || info.Passenger || [];
+  const ticketNumbers = (Array.isArray(pax) ? pax : []).map((x) => x?.Ticket?.TicketNumber).filter(Boolean);
+  const issued = ticketNumbers.length > 0 || (pnr && (status === 1 || status === undefined));
+  if (!issued) return { ok: false, error: err || 'ticket-unconfirmed', pnr, bookingId };
+  return { ok: true, pnr, bookingId, ticketNumbers, amountUSD };
+}
+export async function bookTboAirFlight({ traceId, resultIndex, isLCC = false, manifest = [], contactEmail = '', contactPhone = '', maxAmountUSD = null } = {}) {
+  if (!tboAirEnabled() || !traceId || resultIndex == null) return { ok: false, error: 'not-configured' };
+  if (!Array.isArray(manifest) || !manifest.length) return { ok: false, error: 'no-passengers' };
+  try {
+    const tok = await tboAirToken();
+    if (!tok) return { ok: false, error: 'auth' };
+    const common = { EndUserIp: TBO_AIR_IP, TokenId: tok, TraceId: traceId, ResultIndex: resultIndex };
+    // 1) FareQuote — re-price the exact result right before booking (fresh-fare check).
+    const fq = await httpJSON(`${TBO_AIR_BASE}/BookingEngineService_Air/AirService.svc/rest/FareQuote`, {
+      method: 'POST', headers: TBO_JSONH, body: JSON.stringify(common), timeoutMs: FLIGHT_TIMEOUT_MS,
+    });
+    const quoted = fq?.Response?.Results;
+    if (!quoted) return { ok: false, error: 'farequote-failed', detail: fq?.Response?.Error?.ErrorMessage || null };
+    const lcc = quoted.IsLCC === true || isLCC === true;
+    const fareObj = quoted.Fare || {};
+    const quotedFare = Number(fareObj.PublishedFare != null ? fareObj.PublishedFare : fareObj.OfferedFare);
+    const quotedUSD = Number.isFinite(quotedFare) ? await toUSD(quotedFare, fareObj.Currency || 'GBP') : null;
+    // Never ticket materially above what the customer paid — flag for ops instead.
+    if (maxAmountUSD != null && quotedUSD != null && quotedUSD > maxAmountUSD * 1.02) {
+      return { ok: false, error: 'price-changed', nowUSD: quotedUSD, wasUSD: maxAmountUSD };
+    }
+    const passengers = manifest.map((p, i) => tboAirPassenger(p, i === 0, fareObj, contactEmail, contactPhone));
+    if (lcc) {
+      // LCC: a single Ticket call books AND issues (no separate Book step).
+      const tk = await httpJSON(`${TBO_AIR_BASE}/BookingEngineService_Air/AirService.svc/rest/Ticket`, {
+        method: 'POST', headers: TBO_JSONH, body: JSON.stringify({ ...common, Passengers: passengers }), timeoutMs: TBO_BOOK_TIMEOUT_MS,
+      });
+      return tboTicketResult(tk, quotedUSD);
+    }
+    // GDS: Book (creates the PNR) then Ticket (issues the e-ticket).
+    const bk = await httpJSON(`${TBO_AIR_BASE}/BookingEngineService_Air/AirService.svc/rest/Book`, {
+      method: 'POST', headers: TBO_JSONH, body: JSON.stringify({ ...common, Passengers: passengers }), timeoutMs: TBO_BOOK_TIMEOUT_MS,
+    });
+    const booked = bk?.Response?.Response || bk?.Response;
+    const pnr = booked?.PNR || null;
+    const bookingId = booked?.BookingId ?? null;
+    if (!pnr || bookingId == null) return { ok: false, error: 'book-failed', detail: bk?.Response?.Error?.ErrorMessage || null };
+    const tk = await httpJSON(`${TBO_AIR_BASE}/BookingEngineService_Air/AirService.svc/rest/Ticket`, {
+      method: 'POST', headers: TBO_JSONH, body: JSON.stringify({ EndUserIp: TBO_AIR_IP, TokenId: tok, TraceId: traceId, PNR: pnr, BookingId: bookingId }), timeoutMs: TBO_BOOK_TIMEOUT_MS,
+    });
+    return tboTicketResult(tk, quotedUSD, { pnr, bookingId });
+  } catch (e) { return { ok: false, error: 'exception', detail: String(e?.message || e).slice(0, 120) }; }
+}
+
 // Active probe — auth + a sample Dubai search, plain-English verdict (mirrors
 // hotelbedsDiagnostic) so an admin can see exactly why TBO Air is / isn't live.
 export async function tboAirDiagnostic() {
