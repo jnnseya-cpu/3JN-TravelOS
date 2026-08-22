@@ -635,5 +635,19 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 })();
 </script>
 <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+<script>
+// Analytics: track landing → app CTA clicks on BOTH rails (Meta Pixel + GTM/GA4).
+// Fire-and-forget on click; navigation always proceeds even if a pixel is blocked.
+(function(){
+  function track(label){
+    try{ if(typeof fbq==='function') fbq('trackCustom','LandingCTA',{content_name:label}); }catch(e){}
+    try{ window.dataLayer=window.dataLayer||[]; window.dataLayer.push({event:'landing_cta',item_name:label}); }catch(e){}
+  }
+  document.addEventListener('click',function(e){
+    var a=e.target && e.target.closest ? e.target.closest('a[href^="/app"]') : null;
+    if(a) track((a.textContent||'CTA').trim().slice(0,60));
+  },true);
+})();
+</script>
 </body>
 </html>

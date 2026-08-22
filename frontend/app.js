@@ -366,6 +366,7 @@ window.selectTier = async (key) => {
   let data;
   try { data = await api('/api/membership/subscribe', { method: 'POST', body: JSON.stringify({ tier: key, billing: membershipBilling }) }); }
   catch { return; }
+  metaTrack('Subscribe', { content_name: key, content_category: membershipBilling, value: data.user?.membership?.pricePerMonth || data.priceGbp || undefined, currency: 'GBP' });
   // Live mode: a paid plan opens Stripe Checkout; the webhook activates it.
   if (data.checkout) { toast('💳 Opening secure checkout…'); window.location.href = data.checkout; return; }
   if (data.user) setUser(data.user);
@@ -853,8 +854,13 @@ async function runPlan(overrides = {}) {
       cabin: $('#cabinSelect')?.value || null,
     },
   };
-  // Meta Pixel: a completed search with results is a Search event.
-  if (data.stage === 'options') metaTrack('Search', { search_string: text.slice(0, 100), content_category: data.intent?.destination?.city || '' });
+  // Meta Pixel: a completed search with results is a Search event; the packages
+  // shown are a ViewContent (the traveller is looking at real, priced options).
+  if (data.stage === 'options') {
+    metaTrack('Search', { search_string: text.slice(0, 100), content_category: data.intent?.destination?.city || '' });
+    const rec = data.packages?.options?.find((o) => o.recommended) || data.packages?.options?.[0];
+    if (rec) metaTrack('ViewContent', { content_name: `${rec.tier} · ${data.intent?.destination?.city || ''}`, content_type: 'package', content_category: data.intent?.destination?.city || '', value: rec.pricing?.local?.total, currency: rec.pricing?.currency || 'GBP' });
+  }
   if (data.appliedDiveLever) {
     const al = data.appliedDiveLever;
     const bits = [];
@@ -1803,6 +1809,7 @@ window.submitExactQuote = async (tier) => {
   const body = { option: o, intent: window.__intent || null, contact, depositIntentGBP: $('#qrDeposit')?.checked ? 20 : 0, note: $('#qrNote')?.value.trim() };
   try {
     const d = await api('/api/quote-request', { method: 'POST', body: JSON.stringify(body) });
+    metaTrack('Lead', { content_name: `quote · ${tier}`, content_category: window.__intent?.destination?.city || '', value: o?.pricing?.local?.total, currency: o?.pricing?.currency || 'GBP' });
     closeModal();
     modal(`<div class="center" style="padding:8px"><div style="font-size:40px">📝</div>
       <h3 style="margin:10px 0 6px">Request received</h3>
@@ -2211,6 +2218,7 @@ window.confirmBooking = async () => {
     data = await api('/api/book', { method: 'POST', body: JSON.stringify({ specialRequests, hotelRequests, payment, protection: !!$('#bkProtection')?.checked, quoteId: state.lastQuote.id, option: state.lastQuote.option, intent: window.__intent, months: 3, depositPct: 0.2, paymentMethod, lead, travellers, baggage, src: window.__attribSrc || null }) });
   } catch { return; }
   if (data.user) setUser(data.user);
+  metaTrack('AddPaymentInfo', { value: state.lastQuote?.option?.pricing?.local?.total, currency: state.lastQuote?.option?.pricing?.currency || 'GBP', content_category: paymentMethod });
   closeModal();
   // LIVE CARD CHECKOUT: when Stripe is configured, card payments redirect to
   // the hosted Checkout page for the real deposit charge; the webhook then
@@ -2237,6 +2245,10 @@ window.confirmBooking = async () => {
     return;
   }
   const rail = paymentMethod === 'card' ? 'Stripe' : paymentMethod === 'bitripay' ? 'BitriPay Wallet' : 'BitriPay Mobile Money';
+  // Purchase fires here for the non-Stripe recorded flow (BitriPay / simulation);
+  // the Stripe card path fires Purchase on return from Checkout instead.
+  const bkTotal = state.lastQuote?.option?.pricing?.local?.total || 0;
+  metaTrack('Purchase', { value: payInFull ? bkTotal : Math.round(bkTotal * 0.2 * 100) / 100, currency: state.lastQuote?.option?.pricing?.currency || 'GBP', content_ids: [data.booking?.id].filter(Boolean), content_type: 'travel', content_name: `${payInFull ? 'full' : 'deposit'} · ${rail}` });
   toast(payInFull
     ? `✓ Payment received via ${rail} — we're issuing your e-ticket and will email it once the airline confirms.`
     : `✓ Reserved · deposit paid via ${rail} — your price is locked; the e-ticket is issued on final payment.`, 7000);
@@ -2651,6 +2663,7 @@ async function reserveEstimatedTrip(lead) {
       note: 'Requested from the trip planner — confirm exact price and send a payment link.',
     }) });
   } catch { /* the booking is still saved; the request is best-effort */ }
+  metaTrack('Lead', { content_name: 'estimated-trip reservation', content_category: window.__intent?.destination?.city || '', value: state.lastQuote?.option?.pricing?.local?.total, currency: state.lastQuote?.option?.pricing?.currency || 'GBP' });
   closeModal();
   modal(`<span class="eyebrow">Trip saved ✓</span>
     <h3 style="margin:6px 0">You're all set${lead?.fullName ? ', ' + esc(lead.fullName.split(' ')[0]) : ''}!</h3>
@@ -2676,7 +2689,9 @@ async function renderEsims() {
     </div>`;
 }
 window.provisionEsim = async () => {
-  try { await api('/api/esims', { method: 'POST', body: JSON.stringify({ destination: $('#esimDest').value, dataGB: 5, days: 9 }) }); } catch { return; }
+  const dest = $('#esimDest').value;
+  try { await api('/api/esims', { method: 'POST', body: JSON.stringify({ destination: dest, dataGB: 5, days: 9 }) }); } catch { return; }
+  metaTrack('Purchase', { content_name: `eSIM · ${dest}`, content_type: 'esim', content_category: dest });
   toast('✓ eSIM provisioned.'); renderEsims();
 };
 window.activateEsim = async (id) => { try { await api(`/api/esims/${id}/activate`, { method: 'POST', body: '{}' }); } catch { return; } toast('✓ eSIM activated.'); renderEsims(); };
@@ -3172,7 +3187,7 @@ window.copyRef = () => {
 window.applyInfluencer = async () => {
   const followers = Number($('#folCount')?.value || 0);
   if (!followers) { toast('Enter your total follower count.'); return; }
-  try { await api('/api/rewards/influencer/apply', { method: 'POST', body: JSON.stringify({ followers }) }); toast('✓ Application submitted — we’ll review it shortly.'); renderRewards(); }
+  try { await api('/api/rewards/influencer/apply', { method: 'POST', body: JSON.stringify({ followers }) }); metaTrack('SubmitApplication', { content_name: 'influencer', content_category: 'rewards' }); toast('✓ Application submitted — we’ll review it shortly.'); renderRewards(); }
   catch { toast('Could not submit — please try again.'); }
 };
 window.withdrawCommission = async (amount) => {
@@ -3405,6 +3420,7 @@ window.vendorConvertEarnings = async () => {
   const body = raw ? { amountGbp: Number(raw) } : {};
   try {
     const r = await api('/api/vendors/earnings/convert', { method: 'POST', body: JSON.stringify(body) });
+    metaTrack('EarningsConverted', { value: Number(r.convertedGbp) || undefined, currency: 'GBP', content_type: 'vendor-acu', content_name: `${Number(r.acuCredited).toLocaleString()} ACU` });
     toast(`✓ £${Number(r.convertedGbp).toLocaleString()} converted → ${Number(r.acuCredited).toLocaleString()} ACU`);
     if (state.user) state.user.acuBalance = r.acuBalance; // reflect the new wallet balance
     renderVendors();
@@ -3462,7 +3478,7 @@ window.vendorApplySubmit = async (tier) => {
       socialHandles: website ? [website] : [], businessHistory: registered, documents,
       consent: chk('vaConsent'),
     }) });
-    if (r.ok) { closeModal(); toast(r.profile.status === 'rejected' ? 'Application could not be approved (compliance screening).' : '✓ Application received — we\'ve emailed you and our compliance team will review it.'); renderVendors(); }
+    if (r.ok) { metaTrack('SubmitApplication', { content_name: 'vendor', content_category: tier }); closeModal(); toast(r.profile.status === 'rejected' ? 'Application could not be approved (compliance screening).' : '✓ Application received — we\'ve emailed you and our compliance team will review it.'); renderVendors(); }
     else toast(r.message || 'Could not submit application.');
   } catch { toast('Could not submit application.'); }
 };
@@ -3548,6 +3564,7 @@ window.payInstalment = async (id, index, amount) => {
   // Live card gateway: the instalment is captured through Stripe Checkout and
   // recorded only by the signed webhook — hop to secure checkout.
   if (d && d.requiresPayment && d.checkout) { toast('💳 Opening secure checkout…'); window.location.href = d.checkout; return; }
+  metaTrack('Purchase', { value: Number(amount) || undefined, currency: 'GBP', content_ids: [id], content_type: 'instalment', content_name: `instalment ${Number(index) + 1}` });
   toast('✓ Instalment paid.');
   renderConsole();
 };
@@ -4635,6 +4652,7 @@ window.shareTrip = async () => {
     token = r.token;
   } catch { toast('Could not create a share link — try again.'); return; }
   if (!token) { toast('Could not create a share link — try again.'); return; }
+  metaTrack('Share', { content_name: state.lastPlan?.intent?.destination?.city || 'trip', content_type: 'trip', method: 'link' });
   const copyUrl = tripShareUrl(token, 'copy');
   const qrUrl = tripShareUrl(token, 'qr');
   const waText = encodeURIComponent('Look at this trip I built on 3JN Travel OS — flights, hotel & more, one link:');
@@ -4714,6 +4732,7 @@ window.openPost = async (slug) => {
   if (!p) { toast('That post could not be found.'); return; }
   // Reflect the post in the URL so the browser back button and re-shares work.
   try { history.replaceState({}, '', `/blog/${p.slug}`); } catch {}
+  metaTrack('ViewContent', { content_name: p.title || p.slug, content_type: 'article', content_category: p.category || 'journal' });
   setBlogSeo(p);
   const faqHtml = (Array.isArray(p.faq) && p.faq.length)
     ? `<div class="blog-faq" style="margin-top:20px"><h3 style="margin-bottom:8px">Frequently asked</h3>${p.faq.map((f) => `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">${esc(f.q)}</summary><p class="muted" style="margin-top:6px">${esc(f.a)}</p></details>`).join('')}</div>`
@@ -5389,6 +5408,7 @@ window.orderVisaReservationFlow = async () => {
     }
     const flt = (r.reservation.items || []).find((it) => it.type === 'flight');
     const issued = flt?.providerRef;
+    metaTrack('Purchase', { value: Number(r.fee?.feeGbp) || undefined, currency: 'GBP', content_ids: [r.reservation?.id].filter(Boolean), content_type: 'visa-reservation', content_name: 'VisaOS reservation' });
     const depNote = r.reservation.roomDepositGbp > 0 ? ` (+£${Number(r.reservation.roomDepositGbp).toFixed(2)} refundable deposit${r.reservation.depositAuthorized ? ' held' : ''})` : '';
     toast(issued
       ? `✓ Ordered — £${Number(r.fee.feeGbp).toFixed(2)}${depNote} · flight held: ${flt.provider || 'airline'} ${flt.providerRef}.`
@@ -5431,6 +5451,7 @@ async function loadVisaDocs() {
   try {
     d = await api('/api/visa/checklist', { method: 'POST', body: JSON.stringify({ country: $('#vCountry').value, visaType: $('#vType').value, applicant: applicantFromForm() }) });
   } catch { return; }
+  metaTrack('ViewContent', { content_name: 'visa checklist', content_type: 'visa', content_category: d.country?.name || $('#vCountry')?.value || '' });
   const hint = $('#vDocsHint'); if (hint) hint.textContent = `${d.totalDocuments} documents${d.country ? ' · ' + d.country.name : ''}`;
   let idx = 0;
   box.innerHTML = d.sections.map((s) => `
@@ -6034,6 +6055,7 @@ window.buyAcu = async (pack) => {
   try { const data = await api(`/api/account/${state.user.id}/acu`, { method: 'POST', body: JSON.stringify({ pack }) });
     // Live mode: pay first — the wallet credits when the webhook confirms.
     if (data.checkout) { toast('💳 Opening secure checkout…'); window.location.href = data.checkout; return; }
+    metaTrack('Purchase', { value: Number(data.charged) || undefined, currency: 'GBP', content_type: 'acu', content_name: `ACU pack · ${pack}` });
     toast(`✓ ${data.charged ? '£' + data.charged + ' charged · ' : ''}balance ${data.balance.toLocaleString()} ACU`);
     setUser({ ...state.user, acuBalance: data.balance });
   } catch { return; }
@@ -6271,22 +6293,40 @@ async function fetchHumanChallenge() {
 // One call feeds BOTH rails: fbq for Meta ads, dataLayer for GTM -> GA4 /
 // Google Ads (with GA4-convention event names). Safe wrapper: never throws
 // when a pixel is blocked — analytics can never break the product.
+// Meta standard event → GA4-convention event name. Standard Meta events use the
+// Meta name for fbq and the mapped GA4 name for the dataLayer; anything not here
+// is treated as a CUSTOM event — fbq('trackCustom') + a lower_snake dataLayer name.
 const GA4_EVENT_MAP = {
   Search: 'search',
+  ViewContent: 'view_item',
+  AddToCart: 'add_to_cart',
+  AddPaymentInfo: 'add_payment_info',
   InitiateCheckout: 'begin_checkout',
   CompleteRegistration: 'sign_up',
+  Lead: 'generate_lead',
+  SubmitApplication: 'submit_application',
+  Subscribe: 'subscribe',
+  Contact: 'contact',
   Purchase: 'purchase',
 };
+// Meta STANDARD events (fbq('track', …)); everything else → fbq('trackCustom', …).
+const META_STANDARD = new Set(Object.keys(GA4_EVENT_MAP));
 function metaTrack(event, params) {
   const p = params || {};
-  try { if (typeof fbq === 'function') fbq('track', event, p); } catch { /* blocked — fine */ }
+  try {
+    if (typeof fbq === 'function') fbq(META_STANDARD.has(event) ? 'track' : 'trackCustom', event, p);
+  } catch { /* blocked — fine */ }
   try {
     window.dataLayer = window.dataLayer || [];
-    const ga = { event: GA4_EVENT_MAP[event] || event.toLowerCase() };
+    const ga = { event: GA4_EVENT_MAP[event] || event.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase() };
     if (p.search_string) ga.search_term = p.search_string;
     if (p.value != null) { ga.value = p.value; ga.currency = p.currency || 'GBP'; }
     if (p.content_name) ga.item_name = p.content_name;
-    if (event === 'Purchase' && p.content_ids && p.content_ids[0]) ga.transaction_id = p.content_ids[0];
+    if (p.content_category) ga.item_category = p.content_category;
+    if (p.content_type) ga.item_list_name = p.content_type;
+    if (p.method) ga.method = p.method;
+    if (p.status != null) ga.status = p.status;
+    if (p.content_ids && p.content_ids[0]) ga.transaction_id = p.content_ids[0]; // purchase/booking id
     window.dataLayer.push(ga);
   } catch { /* blocked — fine */ }
 }
@@ -7160,6 +7200,7 @@ window.potCreate = async () => {
   const name = $('#pot-name')?.value?.trim(); const targetUSD = Number($('#pot-target')?.value || 0);
   if (!name || !(targetUSD > 0)) { toast('Name and a target amount, please.'); return; }
   try { await api('/api/pots', { method: 'POST', body: JSON.stringify({ name, targetUSD }) }); } catch (e) { toast(e?.message || 'Failed.'); return; }
+  metaTrack('Lead', { content_name: 'travel pot', content_category: name, value: targetUSD, currency: 'USD' });
   toast('✓ Pot created — saving is not a booking; nothing is held until you buy.', 6000); openSaveWallet();
 };
 window.potContribute = async (id) => {
@@ -7765,7 +7806,7 @@ window.addEventListener('appinstalled', () => {
   };
   const open = () => {
     panel.hidden = false; fab.hidden = true; input.focus();
-    if (!greeted) { greeted = true; bubble("Hi! I'm the 3JN Assistant. Ask me about your bookings, payments, visas or rewards — or just say hello.", 'bot'); }
+    if (!greeted) { greeted = true; metaTrack('Contact', { content_name: 'assistant chat', method: 'chat' }); bubble("Hi! I'm the 3JN Assistant. Ask me about your bookings, payments, visas or rewards — or just say hello.", 'bot'); }
   };
   const close = () => { panel.hidden = true; fab.hidden = false; };
   fab.addEventListener('click', open);
