@@ -92,7 +92,7 @@ import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, pri
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
 import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
-import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, recordBlogView, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats, regenerateBlog } from './agents.js';
+import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, recordBlogView, blogSeoScore, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats, regenerateBlog } from './agents.js';
 import { generateGrowthContent, GROWTH_TOOL_KEYS } from './growth.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
 import { initPersistence, isEnabled, persistenceBackend, persistenceInitError, persistenceSelfTest, load, save, saveMerge, scheduleSave, verifyFirebaseIdToken, firebaseAdminReady } from './persistence.js';
@@ -5887,8 +5887,9 @@ app.get('/api/blog/:slug', safe((req, res) => {
   const post = getPost(req.params.slug);
   if (!post) return res.status(404).json({ error: 'not-found' });
   // Attach the live "related posts" rail — dynamic internal links that keep the
-  // link graph dense as the catalogue grows (rendered under the article).
-  res.json({ post, related: relatedPosts(post, 6) });
+  // link graph dense as the catalogue grows (rendered under the article) — plus
+  // the on-page SEO score for this post.
+  res.json({ post: { ...post, seoScore: blogSeoScore(post) }, related: relatedPosts(post, 6) });
 }));
 // View-count beacon. A POST (not the GET above) so the increment goes through
 // the serverless persistence path — a GET is never saved, so counting there

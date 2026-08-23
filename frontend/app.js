@@ -3706,6 +3706,8 @@ async function renderAdmin() {
   try { att = await api('/api/admin/attribution?days=30'); } catch { /* optional panel */ }
   let vend = null;
   try { vend = (await api('/api/admin/vendors')).vendors; } catch { /* optional panel */ }
+  let blogPosts = null;
+  try { blogPosts = (await api('/api/blog')).posts; } catch { /* optional panel */ }
   let vres = null;
   try { vres = (await api('/api/admin/visa/reservations')).reservations; } catch { /* optional panel */ }
   const o = data.overview;
@@ -3991,6 +3993,14 @@ async function renderAdmin() {
         <p class="muted" style="font-size:12.5px;margin:6px 0">${seo.recommendation}</p>
         <div class="chips">${seo.targetKeywords.slice(0, 8).map((k) => `<span class="chip">${k}</span>`).join('')}</div>
         <div style="margin-top:8px"><a class="muted" href="/sitemap.xml" target="_blank" style="font-size:12px;text-decoration:underline">sitemap.xml</a> · <a class="muted" href="/robots.txt" target="_blank" style="font-size:12px;text-decoration:underline">robots.txt</a></div>
+        ${blogPosts && blogPosts.length ? (() => {
+          const posts = [...blogPosts].sort((a, b) => (b.views || 0) - (a.views || 0));
+          const totalViews = posts.reduce((s, p) => s + (p.views || 0), 0);
+          const avgSeo = Math.round(posts.reduce((s, p) => s + (p.seoScore || 0), 0) / posts.length);
+          const seoCol = (n) => n >= 80 ? 'var(--green)' : n >= 60 ? 'var(--gold)' : '#ff8a8a';
+          return `<div style="margin-top:12px"><span class="eyebrow">Content performance · ${posts.length} posts · ${totalViews.toLocaleString()} views · avg SEO ${avgSeo}/100</span>
+            <div style="max-height:220px;overflow:auto;margin-top:6px">${posts.slice(0, 20).map((p) => `<div class="kv"><span style="cursor:pointer;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.title)}" onclick="openPost('${esc(p.slug)}')">${esc(p.title)}</span><span style="font-size:12px">👁 ${Number(p.views || 0).toLocaleString()} · <span style="color:${seoCol(p.seoScore || 0)}">SEO ${p.seoScore ?? '—'}</span></span></div>`).join('')}</div></div>`;
+        })() : ''}
       </div>
       <div class="card pad">
         <span class="eyebrow">📣 Marketing Agent</span>
@@ -4613,7 +4623,7 @@ async function renderBlog() {
   let data; try { data = await api('/api/blog'); } catch { return; }
   const cards = (data.posts || []).map((p) => `
     <div class="card pad blog-card">
-      <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · 👁 ${Number(p.views || 0).toLocaleString()}</span>
+      <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · 👁 ${Number(p.views || 0).toLocaleString()}${p.seoScore != null ? ` · SEO ${p.seoScore}/100` : ''}</span>
       <h3 style="margin:6px 0 6px;cursor:pointer" onclick="openPost('${esc(p.slug)}')">${esc(p.title)}</h3>
       <p class="muted" style="font-size:13.5px">${esc(p.excerpt)}</p>
       <div class="chips" style="margin-top:8px">${p.tags.map((t) => `<span class="chip">#${esc(t)}</span>`).join('')}</div>
@@ -4760,7 +4770,7 @@ window.openPost = async (slug) => {
     ? `<div style="margin-top:22px"><h3 style="margin-bottom:8px">Related travel guides</h3><div style="display:grid;gap:6px">${rel.map((r) => `<a href="/blog/${esc(r.slug)}" onclick="openPost('${esc(r.slug)}');return false" style="color:var(--gold);font-size:13.5px;text-decoration:none">→ ${esc(r.title)}</a>`).join('')}</div></div>`
     : '';
   modal(`
-    <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)} · 👁 <span id="blogViews">${Number(p.views || 0).toLocaleString()}</span> views</span>
+    <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)} · 👁 <span id="blogViews">${Number(p.views || 0).toLocaleString()}</span> views${p.seoScore != null ? ` · SEO ${p.seoScore}/100` : ''}</span>
     <h2 style="margin:6px 0 4px;font-size:24px">${esc(p.title)}</h2>
     <div class="muted" style="font-size:12px;margin-bottom:12px">${(p.tags || []).map((t) => '#' + esc(t)).join(' ')}</div>
     <div class="blog-body" onclick="blogLink(event)">${p.body}</div>

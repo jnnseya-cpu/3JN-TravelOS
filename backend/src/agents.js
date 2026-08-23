@@ -586,7 +586,35 @@ export function regenerateBlog() {
   recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.regenerated', entity: 'blog', entityId: 'all', summary: `regenerated ${db.blog.length} posts` });
   return db.blog;
 }
-export function listPosts() { return ensureSeedPosts().map(({ body, ...meta }) => ({ ...meta, views: meta.views || 0 })); }
+// Deterministic on-page SEO score (0–100) for one post — the same signals an SEO
+// tool grades: title + meta-description length, FAQ (rich-result) schema, internal
+// linking (topical authority / crawl depth), content depth, and a conversion CTA.
+// Computed from the post itself so it never drifts and needs no external service.
+export function blogSeoScore(post) {
+  if (!post) return 0;
+  const title = String(post.title || '');
+  const meta = String(post.metaDescription || post.excerpt || '');
+  const body = String(post.body || '');
+  const words = body.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+  const internalLinks = (body.match(/href="\/[^"#][^"]*"/g) || []).length;
+  let score = 0;
+  // Title length (Google truncates ~60 chars).
+  if (title.length >= 40 && title.length <= 65) score += 20; else if (title.length >= 30 && title.length <= 75) score += 12;
+  // Meta description length (snippet window ~120–160).
+  if (meta.length >= 120 && meta.length <= 165) score += 20; else if (meta.length >= 80) score += 12;
+  // FAQ schema → rich results.
+  if (Array.isArray(post.faq) && post.faq.length >= 2) score += 15; else if (post.faq && post.faq.length) score += 8;
+  // Internal linking (topical authority + crawl depth).
+  score += Math.min(20, internalLinks * 3);
+  // Content depth.
+  if (words >= 500) score += 15; else if (words >= 300) score += 9;
+  // Conversion CTA present.
+  if (post.cta && post.cta.href) score += 10;
+  return Math.min(100, score);
+}
+export function listPosts() {
+  return ensureSeedPosts().map((p) => { const { body, ...meta } = p; return { ...meta, views: p.views || 0, seoScore: blogSeoScore(p) }; });
+}
 export function getPost(slug) { ensureSeedPosts(); return db.blog.find((p) => p.slug === slug) || null; }
 // Increment a post's view count. Called from a POST beacon so the mutation goes
 // through the serverless read-modify-write persistence path (a GET never saves).

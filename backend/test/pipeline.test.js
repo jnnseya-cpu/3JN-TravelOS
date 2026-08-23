@@ -7407,6 +7407,22 @@ test('feature blog: ensureFeaturePosts is idempotent (no duplicates on re-run)',
   assert.equal(before, after);
 });
 
+test('blog SEO score: computed 0–100 from on-page signals and surfaced in listings', async () => {
+  const { blogSeoScore } = await import('../src/agents.js');
+  ensureSeedPosts();
+  const post = getBlogPost('pay-monthly-flights-and-holidays-uk');
+  const score = blogSeoScore(post);
+  assert.ok(score >= 0 && score <= 100, 'score is within 0–100');
+  assert.ok(score >= 60, `a real feature post scores well (${score})`);
+  // A bare, link-less, meta-less post scores far lower than a full one.
+  const thin = blogSeoScore({ title: 'Hi', metaDescription: '', body: 'short', faq: [], cta: null });
+  assert.ok(thin < score, 'a thin post scores lower than a complete one');
+  // Surfaced in the list so the admin content table can render it.
+  const listed = listBlogPosts().find((p) => p.slug === post.slug);
+  assert.equal(listed.seoScore, score, 'listPosts exposes the same score');
+  assert.equal(blogSeoScore(null), 0, 'no post → 0, no throw');
+});
+
 test('blog view count: recordBlogView increments and surfaces in listings', async () => {
   const { recordBlogView } = await import('../src/agents.js');
   ensureSeedPosts();
