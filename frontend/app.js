@@ -4613,7 +4613,7 @@ async function renderBlog() {
   let data; try { data = await api('/api/blog'); } catch { return; }
   const cards = (data.posts || []).map((p) => `
     <div class="card pad blog-card">
-      <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read</span>
+      <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · 👁 ${Number(p.views || 0).toLocaleString()}</span>
       <h3 style="margin:6px 0 6px;cursor:pointer" onclick="openPost('${esc(p.slug)}')">${esc(p.title)}</h3>
       <p class="muted" style="font-size:13.5px">${esc(p.excerpt)}</p>
       <div class="chips" style="margin-top:8px">${p.tags.map((t) => `<span class="chip">#${esc(t)}</span>`).join('')}</div>
@@ -4733,6 +4733,19 @@ window.openPost = async (slug) => {
   // Reflect the post in the URL so the browser back button and re-shares work.
   try { history.replaceState({}, '', `/blog/${p.slug}`); } catch {}
   metaTrack('ViewContent', { content_name: p.title || p.slug, content_type: 'article', content_category: p.category || 'journal' });
+  // Count the view once per reader per day (a POST beacon so it persists in
+  // serverless), then reflect the fresh number in the header.
+  try {
+    const k = `bv:${p.slug}:${new Date().toISOString().slice(0, 10)}`;
+    let seen = false;
+    try { seen = !!localStorage.getItem(k); } catch { /* storage blocked → still count */ }
+    if (!seen) {
+      try { localStorage.setItem(k, '1'); } catch { /* ignore */ }
+      api(`/api/blog/${encodeURIComponent(p.slug)}/view`, { method: 'POST', body: '{}', silent: true })
+        .then((r) => { const el = document.getElementById('blogViews'); if (el && r && r.views != null) el.textContent = Number(r.views).toLocaleString(); })
+        .catch(() => { /* view count is best-effort */ });
+    }
+  } catch { /* never block the article */ }
   setBlogSeo(p);
   const faqHtml = (Array.isArray(p.faq) && p.faq.length)
     ? `<div class="blog-faq" style="margin-top:20px"><h3 style="margin-bottom:8px">Frequently asked</h3>${p.faq.map((f) => `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">${esc(f.q)}</summary><p class="muted" style="margin-top:6px">${esc(f.a)}</p></details>`).join('')}</div>`
@@ -4747,7 +4760,7 @@ window.openPost = async (slug) => {
     ? `<div style="margin-top:22px"><h3 style="margin-bottom:8px">Related travel guides</h3><div style="display:grid;gap:6px">${rel.map((r) => `<a href="/blog/${esc(r.slug)}" onclick="openPost('${esc(r.slug)}');return false" style="color:var(--gold);font-size:13.5px;text-decoration:none">→ ${esc(r.title)}</a>`).join('')}</div></div>`
     : '';
   modal(`
-    <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)}</span>
+    <span class="eyebrow">${esc(p.destination)} · ${p.readMins} min read · ${esc(p.author)} · 👁 <span id="blogViews">${Number(p.views || 0).toLocaleString()}</span> views</span>
     <h2 style="margin:6px 0 4px;font-size:24px">${esc(p.title)}</h2>
     <div class="muted" style="font-size:12px;margin-bottom:12px">${(p.tags || []).map((t) => '#' + esc(t)).join(' ')}</div>
     <div class="blog-body" onclick="blogLink(event)">${p.body}</div>

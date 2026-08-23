@@ -1540,8 +1540,14 @@ test('price dive: explores date shifts, alternate airports, supplier spread', ()
   assert.equal(dive.leversChecked, 4);
   assert.ok(dive.combinationsExplored > 50, `${dive.combinationsExplored} combinations`);
   const levers = dive.savings.map((s) => s.lever);
-  assert.ok(levers.includes('Date optimisation'), levers.join());
-  assert.ok(levers.includes('Airport selection'), levers.join());
+  // The dive EXPLORES four levers (date, airport, supplier, hotel) — proven by
+  // leversChecked === 4 and combinationsExplored above. It only SURFACES levers
+  // that found a real saving for this seed: supplier + hotel always do, while the
+  // date/airport levers depend on whether a cheaper date/airport actually exists
+  // for the resolved date (that they DO work is proven seed-robustly below).
+  assert.ok(levers.includes('Supplier competition'), levers.join());
+  assert.ok(levers.includes('Hotel swap (same rating)'), levers.join());
+  assert.ok(dive.savings.length >= 2, 'the deterministic levers surface');
   for (const s of dive.savings) {
     assert.ok(s.savingUSD > 0, `${s.lever} quantified`);
     assert.ok(s.how, `${s.lever} explains itself`);
@@ -1549,8 +1555,28 @@ test('price dive: explores date shifts, alternate airports, supplier spread', ()
   assert.ok(dive.totalIdentifiedUSD >= dive.savings[0].savingUSD);
   assert.ok(dive.unbeatable.verdict, 'unbeatable verdict present');
   assert.ok(dive.unbeatable.marginPct >= 0);
-  // The traveller's own request is never silently mutated.
-  assert.equal(r.intent.dates.checkIn.slice(0, 7), '2026-08');
+  // The traveller's own request is never silently mutated: the requested MONTH
+  // (August) is honoured and resolved to a FUTURE August, never into the past.
+  // Date-relative so the assertion doesn't rot as the real clock moves past a
+  // hardcoded year (a bare "August" late in August rolls to next year's August).
+  assert.equal(r.intent.dates.checkIn.slice(5, 7), '08', 'requested month (August) preserved');
+  assert.ok(r.intent.dates.checkIn >= new Date().toISOString().slice(0, 10), 'resolved to a future date, never the past');
+});
+
+test('price dive: date + airport levers each surface real savings for some dates (seed-robust)', () => {
+  // These two levers only appear when a cheaper date/airport actually exists for
+  // the resolved date's seed, so no single date is guaranteed to show both. Prove
+  // the FEATURE works (not a single seed) by scanning a sample of future dates —
+  // date-relative so it never rots as the clock moves.
+  const seen = new Set();
+  for (let k = 30; k < 400 && seen.size < 2; k += 13) {
+    const ci = new Date(Date.now() + k * 86400000).toISOString().slice(0, 10);
+    const co = new Date(Date.now() + (k + 7) * 86400000).toISOString().slice(0, 10);
+    const r = plan({ text: 'Dubai from London, flights and hotel, cheapest reliable', context: GB, user: null, searchTier: 'deep', overrides: { structured: { checkIn: ci, checkOut: co } } });
+    for (const s of (r.priceDive?.savings || [])) if (s.lever === 'Date optimisation' || s.lever === 'Airport selection') seen.add(s.lever);
+  }
+  assert.ok(seen.has('Date optimisation'), 'the date-shift lever surfaces a saving for at least one date');
+  assert.ok(seen.has('Airport selection'), 'the nearby-airport lever surfaces a saving for at least one date');
 });
 
 test('price dive: skipped for utility-only purchases (no journey)', () => {
@@ -7379,6 +7405,18 @@ test('feature blog: ensureFeaturePosts is idempotent (no duplicates on re-run)',
   const after = listBlogPosts().filter((p) => p.angle?.startsWith('feature:')).length;
   assert.equal(added, 0, 'nothing re-added when already present');
   assert.equal(before, after);
+});
+
+test('blog view count: recordBlogView increments and surfaces in listings', async () => {
+  const { recordBlogView } = await import('../src/agents.js');
+  ensureSeedPosts();
+  const slug = 'pay-monthly-flights-and-holidays-uk';
+  const start = getBlogPost(slug).views || 0;
+  assert.equal(recordBlogView(slug), start + 1, 'increments by one');
+  assert.equal(recordBlogView(slug), start + 2, 'increments again');
+  assert.equal(getBlogPost(slug).views, start + 2, 'persisted on the post');
+  assert.equal(listBlogPosts().find((p) => p.slug === slug).views, start + 2, 'shown in the list');
+  assert.equal(recordBlogView('no-such-post-xyz'), null, 'unknown slug → null, no throw');
 });
 
 test('feature blog: each post is densely + dynamically interlinked', () => {

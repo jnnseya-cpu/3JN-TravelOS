@@ -586,8 +586,18 @@ export function regenerateBlog() {
   recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.regenerated', entity: 'blog', entityId: 'all', summary: `regenerated ${db.blog.length} posts` });
   return db.blog;
 }
-export function listPosts() { return ensureSeedPosts().map(({ body, ...meta }) => meta); }
+export function listPosts() { return ensureSeedPosts().map(({ body, ...meta }) => ({ ...meta, views: meta.views || 0 })); }
 export function getPost(slug) { ensureSeedPosts(); return db.blog.find((p) => p.slug === slug) || null; }
+// Increment a post's view count. Called from a POST beacon so the mutation goes
+// through the serverless read-modify-write persistence path (a GET never saves).
+// Returns the new count, or null if the slug is unknown.
+export function recordBlogView(slug) {
+  ensureSeedPosts();
+  const p = db.blog.find((x) => x.slug === slug);
+  if (!p) return null;
+  p.views = (p.views || 0) + 1;
+  return p.views;
+}
 
 // ---- Dynamic internal link graph (topical authority / internal backlinks) ---
 // Every post is linked FROM its most-related siblings and links back to them, so
