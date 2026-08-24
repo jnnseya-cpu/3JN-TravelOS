@@ -7,9 +7,10 @@
 // "Console Error: {}" class of failures from the previous build).
 
 import { parseIntent } from './intent.js';
-import { findDestination, originForCountry, resolveOrigin, proposeDestinations, resolveDestinationFromText } from './destinations.js';
-import { airportCoords, haversineKm } from './airports.js';
-import { scanAll } from './suppliers.js';
+import { findDestination, originForCountry, resolveOrigin, proposeDestinations, resolveDestinationFromText, resolvePlace } from './destinations.js';
+import { airportCoords, haversineKm, routeFareBaseUSD } from './airports.js';
+import { scanAll, flightFareUnits } from './suppliers.js';
+import { autoMarginFlightFeeUSD, usdToLocal, instalmentPlan } from './pricing.js';
 import { deepPriceDive, farePrediction, routeFareRisk } from './price-dive.js';
 import { hostListingsForCity, hostExperiencesForCity, vendorServicesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
@@ -175,6 +176,14 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     origin.inferred = false;
     intent.appliedDiveLever = { ...(intent.appliedDiveLever || {}), airport: origin.airport };
   }
+  // MULTI-CITY circuit (A → B → C → home). We build this honestly instead of
+  // silently collapsing it to a single-destination round trip (the old bug that
+  // dropped every leg after the first). We price each onward leg indicatively
+  // and route the traveller to an exact multi-city quote — never a wrong answer.
+  if (intent.multiCity && Array.isArray(intent.multiCity.stops) && intent.multiCity.stops.length >= 2 && intent.dates?.checkIn) {
+    return buildMultiCity(intent, origin, context);
+  }
+
   // Mixed-mode / split-origin legs: resolve each direction's own departure /
   // arrival point (airport, station or port city). Outbound defaults to the
   // stated origin; the return may come back into a different place entirely.
@@ -481,6 +490,71 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   };
   cacheSearch(cacheKey, response); // the database answers the next traveller
   return response;
+}
+
+// Build a MULTI-CITY circuit response: origin → stop1 → stop2 → … → home, priced
+// as the sum of its one-way legs. Fares are INDICATIVE (distance/route estimate),
+// clearly flagged, with an exact-quote route — we never present an estimate as a
+// bookable price, and we never silently drop a leg.
+function buildMultiCity(intent, origin, context) {
+  const currency = context?.currency || { code: 'USD', symbol: '$', rateFromUSD: 1 };
+  const fareUnits = flightFareUnits(intent.travellers).units || 1;
+  const ONE_WAY_FACTOR = 0.6;       // a one-way leg ≈ 60% of the round-trip base
+  const DEFAULT_RT_PERSEAT = 620;   // fallback per-seat when coords are unknown
+  const legFareUSD = (fromCode, toCode) => {
+    const rt = routeFareBaseUSD(fromCode, toCode) || DEFAULT_RT_PERSEAT;
+    return Math.round(rt * ONE_WAY_FACTOR * fareUnits);
+  };
+  // Resolve each onward stop; unresolved names keep the name with no code.
+  const stops = intent.multiCity.stops.map((s) => {
+    const r = resolvePlace(s.name) || { city: s.name, code: null, country: null };
+    return { city: r.city, code: r.code, nights: s.nights || 14 };
+  });
+  // Ordered points: home → stop1 → stop2 → … → home (a closed circuit).
+  const seq = [{ city: origin.city, code: origin.airport, nights: 0 }, ...stops, { city: origin.city, code: origin.airport, nights: 0 }];
+  let cursor = new Date(intent.dates.checkIn + 'T00:00:00Z');
+  const legs = [];
+  let totalUSD = 0;
+  for (let i = 0; i < seq.length - 1; i++) {
+    const from = seq[i], to = seq[i + 1];
+    const usd = legFareUSD(from.code, to.code);
+    totalUSD += usd;
+    legs.push({
+      from: from.city, fromCode: from.code || '—', to: to.city, toCode: to.code || '—',
+      date: cursor.toISOString().slice(0, 10),
+      stayNights: to.nights || null,
+      indicativeLocal: usdToLocal(usd, currency),
+    });
+    cursor = new Date(cursor.getTime() + (to.nights || 0) * 86400000);
+  }
+  const feeUSD = autoMarginFlightFeeUSD(totalUSD);
+  const allInUSD = totalUSD + feeUSD;
+  const allInLocal = usdToLocal(allInUSD, currency);
+  // Spread over as many months as the departure allows (3–11), counting back
+  // from ~2 weeks before the first flight.
+  const firstDepart = legs[0]?.date;
+  const monthsToFirst = firstDepart ? Math.floor((new Date(firstDepart + 'T00:00:00Z').getTime() - Date.now()) / (30 * 86400000)) : 3;
+  const months = Math.max(3, Math.min(11, monthsToFirst - 1 || 3));
+  const instalment = instalmentPlan({ totalLocal: allInLocal, currency, months, depositPct: 0.2, checkIn: firstDepart });
+  return {
+    stage: 'multiCity',
+    intent: publicIntent(intent),
+    origin: { airport: origin.airport, city: origin.city, inferred: !!origin.inferred },
+    multiCity: {
+      origin: origin.city,
+      returnsHome: !!intent.multiCity.returnsHome,
+      travellers: intent.travellers,
+      legs,
+      currency: { code: currency.code, symbol: currency.symbol },
+      indicativeSubtotalLocal: usdToLocal(totalUSD, currency),
+      serviceFeeLocal: usdToLocal(feeUSD, currency),
+      indicativeAllInLocal: allInLocal,
+      instalment,
+      note: 'Indicative multi-city estimate. Exact bookable fares for each leg are confirmed by our travel desk before you pay — nothing is charged on an estimate.',
+    },
+    gate: { allowed: true, tier: 'multiCity', reason: 'multi-city-indicative', aiCostUSD: 0, acu: 0 },
+    questions: [],
+  };
 }
 
 function roughTotal(scan) {

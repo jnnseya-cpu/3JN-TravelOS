@@ -7542,3 +7542,23 @@ test('vendor: lifecycle emails render; risk agent assesses REAL attestations (no
   assert.equal(bare.review.kycIncomplete, true, 'no ID/address attested → KYC incomplete');
   assert.match(bare.review.recommendation, /REFER/, 'agent refers an unattested application');
 });
+
+test('multi-city: A→B→C→home is understood and priced per leg, never collapsed to leg 1', () => {
+  const text = '1 adult and 3 children (17,14 and 10) want in July 2027; to travel from Birmingham to Edmonton for 2 weeks, then from there to Cincinnati for another 2 weeks, then back to Birmingham. I want flights, instalments and the cheapest reliable price.';
+  const r = plan({ text, context: { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } }, user: null, searchTier: 'smart' });
+  assert.equal(r.stage, 'multiCity', 'a 3-leg circuit routes to the multi-city path');
+  const m = r.multiCity;
+  assert.equal(m.legs.length, 3, 'BHX→YEG, YEG→CVG, CVG→BHX — all three legs, Cincinnati not dropped');
+  assert.equal(m.legs[0].fromCode, 'BHX');
+  assert.equal(m.legs[0].toCode, 'YEG');
+  assert.equal(m.legs[1].toCode, 'CVG', 'the onward Cincinnati leg is present');
+  assert.equal(m.legs[2].toCode, 'BHX', 'the circuit returns home');
+  // Legs are date-sequenced by the stated durations (2 weeks each).
+  assert.ok(m.legs[1].date > m.legs[0].date && m.legs[2].date > m.legs[1].date, 'legs run in order');
+  assert.equal(m.travellers.childAges.join(','), '17,14,10', 'all three children carried');
+  assert.ok(m.indicativeAllInLocal > 0 && m.indicativeAllInLocal >= m.indicativeSubtotalLocal, 'all-in ≥ subtotal, both positive');
+  assert.ok(m.instalment && m.instalment.deposit > 0 && m.instalment.months >= 3, 'an instalment plan is produced');
+  // A single-destination trip must NOT trigger the multi-city path.
+  const single = plan({ text: 'Birmingham to Dubai for 2 adults, 7 nights in July 2027, flights and hotel', context: { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } }, user: null, searchTier: 'smart' });
+  assert.notEqual(single.stage, 'multiCity', 'one destination is a normal trip, not multi-city');
+});

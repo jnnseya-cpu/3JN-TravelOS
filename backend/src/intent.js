@@ -375,6 +375,35 @@ function parseLegs(raw) {
   return null;
 }
 
+// Multi-city circuit: "to A for 2 weeks, then to B for 2 weeks, then back home".
+// Returns the ORDERED onward destination stops (name + nights) when 2+ distinct
+// destinations are named beyond the origin; else null. Airport resolution and
+// leg/date building happen in the planner (which owns the destination engine).
+function parseMultiCity(raw, originName) {
+  const t = String(raw || '');
+  if (!/\bthen\b/i.test(t)) return null; // "then" is the multi-leg cue
+  const origin = String(originName || '').trim().toLowerCase();
+  const nightsOf = (s) => {
+    const m = s.match(/for\s+(?:another\s+|a\s+further\s+)?(\d+)\s*(night|day|week)s?/i);
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return m[2].toLowerCase() === 'week' ? n * 7 : n; // days ≈ nights for scheduling
+  };
+  const lastPlace = (s) => {
+    const all = [...s.matchAll(/\bto\s+([A-Z][A-Za-z'’.-]+(?:\s+[A-Z][A-Za-z'’.-]+){0,2})/g)];
+    return all.length ? all[all.length - 1][1].trim().replace(/[.,;]+$/, '') : null;
+  };
+  const stops = [];
+  for (const chunk of t.split(/\bthen\b/i)) {
+    const p = lastPlace(chunk);
+    if (p) stops.push({ name: p, nights: nightsOf(chunk) });
+  }
+  const onward = stops.filter((s) => s.name && s.name.toLowerCase() !== origin);
+  if (onward.length < 2) return null; // one destination = a normal trip, not multi-city
+  const returnsHome = stops.length > 0 && stops[stops.length - 1].name.toLowerCase() === origin;
+  return { stops: onward, returnsHome };
+}
+
 // Group origins — one group converging from several departure cities in the
 // SAME booking: "2 will come from Birmingham, 1 from London, 4 from Manchester
 // and 2 from Nottingham". Each party keeps its own origin; dates, stay and
@@ -523,6 +552,9 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
   // the journey to mode competition (ferry vs coach vs train vs flight).
   const modesExplicit = ['flights', 'train', 'coach', 'ferry', 'cruise'].some((m) => requested.has(m));
 
+  // Multi-city circuit (A → B → C → home), one booking, several onward legs.
+  const multiCity = parseMultiCity(raw, originCity);
+
   // Mixed-mode / split-origin legs (one booking, per-direction means & points).
   let legs = parseLegs(raw);
   // "back to <destination>" is a round trip, not a split return point.
@@ -567,6 +599,7 @@ export function parseIntent(text, ctx = {}, today = new Date()) {
     originCity, // the user's stated departure city (null if not given)
     modesExplicit: modesExplicit || !!legs || !!groupParties, // journey mode named by the traveller
     legs, // mixed-mode / split-origin legs (null for a simple round trip)
+    multiCity, // ordered onward stops for an A→B→C→home circuit (null if not one)
     groupOrigins: groupParties ? { parties: groupParties } : null, // multi-origin group, one booking
     miniCruise, // short ferry-cruise rather than an ocean liner
     hotelArea, // requested hotel neighbourhood/road (null if not given)

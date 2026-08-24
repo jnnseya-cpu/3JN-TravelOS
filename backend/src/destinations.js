@@ -225,6 +225,7 @@ const CITY_AIRPORTS = {
   miami: { airport: 'MIA', city: 'Miami', country: 'US' },
   'san francisco': { airport: 'SFO', city: 'San Francisco', country: 'US' },
   boston: { airport: 'BOS', city: 'Boston', country: 'US' },
+  cincinnati: { airport: 'CVG', city: 'Cincinnati', country: 'US' },
   toronto: { airport: 'YYZ', city: 'Toronto', country: 'CA' },
   vancouver: { airport: 'YVR', city: 'Vancouver', country: 'CA' },
   ottawa: { airport: 'YOW', city: 'Ottawa', country: 'CA' },
@@ -439,6 +440,20 @@ export function proposeDestinations({ text = '', monthIndex = null, budget = nul
   }).sort((a, b) => b.score - a.score);
   // If nothing matched at all, still return a sensible seasonal spread.
   return scored.slice(0, limit).map((d) => ({ city: d.city, emoji: d.emoji, blurb: d.blurb, inSeason: d.inSeason, matchedVibes: d.matchedVibes, budget: d.budget }));
+}
+
+// Resolve a single place NAME (a multi-city stop or an onward leg) to
+// { city, code, country }. Tries the city→airport table, then the curated
+// destination catalogue, then the worldwide synthesiser — so any named city
+// resolves rather than being silently dropped.
+export function resolvePlace(name) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const a = airportForCity(n);
+  if (a) return { city: a.city, code: a.airport, country: a.country };
+  const d = findDestination(n) || resolveDestinationFromText(`to ${n}`);
+  if (d) return { city: d.city || titleCaseDest(n), code: d.code || d.airport, country: d.country || null };
+  return null;
 }
 
 export function findDestination(text) {

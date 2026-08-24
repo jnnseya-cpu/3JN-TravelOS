@@ -883,6 +883,7 @@ async function runPlan(overrides = {}) {
   if (data.stage === 'concierge-requires-commitment') { renderConciergeCommitment(data); return; }
   if (data.stage === 'inspiration') { renderInspiration(data); return; }
   if (data.stage === 'clarify') { renderClarify(data); return; }
+  if (data.stage === 'multiCity') { renderMultiCity(data); return; }
   // A paid tier was funded by ACUs — reflect the new balance.
   if (typeof data.acuBalance === 'number' && state.user) {
     setUser({ ...state.user, acuBalance: data.acuBalance });
@@ -1024,6 +1025,66 @@ function renderClarify(data) {
     <p class="muted" style="font-size:14px">Tell us where — or let us suggest somewhere below.</p>${qs}${inspire}</div>`;
 }
 window.answer = (id, val) => runPlan({ [id]: val });
+
+// MULTI-CITY circuit result (A → B → C → home). We show the full itinerary, an
+// indicative all-in estimate + instalment plan, and route to an exact quote —
+// honest that live multi-city fares are confirmed by the desk before payment.
+function renderMultiCity(data) {
+  const m = data.multiCity;
+  const sym = m.currency?.symbol || '£';
+  const money = (n) => `${sym}${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const t = m.travellers || {};
+  const pax = `${t.adults || 1} adult${(t.adults || 1) > 1 ? 's' : ''}${t.children ? ` · ${t.children} child${t.children > 1 ? 'ren' : ''}${t.childAges && t.childAges.length ? ` (${t.childAges.join(', ')})` : ''}` : ''}`;
+  const legRows = m.legs.map((l, i) => `
+    <div class="kv" style="align-items:flex-start">
+      <span><strong>${i + 1}. ${esc(l.from)} → ${esc(l.to)}</strong> <span class="muted" style="font-size:12px">${esc(l.fromCode)}→${esc(l.toCode)} · ${ukDate(l.date)}${l.stayNights ? ` · then ${l.stayNights} nights` : ' · return'}</span></span>
+      <span class="muted" style="font-size:13px">~${money(l.indicativeLocal)}</span>
+    </div>`).join('');
+  const inst = m.instalment;
+  const instBlock = inst ? `
+    <div class="card pad" style="margin-top:12px">
+      <span class="eyebrow">💳 Pay monthly (indicative)</span>
+      <div class="kv"><span>Deposit today (${Math.round((inst.depositPct || 0.2) * 100)}%)</span><span>${money(inst.deposit)}</span></div>
+      <div class="kv"><span>Then ${inst.months} monthly payments</span><span>~${money(inst.schedule && inst.schedule[0] ? inst.schedule[0].amount : (inst.remainder / inst.months))}/mo</span></div>
+      <p class="muted" style="font-size:11.5px;margin-top:6px">0% instalments · exact schedule set when the desk confirms your fares.</p>
+    </div>` : '';
+  $('#plannerOut').innerHTML = `
+    <div class="card pad">
+      <span class="eyebrow">🗺️ Multi-city trip understood</span>
+      <div style="font-size:20px;font-family:'Space Grotesk';font-weight:700;margin-top:4px">${esc(m.origin)} → ${m.legs.slice(1).map((l) => esc(l.from)).join(' → ')} → ${esc(m.origin)}</div>
+      <div class="muted" style="font-size:13px;margin-top:2px">${pax} · flights only · ${m.legs.length} flights</div>
+      <div style="margin-top:12px">${legRows}</div>
+      <div class="kv" style="border-top:1px dashed rgba(223,229,238,.15);margin-top:8px;padding-top:8px"><span>Flights subtotal</span><span>~${money(m.indicativeSubtotalLocal)}</span></div>
+      <div class="kv"><span>Service fee</span><span>~${money(m.serviceFeeLocal)}</span></div>
+      <div class="kv"><span style="font-weight:700;color:var(--gold)">Indicative all-in</span><span style="font-weight:700;color:var(--gold)">~${money(m.indicativeAllInLocal)}</span></div>
+      <div class="card pad" style="margin-top:12px;border-color:rgba(255,176,32,.4)">
+        <div style="font-size:12.5px">ℹ️ ${esc(m.note)}</div>
+      </div>
+      ${instBlock}
+      <button class="btn btn-gold btn-block" style="margin-top:14px" onclick="requestMultiCityQuote()">Get my exact multi-city quote →</button>
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Prefer a single destination? Edit your sentence to one place and we’ll build a full flights + hotel package instantly.</p>
+    </div>`;
+  window.__multiCity = m;
+}
+// File an exact-price request for the whole circuit — the desk confirms bookable
+// fares for every leg and emails a secure payment link (reuses the quote pipeline).
+window.requestMultiCityQuote = async () => {
+  const m = window.__multiCity;
+  if (!m) return;
+  const itinerary = m.legs.map((l, i) => `${i + 1}. ${l.from} (${l.fromCode}) → ${l.to} (${l.toCode}) on ${l.date}`).join('  |  ');
+  try {
+    await api('/api/quote-request', { method: 'POST', body: JSON.stringify({
+      intent: window.__intent || null,
+      contact: { name: state.user?.name || '', email: state.user?.email || '', phone: '' },
+      note: `MULTI-CITY circuit — ${m.legs.length} flights, ${JSON.stringify(m.travellers)}. Itinerary: ${itinerary}. Indicative all-in ${m.currency?.symbol || '£'}${m.indicativeAllInLocal}. Instalments requested. Please confirm exact bookable fares per leg + payment link.`,
+    }) });
+    metaTrack('Lead', { content_name: 'multi-city quote', content_category: m.origin, value: m.indicativeAllInLocal, currency: m.currency?.code || 'GBP' });
+    modal(`<div class="center" style="padding:8px"><div style="font-size:40px">🗺️</div>
+      <h3 style="margin:10px 0 6px">Multi-city request received</h3>
+      <p class="muted" style="font-size:14px">Our travel desk will confirm exact bookable fares for all ${m.legs.length} flights and email you a secure pay-monthly link. Reference is in your Console.</p>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="closeModal();nav('console')">Go to my Console</button></div>`);
+  } catch (e) { toast(e?.message || 'Could not send your request — please try again.'); }
+};
 
 // Full "Inspire me" stage — the traveller asked for suggestions outright.
 function renderInspiration(data) {
