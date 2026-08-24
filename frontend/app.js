@@ -7830,10 +7830,18 @@ if ('serviceWorker' in navigator) {
   // reload once to actually run the fresh code. (On a first-ever visit there is
   // no prior controller, so we skip the reload to avoid a flash for new users.)
   const hadController = !!navigator.serviceWorker.controller;
+  // Reload to the fresh build — but NEVER yank the page out from under a booking,
+  // payment or quote in progress. If a modal is open, wait and re-check, so an
+  // auto-update can't lose someone's half-filled form or interrupt a checkout.
+  const reloadWhenSafe = () => {
+    const modalOpen = document.getElementById('modalBg')?.classList.contains('show');
+    if (modalOpen) { setTimeout(reloadWhenSafe, 5000); return; }
+    window.location.reload();
+  };
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing || !hadController) return;
     refreshing = true;
-    window.location.reload(); // pick up the just-deployed app.js automatically
+    reloadWhenSafe(); // pick up the just-deployed app.js automatically, when safe
   });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then((reg) => {

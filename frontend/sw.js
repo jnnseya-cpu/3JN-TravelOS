@@ -11,7 +11,7 @@
  *
  * Bump CACHE_VERSION to force every client to drop old caches on next load.
  */
-const CACHE_VERSION = 'v255';
+const CACHE_VERSION = 'v256';
 const STATIC_CACHE = `3jn-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `3jn-runtime-${CACHE_VERSION}`;
 
@@ -35,8 +35,11 @@ const PRECACHE_URLS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) =>
-      // Don't let one missing asset abort the whole install.
-      Promise.allSettled(PRECACHE_URLS.map((u) => cache.add(u)))
+      // Don't let one missing asset abort the whole install. Fetch each with
+      // `cache: 'reload'` so a fresh deploy is precached, never a stale copy.
+      Promise.allSettled(PRECACHE_URLS.map((u) =>
+        fetch(new Request(u, { cache: 'reload' })).then((r) => (r && r.ok ? cache.put(u, r) : null))
+      ))
     ).then(() => self.skipWaiting())
   );
 });
@@ -104,9 +107,12 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Navigations + app code (same-origin): network-first, cache fallback offline.
+  // Force `cache: 'no-store'` so the network hit BYPASSES the browser HTTP cache
+  // entirely — a fresh deploy is fetched even if an intermediary cached the file,
+  // so users get new code on the next load without a manual hard refresh.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(request)
+      fetch(request, { cache: 'no-store' })
         .then((resp) => {
           if (resp && resp.status === 200) {
             const copy = resp.clone();
