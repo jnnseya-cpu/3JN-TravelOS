@@ -863,7 +863,19 @@ export function scanAll(intent, dest, origin, live = null, communityHosts = null
   // Live provider offers (when configured + reachable) replace the synthetic
   // ones for that component; everything else keeps the deterministic engine.
   if (wanted.has('flights')) {
-    scan.flights = (live && live.flights && live.flights.length) ? live.flights : scanFlights(intent, dest, origin);
+    if (live && live.flights && live.flights.length) {
+      // The customer's OWN airport is the hardest constraint. If the live
+      // provider returned fares only from NEARBY airports (none from the
+      // requested origin — e.g. only Manchester when they asked for Birmingham),
+      // we ALSO add an indicative fare FROM the requested origin so their own
+      // city is always offered (desk-confirmed before payment) rather than
+      // forcing them through a different city. When the live set already has a
+      // requested-origin fare, we use the live set as-is.
+      const hasRequestedOrigin = live.flights.some((f) => !f.details?.altOriginCode);
+      scan.flights = hasRequestedOrigin ? live.flights : [...scanFlights(intent, dest, origin), ...live.flights];
+    } else {
+      scan.flights = scanFlights(intent, dest, origin);
+    }
   }
   if (wanted.has('hotel')) {
     scan.hotel = (live && live.hotels && live.hotels.length) ? live.hotels : scanHotels(intent, dest);

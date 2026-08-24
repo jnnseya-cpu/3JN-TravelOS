@@ -7543,6 +7543,23 @@ test('vendor: lifecycle emails render; risk agent assesses REAL attestations (no
   assert.match(bare.review.recommendation, /REFER/, 'agent refers an unattested application');
 });
 
+test('requested origin is always offered: live nearby-only fares add an indicative fare from the asked city', () => {
+  // Live provider returned ONLY a Manchester (nearby) fare — none from the
+  // requested Birmingham. The customer must still be offered THEIR city.
+  const manFare = (price) => ({
+    type: 'flight', supplier: 'SunExpress', verified: true, live: true, reliabilityScore: 85, priceUSD: price, premium: false,
+    details: { altAirport: true, altOriginCode: 'MAN', requestedOriginCode: 'BHX', cabin: 'Economy',
+      outbound: { from: 'MAN', fromCity: 'Manchester', to: 'DXB', depart: '12:10', arrive: '02:45', stops: 1, layovers: [{ airport: 'AYT', minutes: 110 }] },
+      inbound: { from: 'DXB', to: 'MAN', depart: '03:50', arrive: '11:15', stops: 1, layovers: [{ airport: 'AYT', minutes: 90 }] }, passengers: 2 } });
+  const live = { flights: [manFare(2100), manFare(2150)] };
+  const text = 'I want to travel to Dubai from Birmingham for 2 adults on 18-27 December 2026, cheapest reliable flights';
+  const r = plan({ text, context: { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } }, user: null, searchTier: 'smart', live });
+  const flight = r.packages?.options?.[0]?.components?.find((c) => c.type === 'flight');
+  assert.ok(flight, 'a flight option is built');
+  assert.equal(flight.details?.outbound?.from, 'BHX', 'the default departs the REQUESTED origin (Birmingham), not the nearby airport');
+  assert.ok(!flight.details?.altOriginCode, 'the chosen fare is a requested-origin fare, not a nearby substitute');
+});
+
 test('multi-city: A→B→C→home is understood and priced per leg, never collapsed to leg 1', () => {
   const text = '1 adult and 3 children (17,14 and 10) want in July 2027; to travel from Birmingham to Edmonton for 2 weeks, then from there to Cincinnati for another 2 weeks, then back to Birmingham. I want flights, instalments and the cheapest reliable price.';
   const r = plan({ text, context: { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } }, user: null, searchTier: 'smart' });
