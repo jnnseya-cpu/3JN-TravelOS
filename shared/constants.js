@@ -171,3 +171,20 @@ export const CORPORATE_PLANS = [
 
 // ---- Reliability floor for "cheapest *reliable*" --------------------------
 export const RELIABILITY_FLOOR = 70;
+
+// ---- Membership currency check (revenue-leak guard) ------------------------
+// A membership only confers member benefits (member ACU rate, flat flight fee,
+// package/visa discounts) while it is CURRENTLY PAID. `active` alone is a sticky
+// flag — without this check a user could subscribe once, stop renewing, keep
+// topping up ACU, and enjoy member pricing forever. So every benefit gate must
+// go through here: benefits require active AND a renewal date that hasn't passed
+// (plus a short grace for card-retry). Complimentary/comped memberships and
+// legacy records without a renewal date never lapse on payment.
+export function membershipCurrent(membership, now = Date.now(), graceDays = 3) {
+  if (!membership || !membership.active) return false;
+  if (membership.complimentary) return true;
+  if (!membership.renewsAt) return true;
+  const until = Date.parse(membership.renewsAt);
+  if (!Number.isFinite(until)) return true;
+  return until + graceDays * 86400000 >= now;
+}

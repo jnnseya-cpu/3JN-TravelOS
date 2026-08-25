@@ -25,7 +25,7 @@
 // expensive model.
 
 // ACU economy constants are shared with the frontend — see shared/constants.js.
-import { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE, ACU_PER_GBP } from '../../shared/constants.js';
+import { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE, ACU_PER_GBP, membershipCurrent } from '../../shared/constants.js';
 export { ACU_ACTIONS, ACU_GBP, TIER_ACU_ALLOWANCE };
 
 // MEMBERS are charged at 2× the raw provider AI cost — never below cost, always
@@ -98,7 +98,7 @@ export const REVENUE_TO_COST_MULTIPLE = 10;
 export const CACHED_SEARCH_ACU_MEMBER = 2;
 export function cachedSearchAcu(user) {
   if (!user || user.allAccess) return 0;
-  return user.membership?.active ? CACHED_SEARCH_ACU_MEMBER : 0;
+  return membershipCurrent(user.membership) ? CACHED_SEARCH_ACU_MEMBER : 0;
 }
 
 // Decide whether an AI search may run, and at what depth.
@@ -165,7 +165,7 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // subscription, or a premium plan, regardless of ACU balance or expected
   // revenue. Without one, the search downgrades instead of running.
   if (tier === 'concierge') {
-    const committed = hasDeposit || subscriptionActive || !!(user && user.membership?.active);
+    const committed = hasDeposit || subscriptionActive || membershipCurrent(user && user.membership);
     if (!committed) {
       return {
         allowed: false, downgradeTo: 'free', tier, reason: 'concierge-requires-commitment', aiCostUSD: t.aiCostUSD,
@@ -186,13 +186,13 @@ export function costProtectionGate({ tier = 'smart', user, hasDeposit = false, s
   // kind (which cost the platform, not the user) can't run the premium AI. The
   // commitment test is "has money changed hands", never "does the user hold ACU".
   const committed = hasDeposit || subscriptionActive || hasPurchasedAcu || priorBookings > 0
-    || corporateContract || whiteLabelContract || !!(user && user.membership?.active);
+    || corporateContract || whiteLabelContract || membershipCurrent(user && user.membership);
   // A MEMBER pays the discounted member rate (t.acuMember), so affordability must
   // be tested against the price they actually pay — NOT the full non-member rate.
   // The UI quotes the member "requires N ACU" from acuMember; gating on the higher
   // t.acu made a member with, say, 90 ACU fail a 56-ACU (member) Concierge search
   // because 90 < the 91-ACU non-member price — "the system refused to take ACUs".
-  const isMember = !!(user && user.membership?.active);
+  const isMember = membershipCurrent(user && user.membership);
   // SELLER INCENTIVE: an approved Vendor Partner still funds their OWN ACU, but
   // pays the discounted MEMBER rate (≈2× provider cost) instead of the full
   // commercial rate (≈4×) — a preferential price for the people selling 3JN,

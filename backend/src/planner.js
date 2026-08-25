@@ -15,7 +15,7 @@ import { deepPriceDive, farePrediction, routeFareRisk } from './price-dive.js';
 import { hostListingsForCity, hostExperiencesForCity, vendorServicesForCity, cacheSearch, getCachedSearch, cacheConfidence, CACHE_SERVE_CONFIDENCE, CACHE_SOURCES } from './store.js';
 import { buildPackages, clarifyingQuestions } from './packager.js';
 import { costProtectionGate, SEARCH_TIERS } from './revenue.js';
-import { MEMBERSHIP_TIERS } from '../../shared/constants.js';
+import { MEMBERSHIP_TIERS, membershipCurrent } from '../../shared/constants.js';
 import { route } from './ai-gateway.js';
 import { approvalProbability } from './visaos.js';
 import { travelIntelligenceScore } from './intelligence.js';
@@ -346,7 +346,7 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
     // be part of the key — otherwise a member could be served a non-member's
     // cached (higher) result, or vice versa. Key on the active tier, not just a
     // flag, so each tier's distinct discount caches separately.
-    (user && user.membership?.active) ? `m:${user.membership.tier}` : 'm:none',
+    membershipCurrent(user && user.membership) ? `m:${user.membership.tier}` : 'm:none',
   ].join('|');
   // CHECK CACHE FIRST — before spending ACUs, at EVERY tier (Cache-First
   // Intelligence Engine, spec §16). Confidence decays with age: above the 85%
@@ -395,8 +395,10 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // Build packages (the scan already ran; gate decides depth/labelling).
   const currency = context.currency;
   const points = user ? user.points : 0;
-  // Active Travel+ members pay NO flat fee on flights-only bookings.
-  const memberActive = !!(user && user.membership?.active);
+  // Active Travel+ members pay NO flat fee on flights-only bookings — but ONLY
+  // while the subscription is currently paid (membershipCurrent), so a lapsed
+  // member who just tops up ACU no longer gets member pricing.
+  const memberActive = membershipCurrent(user && user.membership);
   // A paid membership grants a fee/package discount even before points are earned,
   // so an Elite member never shows "Explorer · 0%". Look up the tier's discount.
   const memberPlan = memberActive ? MEMBERSHIP_TIERS.find((t) => t.key === user.membership.tier) : null;

@@ -701,6 +701,29 @@ test('cost-protection gate blocks unfunded deep search and downgrades', () => {
   assert.equal(starterSmart.allowed, true, 'free starter still runs the cheap Smart search');
 });
 
+test('membership loophole: benefits lapse when the subscription is not current (no top-up-only free ride)', async () => {
+  const { membershipCurrent } = await import('../../shared/constants.js');
+  const future = new Date(Date.now() + 20 * 86400000).toISOString();
+  const past = new Date(Date.now() - 10 * 86400000).toISOString();
+  // The predicate itself.
+  assert.equal(membershipCurrent({ active: true, renewsAt: future }), true, 'paid + in-date = current');
+  assert.equal(membershipCurrent({ active: true, renewsAt: past }), false, 'lapsed renewal = NOT current (the loophole)');
+  assert.equal(membershipCurrent({ active: false, renewsAt: future }), false, 'cancelled = not current');
+  assert.equal(membershipCurrent({ active: true, complimentary: true, renewsAt: past }), true, 'comped memberships never lapse on payment');
+  assert.equal(membershipCurrent({ active: true }), true, 'legacy record without a renewal date stays current');
+  assert.equal(membershipCurrent(null), false, 'no membership = not current');
+  // The gate must charge the FULL ACU rate to a lapsed member, not the member rate.
+  const memberRate = SEARCH_TIERS.smart.acuMember; // 16
+  const lapsed = { acuBalance: memberRate, membership: { active: true, renewsAt: past } };
+  const g = costProtectionGate({ tier: 'smart', user: lapsed, expectedBookingUSD: 0 });
+  assert.equal(g.allowed, false, 'a lapsed member with only member-rate ACU can no longer afford the full rate');
+  // A current member with the same balance IS funded at the member rate.
+  const current = { acuBalance: memberRate, membership: { active: true, renewsAt: future } };
+  const g2 = costProtectionGate({ tier: 'smart', user: current, expectedBookingUSD: 0 });
+  assert.equal(g2.allowed, true, 'a current member still gets the member rate');
+  assert.equal(g2.acu, memberRate);
+});
+
 test('vendor ACU incentive: approved vendors self-fund but at the member rate (x2, not x4)', () => {
   const memberRate = SEARCH_TIERS.smart.acuMember; // 16 — 2× provider cost
   const fullRate = SEARCH_TIERS.smart.acu;         // 26 — full commercial rate

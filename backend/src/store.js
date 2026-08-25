@@ -4,7 +4,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { SIGNUP_BONUS_POINTS, tierForPoints, isFlightOnlyFeeModel } from './pricing.js';
-import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD, TRAVEL_CREDIT_RATE } from '../../shared/constants.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP, POINTS_PER_USD, TRAVEL_CREDIT_RATE, membershipCurrent } from '../../shared/constants.js';
 import {
   REWARD_ACTIONS, REDEEM_CATEGORIES, acuForAction, PARTNER_TIERS, tierForFollowers,
   effectiveRevshareRate, accrueRevshare, isValidAttribution, derivePartnerMetrics,
@@ -508,7 +508,7 @@ export function orderVisaReservation(userId, payload = {}, { awaitingPayment = f
       }
     }
   }
-  const fee = visaDocFee(trip.kind, { memberActive: !!u.membership?.active });
+  const fee = visaDocFee(trip.kind, { memberActive: membershipCurrent(u.membership) });
   const dep = visaHotelDeposit(trip.nights, trip.kind);
   // When Stripe is live the service fee is really charged first (Checkout), so
   // the order waits at 'awaiting-payment' and is only issued after payment. In
@@ -1585,7 +1585,7 @@ function publicUser(u) {
   // A paid membership grants a discount that can beat the points tier. Expose the
   // EFFECTIVE discount + a label so every screen (account, chip, receipt) shows
   // what the customer actually gets — an Elite member is never "Explorer · 0%".
-  const memberPlan = u.membership?.active ? MEMBERSHIP_TIERS.find((t) => t.key === u.membership.tier) : null;
+  const memberPlan = membershipCurrent(u.membership) ? MEMBERSHIP_TIERS.find((t) => t.key === u.membership.tier) : null;
   const memberDiscount = memberPlan?.discount || 0;
   const memberBeats = memberDiscount > tier.discount;
   const effectiveDiscount = Math.max(tier.discount, memberDiscount);
@@ -2080,7 +2080,7 @@ export function listBookings(userId) {
 function earnTravelCreditIfEligible(b, totalLocal) {
   if (!b || b.travelCreditProcessed || !b.userId || !(TRAVEL_CREDIT_RATE > 0)) return;
   const u = db.users.get(b.userId);
-  if (!u?.membership?.active) return;
+  if (!membershipCurrent(u?.membership)) return;
   const comps = b.option?.components || [];
   const isFlightOnly = comps.length > 0 && comps.every((c) => c.type === 'flight');
   if (isFlightOnly) return;
@@ -3296,7 +3296,7 @@ export function profitabilityDashboard() {
     commissionRevenueUSD: sumB((b) => b.option?.pricing?.revenue?.commissionUSD),
     supplierRevenueUSD: sumB((b) => b.supplierEarnings?.totalUSD),
     savingsRevenueUSD: sumB((b) => b.option?.pricing?.revenue?.savingsShareUSD),
-    subscriptionRevenueUSD: round2(users.filter((u) => u.membership?.active && u.membership.pricePerMonth > 0).reduce((s, u) => s + u.membership.pricePerMonth, 0) * GBP_TO_USD),
+    subscriptionRevenueUSD: round2(users.filter((u) => membershipCurrent(u.membership) && u.membership.pricePerMonth > 0).reduce((s, u) => s + u.membership.pricePerMonth, 0) * GBP_TO_USD),
     searchDepositRevenueUSD: round2(db.searchDeposits.filter((d) => d.forfeited).reduce((s, d) => s + d.amountGBP, 0) * GBP_TO_USD),
     acuSalesRevenueUSD: round2((db.acuTxns.filter((t) => t.type === 'PURCHASE').reduce((s, t) => s + t.amount, 0) / ACU_PER_GBP) * GBP_TO_USD),
     protectionRevenueUSD: sumB((b) => b.protection?.fee),
@@ -3329,7 +3329,7 @@ export function profitabilityDashboard() {
   const acuGrossUSD = (db.acuTxns.filter((t) => t.type === 'PURCHASE').reduce((s, t) => s + t.amount, 0) / ACU_PER_GBP) * GBP_TO_USD;
   const acuTxnCount = db.acuTxns.filter((t) => t.type === 'PURCHASE').length;
   const memberGrossUSD = streams.subscriptionRevenueUSD + streams.corporateRevenueUSD;
-  const memberTxns = users.filter((u) => u.membership?.active).length + users.filter((u) => u.corporatePlan?.active).length;
+  const memberTxns = users.filter((u) => membershipCurrent(u.membership)).length + users.filter((u) => u.corporatePlan?.active).length;
   const depositGrossUSD = round2(db.searchDeposits.reduce((s, d) => s + (d.amountGBP || 0), 0) * GBP_TO_USD);
   const visaDocsGrossUSD = round2(db.visaReservations.filter((r) => r.paid).reduce((s, r) => s + (r.feeUSD || 0), 0));
   const visaDocsTxns = db.visaReservations.filter((r) => r.paid).length;
@@ -3362,7 +3362,7 @@ export function profitabilityDashboard() {
     targetMarginPct: Math.round(TARGET_MARGIN * 100), targetRevenueForMarginUSD, hitsTargetMargin,
     streams,
     bookings: bookings.length,
-    payingMembers: users.filter((u) => u.membership?.active).length,
+    payingMembers: users.filter((u) => membershipCurrent(u.membership)).length,
     ...(() => {
       // Per-booking margin readout: newest first, plus roll-up totals so the
       // profit floor is visible at a glance across every real booking.
@@ -4787,7 +4787,7 @@ export function reviewHostListing(listingId, { decision, reason = '', reviewerId
 export function adminUserHostOverview() {
   const users = [...db.users.values()].map((u) => ({
     id: u.id, name: u.name, email: u.email, role: u.role,
-    membership: u.membership?.active ? u.membership.name : null,
+    membership: membershipCurrent(u.membership) ? u.membership.name : null,
     acuBalance: u.acuBalance, points: u.points,
     bookings: [...db.bookings.values()].filter((b) => b.userId === u.id).length,
     isHost: !!u.host, suspended: !!u.suspended, createdAt: u.createdAt || null,

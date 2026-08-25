@@ -70,7 +70,7 @@ import { REWARD_ACTIONS, REDEEM_CATEGORIES, PARTNER_TIERS, AI_GROWTH_TOOLS, REVS
 import { assist } from './assistant.js';
 import { classifySupport } from './chatbot.js';
 import { bookingDocument, bookingPdf, includedServices } from './documents.js';
-import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE } from '../../shared/constants.js';
+import { MEMBERSHIP_TIERS, ACU_PER_GBP, MEMBERSHIP_ACU_FUND_RATE, membershipCurrent } from '../../shared/constants.js';
 import { learnProfile, journeyDashboard } from './learning.js';
 import { visaCheck, riskFeed } from './intelligence.js';
 import { assessVisa, approvalProbability, VISAOS_MANIFEST, AGENT_CHECKS, ZERO_TRUST, ANTI_CORRUPTION, DIGITAL_JOURNEY, VISAOS_REVENUE_MODEL, TRAVEL_OS_INTEGRATION } from './visaos.js';
@@ -2916,7 +2916,7 @@ app.post('/api/plan', safe(async (req, res) => {
   // ANY tier — Standard / Deep / Concierge — funded by their membership (at-cost,
   // top up if needed). So the tier is only forced to standard for non-members.
   const isStaffPlan = !!(user && (user.allAccess || PRIVILEGED_ROLES.has(user.role)));
-  const isMemberPlan = !!(user && user.membership?.active);
+  const isMemberPlan = membershipCurrent(user && user.membership);
   const searchTier = (isStaffPlan || isMemberPlan) ? (reqTierKey || 'smart') : 'smart';
   // FLEXIBLE-DATE WINDOW: when the sentence says "cheapest anytime between today
   // and <date>", scan the window with cached market data for the cheapest
@@ -3123,7 +3123,7 @@ app.post('/api/plan', safe(async (req, res) => {
         return res.json({
           stage: 'topup-required', reason: 'insufficient-acu', tierName: 'Cached search',
           acuNeeded: cacheFee, balance: typeof s.balance === 'number' ? s.balance : user.acuBalance,
-          isMember: !!user.membership?.active,
+          isMember: membershipCurrent(user.membership),
           message: `A cached search costs ${cacheFee} ACU. Your balance is ${typeof s.balance === 'number' ? s.balance : user.acuBalance} ACU — top up to continue.`,
         });
       }
@@ -3133,7 +3133,7 @@ app.post('/api/plan', safe(async (req, res) => {
     const reqTier = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
     // MEMBERS pay the AT-COST rate (their subscription is the margin); NON-MEMBERS
     // (top-up only) pay the full 3–10× commercial rate.
-    const isMember = !!user.membership?.active;
+    const isMember = membershipCurrent(user.membership);
     const cost = (isMember && reqTier.acuMember ? reqTier.acuMember : reqTier.acu) || 0;
     // Revenue Engine (spec §9): abuse detection forfeits the active search
     // deposit — deposits are refundable, EXCEPT when the abuse throttle trips.
@@ -3179,7 +3179,7 @@ app.post('/api/plan', safe(async (req, res) => {
           tierName: reqTier.name,
           acuNeeded: cost,
           balance: typeof spend.balance === 'number' ? spend.balance : user.acuBalance,
-          isMember: !!user.membership?.active,
+          isMember: membershipCurrent(user.membership),
           message: `${reqTier.name} costs ${cost} ACU. Your balance is ${typeof spend.balance === 'number' ? spend.balance : user.acuBalance} ACU. Top up to continue, or run a free cached search.`,
         });
       }
@@ -5243,7 +5243,7 @@ app.get('/api/visa/reservations/pricing', safe((req, res) => {
   // depositApplies is true only when hotels are auto-booked (a real sweepable
   // room exists to hold a deposit against). On the manual desk path no deposit is
   // taken, so the UI must not promise one.
-  res.json({ ...visaDocPricing({ memberActive: !!currentUser(req)?.membership?.active }), depositApplies: visaAutoHotelEnabled() });
+  res.json({ ...visaDocPricing({ memberActive: membershipCurrent(currentUser(req)?.membership) }), depositApplies: visaAutoHotelEnabled() });
 }));
 // FULFIL a PAID visa reservation: auto-hold the flight (Duffel), auto-book the
 // hotel (Hotelbeds, if enabled), and place the refundable room-deposit HOLD on
