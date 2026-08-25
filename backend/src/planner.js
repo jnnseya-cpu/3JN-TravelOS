@@ -399,9 +399,13 @@ export function plan({ text, context, user, searchTier = 'smart', overrides = {}
   // while the subscription is currently paid (membershipCurrent), so a lapsed
   // member who just tops up ACU no longer gets member pricing.
   const memberActive = membershipCurrent(user && user.membership);
-  // A paid membership grants a fee/package discount even before points are earned,
-  // so an Elite member never shows "Explorer · 0%". Look up the tier's discount.
-  const memberPlan = memberActive ? MEMBERSHIP_TIERS.find((t) => t.key === user.membership.tier) : null;
+  // The package DISCOUNT is a discretionary margin give-away, so it needs the
+  // subscription to be currently paid with NO grace — a lapsed member in the
+  // 3-day card-retry grace keeps the cost-floored flat flight fee + search access
+  // (memberActive), but NOT a new discount. Stops drawing member savings on a
+  // period no longer paid for.
+  const perksCurrent = membershipCurrent(user && user.membership, Date.now(), 0);
+  const memberPlan = perksCurrent ? MEMBERSHIP_TIERS.find((t) => t.key === user.membership.tier) : null;
   const membershipDiscount = memberPlan?.discount || 0;
   const membershipName = memberPlan ? memberPlan.name.replace('Travel+ ', '') : null;
   const packages = buildPackages(scan, intent, currency, points, memberActive, membershipDiscount, membershipName);

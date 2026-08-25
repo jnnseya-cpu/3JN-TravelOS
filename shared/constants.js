@@ -183,8 +183,11 @@ export const RELIABILITY_FLOOR = 70;
 export function membershipCurrent(membership, now = Date.now(), graceDays = 3) {
   if (!membership || !membership.active) return false;
   if (membership.complimentary) return true;
-  if (!membership.renewsAt) return true;
+  // FAIL CLOSED: a paid membership must carry a renewal date. A missing/unparseable
+  // one is treated as LAPSED (deny benefits) rather than granting them forever —
+  // every real path (subscribe/renew/adminSet/comp) sets renewsAt.
+  if (!membership.renewsAt) return false;
   const until = Date.parse(membership.renewsAt);
-  if (!Number.isFinite(until)) return true;
+  if (!Number.isFinite(until)) return false;
   return until + graceDays * 86400000 >= now;
 }

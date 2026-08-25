@@ -663,8 +663,9 @@ test('loyalty ladder collapsed to a single neutral tier (discounts come from mem
 test('cache-access fee: members pay a small ACU on cached results; others free; Full Access exempt', () => {
   assert.equal(cachedSearchAcu(null), 0, 'guest → free');
   assert.equal(cachedSearchAcu({ membership: null }), 0, 'non-member → free');
-  assert.equal(cachedSearchAcu({ membership: { active: true }, allAccess: true }), 0, 'Full Access → exempt');
-  assert.equal(cachedSearchAcu({ membership: { active: true } }), CACHED_SEARCH_ACU_MEMBER, 'active member → small fee');
+  const future = new Date(Date.now() + 20 * 86400000).toISOString();
+  assert.equal(cachedSearchAcu({ membership: { active: true, renewsAt: future }, allAccess: true }), 0, 'Full Access → exempt');
+  assert.equal(cachedSearchAcu({ membership: { active: true, renewsAt: future } }), CACHED_SEARCH_ACU_MEMBER, 'active member → small fee');
   assert.equal(cachedSearchAcu({ membership: { active: false } }), 0, 'lapsed member → free');
   assert.ok(CACHED_SEARCH_ACU_MEMBER > 0 && CACHED_SEARCH_ACU_MEMBER < 10, 'the fee is small, well below a fresh search');
 });
@@ -710,7 +711,8 @@ test('membership loophole: benefits lapse when the subscription is not current (
   assert.equal(membershipCurrent({ active: true, renewsAt: past }), false, 'lapsed renewal = NOT current (the loophole)');
   assert.equal(membershipCurrent({ active: false, renewsAt: future }), false, 'cancelled = not current');
   assert.equal(membershipCurrent({ active: true, complimentary: true, renewsAt: past }), true, 'comped memberships never lapse on payment');
-  assert.equal(membershipCurrent({ active: true }), true, 'legacy record without a renewal date stays current');
+  assert.equal(membershipCurrent({ active: true, complimentary: true }), true, 'comped memberships never require a renewal date');
+  assert.equal(membershipCurrent({ active: true }), false, 'a paid record with no renewal date fails CLOSED (no free ride)');
   assert.equal(membershipCurrent(null), false, 'no membership = not current');
   // The gate must charge the FULL ACU rate to a lapsed member, not the member rate.
   const memberRate = SEARCH_TIERS.smart.acuMember; // 16
@@ -2395,7 +2397,7 @@ test('gate: abuse throttle never refuses a PAYING customer (member/ACU-funded)',
   // volume and zero bookings. Membership is a real commitment — never throttled.
   const member = costProtectionGate({
     tier: 'concierge',
-    user: { acuBalance: 90, membership: { active: true, tier: 'family' } },
+    user: { acuBalance: 90, membership: { active: true, tier: 'family', renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() } },
     recentSearches: 30, sameDestinationRepeats: 15, priorBookings: 0,
   });
   assert.equal(member.allowed, true, 'committed member is not abuse-throttled');

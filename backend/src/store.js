@@ -1489,6 +1489,7 @@ export function subscribeMembership(userId, tierKey, billing = 'monthly') {
     pricePerMonth: plan.pricePerMonth,
     pricePerYear: plan.pricePerYear,
     acuPerMonth: plan.acuPerMonth,
+    acuPerYear: plan.acuPerYear || plan.acuPerMonth * 2, // persist so renewal grants the correct annual ACU
     active: true,
     startedAt: new Date(now).toISOString(),
     renewsAt: new Date(now + (yearly ? YEAR_MS : PERIOD_MS)).toISOString(),
@@ -1504,7 +1505,13 @@ export function renewMembership(userId) {
   const u = db.users.get(userId);
   if (!u || !u.membership?.active) return { ok: false, error: 'no-active-membership' };
   const yearly = u.membership.billing === 'yearly';
-  const credited = yearly ? (u.membership.acuPerMonth * 12) : u.membership.acuPerMonth;
+  // FIX: the annual fee is only 2× the monthly price, so a year funds acuPerYear
+  // (10% of the annual fee) — NOT acuPerMonth×12, which over-granted ACU ~6× on
+  // every yearly renewal. Mirror subscribeMembership.
+  const plan = MEMBERSHIP_TIERS.find((t) => t.key === u.membership.tier);
+  const credited = yearly
+    ? (u.membership.acuPerYear || plan?.acuPerYear || u.membership.acuPerMonth * 2)
+    : u.membership.acuPerMonth;
   creditAcu(userId, credited, `membership:${u.membership.tier}:renewal`);
   u.membership.renewsAt = new Date(Date.now() + (yearly ? YEAR_MS : PERIOD_MS)).toISOString();
   recordAudit({ actor: userId, role: u.role, action: 'membership.renewed', entity: 'membership', entityId: userId, summary: `${u.membership.name} · ${yearly ? 'yearly' : 'monthly'} · +${credited} ACU` });
@@ -2107,7 +2114,7 @@ export function listBookings(userId) {
 function earnTravelCreditIfEligible(b, totalLocal) {
   if (!b || b.travelCreditProcessed || !b.userId || !(TRAVEL_CREDIT_RATE > 0)) return;
   const u = db.users.get(b.userId);
-  if (!membershipCurrent(u?.membership)) return;
+  if (!membershipCurrent(u?.membership, Date.now(), 0)) return; // no grace — Travel Credit is a discretionary perk
   const comps = b.option?.components || [];
   const isFlightOnly = comps.length > 0 && comps.every((c) => c.type === 'flight');
   if (isFlightOnly) return;

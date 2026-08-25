@@ -393,8 +393,42 @@ function ticketIssuedOf(booking) {
 //                            unused refundable components per supplier policy.
 //   • no ticket, paid >50% → refund paid − (£admin × passengers).
 //   • no ticket, paid ≤50% → deposit forfeited; balance beyond it per supplier.
+// Supplier cost (local currency) of inventory 3JN has ALREADY PURCHASED for this
+// booking — an issued ticket, a booked hotel, a booked tour. That money is gone
+// to the supplier and is (largely) non-refundable, so a cancellation must never
+// refund below it. Cancelled components are excluded (their residual is the
+// cancellation charge, handled on the supplier side / by the ops desk).
+function committedSupplierCostLocal(booking) {
+  const opt = booking?.option || {};
+  const localTotal = opt.pricing?.local?.total || 0;
+  const usdTotal = opt.totalUSD || opt.pricing?.lines?.totalUSD || 0;
+  const rate = usdTotal > 0 ? localTotal / usdTotal : 0.79; // local per USD
+  const f = booking?.fulfilment || {};
+  const flightCommitted = f.ticketing === 'issued' || f.ticketing === 'reissued' || !!f.duffelOrderId || !!f.pnr;
+  let usd = 0;
+  for (const c of (opt.components || [])) {
+    const committed = c.type === 'flight' ? flightCommitted : !!(c.details?.confirmation && !c.details?.cancelled);
+    if (committed) usd += Number(c.priceUSD) || 0;
+  }
+  return round2(usd * rate);
+}
 export function refundOutcome(booking, opts = {}) {
   const out = refundOutcomeRaw(booking, opts);
+  // SUNK-COST FLOOR: never refund below what 3JN has irrevocably paid suppliers
+  // for inventory already purchased. The old policy refunded paid−deposit even
+  // AFTER ticketing (handing back the non-refundable fare) and didn't see
+  // committed hotels/tours at all — a full-supplier-cost loss on every fulfilled
+  // cancellation. The auto-refund is now capped to paid − sunk cost; the ops desk
+  // recovers any genuinely-refundable supplier value on top.
+  const sunk = committedSupplierCostLocal(booking);
+  if (sunk > 0 && out.refund > 0) {
+    const maxRefund = round2(Math.max(0, out.paid - sunk));
+    if (out.refund > maxRefund) {
+      out.refund = maxRefund;
+      out.retained = round2(out.paid - out.refund);
+      out.sunkSupplierCostRetained = sunk;
+    }
+  }
   // SPLIT the refundable amount by the form it was paid in: never pay out more
   // CASH than the customer actually paid in cash. Credit-funded value is returned
   // to the wallet (creditRefund), not as money — so a margin-funded reward can't
