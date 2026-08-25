@@ -919,7 +919,13 @@ async function autoTicketFlight(booking) {
     // on abandonment — they keep what they've paid for). If the purchase fails, we
     // fall through to the safe lock-scheduled/ops path (a funded booking is never
     // refunded away).
-    if (splitPayEnabled() && fareFunded && check.ok && !check.expired && check.live !== false) {
+    // FARE-DRIFT CEILING: never auto-pay the airline more than ~2% above what we
+    // collected from the customer (mirrors the TBO/Stays guard). If the fare rose
+    // beyond that between collection and ticketing, fall through to the ops/refund
+    // path instead of eating the difference blind.
+    const collectedUSD = Number(flight.priceUSD) || 0;
+    const fareOverCollected = collectedUSD > 0 && typeof check.priceUSD === 'number' && check.priceUSD > collectedUSD * 1.02;
+    if (splitPayEnabled() && fareFunded && check.ok && !check.expired && check.live !== false && !fareOverCollected) {
       const baseAmt = Number(check.amount != null ? check.amount : flight.details.liveAmount) || 0;
       const secured = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: Math.round((baseAmt + bagOfferAmt) * 100) / 100, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}`, services: bagServices, device: booking.device }).catch((e) => ({ ok: false, error: e?.message || 'exception' }));
       if (secured.ok) {
@@ -993,6 +999,14 @@ async function autoTicketFlight(booking) {
         return;
       }
       await failTicketingWithRefund(booking, 'offer-expired-before-ticketing');
+      return;
+    }
+    // FARE-DRIFT CEILING (mirrors the split path + TBO/Stays ·1.02): never pay the
+    // airline more than ~2% above what we collected — route to refund/ops instead
+    // of eating the difference blind.
+    const collectedUSD = Number(flight.priceUSD) || 0;
+    if (collectedUSD > 0 && typeof check.priceUSD === 'number' && check.priceUSD > collectedUSD * 1.02) {
+      await failTicketingWithRefund(booking, 'fare-rose-above-collected');
       return;
     }
     // Pay the fare + the ticketed bags (offer currency).

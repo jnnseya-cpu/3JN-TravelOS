@@ -3624,6 +3624,19 @@ export function confirmQuoteRequest(requestId, { confirmedTotalLocal, confirmedB
   if (!r) return { ok: false, error: 'not-found' };
   const amt = Math.round(Number(confirmedTotalLocal) * 100) / 100;
   if (!(amt > 0)) return { ok: false, error: 'invalid-amount' };
+  // SUPPLIER-COST FLOOR: a confirmed price becomes a real chargeable booking, so
+  // it must never be set below what 3JN pays the supplier (a fat-fingered or
+  // scripted confirm would otherwise sell at a loss). Convert the option's net
+  // supplier cost into the request's currency and refuse anything below it.
+  const opt = r.option || {};
+  const netUSD = opt.pricing?.lines?.netSuppliersUSD || 0;
+  const localTotal = opt.pricing?.local?.total || 0;
+  const usdTotal = opt.totalUSD || opt.pricing?.lines?.totalUSD || 0;
+  const rate = usdTotal > 0 ? localTotal / usdTotal : (r.symbol === '£' ? 0.79 : 1);
+  const supplierCostLocal = round2(netUSD * rate);
+  if (supplierCostLocal > 0 && amt < supplierCostLocal - 0.01) {
+    return { ok: false, error: 'below-supplier-cost', supplierCostLocal, message: `Confirmed price ${r.symbol}${amt} is below the ${r.symbol}${supplierCostLocal} supplier cost — 3JN would sell at a loss.` };
+  }
   r.confirmedTotalLocal = amt;
   r.confirmedBy = confirmedBy;
   r.supplierRef = String(supplierRef || '').slice(0, 60);
