@@ -3022,16 +3022,30 @@ app.post('/api/plan', safe(async (req, res) => {
   // NO FREE AI: a guest can't get AI results (they'll be sign-in-gated below), so
   // never burn paid Duffel/AI quota on a guest search.
   const overLimitFree = !isStaffPlan && !user;
+  // A2 — CHARGE BEFORE BILLABLE WORK: the overlay below makes real, billable
+  // supplier/market calls. A paid-tier fresh search must be ACU-APPROVED before
+  // that work runs, else an unapproved caller triggers paid fetches for free. The
+  // first call (no approveAcu) returns the approval prompt WITHOUT the overlay;
+  // the approved second call runs it and is charged. Staff/all-access and the
+  // free/cached path (cost 0) are unaffected.
+  const plannedTierAcu = (() => {
+    if (!user || user.allAccess || result.cached) return 0;
+    const rt = SEARCH_TIERS[searchTier] || SEARCH_TIERS.smart;
+    return (membershipCurrent(user.membership) && rt.acuMember ? rt.acuMember : rt.acu) || 0;
+  })();
+  const overlayPaidFor = isStaffPlan || plannedTierAcu === 0 || req.body?.approveAcu === true;
   if (result.stage !== 'options') {
     liveOverlay.reason = 'not-options-stage';
   } else if (overLimitFree) {
     liveOverlay.reason = 'free-search-exhausted';
+  } else if (!overlayPaidFor) {
+    liveOverlay.reason = 'awaiting-acu-approval';
   } else if (!liveSuppliersConfigured()) {
     liveOverlay.reason = 'no-supplier-keys';
   } else if (!liveBudget.ok) {
     liveOverlay.reason = 'live-search-rate-limited';
   }
-  if (result.stage === 'options' && !overLimitFree && liveSuppliersConfigured() && liveBudget.ok) {
+  if (result.stage === 'options' && !overLimitFree && overlayPaidFor && liveSuppliersConfigured() && liveBudget.ok) {
     liveOverlay.attempted = true;
     try {
       const intent = result.intent;
@@ -3178,7 +3192,12 @@ app.post('/api/plan', safe(async (req, res) => {
     // NO FREE AI: a cached AI answer is metered too. Everyone (except staff/all-
     // access) pays the nominal cached fee, gated by balance — no free cached search.
     if (!user.allAccess) {
-      const cacheFee = AI_ACTION_ACU.cached;
+      // The member cache-access fee (cachedSearchAcu) keeps a member's ACU
+      // reflecting usage; the flat AI_ACTION_ACU.cached is the "no free AI" floor
+      // for everyone else. Charge the greater of the two so an active member pays
+      // their proper member fee (was undercharged the flat floor) and non-members
+      // still pay the floor.
+      const cacheFee = Math.max(AI_ACTION_ACU.cached, cachedSearchAcu(user));
       const s = spendAcu(user.id, cacheFee, 'search:cached');
       if (!s.ok) {
         return res.json({
@@ -3671,13 +3690,44 @@ async function cancelVisaHotelAndSettle(id, hotelbedsRef) {
   const cancel = await cancelHotelbedsBooking(hotelbedsRef).catch(() => ({ ok: false }));
   if (!cancel?.ok) return { ok: false, error: cancel?.error || 'cancel-failed' };
   const charge = Number(cancel.cancellationCharge) || 0;
+  const chargeCurrency = String(cancel.currency || 'EUR').toUpperCase();
   const rec = getVisaReservation(id);
+  let capturedGbp = 0;
   if (rec?.depositPaymentIntent && stripeEnabled()) {
-    if (charge > 0) await captureAuthorization({ paymentIntentId: rec.depositPaymentIntent }).catch(() => {});
-    else await releaseAuthorization({ paymentIntentId: rec.depositPaymentIntent }).catch(() => {});
+    if (charge > 0) {
+      // CAPTURE ONLY THE ACTUAL CHARGE, never the whole hold. The deposit was
+      // authorised in GBP to COVER the room; the supplier's cancellation charge
+      // comes back in the hotel's currency, so convert it to GBP first and cap it
+      // at the hold. Over-capturing the full deposit when the real charge is a
+      // fraction of it would overcharge the customer.
+      const authorizedGbp = Number(rec.roomDepositGbp) || 0;
+      let chargeGbp = null;
+      if (chargeCurrency === 'GBP') chargeGbp = charge;
+      else {
+        const rate = await fxRate(chargeCurrency, 'GBP').catch(() => null);
+        if (typeof rate === 'number' && rate > 0) chargeGbp = charge * rate;
+      }
+      if (chargeGbp != null) {
+        const captureGbp = Math.min(authorizedGbp || chargeGbp, chargeGbp);
+        // Partial capture: Stripe captures amount_to_capture and AUTOMATICALLY
+        // releases the uncaptured remainder of the hold back to the customer — no
+        // separate release call needed (the PI is 'succeeded' after this).
+        const cap = await captureAuthorization({ paymentIntentId: rec.depositPaymentIntent, amountMinor: Math.round(captureGbp * 100) }).catch(() => ({ ok: false }));
+        capturedGbp = cap?.ok ? Math.round(captureGbp * 100) / 100 : 0;
+      } else {
+        // FX unavailable — we can't size the capture safely. Capture the full hold
+        // (3JN is never out of pocket) and raise an ops ticket to reconcile and
+        // refund the customer the difference between the hold and the real charge.
+        const cap = await captureAuthorization({ paymentIntentId: rec.depositPaymentIntent }).catch(() => ({ ok: false }));
+        capturedGbp = cap?.ok ? authorizedGbp : 0;
+        try { createSupportTicket({ userId: rec.userId, intent: 'ops-refund', message: `Visa room deposit for reservation ${rec.id}: cancellation charge ${charge} ${chargeCurrency} could not be converted to GBP, so the full £${authorizedGbp} hold was captured. Reconcile against the supplier charge and refund the customer the difference.`, reason: 'visa-deposit-fx-unavailable' }); } catch {}
+      }
+    } else {
+      await releaseAuthorization({ paymentIntentId: rec.depositPaymentIntent }).catch(() => {});
+    }
   }
   const marked = markVisaHotelCancelled(id, { cancellationRef: cancel.reference, charge });
-  return { ok: true, charge, reservation: marked.reservation };
+  return { ok: true, charge, chargeCurrency, capturedGbp, reservation: marked.reservation };
 }
 app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
@@ -4228,9 +4278,11 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
   // price again — otherwise a customer who paid a deposit and then chose to
   // settle in full would be charged the full total on top of the deposit.
   const fullTotal = booking.option?.pricing?.local?.total || 0;
-  const paidSoFar = (booking.payments || [])
-    .filter((p) => ['deposit', 'instalment', 'full', 'stripe-checkout', 'deposit-credit'].includes(p.type) && Number(p.amount) > 0)
-    .reduce((s, p) => s + Number(p.amount), 0);
+  // Use the canonical planPaid — it counts EVERY plan-funding payment, including
+  // applied Travel Credit ('travel-credit'). The old local filter omitted credit,
+  // so a customer who applied Travel Credit and then paid "in full" was charged
+  // the credit amount a second time. planPaid is the single source of truth.
+  const paidSoFar = planPaid(booking);
   const total = kind === 'full'
     ? Math.max(0, Math.round((fullTotal - paidSoFar) * 100) / 100)
     : (booking.instalment?.deposit || fullTotal);
