@@ -1415,30 +1415,42 @@ export function listSearchDeposits(userId) {
 // "If 3JN Travel OS cannot beat or match your current quote, we refund your
 // search credits." The claim is honest: our floor vs the competing quote,
 // and a losing comparison refunds the ACUs the search consumed.
-export function claimSavingsGuarantee(userId, { competitorQuoteUSD, ourTotalUSD, acuSpent = 0 }) {
+const SAVINGS_GUARANTEE_MAX_REFUND_ACU = 40; // one Deep-search's worth, per quote
+export function claimSavingsGuarantee(userId, { quoteId, competitorQuoteUSD } = {}) {
   const u = db.users.get(userId);
-  if (!u || !(competitorQuoteUSD > 0) || !(ourTotalUSD > 0)) return { ok: false, error: 'invalid' };
-  const beatenOrMatched = ourTotalUSD <= competitorQuoteUSD;
-  if (beatenOrMatched) {
+  if (!u || !(competitorQuoteUSD > 0)) return { ok: false, error: 'invalid' };
+  // MUST reference a REAL, OWNED quote. Our price for the comparison comes from
+  // that quote's recorded total — NEVER a request-body number — and each quote
+  // can be claimed at most ONCE. This kills the old refund-then-respend loop
+  // (asserting fake numbers to reclaim every search's ACU forever).
+  const q = quoteId ? db.quotes.get(quoteId) : null;
+  if (!q) return { ok: false, error: 'quote-required', message: 'A recent 3JN quote is required to claim the guarantee.' };
+  if (q.userId && q.userId !== userId) return { ok: false, error: 'not-your-quote' };
+  const ourTotalUSD = q.option?.totalUSD || q.option?.pricing?.lines?.totalUSD || 0;
+  if (!(ourTotalUSD > 0)) return { ok: false, error: 'quote-unpriced' };
+  if (ourTotalUSD <= competitorQuoteUSD) {
     return {
       ok: true, refunded: false,
-      verdict: `3JN's price ($${ourTotalUSD}) beats or matches your quote ($${competitorQuoteUSD}) — guarantee satisfied.`,
+      verdict: `3JN's price ($${round2(ourTotalUSD)}) beats or matches your quote ($${round2(competitorQuoteUSD)}) — guarantee satisfied.`,
       savedUSD: round2(competitorQuoteUSD - ourTotalUSD),
     };
   }
-  // ANTI-ABUSE: the refund can never exceed what the user ACTUALLY spent on
-  // AI searches and hasn't already had refunded — otherwise the endpoint mints
-  // free ACU (=money) from a request-body number. Cap the client's claim to
-  // the true unrefunded search spend from the ledger.
+  // One refund per quote — dedup on the quote id in the ledger reason.
+  const key = `savings-guarantee:${quoteId}`;
+  if (db.acuTxns.some((t) => t.userId === userId && t.reason === key)) {
+    return { ok: true, refunded: false, already: true, verdict: 'The guarantee has already been claimed for this quote.' };
+  }
+  // Refund at most one search's worth, and never more than the user's true
+  // unrefunded search spend (belt-and-braces against minting above spend).
   const searchSpent = db.acuTxns.filter((t) => t.userId === userId && t.type === 'USAGE' && /search|plan|dive/i.test(t.reason || '')).reduce((s, t) => s + Math.abs(t.amount || 0), 0);
-  const alreadyRefunded = db.acuTxns.filter((t) => t.userId === userId && t.reason === 'savings-guarantee').reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+  const alreadyRefunded = db.acuTxns.filter((t) => t.userId === userId && /^savings-guarantee/.test(t.reason || '')).reduce((s, t) => s + Math.abs(t.amount || 0), 0);
   const refundable = Math.max(0, searchSpent - alreadyRefunded);
-  const refund = Math.min(Math.max(0, Math.round(acuSpent)), refundable);
-  if (refund > 0) refundAcu(userId, refund, 'savings-guarantee');
-  recordAudit({ actor: userId, role: u.role, action: 'guarantee.refund', entity: 'acu', entityId: userId, summary: `+${refund} ACU refunded — quote $${competitorQuoteUSD} not beaten ($${ourTotalUSD})` });
+  const refund = Math.min(SAVINGS_GUARANTEE_MAX_REFUND_ACU, refundable);
+  if (refund > 0) refundAcu(userId, refund, key);
+  recordAudit({ actor: userId, role: u.role, action: 'guarantee.refund', entity: 'acu', entityId: userId, summary: `+${refund} ACU refunded — quote ${quoteId} $${round2(competitorQuoteUSD)} not beaten ($${round2(ourTotalUSD)})` });
   return {
-    ok: true, refunded: true, acuRefunded: refund,
-    verdict: `We couldn't beat your quote this time — your ${refund} search ACUs are refunded.`,
+    ok: true, refunded: refund > 0, acuRefunded: refund,
+    verdict: refund > 0 ? `We couldn't beat your quote this time — ${refund} search ACUs are refunded.` : 'Guarantee noted — no refundable search ACUs remain.',
     balance: u.acuBalance,
   };
 }

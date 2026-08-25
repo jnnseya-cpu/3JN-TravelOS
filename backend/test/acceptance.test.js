@@ -31,7 +31,7 @@ import {
   profitabilityDashboard,
 } from '../src/store.js';
 import { routeFareRisk, scanPotFareUSD } from '../src/price-dive.js';
-import { setPotWatch, recordPotFare } from '../src/store.js';
+import { setPotWatch, recordPotFare, contributeToPot } from '../src/store.js';
 import { bookingDocument, bookingPdf } from '../src/documents.js';
 import { isBookingFullyPaid, refundOutcome, planPaid } from '../src/instalments.js';
 import { bookingExposure, portfolioExposure, flightSecuringPlan, lockMarginPct } from '../src/pricelock.js';
@@ -1344,9 +1344,14 @@ test('WALLET-2: turned ON, a pot saves and converts to Travel Credit — still n
     assert.equal(create.status, 200);
     const potId = create.json.pot.id;
     assert.match(create.json.pot.disclosure, /not a booking/i);
+    // A pot can ONLY be funded through paid checkout — never a free request. With
+    // Stripe off in the test env, the route refuses; funding is simulated below
+    // (what the signed webhook does on a completed payment).
     const contrib = await api('POST', `/api/pots/${potId}/contribute`, { userId: u.id, body: { amountUSD: 500 } });
-    assert.equal(contrib.status, 200);
-    assert.ok(contrib.json.pot.balanceUSD > 0 && contrib.json.pot.balanceUSD < 500, '1.5% processing fee applied');
+    assert.equal(contrib.status, 400, 'no free pot funding — payment required');
+    assert.equal(contrib.json.error, 'payment-unavailable');
+    const seeded = contributeToPot(potId, { name: u.name, amountUSD: 500 }); // simulate the paid webhook credit
+    assert.ok(seeded.pot.balanceUSD > 0 && seeded.pot.balanceUSD < 500, '1.5% processing fee applied');
     // Converting turns saved money into spendable Travel Credit for the SAME user.
     const before = getUser(u.id).travelCreditGbp || 0;
     const conv = await api('POST', `/api/pots/${potId}/convert`, { userId: u.id, body: {} });
@@ -1384,7 +1389,7 @@ test('WATCH-1: a pot fare is priced from the real scan engine, and monitoring no
     assert.equal(r.affordableNow, false);
     // Simulate the fare dropping below what they've saved → alert fires once.
     // (Fund the pot above a low fare, then record that low fare.)
-    await api('POST', `/api/pots/${pot.id}/contribute`, { userId: u.id, body: { amountUSD: 400 } });
+    contributeToPot(pot.id, { name: u.name, amountUSD: 400 }); // paid-webhook credit (route requires checkout)
     r = recordPotFare(pot.id, 100); // fare now well under the ~$394 saved
     assert.equal(r.affordableNow, true);
     assert.equal(r.notified, 'affordable', 'alerted the first time savings cover the fare');

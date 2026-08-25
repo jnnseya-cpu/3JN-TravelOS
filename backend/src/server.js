@@ -1656,9 +1656,23 @@ app.post('/api/pots/:id/contribute', safe(async (req, res) => {
   if (pot.ownerId !== user.id && !user.allAccess) return res.status(403).json({ error: 'not-your-pot' });
   const amountUSD = Number(req.body?.amountUSD);
   if (!(amountUSD > 0)) return res.status(400).json({ error: 'invalid-amount' });
-  const r = contributeToPot(req.params.id, { name: user.name, amountUSD });
-  if (!r.ok) return res.status(400).json(r);
-  res.json({ ok: true, pot: getTravelPot(req.params.id), disclosure: POT_DISCLOSURE });
+  // A pot balance is REAL money — it converts to Travel Credit that pays real
+  // bookings. So it must be FUNDED through Checkout; the balance is credited ONLY
+  // by the signed webhook. NEVER credit a pot from an unpaid request (that let a
+  // user mint spendable value for free and pay a whole trip with it).
+  if (stripeEnabled()) {
+    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const session = await createCheckoutSession({
+      amountMinor: Math.round(amountUSD * 0.79 * 100), currency: 'gbp',
+      description: `3JN Travel Pot — ${(getTravelPot(req.params.id)?.name || 'Trip pot')}`,
+      userId: user.id, customerEmail: user.email,
+      metadata: { kind: 'pot', potId: req.params.id, amountUSD: String(amountUSD), userId: user.id, name: user.name || '' },
+      successUrl: `${origin}/console?pot=1`, cancelUrl: `${origin}/console?pot=0`,
+    });
+    if (!session.ok) return res.status(400).json(session);
+    return res.json({ ok: true, checkout: session.url, requiresPayment: true });
+  }
+  return res.status(400).json({ ok: false, error: 'payment-unavailable', message: 'Adding to a pot requires card payment, which is not configured on this deployment.' });
 }));
 app.post('/api/pots/:id/convert', safe((req, res) => {
   const user = currentUser(req);
@@ -2661,8 +2675,8 @@ app.delete('/api/admin/deals/:id', safe((req, res) => {
 // credits." Compares the competing quote to our floor and refunds the ACUs.
 app.post('/api/account/:id/savings-guarantee', safe((req, res) => {
   if (!requireOwner(req, res, req.params.id)) return;
-  const { competitorQuoteUSD, ourTotalUSD, acuSpent } = req.body || {};
-  const result = claimSavingsGuarantee(req.params.id, { competitorQuoteUSD, ourTotalUSD, acuSpent });
+  const { competitorQuoteUSD, quoteId } = req.body || {};
+  const result = claimSavingsGuarantee(req.params.id, { quoteId, competitorQuoteUSD });
   if (!result.ok) return res.status(400).json(result);
   res.json({ ...result, guarantee: SAVINGS_GUARANTEE });
 }));
@@ -3444,7 +3458,7 @@ app.post('/api/quote', safe(async (req, res) => {
   // on a bag change won't re-hit Duffel.
   await stampInstantPaymentFares(option);
   const instalment = smartPlanForRequest(req, option, intent);
-  const quote = saveQuote({ option, intent, instalment });
+  const quote = saveQuote({ option, intent, instalment, userId: currentUser(req)?.id || null });
   recordBehaviour(currentUser(req)?.id, {
     event: 'quote',
     destination: intent?.destination?.code || null,
@@ -4429,6 +4443,12 @@ app.post('/api/pay/stripe/webhook', safe(async (req, res) => {
       if (fresh) {
         const r = placeSearchDeposit({ userId: meta.userId, tier: meta.tier, searchId: meta.searchId || null, paymentIntent: event.data?.object?.payment_intent || null });
         if (r.ok) pushNotification(meta.userId, { type: 'success', icon: '🔎', title: 'Search deposit placed', body: `Your refundable ${meta.tier} search deposit is active — it comes straight off your booking when you travel.` });
+      }
+    } else if (meta.kind === 'pot' && meta.potId && meta.amountUSD) {
+      // Travel-pot funding: credit the pot ONLY on the signed, paid event.
+      if (fresh) {
+        const r = contributeToPot(meta.potId, { name: meta.name || 'You', amountUSD: Number(meta.amountUSD) });
+        if (r.ok && meta.userId) pushNotification(meta.userId, { type: 'success', icon: '💰', title: 'Pot topped up', body: `$${meta.amountUSD} added to your trip pot.` });
       }
     } else if (meta.kind === 'visa-fee' && meta.reservationId) {
       // The visa reservation SERVICE FEE was paid → mark paid + issue it (flight

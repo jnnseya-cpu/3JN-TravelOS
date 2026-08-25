@@ -2864,19 +2864,26 @@ test('USPs: decision (advisor not search), Travel CFO, negotiation perks, diaspo
   for (const v of Object.values(r.intelligenceScore.scores)) assert.ok(v >= 0 && v <= 100);
 });
 
-test('USP #2: guaranteed savings — beaten quote reports saving; unbeaten refunds the ACUs actually spent', () => {
+test('USP #2: guaranteed savings — bound to a real owned quote, one claim per quote, no free-search loop', () => {
   const u = createUser({ name: 'Guarantee User', email: 'guarantee@example.com' });
   buyAcu(u.id, 'starter');
   spendAcu(u.id, 57, 'deep-search'); // the user really spends 57 ACU on a search
-  const won = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 2000, ourTotalUSD: 1700, acuSpent: 57 });
+  // Our price comes from a REAL, OWNED quote — never a request-body number.
+  const q = saveQuote({ userId: u.id, option: { totalUSD: 1700, pricing: { lines: { totalUSD: 1700 } } } });
+  const won = claimSavingsGuarantee(u.id, { quoteId: q.id, competitorQuoteUSD: 2000 });
   assert.equal(won.refunded, false);
   assert.equal(won.savedUSD, 300);
-  const lost = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 1500, ourTotalUSD: 1700, acuSpent: 57 });
+  const lost = claimSavingsGuarantee(u.id, { quoteId: q.id, competitorQuoteUSD: 1500 });
   assert.equal(lost.refunded, true);
-  assert.equal(lost.acuRefunded, 57);
-  // ANTI-ABUSE: a second claim can't refund more than was really spent (57).
-  const abuse = claimSavingsGuarantee(u.id, { competitorQuoteUSD: 1, ourTotalUSD: 999999, acuSpent: 1000000 });
-  assert.equal(abuse.acuRefunded, 0, 'cannot mint ACU beyond real unrefunded search spend');
+  assert.ok(lost.acuRefunded > 0 && lost.acuRefunded <= 40, 'refunds at most one search worth (cap 40)');
+  // LOOP CLOSED: a repeat claim on the SAME quote refunds nothing.
+  const again = claimSavingsGuarantee(u.id, { quoteId: q.id, competitorQuoteUSD: 1 });
+  assert.equal(again.already, true, 'one claim per quote — no respend loop');
+  // A claim with NO quote is rejected (can't fabricate a comparison from the body).
+  assert.equal(claimSavingsGuarantee(u.id, { competitorQuoteUSD: 1 }).ok, false);
+  // Can't claim another user's quote.
+  const v = createUser({ name: 'Other', email: `sgo${Date.now()}@x.co` });
+  assert.equal(claimSavingsGuarantee(v.id, { quoteId: q.id, competitorQuoteUSD: 1 }).error, 'not-your-quote');
   assert.match(SAVINGS_GUARANTEE, /refund your search credits/i);
 });
 
