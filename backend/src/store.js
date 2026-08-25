@@ -142,7 +142,7 @@ function shareToken() {
   return t;
 }
 
-export function createSharedTrip({ text, tier, prefs } = {}) {
+export function createSharedTrip({ text, tier, prefs, userId } = {}) {
   const clean = String(text || '').slice(0, 600).trim();
   if (!clean) return null;
   let token = shareToken();
@@ -153,6 +153,9 @@ export function createSharedTrip({ text, tier, prefs } = {}) {
     text: clean,
     tier: typeof tier === 'string' ? tier.slice(0, 24) : null,
     prefs: prefs && typeof prefs === 'object' ? prefs : null,
+    // Bind to the creator (when logged in) so a SHARE_ITINERARY reward can be
+    // tied to a share this user actually made — not any token guessed/borrowed.
+    userId: userId || null,
     createdAt: new Date().toISOString(),
   };
   db.sharedTrips.set(token, rec);
@@ -2398,20 +2401,70 @@ const gbpFromUsd = (usd) => Math.round(((usd || 0) * GBP_ANCHOR) * 100) / 100;
 
 // §1 — award ACU for a traveller reward action. `once` actions are granted a
 // single time per user (tracked on the user). Returns the ACU granted.
-export function earnAcu(userId, actionKey, { netBookingGbp = 0, promo = false, reason } = {}) {
+// Per-IP/day throttle for self-attested reward earns — a second wall behind the
+// verified-email + artifact-proof gates. Even if an abuser mints many verified
+// inboxes, one machine can only claim REWARD_EARN_IP_DAY_CAP self-attested
+// rewards a day. In-memory (a daily cap needn't survive a restart); bounded.
+const rewardEarnsByIpDay = new Map(); // `${ip}|${YYYY-MM-DD}` -> count
+export const REWARD_EARN_IP_DAY_CAP = 5;
+function noteRewardEarnByIp(ip) {
+  if (!ip) return { ok: true, count: 0 }; // no IP (server-side award) → not throttled
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `${ip}|${day}`;
+  const count = rewardEarnsByIpDay.get(key) || 0;
+  if (count >= REWARD_EARN_IP_DAY_CAP) return { ok: false, count };
+  // Opportunistically drop stale (not-today) keys so the map can't grow forever.
+  if (rewardEarnsByIpDay.size > 5000) {
+    for (const k of rewardEarnsByIpDay.keys()) { if (!k.endsWith(`|${day}`)) rewardEarnsByIpDay.delete(k); }
+  }
+  return { ok: true, count, commit: () => rewardEarnsByIpDay.set(key, count + 1) };
+}
+
+// Verify that a self-attested reward is backed by a REAL artifact the user owns,
+// so ACU (spendable wallet value) is never minted for an action that never
+// happened. Returns { ok } or { ok:false, error, message }.
+function rewardArtifactCheck(userId, actionKey, evidence = {}) {
+  if (actionKey === 'SHARE_ITINERARY') {
+    const rec = getSharedTrip(evidence.token);
+    // The share must exist AND have been created by THIS user while logged in.
+    if (!rec || rec.userId !== userId) {
+      return { ok: false, error: 'share-required', message: 'Create a shareable trip link first, then claim this reward with that link.' };
+    }
+    return { ok: true };
+  }
+  if (actionKey === 'UPLOAD_PHOTO') {
+    // A travel photo implies real travel — bind to a booking the user owns that
+    // isn't cancelled (the genuine artifact behind "uploaded a travel photo").
+    const b = db.bookings.get(evidence.bookingId);
+    if (!b || b.userId !== userId || b.status === 'cancelled') {
+      return { ok: false, error: 'photo-requires-trip', message: 'Add a photo to one of your booked trips to earn this reward.' };
+    }
+    return { ok: true };
+  }
+  return { ok: true };
+}
+
+export function earnAcu(userId, actionKey, { netBookingGbp = 0, promo = false, reason, evidence = {}, ip = null } = {}) {
   const u = db.users.get(userId);
   const action = REWARD_ACTIONS[actionKey];
   if (!u || !action) return { ok: false, error: 'invalid' };
   u.rewardActionsDone = u.rewardActionsDone || {};
   // Self-attested one-time rewards (photo / share / profile-verified) are wallet
-  // VALUE with no server-side proof, so gate them on a VERIFIED EMAIL — farming
-  // then costs a distinct verified inbox per account, not a scripted POST. (The
-  // per-IP starter cap + verified email together neutralise multi-account farming.)
+  // VALUE, so gate them on a VERIFIED EMAIL — farming then costs a distinct
+  // verified inbox per account, not a scripted POST.
   if (action.once && !u.emailVerified) return { ok: false, error: 'verify-email-first', message: 'Verify your email to earn this reward.' };
   if (action.once && u.rewardActionsDone[actionKey]) return { ok: true, acu: 0, already: true, balance: u.acuBalance };
+  // ARTIFACT BINDING: photo/share rewards must reference a real owned artifact —
+  // no proof, no ACU. (PROFILE_VERIFIED and booking-driven awards pass through.)
+  const proof = rewardArtifactCheck(userId, actionKey, evidence);
+  if (!proof.ok) return proof;
+  // PER-IP/DAY CAP: a second wall against many-accounts-one-machine farming.
+  const throttle = noteRewardEarnByIp(ip);
+  if (!throttle.ok) return { ok: false, error: 'daily-cap', message: 'Daily reward limit reached — please try again tomorrow.' };
   const acu = acuForAction(actionKey, { netBookingGbp, promo });
   if (acu <= 0) return { ok: true, acu: 0, balance: u.acuBalance };
   u.rewardActionsDone[actionKey] = (u.rewardActionsDone[actionKey] || 0) + 1;
+  if (throttle.commit) throttle.commit();
   rewardAcu(userId, acu, reason || `reward:${actionKey}`);
   return { ok: true, acu, balance: u.acuBalance };
 }

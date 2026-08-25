@@ -6658,7 +6658,7 @@ test('anti-farming: free 50-ACU starter is capped per IP per day', () => {
 });
 
 // ==== WAVE 8: close all loopholes / backdoors / abuse ========================
-import { earnAcu, claimStripeEvent, recordBehaviour as recordBehaviourFn } from '../src/store.js';
+import { earnAcu, claimStripeEvent, recordBehaviour as recordBehaviourFn, REWARD_EARN_IP_DAY_CAP } from '../src/store.js';
 
 test('wave8 auth: a self-registered owner-email account is NOT admin until verified', async () => {
   const email = `boss${Date.now()}@x.co`;
@@ -6724,19 +6724,55 @@ test('wave8 money: repeatable reward actions are one-time (no unlimited ACU mint
   const u = createUser({ name: 'Farmer', email: `frm${Date.now()}@x.co` });
   getUserRaw(u.id).emailVerified = true; // self-attested rewards now require a verified email
   const start = getUserRaw(u.id).acuBalance;
+  // Real artifacts the rewards must bind to: a booking the user owns (photo) and
+  // a share link the user created (share itinerary).
+  const opt = { tier: 'smart', components: [], pricing: { currency: 'GBP', symbol: '£', local: { total: 500 }, lines: { totalUSD: 633 } } };
+  const booking = createBooking({ userId: u.id, option: opt, lead: { fullName: 'Farmer', email: u.email } });
+  const share = createSharedTrip({ text: 'BHX → LOS, Aug', userId: u.id });
   // Unverified accounts can't mint these at all (anti-farming gate).
   const unverified = createUser({ name: 'NoVerify', email: `nv${Date.now()}@x.co` });
-  assert.equal(earnAcu(unverified.id, 'UPLOAD_PHOTO').ok, false, 'unverified email cannot earn self-attested rewards');
-  const first = earnAcu(u.id, 'UPLOAD_PHOTO');
+  assert.equal(earnAcu(unverified.id, 'UPLOAD_PHOTO', { evidence: { bookingId: booking.id } }).ok, false, 'unverified email cannot earn self-attested rewards');
+  // No artifact → no reward, even for a verified user.
+  assert.equal(earnAcu(u.id, 'UPLOAD_PHOTO').error, 'photo-requires-trip', 'photo reward needs an owned trip');
+  assert.equal(earnAcu(u.id, 'SHARE_ITINERARY').error, 'share-required', 'share reward needs a real share link');
+  const first = earnAcu(u.id, 'UPLOAD_PHOTO', { evidence: { bookingId: booking.id } });
   assert.equal(first.acu, 50, 'first upload rewards once');
-  const second = earnAcu(u.id, 'UPLOAD_PHOTO');
+  const second = earnAcu(u.id, 'UPLOAD_PHOTO', { evidence: { bookingId: booking.id } });
   assert.equal(second.acu, 0, 'a second upload mints nothing');
   assert.equal(second.already, true);
-  const shareA = earnAcu(u.id, 'SHARE_ITINERARY');
-  const shareB = earnAcu(u.id, 'SHARE_ITINERARY');
+  const shareA = earnAcu(u.id, 'SHARE_ITINERARY', { evidence: { token: share.token } });
+  const shareB = earnAcu(u.id, 'SHARE_ITINERARY', { evidence: { token: share.token } });
   assert.equal(shareA.acu, 75);
   assert.equal(shareB.acu, 0, 'share itinerary is also one-time');
   assert.equal(getUserRaw(u.id).acuBalance, start + 50 + 75, 'balance grew by exactly one of each');
+});
+
+test('wave8 money: reward artifact must be owned by the claimant (no borrowed proof)', () => {
+  const owner = createUser({ name: 'Owner', email: `ow${Date.now()}@x.co` });
+  const other = createUser({ name: 'Other', email: `ot${Date.now()}@x.co` });
+  getUserRaw(other.id).emailVerified = true;
+  const share = createSharedTrip({ text: 'someone elses trip', userId: owner.id });
+  const opt = { tier: 'smart', components: [], pricing: { currency: 'GBP', symbol: '£', local: { total: 200 }, lines: { totalUSD: 253 } } };
+  const booking = createBooking({ userId: owner.id, option: opt, lead: { fullName: 'Owner', email: owner.email } });
+  // Another user can't claim rewards against artifacts they don't own.
+  assert.equal(earnAcu(other.id, 'SHARE_ITINERARY', { evidence: { token: share.token } }).error, 'share-required', 'cannot claim a share you did not create');
+  assert.equal(earnAcu(other.id, 'UPLOAD_PHOTO', { evidence: { bookingId: booking.id } }).error, 'photo-requires-trip', 'cannot claim a photo on someone else\'s booking');
+});
+
+test('wave8 money: self-attested rewards are capped per IP per day', () => {
+  const ip = '203.0.113.77';
+  let allowed = 0, blocked = 0;
+  // Many fresh verified accounts on ONE machine, each with a real owned artifact,
+  // still hit the per-IP/day wall after REWARD_EARN_IP_DAY_CAP claims.
+  for (let i = 0; i < REWARD_EARN_IP_DAY_CAP + 3; i++) {
+    const u = createUser({ name: `ipfarm${i}`, email: `ipf${i}_${Date.now()}@x.co` });
+    getUserRaw(u.id).emailVerified = true;
+    const share = createSharedTrip({ text: `trip ${i}`, userId: u.id });
+    const r = earnAcu(u.id, 'SHARE_ITINERARY', { evidence: { token: share.token }, ip });
+    if (r.ok && r.acu > 0) allowed++; else if (r.error === 'daily-cap') blocked++;
+  }
+  assert.equal(allowed, REWARD_EARN_IP_DAY_CAP, 'exactly the cap is allowed from one IP in a day');
+  assert.equal(blocked, 3, 'everything past the cap is refused');
 });
 
 test('wave8 money: only a PAID booking counts as commitment (unpaid /api/book does not)', () => {

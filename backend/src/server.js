@@ -2542,7 +2542,7 @@ app.get('/api/quote-requests', safe((req, res) => {
 // FRESH, live-priced search (not a stale snapshot).
 app.post('/api/trip/share', safe((req, res) => {
   const { text, tier, prefs } = req.body || {};
-  const rec = createSharedTrip({ text, tier, prefs });
+  const rec = createSharedTrip({ text, tier, prefs, userId: currentUser(req)?.id || null });
   if (!rec) return res.status(400).json({ error: 'empty-trip', message: 'Nothing to share — run a search first.' });
   res.json({ token: rec.token, createdAt: rec.createdAt });
 }));
@@ -4628,9 +4628,11 @@ const USER_EARN_ACTIONS = new Set(['SHARE_ITINERARY', 'UPLOAD_PHOTO', 'PROFILE_V
 app.post('/api/rewards/earn', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
-  const { action } = req.body || {};
+  const { action, token, bookingId } = req.body || {};
   if (!USER_EARN_ACTIONS.has(action)) return res.status(400).json({ error: 'action-not-user-triggerable' });
-  res.json(earnAcu(user.id, action));
+  // Pass the artifact evidence (share token / owned bookingId) and the client IP
+  // so earnAcu can bind the reward to a real artifact and apply the per-IP cap.
+  res.json(earnAcu(user.id, action, { evidence: { token, bookingId }, ip: clientIp(req) }));
 }));
 // Request a payout of pending commission (§4/§6).
 app.post('/api/rewards/withdraw', safe((req, res) => {
