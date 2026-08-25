@@ -2204,7 +2204,16 @@ export function recordPayment(bookingId, payment) {
           : pr.local?.total && pr.symbol === '£' ? round2(pr.local.total / 1.10) // strip the 10% fee from a GBP total
           : round2(((b.option?.totalUSD || 0) / 1.10) * GBP_ANCHOR);
         const takeGbp = round2((pr.revenue?.commissionUSD ? pr.revenue.commissionUSD * GBP_ANCHOR : saleGbp * 0.10));
-        const r = recordVendorSale({ vendorId: vendor.userId, bookingId: b.id, saleGbp, customerId: b.userId, flightsOnly, takeGbp });
+        // ANTI-TAMPER: saleGbp/takeGbp above are derived from CLIENT-supplied
+        // breakdown lines (netSuppliersUSD/commissionUSD), which the payment loss
+        // floor does NOT validate — so a booker could inflate them to be paid
+        // commission on money 3JN never earned. Cap both to the CHARGED TOTAL,
+        // which IS validated at checkout: 3JN can never take more than 10% of what
+        // was actually charged, and the sale base can't exceed the real total.
+        const chargedGbp = (pr.symbol === '£' && pr.local?.total) ? round2(pr.local.total) : round2((b.option?.totalUSD || 0) * GBP_ANCHOR);
+        const safeSaleGbp = Math.min(saleGbp, chargedGbp);
+        const safeTakeGbp = Math.min(takeGbp, round2(chargedGbp * 0.10 + 0.01));
+        const r = recordVendorSale({ vendorId: vendor.userId, bookingId: b.id, saleGbp: safeSaleGbp, customerId: b.userId, flightsOnly, takeGbp: safeTakeGbp });
         if (r.ok) {
           b.vendorSaleProcessed = true;
           // Lifetime attach: the customer stays attributed to the partner who
@@ -2987,12 +2996,23 @@ export function recordVendorSale({ vendorId, bookingId, saleGbp, customerId, fli
   recordAudit({ actor: vendorId, role: 'vendor', action: 'vendor.sale', entity: 'booking', entityId: bookingId || '-', summary: `£${split.saleGbp} sale · vendor £${split.vendorGbp} · platform keeps £${split.platformKeepsGbp}` });
   return { ok: true, sale };
 }
-// §7 — flag a sale (refund/chargeback/fraud): kills any unpaid commission.
+// §7 — flag a sale (refund/chargeback/fraud): kills any unpaid commission, and
+// CLAWS BACK commission already paid out. A chargeback/refund routinely lands
+// weeks after travel — i.e. AFTER the Friday payout or an ACU conversion has set
+// paidOut. Without a clawback, 3JN refunds the customer AND keeps the vendor
+// paid. So on a paid-out sale we book the paid commission as a pending clawback,
+// netted against the vendor's next payout (runWeeklyVendorPayouts).
 export function flagVendorSale(saleId, flag) {
   const s = db.vendorSales.find((x) => x.id === saleId);
   if (!s) return { ok: false, error: 'not-found' };
   if (['refunded', 'chargeback', 'fraudFlag', 'complianceHold'].includes(flag)) s[flag] = true;
-  recordAudit({ actor: 'system', role: 'system', action: 'vendor.sale.flagged', entity: 'vendor-sale', entityId: saleId, summary: flag });
+  // Recover money already paid (bank payout OR taken as ACU) — once per sale.
+  const alreadyPaidOut = s.paidOut && ['refunded', 'chargeback', 'fraudFlag'].includes(flag);
+  if (alreadyPaidOut && !s.clawbackGbp) {
+    s.clawbackGbp = round2(s.vendorGbp || 0);
+    s.clawbackRecoveredGbp = 0; // recovered against future payouts until it clears
+  }
+  recordAudit({ actor: 'system', role: 'system', action: 'vendor.sale.flagged', entity: 'vendor-sale', entityId: saleId, summary: `${flag}${s.clawbackGbp ? ` · clawback £${s.clawbackGbp} queued` : ''}` });
   return { ok: true, sale: s };
 }
 
@@ -3064,10 +3084,23 @@ export function runWeeklyVendorPayouts() {
   const batches = [];
   for (const [vendorId, sales] of byVendor) {
     // Pay the bank only the portion NOT already taken as ACU (fund-from-earnings).
-    const amount = Math.round(sales.reduce((t, s) => t + (s.vendorGbp - (s.acuConvertedGbp || 0)), 0) * 100) / 100;
+    let amount = Math.round(sales.reduce((t, s) => t + (s.vendorGbp - (s.acuConvertedGbp || 0)), 0) * 100) / 100;
     if (amount <= 0) continue;
+    // CLAWBACK: net any commission recovered from refunded/charged-back sales
+    // (already paid out) against this batch, oldest first, until it clears.
+    const clawbacks = db.vendorSales.filter((s) => s.vendorId === vendorId && (s.clawbackGbp || 0) > (s.clawbackRecoveredGbp || 0));
+    let clawedThisRun = 0;
+    for (const cs of clawbacks) {
+      if (amount <= 0.0049) break;
+      const rem = round2((cs.clawbackGbp || 0) - (cs.clawbackRecoveredGbp || 0));
+      const rec = Math.min(rem, amount);
+      cs.clawbackRecoveredGbp = round2((cs.clawbackRecoveredGbp || 0) + rec);
+      amount = round2(amount - rec);
+      clawedThisRun = round2(clawedThisRun + rec);
+    }
+    if (amount <= 0) continue; // clawback consumed the whole payout — nothing to send
     sales.forEach((s) => { s.paidOut = true; });
-    const batch = { id: id('vpo'), vendorId, amountGbp: amount, saleIds: sales.map((s) => s.id), status: 'paid', method: 'bank', at: nowISO() };
+    const batch = { id: id('vpo'), vendorId, amountGbp: amount, clawbackGbp: clawedThisRun || undefined, saleIds: sales.map((s) => s.id), status: 'paid', method: 'bank', at: nowISO() };
     db.vendorPayouts.push(batch);
     batches.push(batch);
     pushNotification(vendorId, { type: 'success', icon: '💷', title: 'Weekly payout sent', body: `£${amount.toFixed(2)} commission for ${sales.length} sale${sales.length > 1 ? 's' : ''} is on its way to your account.` });

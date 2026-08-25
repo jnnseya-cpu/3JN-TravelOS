@@ -7615,6 +7615,25 @@ test('requested origin is always offered: live nearby-only fares add an indicati
   assert.ok(!flight.details?.altOriginCode, 'the chosen fare is a requested-origin fare, not a nearby substitute');
 });
 
+test('vendor clawback: a chargeback after payout is recovered from the next payout', () => {
+  const v = createUser({ email: `clb${Date.now()}@x.co`, name: 'Clawback V' });
+  applyVendor(v.id, { tier: 'independent', identityDoc: true, addressProof: true });
+  decideVendor(v.id, { approve: true, by: 'admin-clb' });
+  // Sale 1 (immediately payable — no booking dates) is paid out this week.
+  const sale = recordVendorSale({ vendorId: v.id, bookingId: null, saleGbp: 1000, customerId: 'cust1', takeGbp: 100 }).sale;
+  const paid1 = runWeeklyVendorPayouts().batches.find((b) => b.vendorId === v.id);
+  assert.ok(paid1 && paid1.amountGbp > 0, 'sale 1 paid out');
+  const vendorGbp = sale.vendorGbp;
+  // Chargeback lands AFTER the payout → a clawback is queued for recovery.
+  flagVendorSale(sale.id, 'chargeback');
+  assert.equal(sale.clawbackGbp, vendorGbp, 'paid-out commission queued for clawback');
+  // A new sale earns the same commission; the next payout nets the clawback.
+  recordVendorSale({ vendorId: v.id, bookingId: null, saleGbp: 1000, customerId: 'cust2', takeGbp: 100 });
+  const paid2 = runWeeklyVendorPayouts().batches.find((b) => b.vendorId === v.id);
+  assert.ok(!paid2, 'the equal-value clawback consumes the next payout (nothing sent)');
+  assert.equal(sale.clawbackRecoveredGbp, vendorGbp, 'clawback fully recovered');
+});
+
 test('multi-city: A→B→C→home is understood and priced per leg, never collapsed to leg 1', () => {
   const text = '1 adult and 3 children (17,14 and 10) want in July 2027; to travel from Birmingham to Edmonton for 2 weeks, then from there to Cincinnati for another 2 weeks, then back to Birmingham. I want flights, instalments and the cheapest reliable price.';
   const r = plan({ text, context: { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } }, user: null, searchTier: 'smart' });
