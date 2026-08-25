@@ -357,11 +357,14 @@ export function provisionEsim(userId, { destination = 'Dubai', dataGB = 5, days 
 // records an honest "arrives on issue" eSIM with NO fabricated ICCID (a fake
 // technical identifier the customer would try to install must never be shown).
 // Async — the /api/esims endpoint awaits it.
-export async function provisionEsimLive(userId, { destination = '', countryCode = '', dataGB = 1, days = 7 } = {}) {
+export async function provisionEsimLive(userId, { destination = '', countryCode = '', dataGB = 1, days = 7, allowLiveOrder = false } = {}) {
   const cc = String(countryCode || '').slice(0, 2).toUpperCase();
   let profile = null;
-  if (cc) profile = await provisionEsimViaAiralo({ countryCode: cc, minGB: Math.max(1, Number(dataGB) || 1), ourRef: `hub:${userId || 'guest'}` }).catch(() => null);
-  if (!profile) profile = await provisionEsimViaApi({ destinationCountry: cc || destination, dataGB: Number(dataGB) || 5, days: Number(days) || 9, ourRef: `hub:${userId || 'guest'}` }).catch(() => null);
+  // A REAL Airalo order costs 3JN money — only place one when the caller has
+  // confirmed it is PAID FOR (allowLiveOrder). Otherwise record an honest
+  // pending-issue eSIM with no supplier order, so a free POST can't farm eSIMs.
+  if (allowLiveOrder && cc) profile = await provisionEsimViaAiralo({ countryCode: cc, minGB: Math.max(1, Number(dataGB) || 1), ourRef: `hub:${userId || 'guest'}` }).catch(() => null);
+  if (allowLiveOrder && !profile) profile = await provisionEsimViaApi({ destinationCountry: cc || destination, dataGB: Number(dataGB) || 5, days: Number(days) || 9, ourRef: `hub:${userId || 'guest'}` }).catch(() => null);
   const rec = {
     id: id('esim'), userId: userId || null,
     destination: destination || cc || 'Regional', provider: profile?.provider || 'Airalo',
@@ -1121,6 +1124,15 @@ export function addPoints(userId, points) {
 // real money 3JN already owes the customer (earned on a prior paid trip), so it
 // settles the balance like a payment. Capped at both the credit balance and what's
 // still owed — never over-applied.
+// Restore credit-funded value to a user's Travel Credit wallet — used on
+// cancellation to return the CREDIT portion of a refund (never paid as cash).
+export function restoreTravelCredit(userId, gbp, reason = 'refund-credit') {
+  const u = db.users.get(userId);
+  if (!u || !(gbp > 0)) return { ok: false };
+  u.travelCreditGbp = round2((u.travelCreditGbp || 0) + round2(gbp));
+  recordAudit({ actor: userId, role: 'consumer', action: 'travelcredit.restored', entity: 'user', entityId: userId, summary: `+£${round2(gbp)} Travel Credit restored (${reason})` });
+  return { ok: true, balance: u.travelCreditGbp };
+}
 export function redeemTravelCredit(userId, bookingId, requestedAmount = null) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'user-not-found' };
@@ -2363,6 +2375,11 @@ export function earnAcu(userId, actionKey, { netBookingGbp = 0, promo = false, r
   const action = REWARD_ACTIONS[actionKey];
   if (!u || !action) return { ok: false, error: 'invalid' };
   u.rewardActionsDone = u.rewardActionsDone || {};
+  // Self-attested one-time rewards (photo / share / profile-verified) are wallet
+  // VALUE with no server-side proof, so gate them on a VERIFIED EMAIL — farming
+  // then costs a distinct verified inbox per account, not a scripted POST. (The
+  // per-IP starter cap + verified email together neutralise multi-account farming.)
+  if (action.once && !u.emailVerified) return { ok: false, error: 'verify-email-first', message: 'Verify your email to earn this reward.' };
   if (action.once && u.rewardActionsDone[actionKey]) return { ok: true, acu: 0, already: true, balance: u.acuBalance };
   const acu = acuForAction(actionKey, { netBookingGbp, promo });
   if (acu <= 0) return { ok: true, acu: 0, balance: u.acuBalance };

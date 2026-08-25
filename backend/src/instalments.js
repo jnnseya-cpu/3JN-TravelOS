@@ -302,10 +302,20 @@ export function dueReminders(booking, todayISO) {
 // (extra owed) and a negative price-guard refund must NOT reduce or inflate
 // coverage, or a good booking would default (refund) / under-collect (change).
 export const PLAN_PAYMENT_TYPES = new Set(['deposit', 'instalment', 'full', 'stripe-checkout', 'deposit-credit', 'travel-credit']);
+// Payment types that moved REAL money (a card/gateway charge). Travel-credit and
+// deposit-credit are margin-funded internal value, NOT cash — a refund must never
+// pay them back out as money (that turns a reward into extractable cash).
+export const CASH_PAYMENT_TYPES = new Set(['deposit', 'instalment', 'full', 'stripe-checkout']);
 export function planPaid(booking) {
   return (booking.payments || [])
     .filter((p) => PLAN_PAYMENT_TYPES.has(p.type) && Number(p.amount) > 0)
     .reduce((s, p) => s + Number(p.amount), 0);
+}
+// The CASH portion of what was paid (excludes credit-funded value).
+export function cashPaid(booking) {
+  return round2((booking.payments || [])
+    .filter((p) => CASH_PAYMENT_TYPES.has(p.type) && Number(p.amount) > 0)
+    .reduce((s, p) => s + Number(p.amount), 0));
 }
 
 // TICKET-RELEASE GATE predicate: an e-ticket is issued/released ONLY when the
@@ -384,6 +394,17 @@ function ticketIssuedOf(booking) {
 //   • no ticket, paid >50% → refund paid − (£admin × passengers).
 //   • no ticket, paid ≤50% → deposit forfeited; balance beyond it per supplier.
 export function refundOutcome(booking, opts = {}) {
+  const out = refundOutcomeRaw(booking, opts);
+  // SPLIT the refundable amount by the form it was paid in: never pay out more
+  // CASH than the customer actually paid in cash. Credit-funded value is returned
+  // to the wallet (creditRefund), not as money — so a margin-funded reward can't
+  // be cashed out via a deposit-then-cancel.
+  const cash = cashPaid(booking);
+  const cashRefund = round2(Math.max(0, Math.min(out.refund, cash)));
+  const creditRefund = round2(Math.max(0, out.refund - cashRefund));
+  return { ...out, cashRefund, creditRefund };
+}
+function refundOutcomeRaw(booking, opts = {}) {
   const inst = booking?.instalment;
   const paid = planPaid(booking);
   const deposit = inst?.deposit || 0;

@@ -12,10 +12,10 @@ import { destinationsCatalog, findDestination, resolveOrigin, resolveDestination
 import { inspireDestinations, INSPIRE_WINDOWS } from './inspire.js';
 import { plan } from './planner.js';
 import { instalmentPlan, protectionFee, DUFFEL_FEES } from './pricing.js';
-import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, FINAL_PAYMENT_DAYS, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT, buildFlightSecuredSplit, splitHotelCancelFee } from './instalments.js';
+import { buildSmartInstalmentPlan, assessInstalmentRisk, daysUntil, INSTALMENT_TIERS, INSTALMENT_GRACE_HOURS, planPaid, cashPaid as cashPaidOf, FINAL_PAYMENT_DAYS, refundOutcome, isBookingFullyPaid, CANCEL_ADMIN_FEE_PER_PAX_GBP, CANCEL_REFUND_THRESHOLD_PCT, buildFlightSecuredSplit, splitHotelCancelFee } from './instalments.js';
 import {
   createUser, getUser, markEmailVerified, buyAcu, ACU_PACKS, saveQuote, getQuote, createBooking,
-  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund, redeemTravelCredit,
+  getBooking, listBookings, allBookings, recordPayment, revenueSnapshot, addPoints, cancelBookingWithRefund, redeemTravelCredit, restoreTravelCredit,
   adminOverview, adminUsers, adminBookings, adminActivity, adminAdjustAcu, adminSetMembership, adminSetCorporatePlan,
   updateUser, seedAllRoles, ROLES,
   createApiKey, listApiKeys, revokeApiKey, useApiKey,
@@ -2877,9 +2877,14 @@ app.get('/api/esims', safe((req, res) => {
 app.post('/api/esims', safe(async (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
-  // Order a REAL Airalo eSIM when the door is open (genuine ICCID/QR/LPA);
-  // otherwise an honest "arrives on issue" record with no fabricated identifier.
-  res.json({ esim: await provisionEsimLive(user.id, req.body || {}) });
+  // A REAL Airalo order costs money, so only place one when it is PAID FOR:
+  // bundled in a fully-paid booking (or, in future, a standalone eSIM charge).
+  // A bare POST records an honest pending-issue eSIM — no supplier order, no cost.
+  const bId = req.body?.bookingId;
+  const b = bId ? getBooking(bId) : null;
+  const paidBundled = !!(b && b.userId === user.id && isBookingFullyPaid(b) && (b.option?.components || []).some((c) => c.type === 'esim'));
+  const allowLiveOrder = liveFulfilmentAllowed() && paidBundled;
+  res.json({ esim: await provisionEsimLive(user.id, { ...(req.body || {}), allowLiveOrder }) });
 }));
 app.post('/api/esims/:id/activate', safe((req, res) => {
   const user = currentUser(req);
@@ -3958,9 +3963,15 @@ app.post('/api/book/:id/cancel', safe(async (req, res) => {
   // Best-effort automatic refund on the primary (deposit) payment intent, for up
   // to the refundable amount. Instalments captured on other intents are settled
   // by ops from the queued refund ticket — never silently dropped.
+  // CASH refunds only ever repay CASH the customer paid; the credit-funded portion
+  // is returned to their Travel Credit wallet, never paid out as money.
+  const cashRefund = outcome.cashRefund != null ? outcome.cashRefund : outcome.refund;
+  if (outcome.creditRefund > 0) {
+    try { restoreTravelCredit(booking.userId, outcome.creditRefund, `cancel:${booking.id}`); } catch {}
+  }
   let autoRefunded = 0;
-  if (outcome.refund > 0 && stripeEnabled() && booking.stripePaymentIntent) {
-    const r = await createRefund({ paymentIntentId: booking.stripePaymentIntent, amountMinor: Math.round(outcome.refund * 100) }).catch(() => ({ ok: false }));
+  if (cashRefund > 0 && stripeEnabled() && booking.stripePaymentIntent) {
+    const r = await createRefund({ paymentIntentId: booking.stripePaymentIntent, amountMinor: Math.round(cashRefund * 100) }).catch(() => ({ ok: false }));
     if (r.ok) {
       autoRefunded = (r.amount || 0) / 100;
       booking.cancellation.stripeRefundId = r.refundId || r.id || null;
@@ -3968,10 +3979,10 @@ app.post('/api/book/:id/cancel', safe(async (req, res) => {
       try { recordPayment(booking.id, { type: 'refund', amount: -autoRefunded, gateway: 'stripe', reference: `refund:${booking.cancellation.stripeRefundId}` }); } catch {}
     }
   }
-  const remainder = Math.round((outcome.refund - autoRefunded) * 100) / 100;
+  const remainder = Math.round((cashRefund - autoRefunded) * 100) / 100;
   try {
     createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-refund',
-      message: `Cancellation refund for booking ${booking.id} (${outcome.basis}). Paid ${sym}${outcome.paid}, refund DUE ${sym}${outcome.refund} (retained ${sym}${outcome.retained}${outcome.adminFee ? `, admin fee ${sym}${outcome.adminFee}` : ''}). ${autoRefunded > 0 ? `Auto-refunded ${sym}${autoRefunded} to the deposit card.` : 'No auto-refund fired.'} ${remainder > 0.01 ? `Process the remaining ${sym}${remainder} to the customer's instalment payment method(s).` : 'Nothing further to process.'}`,
+      message: `Cancellation refund for booking ${booking.id} (${outcome.basis}). Paid ${sym}${outcome.paid} (cash ${sym}${cashPaidOf(booking)}). CASH refund DUE ${sym}${cashRefund}${outcome.creditRefund > 0 ? `; ${sym}${outcome.creditRefund} Travel Credit restored to wallet (not cash)` : ''} (retained ${sym}${outcome.retained}${outcome.adminFee ? `, admin fee ${sym}${outcome.adminFee}` : ''}). ${autoRefunded > 0 ? `Auto-refunded ${sym}${autoRefunded} to the deposit card.` : 'No auto-refund fired.'} ${remainder > 0.01 ? `Process the remaining CASH ${sym}${remainder} to the customer's payment method(s) — do NOT refund credit-funded value as cash.` : 'Nothing further to process.'}`,
       reason: 'cancellation-refund' });
   } catch { /* booking is still cancelled */ }
   if (booking.userId) pushNotification(booking.userId, { type: 'info', icon: '↩️', title: 'Booking cancelled', body: outcome.refund > 0 ? `Your booking is cancelled. A refund of ${sym}${outcome.refund.toFixed(2)} is being processed${outcome.adminFee ? ` (after the ${sym}${outcome.adminFee.toFixed(2)} admin fee)` : ''}${autoRefunded > 0 ? ` — ${sym}${autoRefunded.toFixed(2)} already back on your card` : ''}.` : `Your booking is cancelled. As per the terms, no refund is due at this stage.` });

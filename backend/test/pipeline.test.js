@@ -6175,6 +6175,20 @@ test('flights-only fee: auto-priced to guarantee margin after the card fee (no �
   assert.ok(bigMember < feeGbp(1500), 'still much cheaper than the non-member fee');
 });
 
+test('refund never pays credit-funded value out as cash', async () => {
+  const { refundOutcome } = await import('../src/instalments.js');
+  // £200 paid by card + £300 Travel Credit, no ticket, over the 50% threshold.
+  const booking = {
+    option: { pricing: { local: { total: 900 } } },
+    instalment: { deposit: 200, schedule: [{ amount: 700 }] },
+    payments: [{ type: 'deposit', amount: 200 }, { type: 'travel-credit', amount: 300 }],
+  };
+  const o = refundOutcome(booking, { ticketIssued: false, passengers: 1 });
+  assert.ok(o.cashRefund <= 200 + 1e-9, `cash refund (${o.cashRefund}) never exceeds the £200 paid in cash`);
+  assert.ok(o.creditRefund >= 0, 'credit portion returned to the wallet, not cash');
+  assert.ok(Math.abs((o.cashRefund + o.creditRefund) - o.refund) < 0.02, 'cash + credit refund reconciles to the policy refund');
+});
+
 // ---- WAVE 6: deep-clean critical-fix regressions ----------------------------
 import { quoteCancellation as quoteCancelW6 } from '../src/operator.js';
 import { submitReview as submitReviewW6 } from '../src/reviews.js';
@@ -6682,7 +6696,11 @@ test('wave8 abuse: updateUser can never elevate privilege', () => {
 
 test('wave8 money: repeatable reward actions are one-time (no unlimited ACU minting)', () => {
   const u = createUser({ name: 'Farmer', email: `frm${Date.now()}@x.co` });
+  getUserRaw(u.id).emailVerified = true; // self-attested rewards now require a verified email
   const start = getUserRaw(u.id).acuBalance;
+  // Unverified accounts can't mint these at all (anti-farming gate).
+  const unverified = createUser({ name: 'NoVerify', email: `nv${Date.now()}@x.co` });
+  assert.equal(earnAcu(unverified.id, 'UPLOAD_PHOTO').ok, false, 'unverified email cannot earn self-attested rewards');
   const first = earnAcu(u.id, 'UPLOAD_PHOTO');
   assert.equal(first.acu, 50, 'first upload rewards once');
   const second = earnAcu(u.id, 'UPLOAD_PHOTO');
