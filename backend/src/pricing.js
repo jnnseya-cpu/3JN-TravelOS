@@ -30,12 +30,15 @@ export function isFlightOnlyFeeModel(feeModel) { return FLIGHT_ONLY_FEE_MODELS.i
 // it: F = m·(p·C + k + t) / (1 − m·p), where C=fare, p=card%, k=card fixed,
 // t=per-txn cost, m=(1+targetMargin). Falls back to 10% if the config is
 // pathological (m·p ≥ 1). All inputs are env-tunable to real invoices.
-export function autoMarginFlightFeeUSD(fareUSD) {
+export function autoMarginFlightFeeUSD(fareUSD, marginPct = null) {
   const C = Math.max(0, Number(fareUSD) || 0);
   const p = Number(process.env.FLIGHT_FEE_STRIPE_PCT || process.env.STRIPE_FEE_PCT || 0.029); // worst-case card by default
   const k = Number(process.env.STRIPE_FEE_FIXED_USD || 0.25);
   const t = Number(process.env.FLIGHT_FEE_PERTXN_USD || 0.10); // AI + infra per booking
-  const m = 1 + Number(process.env.TARGET_MARGIN_PCT || 100) / 100; // 100% margin → 2×
+  // Target margin: default 100% (2× cost) for non-members; callers pass a smaller
+  // value for the discounted member floor (still above break-even, never a loss).
+  const pct = marginPct != null ? marginPct : Number(process.env.TARGET_MARGIN_PCT || 100);
+  const m = 1 + pct / 100;
   const denom = 1 - m * p;
   if (denom <= 0.05) return round2(C * 0.10); // config would never converge → safe 10%
   return round2((m * (p * C + k + t)) / denom);
@@ -124,8 +127,15 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // old £15 cap could be smaller than the card fee on a big ticket, turning a
   // flights-only booking into a loss. A member's flight keeps the flat member fee
   // (the subsidy is funded by their membership; the net-margin dashboard reflects it).
+  // MEMBER FEE FLOOR: a member's flight fee stays a deep discount, but is NEVER
+  // sold below cost. It's the GREATER of the flat £4.99 and the auto-margin fee at
+  // a small member margin (MEMBER_FLIGHT_MARGIN_PCT, default 15% vs the non-member
+  // 100%) — so on a small fare the member pays the flat £4.99, and on a big fare
+  // the fee rises just enough to clear the card fee on the whole ticket + infra,
+  // instead of 3JN losing ~£20–50 per member long-haul.
+  const MEMBER_FLIGHT_MARGIN_PCT = Number(process.env.MEMBER_FLIGHT_MARGIN_PCT || 15);
   const flightFeeUSD = memberActive
-    ? FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79
+    ? Math.max(FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79, autoMarginFlightFeeUSD(componentsUSD, MEMBER_FLIGHT_MARGIN_PCT))
     : Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE, autoMarginFlightFeeUSD(componentsUSD));
   // BEDBANK MARGIN: net-rate (wholesale) hotel cost is marked up at HOTEL_MARGIN_RATE
   // (the real profit) instead of the 10% — so the standard commission applies only

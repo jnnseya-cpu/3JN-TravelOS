@@ -111,20 +111,21 @@ const app = express();
 // per-IP auth rate limiter AND the anti-farming starter-ACU cap (rotate a fake
 // IP per request → unlimited accounts, each with 50 free ACU).
 app.set('trust proxy', 1);
-// The real client IP for rate-limiting / anti-farming. req.ip honours the single
-// trusted proxy hop above; never read X-Forwarded-For directly (spoofable).
-// The REAL client IP. On Vercel (and most proxies) the app sees the proxy's
-// address in req.ip, with the true client in x-forwarded-for (first entry). Using
-// req.ip alone would make every visitor share ONE IP — collapsing per-IP rate
-// limits and the guest free-search counter into a single global bucket (everyone
-// throttled/walled after one user's activity). Prefer the forwarded client IP,
-// fall back to the socket. (Spoofing XFF only rotates the free-search IP — the
-// same residual as a VPN — and the real wall is the human-checked signup step.)
-const clientIp = (req) => {
-  const xff = req.headers['x-forwarded-for'];
-  if (xff) { const first = String(xff).split(',')[0].trim(); if (first) return first; }
-  return req.headers['x-real-ip'] || req.ip || req.socket?.remoteAddress || null;
-};
+// The real client IP for rate-limiting / anti-farming. With `trust proxy: 1`
+// above, Express derives req.ip from the address the trusted platform proxy
+// appends to X-Forwarded-For — which a caller CANNOT forge. We deliberately do
+// NOT read the raw X-Forwarded-For / X-Real-IP headers: their left-hand entries
+// are fully attacker-controlled, so trusting them let a script rotate a fake IP
+// per request and defeat both the auth rate limiter and the per-IP starter-ACU
+// cap (unlimited accounts × 50 free ACU). req.ip stays per-client because the
+// proxy hop count is trusted, so this does not collapse everyone into one bucket.
+const clientIp = (req) => req.ip || req.socket?.remoteAddress || null;
+// A LIVE supplier order (real airline ticket / hotel / activity / eSIM) may only
+// be placed when real money can actually be captured — i.e. Stripe is configured.
+// Guards the asymmetric-config hole: a deployment with supplier keys (Duffel etc.)
+// but NO Stripe uses the simulated-payment path, which would otherwise issue real,
+// paid inventory for £0. ALLOW_TEST_PAYMENTS overrides for sandbox/staging.
+const liveFulfilmentAllowed = () => stripeEnabled() || process.env.ALLOW_TEST_PAYMENTS === 'true';
 // Payload limit: host property photos travel as compressed data URLs in JSON
 // (10–100 images ≈ 100–150KB each after client-side compression), so the body
 // cap is generous. Individual photos are size-capped again server-side.
@@ -712,6 +713,9 @@ const offerAlreadyBooked = (e) => /already\s+(been\s+)?booked/i.test(String(e ||
 //   • Instalments  → HOLD the fare now (Duffel hold order); issue the ticket
 //     automatically when the final instalment is paid.
 async function autoTicketFlight(booking) {
+  // Never issue a real ticket unless real money can be captured (Stripe on).
+  // Stops the DUFFEL-on / STRIPE-off config from ticketing on simulated payment.
+  if (!liveFulfilmentAllowed()) return;
   // Kiwi Tequila (LCC) fares have a bookingToken instead of a Duffel offerId.
   // They are ticketed by the OPS DESK through Kiwi's booking flow — money is
   // captured only after check_flights re-validation, and the customer is told
@@ -1062,6 +1066,7 @@ async function syncDuffelTicket(booking) {
 // equivalent of autoTicketFlight. Idempotent; on any failure it hands the room
 // to the ops desk (support ticket) so a paid stay is never left unbooked.
 async function autoBookStays(booking) {
+  if (!liveFulfilmentAllowed()) return; // no real capture → never place a real order
   const hotel = (booking.option?.components || []).find((c) => c.type === 'hotel' && c.live && c.details?.staysSearchResultId);
   if (!hotel || !duffelStaysEnabled()) return;
   const ful = (booking.fulfilment = booking.fulfilment || {});
@@ -1121,6 +1126,7 @@ async function autoBookStays(booking) {
 // silently unbooked. Stores the voucher-ready supplier tag for the mandatory
 // "Payable through …" text (cert §4.5).
 async function autoBookHotelbeds(booking) {
+  if (!liveFulfilmentAllowed()) return; // no real capture → never place a real order
   const hotel = (booking.option?.components || []).find((c) => c.type === 'hotel' && c.live && c.details?.hotelbedsRateKey);
   if (!hotel || !hotelbedsHotelsEnabled()) return;
   const ful = (booking.fulfilment = booking.fulfilment || {});
@@ -1182,6 +1188,7 @@ async function autoBookHotelbeds(booking) {
 // activity is never left unbooked. Books each tour, stores the voucher on the
 // component (which the documents renderer surfaces), and tells the customer.
 async function autoBookActivities(booking) {
+  if (!liveFulfilmentAllowed()) return; // no real capture → never place a real order
   if (!viatorMerchantEnabled()) return;
   const activities = (booking.option?.components || []).filter((c) => c.type === 'activity' && c.details?.viatorProductCode);
   if (!activities.length) return;
@@ -3559,7 +3566,10 @@ app.post('/api/admin/instalments/enforce', safe(async (req, res) => {
 // (Vercel sends it as a Bearer token); open only when no secret is configured.
 app.get('/api/cron/instalments', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  // Fail CLOSED — a cron endpoint must never be publicly triggerable (newsletter
+  // blasts, enforcement runs). CRON_SECRET is a hard go-live item; Vercel sends
+  // it automatically on scheduled runs when the env var is set.
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   const results = await runInstalmentEnforcement();
   res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing, potWatches: results.potWatches });
 }));
@@ -3569,7 +3579,10 @@ app.get('/api/cron/instalments', safe(async (req, res) => {
 // double-sends within the cadence window.
 app.get('/api/cron/newsletter', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  // Fail CLOSED — a cron endpoint must never be publicly triggerable (newsletter
+  // blasts, enforcement runs). CRON_SECRET is a hard go-live item; Vercel sends
+  // it automatically on scheduled runs when the env var is set.
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   const base = `${req.protocol}://${req.get('host')}`;
   res.json(await runFeatureNewsletter({ base }));
 }));
@@ -3580,7 +3593,10 @@ app.get('/api/cron/newsletter', safe(async (req, res) => {
 // (and falls back to a live per-country call if the cache is cold/stale).
 app.get('/api/cron/airalo-sync', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  // Fail CLOSED — a cron endpoint must never be publicly triggerable (newsletter
+  // blasts, enforcement runs). CRON_SECRET is a hard go-live item; Vercel sends
+  // it automatically on scheduled runs when the env var is set.
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
   try {
     const out = await syncAiraloPackages();
     res.json(out);

@@ -1144,6 +1144,9 @@ export function redeemTravelCredit(userId, bookingId, requestedAmount = null) {
 export function spendAcu(userId, amount, reason) {
   const u = db.users.get(userId);
   if (!u) return { ok: false, error: 'unknown-user' };
+  // Never let a negative/zero amount CREDIT the wallet (a negative would pass the
+  // balance check and then `-= amount` would ADD to the balance). Debits only.
+  if (!(amount > 0)) return { ok: false, error: 'invalid-amount' };
   if (u.acuBalance < amount) return { ok: false, error: 'insufficient-acu', balance: u.acuBalance };
   u.acuBalance -= amount;
   db.acuTxns.push({ id: id('acu'), userId, type: 'USAGE', amount: -amount, reason, at: nowISO() });

@@ -6162,10 +6162,17 @@ test('flights-only fee: auto-priced to guarantee margin after the card fee (no �
     const cardFeeGbp = 0.029 * (fare + fee) + 0.25 * 0.79; // worst-case card fee, GBP
     assert.ok(fee >= 2 * cardFeeGbp - 0.6, `£${fare}: fee £${fee.toFixed(2)} ≥ 2× card fee £${cardFeeGbp.toFixed(2)}`);
   }
-  // Members keep the flat member fee (the subsidy is funded by their membership).
-  const memberFee = priceBreakdown({ componentsUSD: 900 / 0.79, marketRefUSD: 1000, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
-  assert.ok(Math.abs(memberFee - 4.99) < 0.05, 'member pays the flat £4.99 flight fee');
-  assert.ok(memberFee < feeGbp(900), 'cheaper than the non-member fee on a £900 fare');
+  // Members get a DEEP discount but never a BELOW-COST fee. On a small fare they
+  // pay the flat £4.99 (it already clears the card cost); on a large fare the fee
+  // rises just enough to cover the card fee on the whole ticket — never a loss —
+  // while staying well below the non-member fee.
+  const smallMember = priceBreakdown({ componentsUSD: 80 / 0.79, marketRefUSD: 100, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
+  assert.ok(Math.abs(smallMember - 4.99) < 0.05, 'small fare: member pays the flat £4.99');
+  const bigMember = priceBreakdown({ componentsUSD: 1500 / 0.79, marketRefUSD: 1800, currency: cur, flightsOnly: true, memberActive: true }).local.commission;
+  const bigCardFeeGbp = 0.029 * (1500 + bigMember) + 0.25 * 0.79; // worst-case card fee, GBP
+  assert.ok(bigMember > 4.99, 'large fare: member fee floored above the flat £4.99 to cover cost');
+  assert.ok(bigMember >= bigCardFeeGbp - 0.05, 'member fee is never below the card cost (no loss per member flight)');
+  assert.ok(bigMember < feeGbp(1500), 'still much cheaper than the non-member fee');
 });
 
 // ---- WAVE 6: deep-clean critical-fix regressions ----------------------------
