@@ -3822,7 +3822,24 @@ test('ops completeReissue: issues the ticket, collects the deferred fee + fare d
   assert.equal(completeReissue(b.id, { pnr: 'X' }).ok, false, 'a second complete-reissue is refused');
 });
 
-import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, lockMarginPct, autoFrontCapGbp } from '../src/pricelock.js';
+import { flightSecuringPlan, flightNetCostGbp, bookingExposure, portfolioExposure, applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, lockMarginPct, autoFrontCapGbp, fareAbsorbCeiling, FARE_DRIFT_TOLERANCE_PCT } from '../src/pricelock.js';
+
+test('fareAbsorbCeiling: absorption is bounded by the collected lock margin, never unbounded', () => {
+  // A price-locked booking banked the 8% lock margin → auto-pay ceiling is
+  // collected × 1.08 (the customer's own money), NOT unbounded.
+  const locked = fareAbsorbCeiling(1000, { locked: true });
+  assert.ok(Math.abs(locked.pct - lockMarginPct()) < 1e-9, 'locked ceiling uses the lock margin');
+  assert.ok(Math.abs(locked.ceilingUSD - 1080) < 0.01, 'locked ceiling = collected × (1 + 8%)');
+  // A non-locked instant fare banked no margin → only the thin drift tolerance.
+  const bare = fareAbsorbCeiling(1000, { locked: false });
+  assert.ok(Math.abs(bare.pct - FARE_DRIFT_TOLERANCE_PCT) < 1e-9, 'non-locked ceiling is the drift tolerance only');
+  assert.ok(Math.abs(bare.ceilingUSD - 1020) < 0.01, 'non-locked ceiling = collected × 1.02');
+  // A fare that leaps 20% is above BOTH ceilings — it can never be auto-paid.
+  assert.ok(1200 > locked.ceilingUSD && 1200 > bare.ceilingUSD, 'a 20% leap exceeds every ceiling → ops, never blind pay');
+  // Degenerate inputs never throw or produce a negative ceiling.
+  assert.equal(fareAbsorbCeiling(0, { locked: true }).ceilingUSD, 0);
+  assert.equal(fareAbsorbCeiling(-5, { locked: false }).ceilingUSD, 0);
+});
 
 test('Instalment uplift: default is lock margin 8% + pay-monthly fee 3% = 11%, from the same cash base', () => {
   assert.ok(Math.abs(instalmentFeeRate() - 0.03) < 1e-9, 'default pay-monthly fee is 3%');

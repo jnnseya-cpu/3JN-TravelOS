@@ -53,6 +53,26 @@ export function instalmentFeeRate() { return Math.max(0, Math.min(0.15, num(env.
 
 const gbp2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Thin drift tolerance (2%) for rounding / micro fare-moves on a NON-guaranteed
+// booking that collected no lock margin. Below this we auto-ticket; above it we
+// stop rather than wear an unfunded rise.
+export const FARE_DRIFT_TOLERANCE_PCT = 0.02;
+
+// The absorption CEILING for auto-ticketing a flight: the most 3JN will ever pay
+// the airline above what it collected, before the rise becomes UNFUNDED and must
+// go to ops (never an auto-refund on a price-locked booking, never a blind
+// over-pay). A price-locked instalment booking banked the lock margin precisely
+// to absorb fare movement, so its ceiling is collected × (1 + lockMargin) — the
+// customer's OWN money, capped at the disclosed guarantee. A non-locked booking
+// banked no margin, so it gets the thin drift tolerance only. This is the hard
+// cap that makes "unbounded absorption" impossible: exposure is bounded by the
+// margin that was actually collected, and nothing beyond it is paid automatically.
+export function fareAbsorbCeiling(collectedUSD, { locked = false } = {}) {
+  const collected = Math.max(0, Number(collectedUSD) || 0);
+  const pct = locked ? Math.max(FARE_DRIFT_TOLERANCE_PCT, lockMarginPct()) : FARE_DRIFT_TOLERANCE_PCT;
+  return { collectedUSD: collected, pct, ceilingUSD: gbp2(collected * (1 + pct)) };
+}
+
 // Combined instalment uplift on a cash total — the price-guarantee margin PLUS
 // the pay-monthly service fee, BOTH computed from the same cash base (no
 // compounding). Pure; no mutation. At 0% for both it's a no-op (locked===cash).

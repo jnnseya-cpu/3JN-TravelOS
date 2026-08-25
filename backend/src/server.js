@@ -86,7 +86,7 @@ import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
 import { runPriceGuard, runDisruptionGuard } from './monitor.js';
-import { applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, flightSecuringPlan, portfolioExposure, bookingExposure, lockMarginPct, autoFrontCapGbp } from './pricelock.js';
+import { applyLockMargin, lockMarginOn, applyInstalmentPricing, instalmentPricing, instalmentFeeRate, flightSecuringPlan, portfolioExposure, bookingExposure, lockMarginPct, autoFrontCapGbp, fareAbsorbCeiling } from './pricelock.js';
 import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS, cachedSearchAcu } from './revenue.js';
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
@@ -919,12 +919,14 @@ async function autoTicketFlight(booking) {
     // on abandonment — they keep what they've paid for). If the purchase fails, we
     // fall through to the safe lock-scheduled/ops path (a funded booking is never
     // refunded away).
-    // FARE-DRIFT CEILING: never auto-pay the airline more than ~2% above what we
-    // collected from the customer (mirrors the TBO/Stays guard). If the fare rose
-    // beyond that between collection and ticketing, fall through to the ops/refund
-    // path instead of eating the difference blind.
+    // FARE-ABSORB CEILING: never auto-pay the airline above the funded ceiling —
+    // for this price-locked instalment booking that's the collected fare PLUS the
+    // lock margin we banked to absorb movement (the customer's own money, capped
+    // at the disclosed guarantee). Above it the rise is UNFUNDED → fall through to
+    // the safe lock-scheduled/ops path instead of eating the difference blind.
     const collectedUSD = Number(flight.priceUSD) || 0;
-    const fareOverCollected = collectedUSD > 0 && typeof check.priceUSD === 'number' && check.priceUSD > collectedUSD * 1.02;
+    const absorbCeil = fareAbsorbCeiling(collectedUSD, { locked: true });
+    const fareOverCollected = collectedUSD > 0 && typeof check.priceUSD === 'number' && check.priceUSD > absorbCeil.ceilingUSD;
     if (splitPayEnabled() && fareFunded && check.ok && !check.expired && check.live !== false && !fareOverCollected) {
       const baseAmt = Number(check.amount != null ? check.amount : flight.details.liveAmount) || 0;
       const secured = await createDuffelOrder({ offerId: flight.details.offerId, passengers, paymentAmount: Math.round((baseAmt + bagOfferAmt) * 100) / 100, paymentCurrency: check.currency || flight.details.liveCurrency || 'GBP', idempotencyKey: `order:${booking.id}`, services: bagServices, device: booking.device }).catch((e) => ({ ok: false, error: e?.message || 'exception' }));
@@ -1001,11 +1003,30 @@ async function autoTicketFlight(booking) {
       await failTicketingWithRefund(booking, 'offer-expired-before-ticketing');
       return;
     }
-    // FARE-DRIFT CEILING (mirrors the split path + TBO/Stays ·1.02): never pay the
-    // airline more than ~2% above what we collected — route to refund/ops instead
-    // of eating the difference blind.
+    // FARE-ABSORB CEILING: never auto-pay the airline above the funded ceiling.
+    // A price-locked booking banked the lock margin to absorb movement, so its
+    // ceiling is collected × (1 + lockMargin); a non-locked instant fare gets only
+    // the thin drift tolerance. Above the ceiling the rise is UNFUNDED:
+    //   • price-locked  → NEVER auto-refund (that breaks the guarantee). Hand to
+    //     ops to secure within the locked price via consolidator/alternative.
+    //   • non-locked    → refund/ops as before (no guarantee was sold).
     const collectedUSD = Number(flight.priceUSD) || 0;
-    if (collectedUSD > 0 && typeof check.priceUSD === 'number' && check.priceUSD > collectedUSD * 1.02) {
+    const isLocked = booking.fulfilment?.ticketing === 'lock-scheduled' || !!booking.fulfilment?.lockScheduled || !!booking.instalment;
+    const absorbCeil = fareAbsorbCeiling(collectedUSD, { locked: isLocked });
+    if (collectedUSD > 0 && typeof check.priceUSD === 'number' && check.priceUSD > absorbCeil.ceilingUSD) {
+      if (isLocked) {
+        ful().ticketing = 'lock-scheduled';
+        booking.fulfilment.readyToSecure = bookingFullyPaid(booking);
+        booking.fulfilment.fareRiseUnfunded = { collectedUSD, liveUSD: check.priceUSD, ceilingUSD: absorbCeil.ceilingUSD, at: new Date().toISOString() };
+        try {
+          createSupportTicket({ userId: booking.userId, bookingId: booking.id, intent: 'ops-secure-flight',
+            message: `FARE ROSE ABOVE THE FUNDED CEILING for price-locked booking ${booking.id}. Collected ≈ $${collectedUSD.toFixed(2)}, funded ceiling $${absorbCeil.ceilingUSD.toFixed(2)} (+${Math.round(absorbCeil.pct * 100)}% lock margin), live fare $${Number(check.priceUSD).toFixed(2)}. The customer's price is GUARANTEED — do NOT refund and do NOT charge them more. Secure within the locked price via consolidator/allocation or an equivalent alternative, and escalate if none exists.`,
+            reason: 'fare-rose-above-funded-ceiling' });
+        } catch {}
+        if (booking.userId && bookingFullyPaid(booking)) pushNotification(booking.userId, { type: 'info', icon: '🔒', title: 'Paid in full — securing your ticket', body: 'Your balance is paid and your price is locked. Our team is securing your e-ticket now — it will be emailed to you shortly.' });
+        recordAudit({ actor: 'system', role: 'system', action: 'ticketing.secure-pending', entity: 'booking', entityId: booking.id, summary: `fare above funded ceiling ($${Number(check.priceUSD).toFixed(2)} > $${absorbCeil.ceilingUSD.toFixed(2)}) · guarantee held · ops securing` });
+        return;
+      }
       await failTicketingWithRefund(booking, 'fare-rose-above-collected');
       return;
     }
