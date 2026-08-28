@@ -4655,6 +4655,27 @@ test('embassy sets criteria/fees/templates; AI proposal follows THEIR thresholds
   assert.ok(letter.includes('199'), 'letter shows the embassy-set fee');
 });
 
+test('security: embassy branding/language cannot inject script into the visa letter (stored XSS closed)', () => {
+  const appRec = recordVisaApplication(assessVisa({ name: 'Bola A', nationality: 'NG', destination: 'Dubai', visaType: 'tourist' }));
+  const decided = decideVisaApplication(appRec.id, { decision: 'Approved', reason: 'ok', conditions: [], officerId: 'o1' });
+  // A malicious embassy/admin-supplied config: colours that try to break out of the
+  // <style> block and a language that tries to break out of the lang="" attribute.
+  const evil = {
+    language: 'en"></head><body><script>alert(1)</script>',
+    branding: {
+      primaryColor: '#000}</style><script>alert(2)</script><style>',
+      accentColor: 'red;}</style><img src=x onerror=alert(3)>',
+    },
+  };
+  const letter = visaDecisionLetter(decided.application, evil);
+  assert.ok(!letter.includes('<script>alert(1)</script>'), 'language cannot inject a script tag');
+  assert.ok(!letter.includes('<script>alert(2)</script>'), 'primaryColor cannot break out of <style>');
+  assert.ok(!letter.includes('onerror=alert(3)'), 'accentColor cannot inject an event handler');
+  assert.ok(!/<script>/.test(letter), 'no script tag survives anywhere in the rendered letter');
+  // The letter still renders normally with safe fallbacks.
+  assert.ok(letter.includes('<!doctype html'), 'letter still renders');
+});
+
 test('travel document is COMPLETE: e-ticket number, hotel, transfer, eSIM, insurance, voucher', () => {
   const b = { id: 'bkg_doc1', fulfilment: { pnr: 'KXQPLM', eTicketNumber: '176-2400123456', ticketing: 'confirmed' }, leadTraveller: { fullLegalName: 'Jean N' }, payments: [{ amount: 500 }], option: { tier: 'Standard', destination: 'Dubai', travellers: { total: 2 }, pricing: { symbol: '£', local: { total: 2000 } }, components: [
     { type: 'flight', supplier: 'Emirates', details: { cabin: 'Economy', baggage: '2 checked', outbound: { from: 'LHR', to: 'DXB', date: '2026-10-03', depart: '10:00', arrive: '20:00' }, inbound: { from: 'DXB', to: 'LHR', date: '2026-10-10' }, passengers: 2 } },

@@ -99,33 +99,43 @@ const LETTER_I18N = {
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+// SECURITY: embassy branding + language are admin/embassy-role editable and this
+// letter is rendered for a DIFFERENT user (the applicant) and other officers, so
+// an unvalidated value would be stored XSS. Whitelist the language to a known
+// i18n key and force any branding colour to a strict hex literal before it can
+// reach the lang="" attribute or the <style> block.
+const safeColor = (c, fallback) => (/^#[0-9a-fA-F]{3,8}$/.test(String(c || '')) ? String(c) : fallback);
+
 export function visaDecisionLetter(app, config) {
   const cfg = resolveEmbassyConfig(config);
-  const t = LETTER_I18N[cfg.language] || LETTER_I18N.en;
-  const rtl = cfg.language === 'ar';
+  const lang = LETTER_I18N[cfg.language] ? cfg.language : 'en';
+  const t = LETTER_I18N[lang];
+  const rtl = lang === 'ar';
+  const primaryColor = safeColor(cfg.branding.primaryColor, '#1b2333');
+  const accentColor = safeColor(cfg.branding.accentColor, '#6b7590');
   const dec = app.embassyDecision || {};
   const headline = dec.decision === 'Approved' ? t.approved
     : dec.decision === 'Refused' ? t.refused
     : dec.decision === 'More info requested' ? t.moreinfo : t.escalated;
-  const color = dec.decision === 'Approved' ? '#1e7a4b' : dec.decision === 'Refused' ? '#a33030' : cfg.branding.accentColor;
+  const color = dec.decision === 'Approved' ? '#1e7a4b' : dec.decision === 'Refused' ? '#a33030' : accentColor;
   const visaType = app.applicant?.visaType || app.visaType || 'tourist';
   const fee = cfg.fees[String(visaType).toLowerCase()] || cfg.fees.tourist;
   const conditions = dec.conditions || [];
   const reasons = dec.reason ? [dec.reason] : [];
-  return `<!doctype html><html lang="${cfg.language}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"/>
+  return `<!doctype html><html lang="${esc(lang)}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${esc(cfg.embassyName)} — ${esc(t.decision)} ${esc(app.id)}</title>
 <style>
   body { font-family: Georgia, 'Times New Roman', serif; color: #1b2333; background: #eef0f4; margin: 0; }
   .doc { max-width: 760px; margin: 26px auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.14); }
-  .hd { background: ${cfg.branding.primaryColor}; color: #fff; padding: 26px 32px; }
+  .hd { background: ${primaryColor}; color: #fff; padding: 26px 32px; }
   .seal { font-size: 34px; } .emb { font-size: 20px; font-weight: 700; letter-spacing: .4px; }
   .lh { font-size: 11.5px; opacity: .8; margin-top: 4px; }
   .verdict { margin: 26px 32px 6px; padding: 12px 18px; border: 2px solid ${color}; color: ${color}; font-weight: 700; letter-spacing: 1.2px; display: inline-block; }
   .body { padding: 10px 32px 26px; font-size: 14.5px; line-height: 1.55; }
   table { border-collapse: collapse; margin: 12px 0; } td { padding: 5px 14px 5px 0; vertical-align: top; }
   td.k { color: #6b7590; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
-  h4 { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: ${cfg.branding.accentColor}; }
+  h4 { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: ${accentColor}; }
   ul { margin: 4px 0; padding-${rtl ? 'right' : 'left'}: 20px; } li { margin: 4px 0; }
   .ft { padding: 16px 32px; border-top: 1px solid #e3e7ef; font-size: 11px; color: #6b7590; }
   .sig { margin-top: 22px; } .sig b { display: block; font-size: 13px; }

@@ -514,10 +514,17 @@ const splitPayEnabled = () => process.env.SPLIT_PAY_INSTANT_FARES === 'true';
 // Searches keep their per-tier cost (SEARCH_TIERS); these cover the smaller AI
 // actions. Guests (no balance) must sign in — new accounts get SIGNUP_STARTER_ACU.
 const AI_ACTION_ACU = { growth: 5, assistant: 2, cached: 1 };
+// Constant-time secret compare (length-checked) — avoids leaking the secret via
+// response-timing, matching the reviewer-key path. Never throws on odd input.
+function secretEq(given, expected) {
+  const a = Buffer.from(String(given == null ? '' : given));
+  const b = Buffer.from(String(expected == null ? '' : expected));
+  return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
+}
 function staffPinOk(req) {
   const pin = staffPin();
   if (!pin) return true; // gate not configured
-  return req.headers['x-staff-pin'] === pin || (req.body && req.body.staffPin === pin);
+  return secretEq(req.headers['x-staff-pin'], pin) || (req.body && secretEq(req.body.staffPin, pin));
 }
 
 function requireRole(req, res, roles) {
@@ -2757,7 +2764,12 @@ app.post('/api/login', safe((req, res) => {
   // address. Without this gate, anyone who knew a customer's email could open their
   // account with only the human-check. The frontend already prefers Firebase when
   // it's configured; this closes the fallback in production.
-  if (LIVE_MODE()) {
+  // FAIL-CLOSED IN PRODUCTION: passwordless email login is a DEMO affordance and
+  // an account-takeover oracle if left on. Disable it whenever LIVE_MODE is set OR
+  // NODE_ENV is 'production' (Vercel sets this by default on production deploys) —
+  // so a real deployment is safe even if the operator forgets LIVE_MODE=true. The
+  // test/demo flow (NODE_ENV=test / unset) is unaffected.
+  if (LIVE_MODE() || process.env.NODE_ENV === 'production') {
     return res.status(403).json({ error: 'password-login-disabled', message: 'Please sign in with your verified account (Continue with Google or your email + password).' });
   }
   const ip = clientIp(req);
@@ -2986,9 +2998,14 @@ app.post('/api/plan', safe(async (req, res) => {
   // through to the normal dated search. Uses no ACU (it's cached market data).
   let effectiveOverrides = overrides;
   let flexResult = null;
+  // Per-IP live-search budget — computed ONCE per request (also gates the live
+  // overlay + market floor below). Guards the flexible-window scan too, which
+  // makes a real external market call: an unauthenticated caller must not be able
+  // to trigger it unbounded (denial-of-wallet).
+  const liveBudget = rateLimitLiveSearch(clientIp(req));
   try {
     const pre = parseIntent(String(text || ''), context);
-    if (pre?.flexWindow && marketDataEnabled() && pre.destination) {
+    if (pre?.flexWindow && marketDataEnabled() && liveBudget.ok && pre.destination) {
       const originR = (pre.originCity && resolveOrigin(String(pre.originCity))) || originForCountry(context.country) || { airport: 'LHR' };
       const scan = await cheapestDepartureInWindow(pre, pre.destination, originR, pre.flexWindow);
       if (scan?.dep) {
@@ -3014,7 +3031,7 @@ app.post('/api/plan', safe(async (req, res) => {
   // silent fallback (below) is never a mystery to the operator. Attached to the
   // response as `liveOverlay`.
   const liveOverlay = { attempted: false, applied: false, reason: null, flightsFound: 0, hotelsFound: 0, duffelMode: duffelMode() };
-  const liveBudget = rateLimitLiveSearch(clientIp(req));
+  // liveBudget was computed once above (before the flexible-window scan).
   // SPEND GUARD: a NON-FUNDED user who has already used their free searches gets no
   // live-supplier call — we're going to send them to sign up / join anyway, so
   // never burn paid Duffel/AI quota on an over-limit user (read-only checks, no
@@ -3642,7 +3659,7 @@ app.get('/api/cron/instalments', safe(async (req, res) => {
   // Fail CLOSED — a cron endpoint must never be publicly triggerable (newsletter
   // blasts, enforcement runs). CRON_SECRET is a hard go-live item; Vercel sends
   // it automatically on scheduled runs when the env var is set.
-  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
   const results = await runInstalmentEnforcement();
   res.json({ ok: true, checked: results.checked, reminders: results.reminders, warned: results.warned, defaulted: results.defaulted, securing: results.securing, potWatches: results.potWatches });
 }));
@@ -3655,7 +3672,7 @@ app.get('/api/cron/newsletter', safe(async (req, res) => {
   // Fail CLOSED — a cron endpoint must never be publicly triggerable (newsletter
   // blasts, enforcement runs). CRON_SECRET is a hard go-live item; Vercel sends
   // it automatically on scheduled runs when the env var is set.
-  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
   const base = `${req.protocol}://${req.get('host')}`;
   res.json(await runFeatureNewsletter({ base }));
 }));
@@ -3669,7 +3686,7 @@ app.get('/api/cron/airalo-sync', safe(async (req, res) => {
   // Fail CLOSED — a cron endpoint must never be publicly triggerable (newsletter
   // blasts, enforcement runs). CRON_SECRET is a hard go-live item; Vercel sends
   // it automatically on scheduled runs when the env var is set.
-  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
   try {
     const out = await syncAiraloPackages();
     res.json(out);
@@ -3734,7 +3751,7 @@ app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
   // Fail CLOSED: this sweep CANCELS real hotel bookings, so it must never be
   // publicly triggerable. Requires CRON_SECRET (Vercel auto-sends it on cron runs
   // when the env var is set — so setting CRON_SECRET is a hard go-live item).
-  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
   // Clamp the buffer (max 3 days) so a caller can never force EARLY mass
   // cancellation of reservations before customers' embassy appointments.
   const bufferDays = Math.min(3, Math.max(0, Number(req.query.bufferDays) || 2));
@@ -3752,7 +3769,7 @@ app.get('/api/cron/visa-hotel-sweep', safe(async (req, res) => {
 // paid customer can never stay stuck. Fail-closed (CRON_SECRET); idempotent.
 app.get('/api/cron/visa-reconcile', safe(async (req, res) => {
   const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' });
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
   if (!stripeEnabled()) return res.json({ ok: true, checked: 0, issued: 0, note: 'Stripe not configured.' });
   const pending = visaReservationsAwaitingPayment();
   let issued = 0;
