@@ -120,6 +120,14 @@ app.set('trust proxy', 1);
 // cap (unlimited accounts × 50 free ACU). req.ip stays per-client because the
 // proxy hop count is trusted, so this does not collapse everyone into one bucket.
 const clientIp = (req) => req.ip || req.socket?.remoteAddress || null;
+// The canonical public base URL for building redirect/return URLs (Stripe
+// success/cancel etc.). SECURITY: prefer a configured, trusted origin so a spoofed
+// Origin/Host header can never redirect a post-payment flow (carrying booking/
+// session params) to an attacker domain. Falls back to the request header only
+// when PUBLIC_BASE_URL / CORS_ORIGIN are unset (dev/prototype). Trailing slash
+// trimmed so `${origin}/path` never doubles up.
+const trimSlash = (s) => String(s || '').replace(/\/+$/, '');
+const safeOrigin = (req) => trimSlash(process.env.PUBLIC_BASE_URL || process.env.CORS_ORIGIN || req.headers.origin || `https://${req.headers.host}`);
 // A LIVE supplier order (real airline ticket / hotel / activity / eSIM) may only
 // be placed when real money can actually be captured — i.e. Stripe is configured.
 // Guards the asymmetric-config hole: a deployment with supplier keys (Duffel etc.)
@@ -225,6 +233,35 @@ app.use((req, res, next) => {
       return res.status(403).json({ error: 'forbidden', message: 'Request blocked by the security perimeter.' });
     }
   } catch { /* the shield must never take the app down — fail open on its own error */ }
+  next();
+});
+
+// PRODUCTION READINESS GATE (fail-closed) — turns the two biggest launch blockers
+// into HARD gates instead of hopeful config. In a production deployment we REFUSE
+// customer API traffic until the launch-critical configuration is present:
+//   • a DURABLE store  — else every booking/payment/user is ephemeral and lost on
+//     the next cold start / redeploy (the store is in-memory; durability is the
+//     external Firebase/KV backend, which fails OPEN to memory when unset).
+//   • LIVE_MODE=true   — else demo/passwordless/free-AI affordances are live.
+// The static SPA/SEO and a short diagnostics allowlist stay reachable so an
+// operator can SEE why it is refusing. Explicit escape hatch for a controlled
+// test: ALLOW_UNSAFE_PROD=true. Off entirely outside NODE_ENV=production, so the
+// dev/test/demo flow is untouched.
+const PROD_GATE_DIAGNOSTICS = new Set(['/api/health', '/api/persistence-test', '/api/context', '/api/auth/precheck']);
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production' || process.env.ALLOW_UNSAFE_PROD === 'true') return next();
+  if (!req.path.startsWith('/api')) return next();          // let the SPA/SEO shell load
+  if (PROD_GATE_DIAGNOSTICS.has(req.path)) return next();   // operators must be able to diagnose
+  const missing = [];
+  if (!isEnabled()) missing.push('durable-store');          // Firebase RTDB / Vercel KV not configured
+  if (process.env.LIVE_MODE !== 'true') missing.push('LIVE_MODE');
+  if (missing.length) {
+    return res.status(503).json({
+      error: 'not-ready-for-production',
+      missing,
+      message: 'This deployment is missing launch-critical configuration and is refusing customer traffic to protect data and accounts. Configure a durable store and set LIVE_MODE=true — or set ALLOW_UNSAFE_PROD=true to override during a controlled test.',
+    });
+  }
   next();
 });
 
@@ -1554,7 +1591,7 @@ app.post('/api/search/priority-checkout', safe(async (req, res) => {
   if (!fee.feeGBP) return res.json({ ok: true, level: fee.level, feeGBP: 0, note: 'Standard search is free — no payment needed.' });
   if (!stripeEnabled()) return res.status(400).json({ error: 'stripe-not-configured', level: fee.level, feeGBP: fee.feeGBP });
   const user = currentUser(req);
-  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const origin = safeOrigin(req);
   const session = await createCheckoutSession({
     amountMinor: Math.round(fee.feeGBP * 100), currency: 'GBP',
     description: `3JN priority search — ${fee.level} (${fee.note})`,
@@ -1703,7 +1740,7 @@ app.post('/api/pots/:id/contribute', safe(async (req, res) => {
   // by the signed webhook. NEVER credit a pot from an unpaid request (that let a
   // user mint spendable value for free and pay a whole trip with it).
   if (stripeEnabled()) {
-    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const origin = safeOrigin(req);
     const session = await createCheckoutSession({
       amountMinor: Math.round(amountUSD * 0.79 * 100), currency: 'gbp',
       description: `3JN Travel Pot — ${(getTravelPot(req.params.id)?.name || 'Trip pot')}`,
@@ -2087,7 +2124,7 @@ app.post('/api/account/:id/acu', safe(async (req, res) => {
     const p = ACU_PACKS[pack];
     if (!p) return res.status(400).json({ ok: false, error: 'invalid' });
     if (p.custom) return res.status(400).json({ ok: false, error: 'contact-sales', message: 'Enterprise ACU volume is priced individually — contact sales@3jntravel.com.' });
-    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const origin = safeOrigin(req);
     const user = currentUser(req);
     const session = await createCheckoutSession({
       amountMinor: Math.round(p.gbp * 100), currency: 'gbp',
@@ -2124,7 +2161,7 @@ app.post('/api/account/:id/deposit', safe(async (req, res) => {
   if (stripeEnabled()) {
     const amountGBP = SEARCH_DEPOSIT_GBP[tier];
     if (!amountGBP) return res.status(400).json({ ok: false, error: 'invalid', schedule: SEARCH_DEPOSIT_GBP });
-    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const origin = safeOrigin(req);
     const user = currentUser(req);
     const session = await createCheckoutSession({
       amountMinor: Math.round(amountGBP * 100), currency: 'gbp',
@@ -2594,7 +2631,7 @@ app.post('/api/quote-request/:id/pay', safe(async (req, res) => {
   // Capture the traveller's device now (payment is initiated from their browser);
   // markQuoteRequestPaid copies it onto the booking for Duffel's fraud headers.
   qr.device = { ip: clientIp(req), userAgent: String(req.headers['user-agent'] || '').slice(0, 512) };
-  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const origin = safeOrigin(req);
   const session = await createCheckoutSession({
     amountMinor: Math.round(qr.confirmedTotalLocal * 100),
     currency: qr.currency,
@@ -2648,7 +2685,7 @@ app.post('/api/deals/:id/checkout', safe(async (req, res) => {
   const payNowGBP = kind === 'deposit' && deal.depositGBP ? deal.depositGBP : (option.pricing.local.total);
 
   if (stripeEnabled()) {
-    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const origin = safeOrigin(req);
     const session = await createCheckoutSession({
       amountMinor: Math.round(payNowGBP * 100),
       currency: 'GBP',
@@ -2819,7 +2856,7 @@ async function membershipCheckout(req, res, tierKey, mode, billing = 'monthly') 
     const r = mode === 'renew' ? renewMembership(user.id) : subscribeMembership(user.id, tierKey, billing);
     return r.ok ? res.json(r) : res.status(400).json(r);
   }
-  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const origin = safeOrigin(req);
   const session = await createCheckoutSession({
     amountMinor: Math.round(price * 100), currency: 'gbp',
     description: `3JN Travel+ — ${plan.name} (${yearly ? 'yearly · 2 months free' : 'monthly'})`,
@@ -3947,7 +3984,7 @@ app.post('/api/book/:id/pay', safe(async (req, res) => {
   // (meta.bookingId + meta.instalmentIndex) is the single source of truth that
   // records the payment and marks the schedule item, exactly like the deposit.
   if (stripeEnabled()) {
-    const origin = req.headers.origin || `https://${req.headers.host}`;
+    const origin = safeOrigin(req);
     const sym = target.option?.pricing?.symbol || '£';
     const session = await createCheckoutSession({
       amountMinor: Math.round(Number(item.amount) * 100),
@@ -4332,7 +4369,7 @@ app.post('/api/pay/stripe/session', safe(async (req, res) => {
       }
     }
   }
-  const origin = req.headers.origin || `https://${req.headers.host}`;
+  const origin = safeOrigin(req);
   const user = currentUser(req);
   const session = await createCheckoutSession({
     amountMinor: Math.round(total * 100),
