@@ -172,6 +172,10 @@ export function route(task) {
   };
 }
 
+// Is a live provider actually configured for this task's route? (A key is set, so
+// run()/runText() will make a real call instead of the deterministic fallback.)
+export function aiConfigured(task = 'chiefOfStaff') { return route(task).mode === 'live'; }
+
 // Execute a task through the gateway.
 //   task    — a key from TASK_ROUTES
 //   payload — task input (e.g. { text } for intentExtraction)
@@ -236,14 +240,100 @@ export async function run({ task, payload, localFn, spentThisSession = 0, contex
   };
 }
 
-// Live provider call. Stubbed to a clear, single integration point — wire the
-// real SDK/HTTP here. In the prototype this path is never reached unless a key
-// is set, and even then a thrown error degrades to the local fallback.
+// Live provider call — a REAL HTTP call to the routed provider's API. Activates
+// the moment the provider's key is set in the environment; with no key the route
+// never reaches here (route().mode is 'local-fallback') and run() uses localFn.
+// Every provider adapter returns a normalised { text, usage } — run()'s caller
+// gets the model's text and the deterministic engine stays as the fallback.
+// Uses the platform SYSTEM_PROMPT and a hard timeout; a non-OK response, an empty
+// body, or a malformed shape throws → run() degrades to the deterministic result.
+const AI_TIMEOUT_MS = Math.max(2000, Number(env.AI_TIMEOUT_MS) || 20000);
+const AI_MAX_TOKENS = Math.max(64, Number(env.AI_MAX_TOKENS) || 1024);
+const AI_MAX_OUTPUT_CHARS = 100000; // sanity cap on any model reply we accept
+
+// Build the user text from a task payload (accepts { prompt } | { text } | { user }
+// | a raw string), so callers can pass whatever they already have.
+function payloadToPrompt(payload) {
+  if (payload == null) return '';
+  if (typeof payload === 'string') return payload;
+  return String(payload.prompt ?? payload.user ?? payload.text ?? '').trim();
+}
+// Validate a model reply before any caller can use it: a non-empty string within
+// a sane length. Anything else is treated as a provider failure (→ fallback).
+function validateText(text) {
+  if (typeof text !== 'string') throw new Error('provider returned non-text');
+  const t = text.trim();
+  if (!t) throw new Error('provider returned empty text');
+  if (t.length > AI_MAX_OUTPUT_CHARS) throw new Error('provider reply exceeded size cap');
+  return t;
+}
+
+async function fetchJson(url, options) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
+    try { return JSON.parse(body); } catch { throw new Error('provider returned non-JSON'); }
+  } finally { clearTimeout(timer); }
+}
+
 async function callProvider(routeInfo, payload) {
-  // Example shape (left unimplemented so no network call happens by default):
-  //   const res = await fetch(providerEndpoint, { headers: { authorization: ... }, body: ... });
-  //   return await res.json();
-  throw new Error(`live provider '${routeInfo.provider}' not wired in prototype — using local fallback`);
+  const providerId = routeInfo.provider;
+  const p = PROVIDERS[providerId];
+  const key = p && env[p.envKey];
+  if (!key) throw new Error(`no key for provider '${providerId}'`);
+  const model = env[`${providerId.toUpperCase()}_MODEL`] || p.model;
+  const system = SYSTEM_PROMPT;
+  const user = payloadToPrompt(payload);
+  if (!user) throw new Error('empty prompt');
+  let text;
+
+  if (providerId === 'anthropic') {
+    const data = await fetchJson('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, max_tokens: AI_MAX_TOKENS, system, messages: [{ role: 'user', content: user }] }),
+    });
+    text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  } else if (providerId === 'openai') {
+    const data = await fetchJson('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, max_tokens: AI_MAX_TOKENS, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+    });
+    text = data.choices?.[0]?.message?.content;
+  } else if (providerId === 'gemini') {
+    const data = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { maxOutputTokens: AI_MAX_TOKENS } }),
+    });
+    text = (data.candidates?.[0]?.content?.parts || []).map((x) => x.text || '').join('').trim();
+  } else if (providerId === 'cohere') {
+    const data = await fetchJson('https://api.cohere.com/v2/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+    });
+    text = (data.message?.content || []).map((x) => x.text || '').join('').trim();
+  } else {
+    throw new Error(`unknown provider '${providerId}'`);
+  }
+  return validateText(text); // the model's text (validated); run() returns it as `result`
+}
+
+// Convenience: run a text task through the gateway and get the model's TEXT back,
+// with a deterministic fallback that is ALSO validated the same way. Returns
+// { text, meta } and never throws — the caller always gets usable text.
+export async function runText({ task, prompt, localFn, spentThisSession = 0, context = {} }) {
+  const out = await run({ task, payload: { prompt }, localFn, spentThisSession, context });
+  let text = out.result;
+  if (typeof text !== 'string' || !text.trim()) {
+    text = typeof localFn === 'function' ? String((await localFn({ prompt })) || '').trim() : '';
+  }
+  return { text, meta: out.meta };
 }
 
 // ---- AI Cost Optimisation Engine ------------------------------------------

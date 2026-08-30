@@ -91,7 +91,7 @@ import { submitReview, leaderboard } from './reviews.js';
 import { whiteLabelPayout, REVENUE_STREAMS, SEARCH_TIERS, SAVINGS_GUARANTEE, prioritySearchFee, PRIORITY_SEARCH_FEES, groupTravelFees, GROUP_SEGMENTS, cachedSearchAcu } from './revenue.js';
 import { createSponsoredPlacement, listSponsoredPlacements, setSponsoredPlacementActive, removeSponsoredPlacement, sponsoredPlacementsFor, sponsoredPlacementRevenueGBP } from './store.js';
 import { PLACEMENT_SECTIONS as PLACEMENT_SECTIONS_LIST } from './partners.js';
-import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN } from './ai-gateway.js';
+import { gatewayStatus, PROVIDER_TOKEN_RATES, aiMarginReport, MIN_AI_MARGIN, runText, aiConfigured } from './ai-gateway.js';
 import { securityReport, opsDiagnostics, seoReport, marketingPlan, createPost, listPosts, getPost, recordBlogView, blogSeoScore, ensureDailyPublish, startPublishingLoop, relatedPosts, blogRssFeed, seoAutopilot, linkGraphStats, regenerateBlog } from './agents.js';
 import { generateGrowthContent, GROWTH_TOOL_KEYS } from './growth.js';
 import { snapshot, flatSnapshot, hydrate, hydrateMerge } from './store.js';
@@ -3054,6 +3054,25 @@ app.post('/api/plan', safe(async (req, res) => {
   let result = plan({ text, context, user, searchTier, overrides: effectiveOverrides, preferences: preferences || {}, usage: usageStats(user?.id) });
   if (flexResult) result.flexResult = flexResult;
 
+  // LIVE AI INTENT ASSIST (activates only with an AI provider key): when the
+  // deterministic parser could not identify a destination, use the LLM to restate
+  // the traveller's message as one clear booking sentence, then RE-PARSE it through
+  // the SAME deterministic engine — which validates every place and date against
+  // the real catalogue, so no model-invented destination can enter a booking.
+  // Falls back to the original clarify response on any failure or if no real
+  // destination resolves. No-op (and no cost) unless a provider key is configured.
+  if (result.stage === 'clarify' && !result.intent?.destination && typeof text === 'string' && text.trim() && aiConfigured('intentExtraction')) {
+    try {
+      const prompt = `Restate this traveller's request as ONE clear trip-booking sentence, naming only details they actually gave — origin city, destination city, month or dates, number of nights, and traveller counts (adults/children with ages). Do NOT invent a destination or any detail they did not state; omit anything missing. Message:\n"""${text.slice(0, 800)}"""`;
+      const enh = await runText({ task: 'intentExtraction', prompt, localFn: () => '', context: { userId: user?.id } });
+      const sentence = String(enh.text || '').trim();
+      if (sentence) {
+        const retry = plan({ text: sentence, context, user, searchTier, overrides: effectiveOverrides, preferences: preferences || {}, usage: usageStats(user?.id) });
+        if (retry && retry.intent?.destination) { result = retry; result.intentAssisted = true; if (flexResult) result.flexResult = flexResult; }
+      }
+    } catch { /* keep the original deterministic clarify response */ }
+  }
+
   // Live provider pricing overlay: when flight/hotel provider keys are present
   // and reachable, fetch real offers and rebuild the packages from them. Any
   // failure (no keys, outbound disabled, provider down) silently keeps the
@@ -5082,6 +5101,21 @@ app.post('/api/support/chat', safe(async (req, res) => {
       }
       if (Object.keys(leaf).length) await saveMerge(leaf);
     } catch (e) { console.error('[pending-persist]', e?.message || e); }
+  }
+  // LIVE AI VOICE (activates only when an AI provider key is set): for soft,
+  // pre-sales/conversational intents, rewrite the deterministic reply in a warmer,
+  // 3JN-specific voice — GROUNDED on the deterministic answer, instructed to invent
+  // nothing, with that answer as the automatic fallback. Operational intents
+  // (bookings, payments, visas, refunds, escalation, confirms) keep the
+  // deterministic reply VERBATIM, so no customer-facing fact is ever model-authored.
+  const SOFT_ASSISTANT_INTENTS = new Set(['info', 'greeting', 'booking_new']);
+  if (!out.escalate && SOFT_ASSISTANT_INTENTS.has(out.intent) && aiConfigured('chiefOfStaff')) {
+    try {
+      const grounded = String(out.reply || '');
+      const prompt = `A customer wrote to the 3JN Travel OS assistant:\n"""${String(message || '').slice(0, 1500)}"""\n\nThe system's grounded answer is:\n"""${grounded.slice(0, 1500)}"""\n\nRewrite the grounded answer in a warm, concise, professional 3JN voice (max ~90 words). Preserve every fact, number, instruction and link exactly; do NOT invent prices, availability, bookings, discounts or promises; do NOT add facts not present in the grounded answer. If nothing can be safely improved, return the grounded answer unchanged.`;
+      const enh = await runText({ task: 'chiefOfStaff', prompt, localFn: () => grounded, context: { userId: user.id } });
+      if (enh.text && enh.text.length <= 1200) out.reply = enh.text;
+    } catch { /* keep the deterministic reply */ }
   }
   let ticket = null;
   if (out.escalate) {
