@@ -19,7 +19,7 @@ import { benchmarkVerdict } from './benchmark.js';
 import { sendMail, vendorApplicationEmail, vendorApprovedEmail, vendorDeclinedEmail, vendorSuspendedEmail, vendorReinstatedEmail } from './mailer.js';
 const VENDOR_PORTAL_URL = process.env.SITE_URL || 'https://3jntravel.com/';
 import { instalmentState, defaultOutcome, refundOutcome, dueReminders, planPaid, daysUntil, FINAL_PAYMENT_DAYS } from './instalments.js';
-import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo } from './extras-suppliers.js';
+import { fulfilmentChannelFor, portalPayload, provisionEsimViaApi, provisionEsimViaAiralo, airaloUsage } from './extras-suppliers.js';
 import { accountIsDormantBot } from './bot-defence.js';
 import { PLACEMENT_SECTIONS } from './partners.js';
 
@@ -133,12 +133,14 @@ const SHARE_EVENT_CAP = 20000;
 const SHARED_TRIP_CAP = 20000;
 const SRC_CLEAN = (s) => String(s || 'link').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'link';
 
-// Short, URL/QR-friendly token. Not security-sensitive (a shared trip is public
-// by nature) — just needs to be unguessable enough to avoid casual enumeration.
+// Short, URL/QR-friendly token — CRYPTO-random (not Math.random) so shared-trip
+// links can't be enumerated by guessing the PRNG. A shared trip is public by
+// nature, but the token now carries the creator's userId, so it must be unguessable.
 function shareToken() {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = randomBytes(10);
   let t = '';
-  for (let i = 0; i < 8; i++) t += alphabet[Math.floor(Math.random() * alphabet.length)];
+  for (let i = 0; i < 10; i++) t += alphabet[bytes[i] % alphabet.length];
   return t;
 }
 
@@ -392,8 +394,31 @@ export function activateEsim(userId, esimId) {
   const e = db.esims.find((x) => x.id === esimId && x.userId === userId);
   if (!e) return { ok: false, error: 'not-found' };
   e.status = 'active'; e.activatedAt = nowISO();
-  e.dataUsedGB = Math.round(e.dataGB * 0.18 * 10) / 10; // simulate some usage
+  // A freshly activated eSIM has used nothing yet — that is the truthful value.
+  // Real consumption is pulled from the carrier on demand via refreshEsimUsage
+  // (never fabricated). Leave any previously-synced figure untouched.
+  if (typeof e.dataUsedGB !== 'number') e.dataUsedGB = 0;
   return { ok: true, esim: e };
+}
+
+// Pull REAL data usage from the carrier (Airalo) for a provisioned eSIM and store
+// it. No fabrication: without a live eSIM (ICCID) or Airalo credentials it returns
+// { ok:false } and the stored figure is left as-is so the UI can show
+// "usage unavailable" rather than an invented number.
+export async function refreshEsimUsage(userId, esimId) {
+  const e = db.esims.find((x) => x.id === esimId && x.userId === userId);
+  if (!e) return { ok: false, error: 'not-found' };
+  const iccid = e.iccid || e.profile?.iccid || null;
+  if (!iccid) return { ok: false, error: 'no-live-esim', esim: { ...e } };
+  const u = await airaloUsage(iccid).catch(() => ({ ok: false }));
+  if (!u.ok) return { ok: false, error: u.reason || 'usage-unavailable', esim: { ...e } };
+  e.dataUsedGB = u.usedGB;
+  e.dataRemainingGB = u.remainingGB;
+  if (u.totalGB) e.dataGB = u.totalGB;
+  if (u.status) e.carrierStatus = u.status;
+  if (u.expiredAt) e.expiresAt = u.expiredAt;
+  e.usageSyncedAt = nowISO();
+  return { ok: true, esim: { ...e } };
 }
 
 // ---- Expense Intelligence (Executive tier) --------------------------------

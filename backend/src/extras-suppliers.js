@@ -212,6 +212,33 @@ async function airaloToken() {
   return tok;
 }
 
+// REAL data-usage for a provisioned eSIM (Airalo GET /v2/sims/{iccid}/usage).
+// Returns { ok, usedGB, remainingGB, totalGB, unlimited, status, expiredAt } from
+// the carrier — never a fabricated figure. { ok:false } when Airalo isn't
+// configured or the ICCID is unknown, so the caller can show "usage unavailable"
+// rather than invent a number. Amounts come back in MB → GB (1 dp).
+export async function airaloUsage(iccid) {
+  if (!iccid || !airaloEnabled()) return { ok: false, reason: 'not-configured' };
+  const tok = await airaloToken();
+  if (!tok) return { ok: false, reason: 'not-configured' };
+  try {
+    const res = await httpJSON(`${AIRALO_BASE}/v2/sims/${encodeURIComponent(iccid)}/usage`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${tok}` },
+    });
+    const d = res?.data;
+    if (!d) return { ok: false, reason: 'no-data' };
+    const mbToGb = (mb) => Math.round(((Number(mb) || 0) / 1000) * 10) / 10;
+    const unlimited = !!d.is_unlimited;
+    const remainingGB = mbToGb(d.remaining);
+    const totalGB = mbToGb(d.total);
+    const usedGB = unlimited ? mbToGb(d.total != null && d.remaining != null ? Number(d.total) - Number(d.remaining) : 0)
+      : Math.max(0, Math.round((totalGB - remainingGB) * 10) / 10);
+    return { ok: true, usedGB, remainingGB, totalGB, unlimited, status: d.status || null, expiredAt: d.expired_at || null };
+  } catch (e) {
+    return { ok: false, reason: 'fetch-failed', message: String(e?.message || e).slice(0, 160) };
+  }
+}
+
 // ---- Airalo package catalogue: hourly sync + cache -------------------------
 // Airalo require partners to hit GET /v2/packages at least once an hour so the
 // catalogue never goes stale (no selling retired / out-of-stock eSIMs). We sync

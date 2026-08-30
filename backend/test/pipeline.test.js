@@ -82,7 +82,7 @@ import { assist } from '../src/assistant.js';
 import { getUserRaw } from '../src/store.js';
 import { acuForAction, effectiveRevshareRate, accrueRevshare, isValidAttribution, REVSHARE_CAP_GBP, tierForFollowers } from '../src/rewards.js';
 import { assessVisa, approvalProbability } from '../src/visaos.js';
-import { findUserByEmail, provisionEsim, listEsims, activateEsim, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
+import { findUserByEmail, provisionEsim, listEsims, activateEsim, refreshEsimUsage, expenseReport, createContract, negotiatedDiscount } from '../src/store.js';
 import { subscribeMembership, renewMembership, spendAcu, buyAcu, redeemTravelCredit, listBookings } from '../src/store.js';
 
 // A PACKAGE option (flight + hotel) carrying a member perk budget (25% of gross) +
@@ -175,6 +175,31 @@ test('geo detection reads Accept-Language', () => {
   const ctx = detectContext({ headers: { 'accept-language': 'en-GB,en;q=0.9' } });
   assert.equal(ctx.country, 'GB');
   assert.equal(ctx.currency.code, 'GBP');
+});
+
+test('geo uses REAL IP-country from the CDN edge header', () => {
+  // Vercel/Cloudflare geolocate the request at the edge — no external GeoIP call.
+  const v = detectContext({ headers: { 'x-vercel-ip-country': 'NG', 'accept-language': 'en-GB' } });
+  assert.equal(v.country, 'NG', 'edge IP-country wins over the language hint');
+  assert.equal(v.currency.code, 'NGN');
+  const cf = detectContext({ headers: { 'cf-ipcountry': 'AE' } });
+  assert.equal(cf.country, 'AE');
+  // An explicit user choice still overrides the IP.
+  const chosen = detectContext({ headers: { 'x-vercel-ip-country': 'NG' } }, { country: 'GB', currencyCountry: 'GB' });
+  assert.equal(chosen.country, 'GB', 'explicit market choice beats IP geolocation');
+  // A junk header never breaks detection.
+  assert.equal(detectContext({ headers: { 'x-vercel-ip-country': 'XX!' } }).country, 'GB');
+});
+
+test('eSIM usage is REAL or unavailable — never fabricated', async () => {
+  const u = createUser({ name: 'Esim Honest', role: 'consumer' });
+  const e = provisionEsim(u.id, { destination: 'Dubai', dataGB: 5 });
+  assert.equal(e.dataUsedGB, 0, 'provisioned eSIM starts at 0 used');
+  // No Airalo credentials (and/or no live ICCID) → refuse to invent usage.
+  const r = await refreshEsimUsage(u.id, e.id);
+  assert.equal(r.ok, false, 'without real carrier data → usage unavailable, not fabricated');
+  assert.ok(['no-live-esim', 'not-configured', 'usage-unavailable', 'no-data', 'fetch-failed'].includes(r.error), `honest unavailable reason (${r.error})`);
+  assert.equal(listEsims(u.id)[0].dataUsedGB, 0, 'stored usage stays truthful (0), never guessed');
 });
 
 test('plan returns tiered, verified options with a recommendation', () => {
@@ -990,7 +1015,9 @@ test('login finds a seeded account by email; eSIM + expense work', () => {
   const e = provisionEsim(u.id, { destination: 'Dubai', dataGB: 5 });
   assert.equal(e.status, 'provisioned');
   assert.equal(listEsims(u.id).length, 1);
-  assert.equal(activateEsim(u.id, e.id).esim.status, 'active');
+  const act = activateEsim(u.id, e.id);
+  assert.equal(act.esim.status, 'active');
+  assert.equal(act.esim.dataUsedGB, 0, 'activation never fabricates usage — a fresh eSIM has used 0');
 
   const rep = expenseReport(u.id); // no bookings yet
   assert.ok('categories' in rep && 'csv' in rep);
@@ -1222,7 +1249,7 @@ test('ACU: hard block at insufficient balance, top-ups priced at £1 = 100 ACU',
 
 test('share-a-trip: store round-trips the exact search + attributes by channel', () => {
   const rec = createSharedTrip({ text: 'Faro from Birmingham for 7 nights, flights and hotel for 2 adults and a 9 year old', tier: 'smart', prefs: { directOnly: true } });
-  assert.ok(rec && rec.token && rec.token.length === 8, 'short token minted');
+  assert.ok(rec && rec.token && rec.token.length === 10 && /^[a-z0-9]+$/.test(rec.token), 'short crypto-random token minted');
   const got = getSharedTrip(rec.token);
   assert.equal(got.text, rec.text, 'exact search reconstructs');
   assert.equal(got.tier, 'smart');

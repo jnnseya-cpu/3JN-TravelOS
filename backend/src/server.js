@@ -28,7 +28,7 @@ import {
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
   applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid, setVisaFeeSession, visaReservationsAwaitingPayment,
-  findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, expenseReport,
+  findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, refreshEsimUsage, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
   subscribeMembership, renewMembership, cancelMembership, spendAcu, creditAcu,
   createHostListing, listHostListings, hostEarnings,
@@ -2988,6 +2988,14 @@ app.post('/api/esims/:id/activate', safe((req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: 'auth-required' });
   res.json(activateEsim(user.id, req.params.id));
+}));
+// Pull REAL carrier data-usage for a live eSIM (Airalo). Returns the updated eSIM,
+// or ok:false with the stored record unchanged when no live usage is available —
+// never a fabricated figure.
+app.post('/api/esims/:id/usage', safe(async (req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(await refreshEsimUsage(user.id, req.params.id));
 }));
 
 // ---- Expense Intelligence -------------------------------------------------

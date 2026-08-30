@@ -1,9 +1,10 @@
 // Location, language and currency detection.
 //
-// In a real deployment this would read the request IP (via a GeoIP service),
-// the Accept-Language header and the user's saved profile. For the prototype we
-// derive everything we can from the inbound request headers and fall back to a
-// sensible default so the experience is fully offline-capable.
+// Country is resolved from REAL IP geolocation: the edge/CDN geolocates the
+// request and passes the ISO country in a header (x-vercel-ip-country on Vercel,
+// cf-ipcountry on Cloudflare) — no external GeoIP service or key needed. An
+// explicit user choice (override / x-country / saved profile) wins over the IP,
+// then Accept-Language, then a sensible default, so it stays fully offline-capable.
 
 const CURRENCY_BY_COUNTRY = {
   GB: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 },
@@ -48,10 +49,14 @@ function parseAcceptLanguage(header) {
 
 export function detectContext(req, overrides = {}) {
   const headerCountry = parseAcceptLanguage(req?.headers?.['accept-language']);
+  // Real IP geolocation from the edge/CDN (no external call). Two-letter ISO only.
+  const cdnRaw = String(req?.headers?.['x-vercel-ip-country'] || req?.headers?.['cf-ipcountry'] || '').toUpperCase();
+  const cdnCountry = /^[A-Z]{2}$/.test(cdnRaw) ? cdnRaw : null;
   const country =
-    overrides.country ||
-    req?.headers?.['x-country'] ||
-    headerCountry ||
+    overrides.country ||            // explicit request (user chose a market)
+    req?.headers?.['x-country'] ||  // saved profile / client preference
+    cdnCountry ||                   // real IP-country from the CDN edge
+    headerCountry ||               // Accept-Language hint
     DEFAULT_COUNTRY;
 
   const known = CURRENCY_BY_COUNTRY[country] ? country : DEFAULT_COUNTRY;
