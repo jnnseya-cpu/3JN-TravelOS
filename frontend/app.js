@@ -1564,6 +1564,7 @@ function optionCard(o, sym, intent) {
   return `
     <div class="card opt ${o.recommended ? 'rec' : ''}">
       ${o.recommended ? '<span class="rec-tag">★ Recommended</span>' : ''}
+      ${optionPhotoStrip(o, intent)}
       <span class="verified-tag">✓ ${o.verified ? '100% Verified' : 'Mixed'} · reliability ${o.avgReliability}</span>
       <div class="rel-bar"><i style="width:${o.avgReliability}%"></i></div>
       <h3>${esc(o.tier)}</h3>
@@ -3121,6 +3122,7 @@ function bookingCard(b) {
 
   return `
     <div class="card booking-card">
+      ${destStrip({ city: b.destination, seed: b.id, pad: 18, h: 84 })}
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div><strong>${o.tier} package</strong> <span class="tag-confirmed">${b.status}</span> ${b.priceBasis === 'live' ? '<span class="chip" style="font-size:10px;border-color:rgba(121,217,155,.4);color:#79d99b">LIVE FARE</span>' : '<span class="chip" style="font-size:10px;border-color:rgba(201,168,106,.4);color:var(--gold)">ESTIMATED QUOTE — no payment taken</span>'} ${lockBadge}</div>
         <strong style="font-family:var(--font-body)">${money2(o.pricing.local.total, sym)}</strong>
@@ -4958,6 +4960,24 @@ function travelPhoto(d, w = 820) {
   const key = String(d.destinationCity || '').toLowerCase().trim();
   const id = CITY_PHOTO[key] || TRAVEL_PHOTOS[photoHash(d.id || key || d.title) % TRAVEL_PHOTOS.length];
   return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${w}&q=70`;
+}
+// A slim destination photo strip — full-bleed across a card's padding, capped
+// short so the content below stays the focus. Used on the search-result option
+// card and the booking card. Only shown when the destination is known; graceful
+// image fallback (the <img> hides itself, the warm gradient + caption remain).
+function destStrip({ city, country = '', seed = '', pad = 22, h = 94 }) {
+  if (!city || city === '—') return '';
+  const url = travelPhoto({ destinationCity: city, id: seed || city, title: city }, 640);
+  return `<div style="margin:-${pad}px -${pad}px 14px;height:${h}px;position:relative;overflow:hidden;border-radius:13px 13px 0 0;background:linear-gradient(135deg,#1b1d22,#26282f)">
+    <img src="${url}" alt="${esc(city)}" loading="lazy" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">
+    <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,13,16,.12),rgba(12,13,16,.8))"></div>
+    <div style="position:absolute;left:16px;bottom:9px;font-family:var(--font-display);font-size:15px;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,.6)">${esc(city)}${country ? `<span style="font-family:var(--font-body);font-size:11px;color:rgba(242,239,231,.82);margin-left:6px">${esc(country)}</span>` : ''}</div>
+  </div>`;
+}
+function optionPhotoStrip(o, intent) {
+  const city = o?.destination?.city || intent?.destination?.city || '';
+  const country = o?.destination?.country || intent?.destination?.country || '';
+  return destStrip({ city, country, seed: (o?.tier || '') + city, pad: 22, h: 94 });
 }
 function dealBanner(d) {
   const img = d.image || '';
