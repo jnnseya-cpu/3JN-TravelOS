@@ -266,13 +266,28 @@ function sliceToLeg(slice) {
 export function duffelBaggageLabel(offer) {
   const seg = offer?.slices?.[0]?.segments?.[0];
   const bags = seg?.passengers?.[0]?.baggages;
-  if (!Array.isArray(bags) || !bags.length) return 'Cabin bag included · checked bags per fare rules';
+  // No baggage data on the fare — DON'T assert a cabin bag is included (that was
+  // a fabrication that broke the like-for-like comparison against a "Light"/
+  // underseat-only market fare). State the truth: it's governed by fare rules.
+  if (!Array.isArray(bags) || !bags.length) return 'Baggage per fare rules';
   const checked = bags.filter((b) => b.type === 'checked').reduce((s, b) => s + (Number(b.quantity) || 0), 0);
   const carry = bags.filter((b) => b.type === 'carry_on').reduce((s, b) => s + (Number(b.quantity) || 0), 0);
   const parts = [];
-  parts.push(carry > 0 ? `${carry} cabin bag${carry > 1 ? 's' : ''}` : 'Cabin bag');
+  // carry === 0 is a genuine "Light"/underseat-only fare (same product the metasearch
+  // headlines quote) — say so honestly instead of printing "Cabin bag" regardless.
+  parts.push(carry > 0 ? `${carry} cabin bag${carry > 1 ? 's' : ''}` : 'Underseat bag only (no cabin bag)');
   parts.push(checked > 0 ? `${checked} checked bag${checked > 1 ? 's' : ''} included` : 'no checked bag (add at booking)');
   return parts.join(' + ');
+}
+
+// Whether the fare INCLUDES an overhead cabin bag (carry_on > 0). null = the
+// offer carried no baggage data so we genuinely don't know. Lets the UI compare
+// like-for-like against a "Light" market fare and offer the cabin bag as a
+// truthful add-on rather than implying it's already in the price.
+export function duffelCabinBagIncluded(offer) {
+  const bags = offer?.slices?.[0]?.segments?.[0]?.passengers?.[0]?.baggages;
+  if (!Array.isArray(bags) || !bags.length) return null;
+  return bags.filter((b) => b.type === 'carry_on').reduce((s, b) => s + (Number(b.quantity) || 0), 0) > 0;
 }
 
 // Normalise one Duffel offer to our flight-offer shape. Returns null if the
@@ -305,6 +320,10 @@ export function normalizeDuffelOffer(offer, priceUSD, travellers) {
       // "per fare rules" / "no checked bag") — lets the package show a bags-
       // included inclusion like the retail OTAs.
       checkedBagIncluded: /\d+\s*checked bag/i.test(duffelBaggageLabel(offer)),
+      // Truthful cabin-bag flag (true/false/null-unknown) so the UI can show a
+      // like-for-like comparison vs a "Light" market fare and offer the cabin
+      // bag as an add-on when it isn't already included.
+      cabinBagIncluded: duffelCabinBagIncluded(offer),
       offerId: offer.id,
       // Real-money safety: a Duffel offer is only ticketable until it expires,
       // and can reprice. Store both so payment can RE-VALIDATE before charging.
