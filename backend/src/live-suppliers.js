@@ -1134,15 +1134,20 @@ export async function fetchLiveFlights(intent, dest, origin) {
 
   const results = await Promise.all(tasks);
   const all = results.flat().filter(Boolean);
-  // RANK: fares that depart from the REQUESTED origin always come first (the
-  // default/recommended trip must match what the customer asked for). Nearby-origin
-  // alternatives are kept — cheapest first — but strictly BELOW every requested-
-  // origin fare, so a cheaper Manchester fare can never silently become a booking
-  // for a customer who asked to fly from Birmingham. Each group is price-sorted.
+  // RANK: fares that match EXACTLY what the customer asked for — the requested
+  // origin AND the requested dates — always come first (the default/recommended
+  // trip must match the request). Nearby-origin AND ±1-day date-flex fares are
+  // kept — cheapest first — but strictly BELOW every exact-match fare, so a
+  // cheaper Manchester fare can never silently become a booking for a customer
+  // who asked to fly from Birmingham, and a cheaper 21-Nov fare can never
+  // silently rebook a customer who asked for 20-Nov. They surface only as the
+  // clearly-labelled "cheaper 1 day later / from a nearby airport" alternative.
+  // Each group is price-sorted.
   const byPrice = (a, b) => a.priceUSD - b.priceUSD;
-  const requested = all.filter((f) => !f?.details?.altOriginCode).sort(byPrice);
-  const altOrigin = all.filter((f) => f?.details?.altOriginCode).sort(byPrice);
-  const merged = [...requested, ...altOrigin].slice(0, 24);
+  const isAlternate = (f) => Boolean(f?.details?.altOriginCode || f?.details?.dateFlex || f?.details?.flexDate);
+  const requested = all.filter((f) => !isAlternate(f)).sort(byPrice);
+  const alternates = all.filter(isAlternate).sort(byPrice);
+  const merged = [...requested, ...alternates].slice(0, 24);
   return merged.length ? merged : null;
 }
 
