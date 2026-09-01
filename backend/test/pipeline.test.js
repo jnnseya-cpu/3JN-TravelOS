@@ -6034,6 +6034,41 @@ test('wave4 tequila TZ: duration uses UTC epochs, not wall-clock across timezone
   assert.equal(offer.details.outbound.depart, '10:00', 'display time stays LOCAL');
 });
 
+test('travelfusion: route XML normalises to a bookable LCC offer, baggage honest', async () => {
+  const { normalizeTravelfusionRoute, buildTravelfusionLeg } = await import('../src/live-suppliers.js');
+  const outward = `<Outward><Segment>` +
+    `<MarketingAirline>FR</MarketingAirline><FlightNumber>202</FlightNumber>` +
+    `<DepartAirport>BHX</DepartAirport><ArriveAirport>BVA</ArriveAirport>` +
+    `<DepartDateTime>2026-11-20T07:15</DepartDateTime><ArriveDateTime>2026-11-20T09:55</ArriveDateTime>` +
+    `</Segment></Outward>`;
+  const homeward = `<Homeward><Segment>` +
+    `<MarketingAirline>FR</MarketingAirline><FlightNumber>203</FlightNumber>` +
+    `<DepartAirport>BVA</DepartAirport><ArriveAirport>BHX</ArriveAirport>` +
+    `<DepartDateTime>2026-11-22T10:20</DepartDateTime><ArriveDateTime>2026-11-22T10:40</ArriveDateTime>` +
+    `</Segment></Homeward>`;
+  const route = { routeId: 'R1', supplier: 'ryanair', priceGbp: 134, currency: 'GBP', outwardXml: outward, homewardXml: homeward, cabinBagIncluded: false };
+  const offer = normalizeTravelfusionRoute(route, 170, { total: 2, adults: 2 });
+  assert.ok(offer, 'route normalises');
+  assert.equal(offer.type, 'flight');
+  assert.equal(offer.live, true);
+  assert.equal(offer.sourcedVia, 'Travelfusion (live)');
+  assert.equal(offer.details.outbound.from, 'BHX');
+  assert.equal(offer.details.outbound.to, 'BVA');
+  assert.equal(offer.details.outbound.depart, '07:15', 'segment time parsed');
+  assert.equal(offer.details.outbound.stopLabel, 'Direct');
+  assert.ok(offer.details.inbound, 'return leg parsed');
+  // Baggage must be HONEST: a base LCC fare with no cabin bag says so.
+  assert.match(offer.details.baggage, /Underseat bag only/);
+  assert.equal(offer.details.cabinBagIncluded, false);
+  assert.equal(offer.details.travelfusionRouteId, 'R1');
+  // And when the fare DOES include a cabin bag, the label flips truthfully.
+  const withBag = normalizeTravelfusionRoute({ ...route, cabinBagIncluded: true }, 170, { total: 2, adults: 2 });
+  assert.match(withBag.details.baggage, /1 cabin bag/);
+  assert.equal(withBag.details.cabinBagIncluded, true);
+  // A leg with no parseable segments yields null (never a phantom leg).
+  assert.equal(buildTravelfusionLeg('<Outward></Outward>'), null);
+});
+
 test('wave4 scanSummary: empty categories report null cheapest, never Infinity', () => {
   const res = plan({ text: 'Barcelona from London in September for 4 nights, flights and hotel for 2 adults', context: GB, user: null, searchTier: 'smart' });
   for (const [, s] of Object.entries(res.scanSummary || {})) {

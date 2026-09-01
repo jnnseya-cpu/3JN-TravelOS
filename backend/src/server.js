@@ -80,7 +80,7 @@ import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore }
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, travelfusionEnabled, validateTravelfusionOffer, travelfusionDiagnostic, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -2257,6 +2257,17 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
       note: lccFlightsEnabled()
         ? 'LCC door OPEN — Ryanair/Jet2/Wizz fares flow live on regional routes (EMA, etc.).'
         : 'Kiwi Tequila is now INVITATION-ONLY (B2B partnerships). Alternatives: Duffel already carries easyJet/Vueling LCC content; for bookable Ryanair/Jet2 apply to Travelfusion (sales-led) or Ryanair\'s approved-OTA programme. The adapter activates the moment any partner key lands in TEQUILA_API_KEY.',
+    },
+    // Travelfusion LCC consolidator — the price-competitive European short-haul
+    // source (Ryanair/easyJet/Jet2/Wizz/Vueling). The adapter is BUILT and wired;
+    // it activates when TRAVELFUSION_LOGIN_ID + TRAVELFUSION_PASSWORD are set and
+    // the account is certified. Live probe shows the real auth/reachability state.
+    travelfusion: {
+      provider: 'Travelfusion', enabled: travelfusionEnabled(),
+      diagnostic: probe ? await travelfusionDiagnostic().catch((e) => ({ ok: false, verdict: `Travelfusion probe threw: ${e?.message || e}` })) : { enabled: travelfusionEnabled() },
+      note: travelfusionEnabled()
+        ? 'Travelfusion door OPEN — bookable Ryanair/easyJet/Jet2 fares flow into the live search and undercut Duffel on European short-haul.'
+        : 'Adapter BUILT + wired (fail-closed). Apply to Travelfusion for the Flight API, then set TRAVELFUSION_LOGIN_ID + TRAVELFUSION_PASSWORD (optionally TRAVELFUSION_MODE=live after certification). See docs/travelfusion-application.md.',
     },
     marketData: {
       provider: 'Travelpayouts (Aviasales)', enabled: marketDataEnabled(),

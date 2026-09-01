@@ -1006,6 +1006,278 @@ export async function validateTequilaOffer(bookingToken, { adults = 1, children 
   };
 }
 
+// ===========================================================================
+// Travelfusion (LCC consolidator — Ryanair / easyJet / Jet2 / Wizz / Vueling)
+// ===========================================================================
+// A bookable low-cost-carrier content source. Duffel's NDC easyJet fare sits
+// ~£45pp above the consolidator fare metasearch shows, and Duffel does not sell
+// Ryanair/Jet2 at all — Travelfusion closes both gaps. It is an XML-over-HTTPS
+// "Universal API": every call POSTs an XML document whose root element names the
+// request, authenticated by a provisioned LoginId. The flow is async:
+//   StartRouteSearch → (poll) CheckRouteSearchStatus → GetRouteSearchResults
+//   → GetDetails (bookable re-price)  → StartBooking → GetBookingDetails
+//
+// CERTIFICATION NOTE: the request/response ELEMENT NAMES below follow
+// Travelfusion's documented Universal API. A handful vary by account/version;
+// each is centralised here and flagged `// cert:` so they can be confirmed
+// against the test credentials without touching the pipeline. The adapter is
+// fail-closed — travelfusionEnabled() is false until BOTH keys are set, so it is
+// completely inert in production until a certified key lands. Nothing here can
+// charge a customer: booking re-validates the live price first (same contract as
+// validateDuffelOffer) and final ticket issuance runs through the ops queue.
+const TRAVELFUSION_LOGIN = env.TRAVELFUSION_LOGIN_ID || '';
+const TRAVELFUSION_PASSWORD = env.TRAVELFUSION_PASSWORD || '';
+const TRAVELFUSION_BASE = env.TRAVELFUSION_BASE_URL || 'https://api.travelfusion.com';
+const TRAVELFUSION_MODE = env.TRAVELFUSION_MODE || (env.LIVE_MODE === 'true' ? 'live' : 'test');
+// Which supplier classes to search. Default to the low-cost carriers Duffel
+// can't beat / can't sell; override with a comma list if the account carries more.
+const TRAVELFUSION_SUPPLIERS = (env.TRAVELFUSION_SUPPLIERS || 'ryanair,easyjet,jet2,wizzair,vueling')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+export function travelfusionEnabled() {
+  return !!(TRAVELFUSION_LOGIN && TRAVELFUSION_PASSWORD) && typeof fetch === 'function';
+}
+
+// Low-level XML POST. Travelfusion returns text/xml; return the raw string, or
+// an {__error,__status} envelope on a non-2xx, or null on transport failure.
+async function httpXML(bodyXml, { timeoutMs } = {}) {
+  if (typeof fetch !== 'function') return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs || TIMEOUT_MS);
+  try {
+    const r = await fetch(TRAVELFUSION_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/xml; charset=utf-8', Accept: 'text/xml' },
+      body: bodyXml,
+      signal: ctrl.signal,
+    });
+    const text = await r.text();
+    return r.ok ? text : { __error: text, __status: r.status };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Minimal, dependency-free XML readers — enough for Travelfusion's flat element
+// structure (the project ships no XML lib on purpose). Not a general parser:
+// they read the FIRST match / ALL matches of a named element's inner text.
+function tfXmlEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+}
+function tfTag(xml, tag) {
+  const m = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`).exec(xml || '');
+  return m ? m[1].trim() : null;
+}
+function tfTagsAll(xml, tag) {
+  const out = []; const re = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, 'g'); let m;
+  while ((m = re.exec(xml || ''))) out.push(m[1]);
+  return out;
+}
+// Travelfusion dates are ISO YYYY-MM-DD (cert: confirm; some flows want DD/MM/YYYY).
+function travelfusionDate(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+}
+function tfTimeHH(s) { return (String(s || '').match(/(\d{2}:\d{2})/) || [])[1] || ''; }
+function tfDateYMD(s) { return (String(s || '').match(/(\d{4}-\d{2}-\d{2})/) || [])[1] || ''; }
+
+// Parse one <Segment>/<Flight> block into our per-segment shape. cert: element
+// names (DepartTime/ArriveTime/DepartAirport…) confirmed at integration.
+function parseTfSegment(seg) {
+  const dep = tfTag(seg, 'DepartDateTime') || tfTag(seg, 'DepartTime') || '';
+  const arr = tfTag(seg, 'ArriveDateTime') || tfTag(seg, 'ArriveTime') || '';
+  const airline = tfTag(seg, 'MarketingAirline') || tfTag(seg, 'Airline') || tfTag(seg, 'SupplierCode') || '';
+  return {
+    carrier: carrierName(airline) || airline,
+    flightNumber: `${airline}${tfTag(seg, 'FlightNumber') || ''}`,
+    operatedBy: null,
+    from: tfTag(seg, 'DepartAirport') || tfTag(seg, 'Origin') || '',
+    fromCity: '',
+    to: tfTag(seg, 'ArriveAirport') || tfTag(seg, 'Destination') || '',
+    toCity: '',
+    date: tfDateYMD(dep), depart: tfTimeHH(dep), arrive: tfTimeHH(arr),
+    durationLabel: '',
+    aircraft: null,
+  };
+}
+
+// Turn one <Outward>/<Homeward> block into a leg (mirrors the Tequila/Duffel leg
+// shape: segments + layovers + stop label). Exported for tests as it's pure.
+export function buildTravelfusionLeg(legXml) {
+  if (!legXml) return null;
+  const segXmls = tfTagsAll(legXml, 'Segment').length ? tfTagsAll(legXml, 'Segment') : tfTagsAll(legXml, 'Flight');
+  const segments = segXmls.map(parseTfSegment).filter((s) => s.from && s.to);
+  if (!segments.length) return null;
+  const first = segments[0]; const last = segments[segments.length - 1];
+  const stops = segments.length - 1;
+  const layovers = [];
+  for (let i = 1; i < segments.length; i++) {
+    layovers.push({ airport: segments[i].from, city: segments[i].fromCity || '', minutes: null, durationLabel: '', overnight: false, tight: false });
+  }
+  const viaLabel = layovers.length ? ` · via ${layovers.map((l) => l.airport).join(', ')}` : '';
+  return {
+    from: first.from, fromCity: first.fromCity || '',
+    to: last.to, toCity: last.toCity || '',
+    date: first.date, depart: first.depart, arrive: last.arrive,
+    arriveNextDay: !!(first.date && last.date && last.date !== first.date),
+    durationLabel: '',
+    stops, stopLabel: stops === 0 ? 'Direct' : `${stops} stop${stops > 1 ? 's' : ''}${viaLabel}`,
+    segments, layovers,
+  };
+}
+
+// Normalise one parsed Travelfusion route to our flight-offer shape. `route` is a
+// plain object {routeId, supplier, priceGbp, currency, outwardXml, homewardXml,
+// cabinBagIncluded}. Pure + exported for tests. priceUSD is pre-converted.
+export function normalizeTravelfusionRoute(route, priceUSD, travellers) {
+  if (!route) return null;
+  const outbound = buildTravelfusionLeg(route.outwardXml);
+  if (!outbound) return null;
+  const inbound = route.homewardXml ? buildTravelfusionLeg(route.homewardXml) : null;
+  const carrier = carrierName(route.supplier) || route.supplier || 'Airline';
+  return {
+    type: 'flight',
+    supplier: carrier,
+    verified: true,
+    reliabilityScore: 85, // real bookable LCC fare via Travelfusion
+    premium: false,
+    live: true,
+    sourcedVia: 'Travelfusion (live)',
+    sourcedType: 'LCC consolidator',
+    details: {
+      outbound, inbound,
+      passengers: travellers.total,
+      cabin: 'Economy',
+      // Truthful baggage: LCC base fares are underseat-only unless the route
+      // explicitly includes a cabin bag (same honesty rule as the Duffel label).
+      baggage: route.cabinBagIncluded === true
+        ? '1 cabin bag + no checked bag (add at booking)'
+        : 'Underseat bag only (no cabin bag) + no checked bag (add at booking)',
+      cabinBagIncluded: route.cabinBagIncluded === true ? true : (route.cabinBagIncluded === false ? false : null),
+      // Booking context: re-priced via getTravelfusionDetails before any charge;
+      // ticketing runs through the ops queue like the Tequila LCC pipe.
+      travelfusionRouteId: route.routeId || null,
+      travelfusionSupplier: route.supplier || null,
+      liveAmount: route.priceGbp != null ? String(route.priceGbp) : null,
+      liveCurrency: route.currency || 'GBP',
+    },
+    priceUSD,
+  };
+}
+
+// Extract the route objects from a GetRouteSearchResults XML body.
+function parseTravelfusionRoutes(xml) {
+  return tfTagsAll(xml, 'Route').map((r) => {
+    const priceGbp = Number(tfTag(r, 'Price') || tfTag(r, 'TotalPrice') || tfTag(r, 'Amount'));
+    const cabinBag = tfTag(r, 'CabinBaggageIncluded') || tfTag(r, 'HandBaggageIncluded');
+    return {
+      routeId: tfTag(r, 'RouteId') || tfTag(r, 'RouteID') || null,
+      supplier: tfTag(r, 'SupplierCode') || tfTag(r, 'Supplier') || '',
+      priceGbp: Number.isFinite(priceGbp) ? priceGbp : null,
+      currency: tfTag(r, 'Currency') || 'GBP',
+      outwardXml: tfTag(r, 'Outward') || tfTag(r, 'OutboundFlight') || null,
+      homewardXml: tfTag(r, 'Homeward') || tfTag(r, 'InboundFlight') || null,
+      cabinBag: cabinBag == null ? null : /true|yes|1/i.test(cabinBag),
+    };
+  }).filter((r) => r.priceGbp != null && r.outwardXml);
+}
+
+// Search Travelfusion: start the async route search, poll to Ready, pull results.
+// Returns normalised offers (cheapest first) or null. cert: request/reply element
+// names centralised here — confirm against the test account, pipeline unaffected.
+async function fetchTravelfusionFlights(intent, originCode, destCode) {
+  if (!travelfusionEnabled()) return null;
+  const t = intent.travellers || {};
+  const supList = TRAVELFUSION_SUPPLIERS.map((s) => `<SupplierClass>${tfXmlEsc(s)}</SupplierClass>`).join('');
+  const homeward = !intent.oneWay && intent.dates.checkOut
+    ? `<HomewardDates><DateOfSearch>${travelfusionDate(intent.dates.checkOut)}</DateOfSearch></HomewardDates>` : '';
+  const start = await httpXML(
+    `<StartRouteSearch>` +
+    `<LoginId>${tfXmlEsc(TRAVELFUSION_LOGIN)}</LoginId>` +
+    `<Password>${tfXmlEsc(TRAVELFUSION_PASSWORD)}</Password>` +
+    `<Mode>${tfXmlEsc(TRAVELFUSION_MODE)}</Mode>` +
+    `<Origin>${tfXmlEsc(originCode)}</Origin><Destination>${tfXmlEsc(destCode)}</Destination>` +
+    `<OutwardDates><DateOfSearch>${travelfusionDate(intent.dates.checkIn)}</DateOfSearch></OutwardDates>${homeward}` +
+    `<Passengers><Adults>${t.adults || 1}</Adults><Children>${t.children || 0}</Children><Infants>${t.infants || 0}</Infants></Passengers>` +
+    `<SupplierClassList>${supList}</SupplierClassList>` +
+    `</StartRouteSearch>`,
+    { timeoutMs: FLIGHT_TIMEOUT_MS },
+  );
+  if (!start || start.__error) return null;
+  const toolId = tfTag(start, 'ToolId') || tfTag(start, 'ToolID');
+  if (!toolId) return null;
+
+  // Poll for readiness — bounded so one search can never hang the request.
+  let ready = false;
+  for (let i = 0; i < 6 && !ready; i++) {
+    const status = await httpXML(
+      `<CheckRouteSearchStatus><LoginId>${tfXmlEsc(TRAVELFUSION_LOGIN)}</LoginId><ToolId>${tfXmlEsc(toolId)}</ToolId></CheckRouteSearchStatus>`,
+      { timeoutMs: FLIGHT_TIMEOUT_MS },
+    );
+    if (!status || status.__error) break;
+    ready = /true|ready|complete/i.test(tfTag(status, 'Ready') || tfTag(status, 'Status') || '');
+    if (!ready) await new Promise((r) => setTimeout(r, 700));
+  }
+
+  const results = await httpXML(
+    `<GetRouteSearchResults><LoginId>${tfXmlEsc(TRAVELFUSION_LOGIN)}</LoginId><ToolId>${tfXmlEsc(toolId)}</ToolId></GetRouteSearchResults>`,
+    { timeoutMs: FLIGHT_TIMEOUT_MS },
+  );
+  if (!results || results.__error) return null;
+
+  const routes = parseTravelfusionRoutes(results).sort((a, b) => a.priceGbp - b.priceGbp).slice(0, 8);
+  const out = [];
+  for (const r of routes) {
+    const usd = await toUSD(r.priceGbp, r.currency || 'GBP');
+    if (usd == null) continue;
+    const norm = normalizeTravelfusionRoute({ ...r, cabinBagIncluded: r.cabinBag }, usd, intent.travellers);
+    if (norm) out.push(norm);
+  }
+  return out.length ? out : null;
+}
+
+// Re-validate a Travelfusion route right before charging — same safety contract
+// as validateDuffelOffer/validateTequilaOffer: never charge a repriced/sold-out
+// fare. Runs the detailed (bookable) price check for the chosen route.
+export async function validateTravelfusionOffer(routeId, { adults = 1, children = 0, infants = 0 } = {}) {
+  if (!travelfusionEnabled() || !routeId) return { ok: false, reason: 'not-configured' };
+  const res = await httpXML(
+    `<GetDetails><LoginId>${tfXmlEsc(TRAVELFUSION_LOGIN)}</LoginId><RouteId>${tfXmlEsc(routeId)}</RouteId>` +
+    `<Passengers><Adults>${adults}</Adults><Children>${children}</Children><Infants>${infants}</Infants></Passengers></GetDetails>`,
+    { timeoutMs: FLIGHT_TIMEOUT_MS },
+  );
+  if (!res || res.__error) return { ok: false, reason: 'unreachable' };
+  const priceGbp = Number(tfTag(res, 'Price') || tfTag(res, 'TotalPrice'));
+  const bookable = /true|yes|available/i.test(tfTag(res, 'Bookable') || tfTag(res, 'Available') || 'true');
+  return {
+    ok: true,
+    live: bookable && Number.isFinite(priceGbp),
+    expired: !bookable,
+    amount: Number.isFinite(priceGbp) ? priceGbp : null,
+    currency: tfTag(res, 'Currency') || 'GBP',
+  };
+}
+
+// Live diagnostic for the admin go-live panel — is the Travelfusion door open,
+// reachable, and authenticating? Mirrors duffelDiagnostic's shape.
+export async function travelfusionDiagnostic() {
+  if (!travelfusionEnabled()) {
+    return { ok: false, enabled: false, mode: 'off', reason: 'not-configured', message: 'No TRAVELFUSION_LOGIN_ID / TRAVELFUSION_PASSWORD — LCC (Ryanair/easyJet/Jet2) content is off. Apply to Travelfusion, then set both keys.' };
+  }
+  const started = Date.now();
+  const login = await httpXML(
+    `<LoginRequest><LoginId>${tfXmlEsc(TRAVELFUSION_LOGIN)}</LoginId><Password>${tfXmlEsc(TRAVELFUSION_PASSWORD)}</Password></LoginRequest>`,
+    { timeoutMs: FLIGHT_TIMEOUT_MS },
+  );
+  const latencyMs = Date.now() - started;
+  if (!login) return { ok: false, enabled: true, mode: TRAVELFUSION_MODE, reason: 'unreachable', message: `Travelfusion did not respond (network/host). Ensure this host can reach ${TRAVELFUSION_BASE}.` };
+  if (login.__error) return { ok: false, enabled: true, mode: TRAVELFUSION_MODE, reason: 'auth', message: `Travelfusion rejected the login (HTTP ${login.__status}). Check the credentials and that the account is certified live.` };
+  const okLogin = !/error|invalid|fail/i.test(login) || !!tfTag(login, 'LoginId');
+  return { ok: okLogin, enabled: true, mode: TRAVELFUSION_MODE, latencyMs, reason: okLogin ? 'ok' : 'auth', message: okLogin ? `Travelfusion is LIVE and reachable (${latencyMs}ms). Ryanair/easyJet/Jet2 fares flow on European routes.` : 'Travelfusion responded but the login was not accepted — verify credentials/certification.' };
+}
+
 // ---- Travelpayouts / Aviasales market fares ---------------------------------
 // Real prices from recent user searches (incl. Ryanair/Jet2/Wizz), cached up
 // to 7 days. NOT bookable offers — used to calibrate estimates and to feed
@@ -1139,6 +1411,9 @@ export async function fetchLiveFlights(intent, dest, origin) {
     fetchDuffelFlights(intent, originCode, destCode, 'premium_economy').catch(() => null),
     fetchDuffelFlights(intent, originCode, destCode, 'business').catch(() => null),
     fetchTequilaFlights(intent, originCode, destCode).catch(() => null),
+    // Travelfusion LCC consolidator (Ryanair/easyJet/Jet2/Wizz/Vueling) — the
+    // price-competitive European short-haul source. Inert until keyed+certified.
+    travelfusionEnabled() ? fetchTravelfusionFlights(intent, originCode, destCode).catch(() => null) : null,
     // TBO Air consolidator — broad content incl. Gulf/full-service carriers
     // (Emirates/Etihad/Qatar) that Duffel doesn't sell. Inert until keyed.
     tboAirEnabled() ? fetchTboAirFlights(intent, originCode, destCode).catch(() => null) : null,
