@@ -11,7 +11,7 @@
 
 import { visaRule, destExperiences } from './destinations.js';
 import { stayQuote, stayIsAvailable } from './host-listing.js';
-import { routeFareBaseUSD, marketFactor, airportCoords, haversineKm } from './airports.js';
+import { routeFareBaseUSD, marketFactor, airportCoords, haversineKm, metroAirports, secondaryAirport } from './airports.js';
 import { applySourcing } from './partners.js';
 import { adjustedReliability } from './reviews.js';
 import { RELIABILITY_FLOOR as SHARED_FLOOR } from '../../shared/constants.js';
@@ -72,8 +72,20 @@ const AIRLINES = [
   { name: 'Turkish Airlines', rating: 90, verified: true, premium: false, hubCountry: 'TR', hubAirport: 'IST', hubCity: 'Istanbul' },
   { name: 'Lufthansa', rating: 89, verified: true, premium: false, hubCountry: 'DE', hubAirport: 'FRA', hubCity: 'Frankfurt' },
   { name: 'Wizz Air', rating: 74, verified: true, premium: false, lcc: true }, // intra-Europe point-to-point
+  // The big-three European LCCs — reliable AND cheap. They own the low end of
+  // short-haul (and Ryanair especially flies to SECONDARY airports: Beauvais,
+  // Charleroi, Bergamo…), so they must be priced as low-cost, not full-service.
+  { name: 'easyJet', rating: 82, verified: true, premium: false, lcc: true },
+  { name: 'Ryanair', rating: 80, verified: true, premium: false, lcc: true, prefersSecondary: true },
+  { name: 'Jet2.com', rating: 84, verified: true, premium: false, lcc: true },
   { name: 'SkyValue Air', rating: 61, verified: false, premium: false, lcc: true }, // unreliable — filtered out
 ];
+// Low-cost carriers undercut full-service on short-haul by ~35% regardless of
+// their (good) reliability rating — the old model only discounted LOW-RATED
+// carriers, so easyJet/Ryanair were wrongly priced like a flag carrier.
+const LCC_FARE_MULT = Math.max(0.4, Math.min(1, Number(process.env.LCC_FARE_MULT) || 0.65));
+// A secondary/low-cost airport (Beauvais vs CDG) saves a little more again.
+const SECONDARY_FARE_MULT = 0.92;
 
 // Countries Wizz-style low-cost carriers serve point-to-point (short-haul).
 const EUROPE = new Set(['GB', 'IE', 'FR', 'DE', 'NL', 'ES', 'PT', 'IT', 'CH', 'AT', 'BE', 'DK', 'SE', 'NO', 'FI', 'GR', 'TR', 'PL', 'HU', 'CZ', 'RO']);
@@ -213,7 +225,7 @@ export function flightFareUnits(travellers) {
 // is ~12% dearer (not 35%), a low-rated carrier undercuts ~20%, and a small
 // seeded spread gives per-carrier variation. Over-stacking multipliers here is
 // what made earlier prices ~2x the market.
-export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey, routeBaseUSD = null) {
+export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey, routeBaseUSD = null, opts = {}) {
   const rnd = seeded(`fare-${seedKey}`);
   // Prefer the distance-derived base (origin-aware, worldwide) when available,
   // else the destination's catalogue/synthesised base.
@@ -221,7 +233,11 @@ export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey
   const spread = 0.9 + rnd() * 0.22; // 0.90–1.12 carrier/seasonal variation
   const premiumMult = premium ? 1.12 : 1;
   const lowMult = lowRated ? 0.8 : 1;
-  const totalPerSeat = round(base * spread * premiumMult * lowMult);
+  // Low-cost carriers undercut full-service (~35%); a secondary/low-cost airport
+  // (Beauvais) trims a little more. This is what makes the cheap LCC option win.
+  const lccMult = opts.lcc ? LCC_FARE_MULT : 1;
+  const secondaryMult = opts.secondary ? SECONDARY_FARE_MULT : 1;
+  const totalPerSeat = round(base * spread * premiumMult * lowMult * lccMult * secondaryMult);
   // Split the round trip across the two legs (outbound a touch dearer).
   const outboundPerSeat = round(totalPerSeat * 0.52);
   const inboundPerSeat = round(totalPerSeat - outboundPerSeat);
@@ -236,22 +252,43 @@ export function estimateFlightFares(dest, premium, lowRated, travellers, seedKey
 }
 
 // --- Flights (inbound + outbound, as the brief and the session require) ----
+// METRO-AWARE: a city with several airports (Paris → CDG/Orly/Beauvais) is scanned
+// across ALL of them so the cheapest airport wins — the low-cost carriers that own
+// the cheap end often fly to the SECONDARY airport (Ryanair → Beauvais). Full-
+// service carriers serve the primary airport; secondary airports carry LCCs only.
 export function scanFlights(intent, dest, origin) {
-  const rnd = seeded(`flt-${dest.code}-${origin.airport}-${intent.dates.checkIn}`);
+  const destAirport = dest.airport || dest.code;
+  const airports = metroAirports(destAirport);
+  if (airports.length <= 1) return scanFlightsAt(intent, dest, origin, false);
+  const out = [];
+  for (const ap of airports) {
+    const secondary = ap !== destAirport;
+    const d = { ...dest, airport: ap }; // same metro city, this airport
+    for (const f of scanFlightsAt(intent, d, origin, secondary)) out.push(f);
+  }
+  return out;
+}
+function scanFlightsAt(intent, dest, origin, secondary = false) {
+  const destAp = dest.airport || dest.code;
+  const rnd = seeded(`flt-${destAp}-${origin.airport}-${intent.dates.checkIn}`);
   const pax = intent.travellers.total;
   const fare = flightFareUnits(intent.travellers); // age-banded fare units
   const distanceFactor = 1 + rnd() * 0.4;
   // Distance-derived, origin-aware fare base (null when coords unknown).
-  const routeBase = routeFareBaseUSD(origin.airport, dest.code || dest.airport);
+  const routeBase = routeFareBaseUSD(origin.airport, destAp);
 
   // Low-cost carriers only operate intra-Europe — don't offer Wizz to Kinshasa.
   const intraEurope = EUROPE.has(origin.country) && EUROPE.has(dest.country);
-  const carriers = AIRLINES.filter((a) => !a.lcc || intraEurope);
+  // Primary airport: all carriers (intra-Europe unlocks LCCs). Secondary airport:
+  // ONLY low-cost carriers fly there — and Ryanair-style carriers prefer them.
+  const carriers = AIRLINES.filter((a) => (secondary ? (a.lcc && intraEurope) : (!a.lcc || intraEurope)));
+  const sec = secondary ? secondaryAirport(destAp) : null;
 
   return carriers.map((a) => {
     // Price via the SHARED estimator so the synthetic engine and OAG-schedule
-    // flights are calibrated identically (and only here).
-    const fares = estimateFlightFares(dest, a.premium, a.rating < 75, intent.travellers, `${dest.code}-${origin.airport}-${a.name}-${intent.dates.checkIn}`, routeBase);
+    // flights are calibrated identically (and only here). LCC + secondary-airport
+    // undercuts are applied here.
+    const fares = estimateFlightFares(dest, a.premium, a.rating < 75, intent.travellers, `${destAp}-${origin.airport}-${a.name}-${intent.dates.checkIn}`, routeBase, { lcc: a.lcc, secondary });
     const outboundPerSeat = fares.outboundPerSeat;
     const inboundPerSeat = fares.inboundPerSeat;
     const totalPerSeat = fares.totalPerSeat;
@@ -315,6 +352,10 @@ export function scanFlights(intent, dest, origin) {
         adultFareUSD: seatPerFare,
         childFareUSD: round(seatPerFare * FARE_BANDS.child),
         infantFareUSD: round(seatPerFare * FARE_BANDS.infant),
+        // Honest secondary-airport note (Beauvais ~85 km from Paris) so a cheaper
+        // out-of-town airport is never presented as if it were the city's main one.
+        secondaryAirport: sec || undefined,
+        lcc: a.lcc || undefined,
       },
       priceUSD: round(seatPerFare * fare.units),
     };

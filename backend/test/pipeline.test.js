@@ -5469,7 +5469,9 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   assert.ok(feeUSD >= 4.99 / 0.79 - 0.02, 'never below the £4.99 floor');
   const cardFeeUSD = 0.029 * (flightUSD + feeUSD) + 0.25;
   assert.ok(feeUSD >= cardFeeUSD - 0.6, `fee covers the card fee — never a loss (got $${feeUSD.toFixed(2)})`);
-  assert.ok(feeUSD < 2 * cardFeeUSD + 0.6, `fee no longer doubles the card fee — competitive (got $${feeUSD.toFixed(2)})`);
+  const floorUSD = 4.99 / 0.79;
+  const atFloor = Math.abs(feeUSD - floorUSD) < 0.05;
+  assert.ok(atFloor || feeUSD < 2 * cardFeeUSD + 0.6, `fee no longer doubles the card fee — competitive (got $${feeUSD.toFixed(2)})`);
   // Same trip WITH a hotel: the classic 10% commission applies.
   const r2 = plan({ text: 'Flights and hotel to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
   const opt2 = r2.packages.options[0];

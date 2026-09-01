@@ -50,6 +50,67 @@ const AIRPORT_COORDS = {
   KIN: [18.0, -76.8], HAJ: [52.5, 9.7], RIX: [56.9, 23.9], TLL: [59.4, 24.8], VNO: [54.6, 25.3],
 };
 
+// Secondary / low-cost airports that share a metro area with a primary hub. The
+// cheapest fare on a city pair very often uses one of these (Ryanair→Beauvais,
+// easyJet→Orly) rather than the flagship airport — so a metro search MUST scan
+// them, not just the primary. Coordinates + a human note (distance to the city).
+const SECONDARY_COORDS = {
+  ORY: [48.7, 2.4], BVA: [49.5, 2.1],          // Paris — Orly, Beauvais
+  LGW: [51.2, -0.2], STN: [51.9, 0.2], LTN: [51.9, -0.4], SEN: [51.6, 0.7], // London (LGW/STN/LTN already above; SEN Southend)
+  CIA: [41.8, 12.6],                            // Rome — Ciampino
+  BGY: [45.7, 9.7], LIN: [45.5, 9.3],           // Milan — Bergamo, Linate
+  CRL: [50.5, 4.5],                             // Brussels — Charleroi
+  HHN: [49.9, 7.3],                             // Frankfurt — Hahn
+  GRO: [41.9, 2.8], REU: [41.1, 1.2],           // Barcelona — Girona, Reus
+  NYO: [58.8, 16.9], BMA: [59.4, 18.0],         // Stockholm — Skavsta, Bromma
+  TSF: [45.6, 12.2], VCE: [45.5, 12.35],        // Venice — Treviso, Marco Polo
+  SAW: [40.9, 29.3],                            // Istanbul — Sabiha Gökçen
+  CGN: [50.9, 7.1], EIN: [51.5, 5.4],           // Cologne, Eindhoven (Amsterdam-area LCC)
+  PMO: [38.2, 13.1], NAP: [40.9, 14.3],         // (extra Italy)
+};
+Object.assign(AIRPORT_COORDS, SECONDARY_COORDS);
+
+// Metro groups — every airport that serves the same city. Primary FIRST. The
+// cheapest across the whole group wins. A code maps to its whole group via
+// METRO_OF; a lone airport is its own group.
+const METRO_GROUPS = [
+  ['LHR', 'LGW', 'STN', 'LTN', 'LCY', 'SEN'], // London
+  ['CDG', 'ORY', 'BVA'],                      // Paris
+  ['FCO', 'CIA'],                             // Rome
+  ['MXP', 'LIN', 'BGY'],                      // Milan
+  ['BRU', 'CRL'],                             // Brussels
+  ['FRA', 'HHN'],                             // Frankfurt
+  ['BCN', 'GRO', 'REU'],                      // Barcelona
+  ['ARN', 'NYO', 'BMA'],                      // Stockholm
+  ['VCE', 'TSF'],                             // Venice
+  ['IST', 'SAW'],                             // Istanbul
+];
+const SECONDARY_INFO = {
+  ORY: { city: 'Paris', note: 'Orly · ~18 km from Paris' }, BVA: { city: 'Paris', note: 'Beauvais · ~85 km from Paris (low-cost)' },
+  CIA: { city: 'Rome', note: 'Ciampino · ~15 km (low-cost)' }, BGY: { city: 'Milan', note: 'Bergamo · ~50 km (low-cost)' },
+  LIN: { city: 'Milan', note: 'Linate · ~8 km' }, CRL: { city: 'Brussels', note: 'Charleroi · ~55 km (low-cost)' },
+  HHN: { city: 'Frankfurt', note: 'Hahn · ~120 km (low-cost)' }, GRO: { city: 'Barcelona', note: 'Girona · ~90 km (low-cost)' },
+  REU: { city: 'Barcelona', note: 'Reus · ~100 km (low-cost)' }, NYO: { city: 'Stockholm', note: 'Skavsta · ~100 km (low-cost)' },
+  TSF: { city: 'Venice', note: 'Treviso · ~40 km (low-cost)' }, SAW: { city: 'Istanbul', note: 'Sabiha Gökçen · ~50 km' },
+  STN: { city: 'London', note: 'Stansted' }, LTN: { city: 'London', note: 'Luton' }, LGW: { city: 'London', note: 'Gatwick' },
+};
+const METRO_OF = (() => {
+  const m = {};
+  for (const g of METRO_GROUPS) for (const c of g) m[c] = g;
+  return m;
+})();
+
+// All airports serving the metro area of `code` (primary first). Lone airport →
+// just itself. Used by the flight scan to price every airport in a city.
+export function metroAirports(code) {
+  const c = (code || '').toUpperCase();
+  return (METRO_OF[c] || [c]).filter((x) => AIRPORT_COORDS[x]);
+}
+// Is this a secondary (usually low-cost) airport, and its human note?
+export function secondaryAirport(code) {
+  return SECONDARY_INFO[(code || '').toUpperCase()] || null;
+}
+
 export function airportCoords(code) {
   return AIRPORT_COORDS[(code || '').toUpperCase()] || null;
 }
