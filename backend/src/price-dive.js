@@ -221,13 +221,19 @@ export function deepPriceDive({ intent, dest, origin, scan, liveFlights = false,
     }
   }
 
+  // HONESTY: the dive compares combinations across the suppliers we can BOOK
+  // (verified full-service + LCC pipes we're connected to). It does NOT claim to
+  // beat every no-frills fare — an ultra-low-cost carrier (Ryanair/Wizz) on a
+  // secondary airport can be cheaper for a different, non-like-for-like trip. So
+  // the verdict is scoped to "the suppliers we book", never an absolute "nothing
+  // is cheaper anywhere".
   const verdict = marginPct > 0
     ? (basketAllLive
       ? `Priced ${marginPct}% under the public floor for the same verified basket.`
       : `Estimate: around ${marginPct}% under a typical public price for the same basket — confirmed against live inventory before you book.`)
     : (basketAllLive
-      ? 'Matched to the verified market floor — no cheaper reliable combination found.'
-      : 'Estimate: matched to the typical market floor — no cheaper reliable combination found.');
+      ? 'The lowest total across the verified suppliers we book for this route.'
+      : 'Estimate: the lowest across typical market prices for this route — confirmed against live inventory before you book.');
 
   const anyIndicative = savings.some((x) => x.basis === 'indicative' || x.basis === 'estimated');
   const anyVerified = savings.some((x) => x.basis === 'verified') || basketAllLive;

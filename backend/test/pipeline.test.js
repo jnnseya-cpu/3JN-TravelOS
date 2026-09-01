@@ -270,9 +270,15 @@ test('accuracy: real airport codes, UK date range, child ages and hotel area are
   // Birmingham must be BHX (not the first-three-letters "BIR" = Biratnagar, Nepal).
   assert.equal(r.origin.airport, 'BHX');
   assert.equal(r.origin.city, 'Birmingham');
-  // Explicit UK-style 17/08–24/08 range, not the bare-month default.
-  assert.equal(r.intent.dates.checkIn, '2026-08-17');
-  assert.equal(r.intent.dates.checkOut, '2026-08-24');
+  // Explicit UK-style 17/08–24/08 range, not the bare-month default. A bare day/
+  // month with no year resolves to the NEXT future occurrence, so derive the
+  // expected year from today rather than hardcoding it (the test must not rot as
+  // real time passes 17 August).
+  const _today = new Date();
+  const _augThis = new Date(_today.getFullYear(), 7, 17);
+  const _yr = _today > _augThis ? _today.getFullYear() + 1 : _today.getFullYear();
+  assert.equal(r.intent.dates.checkIn, `${_yr}-08-17`);
+  assert.equal(r.intent.dates.checkOut, `${_yr}-08-24`);
   assert.equal(r.intent.month, 'august');
   // Travellers + child ages.
   assert.equal(r.intent.travellers.adults, 2);
@@ -5455,13 +5461,15 @@ test('tiered take-rate: flights-only pays the flat fee, members pay a small flat
   assert.ok(opt.components.every((c) => c.type === 'flight'), 'flights-only basket');
   assert.equal(opt.pricing.feeModel, 'flight-service-fee');
   assert.match(opt.pricing.feeLabel, /service fee/);
-  // Auto-priced: never below the £4.99 floor, and always ≥ 2× the worst-case card
-  // fee on the whole charge (the margin guarantee) — no £15 cap.
+  // COMPETITIVE HOOK: never below the £4.99 floor, and it always COVERS the card
+  // fee on the whole charge (break-even — never a loss), but no longer DOUBLES it
+  // (the old 100% margin made bare flights ~6.5% and uncompetitive).
   const feeUSD = opt.pricing.lines.commissionUSD;
   const flightUSD = opt.pricing.lines.suppliersUSD; // flights-only → suppliers = the fare
   assert.ok(feeUSD >= 4.99 / 0.79 - 0.02, 'never below the £4.99 floor');
   const cardFeeUSD = 0.029 * (flightUSD + feeUSD) + 0.25;
-  assert.ok(feeUSD >= 2 * cardFeeUSD - 0.6, `fee guarantees margin after the card fee (got $${feeUSD.toFixed(2)})`);
+  assert.ok(feeUSD >= cardFeeUSD - 0.6, `fee covers the card fee — never a loss (got $${feeUSD.toFixed(2)})`);
+  assert.ok(feeUSD < 2 * cardFeeUSD + 0.6, `fee no longer doubles the card fee — competitive (got $${feeUSD.toFixed(2)})`);
   // Same trip WITH a hotel: the classic 10% commission applies.
   const r2 = plan({ text: 'Flights and hotel to Barcelona from London, 1 adult, 2026-09-10 to 2026-09-14', context: GB, user: null, searchTier: 'smart' });
   const opt2 = r2.packages.options[0];
@@ -6219,22 +6227,24 @@ test('flights-only: an explicit "only" drops a loosely-triggered stay + keeps th
   assert.equal(r3.packages.options[0].pricing.feeModel, 'commission-10');
 });
 
-// ---- Flights-only fee: AUTO-priced to guarantee margin after the card fee ----
-test('flights-only fee: auto-priced to guarantee margin after the card fee (no £15 cap)', () => {
+// ---- Flights-only fee: the competitive near-free hook (break-even, never a loss) ----
+test('flights-only fee: break-even hook — covers card cost, never doubles it, never caps below cost', () => {
   const cur = { code: 'GBP', symbol: '£', rateFromUSD: 0.79 };
   const feeGbp = (fareGbp) => priceBreakdown({ componentsUSD: fareGbp / 0.79, marketRefUSD: fareGbp / 0.79 * 1.2, currency: cur, flightsOnly: true }).local.commission;
   // Never below the £4.99 floor.
   assert.ok(feeGbp(80) >= 4.99 - 0.02, 'never below the £4.99 floor');
-  // Scales with the fare and is NOT capped — the old £15 cap is gone (it would
-  // have been a LOSS on a £1500 ticket once the card fee is on the whole amount).
-  assert.ok(feeGbp(1500) > feeGbp(450), 'no cap — the fee grows with the fare');
-  assert.ok(feeGbp(1500) > 15, 'the £15 cap is removed');
-  // MARGIN GUARANTEE: the fee is ≥ 2× (100% margin) the worst-case card fee on the
-  // WHOLE amount charged (fare + fee) — so a flights-only booking can never lose.
+  // Grows with the fare (card cost scales), and on a big fare rises above £15 — the
+  // £15 cap must never force a LOSS on a long-haul where the card fee alone tops £15.
+  assert.ok(feeGbp(1500) > feeGbp(450), 'the fee grows with the fare');
+  assert.ok(feeGbp(1500) > 15, 'on a long-haul the fee rises past £15 to cover the card cost (no loss)');
+  // BREAK-EVEN HOOK: the fee COVERS the worst-case card fee on the whole amount
+  // charged (never a loss), but no longer DOUBLES it — that 100% margin made bare
+  // flights ~6.5% and uncompetitive. Flights are the hook; margin lives in packages.
   for (const fare of [80, 450, 1500, 3000]) {
     const fee = feeGbp(fare);
     const cardFeeGbp = 0.029 * (fare + fee) + 0.25 * 0.79; // worst-case card fee, GBP
-    assert.ok(fee >= 2 * cardFeeGbp - 0.6, `£${fare}: fee £${fee.toFixed(2)} ≥ 2× card fee £${cardFeeGbp.toFixed(2)}`);
+    assert.ok(fee >= cardFeeGbp - 0.6, `£${fare}: fee £${fee.toFixed(2)} covers the card fee £${cardFeeGbp.toFixed(2)} (no loss)`);
+    assert.ok(fee < 2 * cardFeeGbp + 0.6, `£${fare}: fee £${fee.toFixed(2)} no longer doubles the card fee (competitive)`);
   }
   // Members get a DEEP discount but never a BELOW-COST fee. On a small fare they
   // pay the flat £4.99 (it already clears the card cost); on a large fare the fee
