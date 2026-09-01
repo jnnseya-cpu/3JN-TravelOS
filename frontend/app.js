@@ -4866,18 +4866,28 @@ async function renderMarketplace() {
   if (!out) return;
   let data;
   try { data = await api(`/api/destinations?country=${state.country || 'GB'}`); } catch { out.innerHTML = '<div class="card pad muted">Failed to load.</div>'; return; }
-  const cards = (data.destinations || []).map((d) => `
-    <div class="card pad dest-card" onclick="trackView('${esc(d.code)}','${esc(d.city)}');planDest('${esc(d.city)}')">
-      <div class="dest-emoji">${esc(d.emoji)}</div>
-      <h3 style="margin:6px 0 2px">${esc(d.city)}</h3>
-      <div class="muted" style="font-size:12.5px">${esc(d.country)} · ${esc(d.tag)}</div>
-      <div class="exp-tags">${d.experiences.map((e) => `<span class="chip">${esc(e)}</span>`).join('')}</div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px">
-        <span class="muted" style="font-size:12px">from</span>
-        <span style="font-family:var(--font-body);font-weight:700;font-size:22px;color:var(--gold)">${d.symbol}${d.fromLocal.toLocaleString()}</span>
+  const cards = (data.destinations || []).map((d) => {
+    const photo = travelPhoto({ destinationCity: d.city, id: d.code, title: d.city }, 720);
+    return `
+    <div class="card dest-card" style="padding:0;overflow:hidden;display:flex;flex-direction:column;cursor:pointer" onclick="trackView('${esc(d.code)}','${esc(d.city)}');planDest('${esc(d.city)}')">
+      <div style="height:158px;position:relative;overflow:hidden;background:linear-gradient(135deg,#1b1d22,#26282f)">
+        <img src="${photo}" alt="${esc(d.city)}" loading="lazy" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">
+        <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,13,16,0) 34%,rgba(12,13,16,.74) 100%)"></div>
+        <div style="position:absolute;left:15px;right:15px;bottom:11px">
+          <div style="font-family:var(--font-display);font-size:20px;color:#fff;line-height:1.1;text-shadow:0 1px 10px rgba(0,0,0,.6)">${esc(d.city)}</div>
+          <div style="font-size:11.5px;color:rgba(242,239,231,.82);margin-top:1px">${esc(d.country)} · ${esc(d.tag)}</div>
+        </div>
       </div>
-      <button class="btn btn-gold btn-sm btn-block" style="margin-top:10px">Build my package →</button>
-    </div>`).join('');
+      <div class="pad" style="display:flex;flex-direction:column;flex:1;padding-top:16px">
+        <div class="exp-tags">${d.experiences.map((e) => `<span class="chip">${esc(e)}</span>`).join('')}</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:auto;padding-top:14px">
+          <span class="muted" style="font-size:12px">from</span>
+          <span style="font-family:var(--font-body);font-weight:700;font-size:22px;color:var(--gold)">${d.symbol}${d.fromLocal.toLocaleString()}</span>
+        </div>
+        <button class="btn btn-gold btn-sm btn-block" style="margin-top:10px">Build my package →</button>
+      </div>
+    </div>`;
+  }).join('');
   out.innerHTML = `
     <div class="dest-grid">${cards}</div>
     <div class="card pad" style="margin-top:24px">
