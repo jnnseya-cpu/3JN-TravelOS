@@ -134,9 +134,19 @@ export function priceBreakdown({ componentsUSD, marketRefUSD, currency, loyaltyP
   // the fee rises just enough to clear the card fee on the whole ticket + infra,
   // instead of 3JN losing ~£20–50 per member long-haul.
   const MEMBER_FLIGHT_MARGIN_PCT = Number(process.env.MEMBER_FLIGHT_MARGIN_PCT || 15);
+  // COMPETITIVE FLIGHT FEE — flights are the near-free HOOK (hotels/packages carry
+  // the margin), so the non-member fee targets BREAK-EVEN by default (covers the
+  // card fee on the whole ticket + infra — never a loss), NOT a 100% margin that
+  // stacked a 6%+ fee and made bare flights uncompetitive. It stays inside the
+  // advertised band: at least £4.99, and HARD-CAPPED at £15 (the cap was never
+  // actually applied here before). Tune FLIGHT_ONLY_MARGIN_PCT up if you want a
+  // slim flight margin; lower FLIGHT_FEE_STRIPE_PCT to your real blended card rate
+  // (~1.5% for UK/EU consumer cards) to bring the fee down to the £4.99 floor.
+  const FLIGHT_ONLY_MARGIN_PCT = Number(process.env.FLIGHT_ONLY_MARGIN_PCT || 0);
+  const capUSD = FLIGHT_ONLY_FEE_CAP_GBP / 0.79;
   const flightFeeUSD = memberActive
-    ? Math.max(FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79, autoMarginFlightFeeUSD(componentsUSD, MEMBER_FLIGHT_MARGIN_PCT))
-    : Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE, autoMarginFlightFeeUSD(componentsUSD));
+    ? Math.min(capUSD, Math.max(FLIGHT_ONLY_MEMBER_FEE_GBP / 0.79, autoMarginFlightFeeUSD(componentsUSD, MEMBER_FLIGHT_MARGIN_PCT)))
+    : Math.min(capUSD, Math.max(FLIGHT_ONLY_FEE_GBP / 0.79, componentsUSD * FLIGHT_ONLY_FEE_RATE, autoMarginFlightFeeUSD(componentsUSD, FLIGHT_ONLY_MARGIN_PCT)));
   // BEDBANK MARGIN: net-rate (wholesale) hotel cost is marked up at HOTEL_MARGIN_RATE
   // (the real profit) instead of the 10% — so the standard commission applies only
   // to the NON-bedbank remainder, and the bedbank spread is added on top. No-op when
