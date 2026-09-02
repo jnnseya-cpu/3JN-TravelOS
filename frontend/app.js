@@ -269,8 +269,8 @@ window.addEventListener('resize', () => { if (window.innerWidth > 1240) closeMob
 
 // ---- Static content (agents, tiers, steps, loyalty) -----------------------
 const AGENTS = [
-  ['✈', 'Journey Intelligence', 'Scans flights, trains, coaches, ferries & cruises for the cheapest reliable route.'],
-  ['🏨', 'Hotel Negotiation', 'Compares hotels and private hosts, negotiates upgrades & board.'],
+  ['✈', 'Journey search', 'Scans flights, trains, coaches, ferries & cruises for a reliable route you can book.'],
+  ['🏨', 'Hotel search', 'Compares hotels and private hosts, and shows the board and inclusions upfront.'],
   ['🛂', 'Visa Automation', 'Detects requirements by nationality and processes eVisas.'],
   ['🚘', 'Transfer Logistics', 'Books verified airport transfers for arrival & departure.'],
   ['🔒', 'Price Lock', 'Fixes your booked price and protects it from fare rises and currency moves until you travel.'],
@@ -477,27 +477,25 @@ async function populateShowcase() {
   try { s = (await api(`/api/showcase?country=${state.country || 'GB'}`)).showcase; } catch { return; }
   const set = (id, v) => { const el = $(id); if (el && v != null) el.textContent = v; };
   const m = s.metrics || {};
-  // Hero + final-CTA stats (real cumulative savings + real coverage + agent count).
-  const savedTxt = m.savedForTravellersLocal > 0 ? m.savedForTravellersDisplay : (s.example ? s.example.savedDisplay + '/trip' : '£0');
-  set('#statSaved', savedTxt); set('#ctaSaved', savedTxt);
+  // Honest coverage stat only. We do NOT surface a "saved for travellers" money
+  // figure — with real bookings still ramping it would be an example dressed as
+  // fact. The other hero stats are static, honest values in the HTML.
   set('#statCountries', (m.countriesServed || 195) + '+'); set('#ctaCountries', (m.countriesServed || 195) + '+');
-  set('#statAgents', '10'); set('#ctaAgents', '10');
-  // Example trip (problem/solution + featured holiday).
+  // Featured holiday: show the real "from" price only — never a fabricated
+  // "save X% vs market" claim (we're not always below the market on a bare seat).
   if (s.example) {
-    set('#solutionSaved', `You Save ${s.example.savedDisplay}`);
     set('#featuredPrice', s.example.totalDisplay);
-    set('#featuredSave', `Save ${s.example.savedDisplay} (${s.example.savingsPct}%) vs ${s.example.marketDisplay}`);
   }
-  // Savings engine — real per-component breakdown + total.
+  // "How we price" panel — show the real, all-in breakdown (every fee visible),
+  // not a synthetic savings tally. Falls back to a plain transparency note.
   const se = $('#savingsEngine');
-  if (se && s.savingsBreakdown?.length) {
-    const rows = s.savingsBreakdown.map((b) => `<div class="kv"><span>${esc(b.label)}</span><span style="color:var(--green)">Saved ${esc(b.saved)}</span></div>`).join('');
-    se.innerHTML = rows + `<div class="kv" style="border:none;padding-top:16px"><span style="font-family:var(--font-body);font-weight:700;font-size:18px">Total Trip Saving</span><span style="font-family:var(--font-body);font-weight:700;font-size:26px;color:var(--gold)">${s.example ? esc(s.example.savedDisplay) : '—'}</span></div>`;
-  }
-  // Negotiation engine — real outcomes from the actual package.
-  const neg = $('#negotiationList');
-  if (neg && s.negotiation?.length) {
-    neg.innerHTML = s.negotiation.map((n) => `<div class="holo-row"><span>${esc(n.item)}</span><span class="v ${n.status === 'Applied' ? 'blue' : 'good'}">${esc(n.status)}</span></div>`).join('');
+  if (se) {
+    if (s.priceBreakdown?.length) {
+      const rows = s.priceBreakdown.map((b) => `<div class="kv"><span>${esc(b.label)}</span><span>${esc(b.amount)}</span></div>`).join('');
+      se.innerHTML = rows + `<div class="kv" style="border:none;padding-top:16px"><span style="font-family:var(--font-body);font-weight:700;font-size:18px">Total you pay — bookable, not an estimate</span><span style="font-family:var(--font-body);font-weight:700;font-size:22px;color:var(--gold)">${s.example ? esc(s.example.totalDisplay) : '—'}</span></div>`;
+    } else {
+      se.innerHTML = `<div class="muted" style="font-size:14px">Run a search to see the real, all-in price — airfare, baggage, taxes and our service fee, every line shown before you pay. We only ever charge a confirmed, bookable amount.</div>`;
+    }
   }
 }
 // Open the right view from the URL — supports PWA shortcuts (/?view=planner)
@@ -6139,14 +6137,14 @@ async function renderBusiness() {
       </div>
     </div>
     <div class="card pad" style="margin-top:16px">
-      <span class="eyebrow">Supplier Contract Manager · AI-negotiated volume deals</span>
-      ${contracts.length ? contracts.map((c) => `<div class="kv"><span>${esc(c.supplier)} <span class="muted">${esc(c.category)}</span></span><span>$${(c.annualVolumeUSD).toLocaleString()}/yr · <strong style="color:var(--green)">${(c.discountPct * 100).toFixed(1)}%</strong> · ${esc(c.status)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">No contracts yet. The Supplier Negotiation Agent scales the discount with committed volume.</div>'}
+      <span class="eyebrow">Corporate Rate Manager · your volume deals</span>
+      ${contracts.length ? contracts.map((c) => `<div class="kv"><span>${esc(c.supplier)} <span class="muted">${esc(c.category)}</span></span><span>$${(c.annualVolumeUSD).toLocaleString()}/yr · <strong style="color:var(--green)">${(c.discountPct * 100).toFixed(1)}%</strong> · ${esc(c.status)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">No rates yet. Record a supplier rate and we apply your volume discount automatically at booking.</div>'}
       <div class="composer-row" style="margin-top:12px">
         <div class="field"><label>Supplier</label><input class="in" id="ctrSupplier" placeholder="e.g. Emirates" style="width:150px"></div>
         <div class="field"><label>Category</label><select class="in" id="ctrCat"><option value="hotel">hotel</option><option value="flights">flights</option><option value="carhire">car hire</option><option value="transfer">transfer</option></select></div>
         <div class="field"><label>Annual volume (USD)</label><input class="in" id="ctrVol" value="500000" style="width:130px"></div>
         <div style="flex:1"></div>
-        <button class="btn btn-gold btn-sm" onclick="createContract()">🤝 Negotiate</button>
+        <button class="btn btn-gold btn-sm" onclick="createContract()">＋ Add rate</button>
       </div>
     </div>`;
 }
@@ -6154,7 +6152,7 @@ window.createContract = async () => {
   const supplier = $('#ctrSupplier').value.trim();
   if (!supplier) { toast('Enter a supplier.'); return; }
   try { await api('/api/business/contracts', { method: 'POST', body: JSON.stringify({ supplier, category: $('#ctrCat').value, annualVolumeUSD: Number($('#ctrVol').value) }) }); } catch { return; }
-  toast('✓ Contract negotiated.'); renderBusiness();
+  toast('✓ Rate saved.'); renderBusiness();
 };
 window.decideApproval = async (id, decision) => {
   try { await api(`/api/business/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision }) }); } catch { return; }
@@ -6874,11 +6872,11 @@ document.addEventListener('click', (e) => {
 
 // ---- Internationalisation (EN / FR / SW / LN / AR) ------------------------
 const I18N = {
-  en: { 'nav.home': 'Home', 'nav.plan': 'Plan a Trip', 'nav.how': 'How it Works', 'nav.membership': 'Membership', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Business', 'nav.admin': 'Admin', 'hero.line1': 'Stop Searching.', 'hero.line2': 'Start Saving.', 'hero.lede': '3JN Travel OS finds, optimises, negotiates, books and manages your entire journey while continuously reducing travel costs through AI-powered travel intelligence.', 'hero.cta1': 'Get My Best Trip', 'hero.cta2': 'See How It Works', 'hero.whatsapp': '💬 Book on WhatsApp' },
-  fr: { 'nav.home': 'Accueil', 'nav.plan': 'Planifier', 'nav.how': 'Comment ça marche', 'nav.membership': 'Abonnement', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Entreprise', 'nav.admin': 'Admin', 'hero.line1': 'Arrêtez de chercher.', 'hero.line2': 'Commencez à économiser.', 'hero.lede': "3JN Travel OS trouve, optimise, négocie, réserve et gère tout votre voyage tout en réduisant continuellement les coûts grâce à l'intelligence artificielle.", 'hero.cta1': 'Mon meilleur voyage', 'hero.cta2': 'Comment ça marche', 'hero.whatsapp': '💬 Réserver sur WhatsApp' },
-  sw: { 'nav.home': 'Nyumbani', 'nav.plan': 'Panga Safari', 'nav.how': 'Jinsi Inavyofanya', 'nav.membership': 'Uanachama', 'nav.api': 'API', 'nav.console': 'Konsoli', 'nav.business': 'Biashara', 'nav.admin': 'Msimamizi', 'hero.line1': 'Acha Kutafuta.', 'hero.line2': 'Anza Kuokoa.', 'hero.lede': '3JN Travel OS hupata, huboresha, hujadiliana, huweka nafasi na kusimamia safari yako yote huku ikipunguza gharama kwa akili bandia.', 'hero.cta1': 'Pata Safari Bora', 'hero.cta2': 'Jinsi Inavyofanya', 'hero.whatsapp': '💬 Weka kwa WhatsApp' },
-  ln: { 'nav.home': 'Ndako', 'nav.plan': 'Bongisa Mobembo', 'nav.how': 'Ndenge Esalaka', 'nav.membership': 'Bosangani', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Mombongo', 'nav.admin': 'Admin', 'hero.line1': 'Tika Koluka.', 'hero.line2': 'Banda Kobomba.', 'hero.lede': '3JN Travel OS ekolukaka, ekobongisaka, ekosololaka, ekosalaka mpe ekobatelaka mobembo na yo mobimba na kokitisáká motúya na nzelá ya mayele ya masini.', 'hero.cta1': 'Zwá Mobembo Malamu', 'hero.cta2': 'Ndenge Esalaka', 'hero.whatsapp': '💬 Réserver na WhatsApp' },
-  ar: { 'nav.home': 'الرئيسية', 'nav.plan': 'خطط رحلة', 'nav.how': 'كيف يعمل', 'nav.membership': 'العضوية', 'nav.api': 'API', 'nav.console': 'لوحة التحكم', 'nav.business': 'الأعمال', 'nav.admin': 'المشرف', 'hero.line1': 'توقف عن البحث.', 'hero.line2': 'ابدأ التوفير.', 'hero.lede': 'يبحث 3JN Travel OS ويحسّن ويتفاوض ويحجز ويدير رحلتك بالكامل مع خفض التكاليف باستمرار عبر الذكاء الاصطناعي.', 'hero.cta1': 'احصل على أفضل رحلة', 'hero.cta2': 'كيف يعمل', 'hero.whatsapp': '💬 احجز عبر واتساب' },
+  en: { 'nav.home': 'Home', 'nav.plan': 'Plan a Trip', 'nav.how': 'How it Works', 'nav.membership': 'Membership', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Business', 'nav.admin': 'Admin', 'hero.line1': 'Book It All.', 'hero.line2': 'Pay Monthly.', 'hero.lede': '3JN books real airline tickets and issues your e-ticket — plus hotels, visa help and an eSIM — with every fee shown before you pay. Pay in full, or spread it over interest-free monthly instalments.', 'hero.cta1': 'Get My Best Trip', 'hero.cta2': 'See How It Works', 'hero.whatsapp': '💬 Book on WhatsApp' },
+  fr: { 'nav.home': 'Accueil', 'nav.plan': 'Planifier', 'nav.how': 'Comment ça marche', 'nav.membership': 'Abonnement', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Entreprise', 'nav.admin': 'Admin', 'hero.line1': 'Réservez tout.', 'hero.line2': 'Payez chaque mois.', 'hero.lede': "3JN réserve de vrais billets d'avion et émet votre billet électronique — plus hôtels, aide au visa et une eSIM — avec chaque frais affiché avant le paiement. Payez en une fois, ou étalez le coût en mensualités sans intérêt.", 'hero.cta1': 'Mon meilleur voyage', 'hero.cta2': 'Comment ça marche', 'hero.whatsapp': '💬 Réserver sur WhatsApp' },
+  sw: { 'nav.home': 'Nyumbani', 'nav.plan': 'Panga Safari', 'nav.how': 'Jinsi Inavyofanya', 'nav.membership': 'Uanachama', 'nav.api': 'API', 'nav.console': 'Konsoli', 'nav.business': 'Biashara', 'nav.admin': 'Msimamizi', 'hero.line1': 'Weka Yote.', 'hero.line2': 'Lipa Kila Mwezi.', 'hero.lede': '3JN inaweka tiketi halisi za ndege na kukupa tiketi yako ya kielektroniki — pamoja na hoteli, msaada wa viza na eSIM — kila ada ikionyeshwa kabla ya kulipa. Lipa yote kwa mara moja, au gawanya gharama kwa awamu bila riba.', 'hero.cta1': 'Pata Safari Bora', 'hero.cta2': 'Jinsi Inavyofanya', 'hero.whatsapp': '💬 Weka kwa WhatsApp' },
+  ln: { 'nav.home': 'Ndako', 'nav.plan': 'Bongisa Mobembo', 'nav.how': 'Ndenge Esalaka', 'nav.membership': 'Bosangani', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Mombongo', 'nav.admin': 'Admin', 'hero.line1': 'Bongisa Nyonso.', 'hero.line2': 'Futa Sanza na Sanza.', 'hero.lede': '3JN ekosombaka batike ya solo ya mpepo mpe ekopesaka yo e-ticket na yo — elongo na baotɛlɛ, lisalisi ya visa mpe eSIM — na mbongo nyonso emonisami liboso ya kofuta. Futa nyonso mbala moko, to kabola motúya na sanza na sanza kozanga interɛ.', 'hero.cta1': 'Zwá Mobembo Malamu', 'hero.cta2': 'Ndenge Esalaka', 'hero.whatsapp': '💬 Réserver na WhatsApp' },
+  ar: { 'nav.home': 'الرئيسية', 'nav.plan': 'خطط رحلة', 'nav.how': 'كيف يعمل', 'nav.membership': 'العضوية', 'nav.api': 'API', 'nav.console': 'لوحة التحكم', 'nav.business': 'الأعمال', 'nav.admin': 'المشرف', 'hero.line1': 'احجز كل شيء.', 'hero.line2': 'ادفع شهريًا.', 'hero.lede': 'يحجز 3JN تذاكر طيران حقيقية ويصدر تذكرتك الإلكترونية — بالإضافة إلى الفنادق والمساعدة في التأشيرة وشريحة eSIM — مع عرض كل رسم قبل الدفع. ادفع كاملًا أو قسّط التكلفة على أقساط شهرية بدون فوائد.', 'hero.cta1': 'احصل على أفضل رحلة', 'hero.cta2': 'كيف يعمل', 'hero.whatsapp': '💬 احجز عبر واتساب' },
 };
 function applyLanguage(lang) {
   const dict = I18N[lang] || I18N.en;
