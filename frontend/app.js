@@ -1130,7 +1130,7 @@ function renderOptions(data) {
         </div>
       </div>
       ${data.flexResult ? `<div class="pill" style="margin:14px 0 0;border-color:rgba(139,184,154,0.4)"><span class="dot" style="background:var(--green)"></span> 🗓 Cheapest date found · we scanned your window <strong style="margin:0 4px">${esc(ukDate(data.flexResult.window.start))} → ${esc(ukDate(data.flexResult.window.end))}</strong> and picked <strong style="margin:0 4px">${esc(ukDate(data.flexResult.chosenDate))}</strong>${data.flexResult.marketMinGbp ? ` <span class="muted" style="font-size:11px">(market from £${data.flexResult.marketMinGbp})</span>` : ''} — prices below are live for that date</div>` : ''}
-      ${data.visa?.ok ? `<div class="pill" style="margin:14px 0 0;cursor:pointer" onclick="nav('visaos')"><span class="dot" style="background:${data.visa.approvalProbability >= 85 ? 'var(--green)' : 'var(--gold)'}"></span> 3JN VisaOS · approval probability <strong style="margin:0 4px">${data.visa.approvalProbability}%</strong> · ${data.visa.visaRequired ? 'visa required' : 'visa-free'} · decision in ~${data.visa.typicalDecisionMinutes} min</div>` : ''}
+      ${data.visa?.ok ? `<div class="pill" style="margin:14px 0 0;cursor:pointer" onclick="nav('visaos')"><span class="dot" style="background:${data.visa.approvalProbability >= 85 ? 'var(--green)' : 'var(--gold)'}"></span> 3JN VisaOS · <strong style="margin:0 4px">estimated</strong> approval odds <strong style="margin:0 4px">${data.visa.approvalProbability}%</strong> · ${data.visa.visaRequired ? 'visa required' : 'visa-free'} · AI eligibility check ~${data.visa.typicalDecisionMinutes} min <span class="muted" style="font-size:11px">· the embassy issues the real decision</span></div>` : ''}
       ${data.routeRisk ? `<div class="pill" style="margin:14px 0 0" title="${esc(data.routeRisk.disclaimer)}"><span class="dot" style="background:${({ low: 'var(--green)', medium: 'var(--gold)', high: '#ff9f45', critical: '#ff6b6b' })[data.routeRisk.band] || 'var(--gold)'}"></span> Fare risk · <strong style="margin:0 4px">${esc(data.routeRisk.label)}</strong> · ${esc(data.routeRisk.action)}${(data.routeRisk.factors || []).length ? ` <span class="muted" style="font-size:11px">(${data.routeRisk.factors.map(esc).join(' · ')})</span>` : ''}</div>` : ''}
     </div>`;
 
@@ -5339,7 +5339,7 @@ async function renderVisaApply() {
     <div class="planner-shell">
       <div class="card pad">
         <span class="eyebrow">Digital Visa Application · private dashboard</span>
-        <p class="muted" style="font-size:12.5px">Complete every required field <strong>and attach every document</strong>. The AI decision swarm only runs once your file is 100% complete. <span class="muted">* = required</span></p>
+        <p class="muted" style="font-size:12.5px">Complete every required field <strong>and attach every document</strong>. Our AI eligibility &amp; document check runs once your file is 100% complete — it prepares your application and estimates your odds. <strong>The embassy issues the actual decision.</strong> <span class="muted">* = required</span></p>
 
         <div style="margin-top:12px"><span class="eyebrow">Trip & visa</span></div>
         <div class="composer-row" style="margin-top:6px">
