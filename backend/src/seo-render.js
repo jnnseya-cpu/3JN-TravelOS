@@ -194,7 +194,7 @@ article :is(h2,h3){margin-top:1.4em}
 ${bodyHtml}
 </main>
 <footer>
-<p><strong>${esc(BRAND)}</strong> — AI builds your cheapest reliable trip: flights, hotels, visa, transfers &amp; eSIM, with pay-monthly instalments.</p>
+<p><strong>${esc(BRAND)}</strong> — AI builds your whole trip in one booking: flights, hotels, visa, transfers &amp; eSIM, with pay-monthly instalments.</p>
 <p class="links">
 <a href="/">AI trip planner</a>
 <a href="/destinations">All destinations</a>
@@ -252,7 +252,7 @@ const TRUST_SIGNALS = [
   { icon: '🔒', title: 'Your price is locked', body: 'Book and your total is fixed — no fare hikes or currency surcharges before you travel.' },
   { icon: '💳', title: 'Secure payments', body: 'Card payments are processed by Stripe. 3JN never stores your card details.' },
   { icon: '📅', title: 'Pay monthly, transparently', body: 'Spread the cost over weeks or months. The AI buys your ticket the moment the fare is covered and holds it for you.' },
-  { icon: '✅', title: 'Savings guarantee', body: 'If we can\'t beat or match your current quote, your search credits are refunded.' },
+  { icon: '🎟', title: 'One booking, every fee shown', body: 'Flights, hotel, visa, transfers and eSIM in a single booking — every fee shown before you pay, never a hidden estimate.' },
 ];
 function trustBlock({ compact = false } = {}) {
   const badge = moneyProtectionBadge();
@@ -272,7 +272,7 @@ function referralBlock() {
   return `
 <section style="margin:26px 0;padding:18px 20px;border:1px solid rgba(216,180,106,.4);border-radius:12px;background:rgba(216,180,106,.07)">
 <h2 style="margin:.1em 0 .3em;font-size:19px">👥 Refer a friend — you both win</h2>
-<p class="muted" style="margin:.2em 0 .8em">Share 3JN with friends and family. When someone you refer takes their first trip, <strong>you earn reward credit</strong> toward your own travel — and they get the cheapest reliable package too.</p>
+<p class="muted" style="margin:.2em 0 .8em">Share 3JN with friends and family. When someone you refer takes their first trip, <strong>you earn reward credit</strong> toward your own travel — and they get the same one-booking trip too.</p>
 <a class="cta" href="/?open=signup" style="margin:4px 0">Create an account &amp; get your referral link →</a>
 </section>`;
 }
@@ -280,7 +280,7 @@ function referralBlock() {
 const org = (base) => ({
   '@context': 'https://schema.org', '@type': 'Organization', name: BRAND, url: base + '/',
   logo: base + '/logo.png',
-  sameAs: [], description: 'AI travel platform: cheapest reliable flights, hotels, visas, eSIM and transfers with pay-monthly instalments.',
+  sameAs: [], description: 'AI travel platform: book flights, hotels, visa help, eSIM and transfers in one trip, with pay-monthly instalments.',
 });
 
 // ---- Page renderers -------------------------------------------------------
@@ -290,11 +290,11 @@ export function renderHome(base) {
   const cards = featured.map((d) => `<a href="/destinations/${slugifyCity(d.city)}">${esc(d.city)}</a>`).join(' · ');
   const body = `
 <h1>Stop searching. Start saving.</h1>
-<p class="lede">Describe your trip in one sentence. 3JN's AI finds, negotiates and books the cheapest reliable package — flights, hotels, visa, transfers and eSIM — and lets you pay monthly.</p>
+<p class="lede">Describe your trip in one sentence. 3JN's AI plans and books your whole trip — flights, hotels, visa, transfers and eSIM — in one place, and lets you pay monthly.</p>
 <a class="cta" href="/?open=planner">Plan my trip →</a>
 <h2>What 3JN does</h2>
 <ul>
-<li><strong>Cheapest reliable flights &amp; hotels</strong> from multiple suppliers, compared in seconds.</li>
+<li><strong>Real, bookable flights &amp; hotels</strong> from verified suppliers, compared in seconds.</li>
 <li><strong>Pay monthly</strong> — spread the cost over weeks or months, with the AI tracking the fare and buying the moment it drops.</li>
 <li><strong>AI VisaOS</strong> — an instant read on your visa approval odds before you book anything.</li>
 <li><strong>One trip, fully managed</strong> — flights, hotel, transfers, eSIM and visa in a single plan.</li>
@@ -304,7 +304,7 @@ export function renderHome(base) {
 <p><a href="/destinations">Browse all destinations →</a> · <a href="/blog">Read the travel guides →</a></p>`;
   return shell({
     title: `${BRAND} — cheap flights & hotels, pay monthly, AI visa check`,
-    description: 'Describe your trip once — 3JN\'s AI books the cheapest reliable flights, hotels, visa, transfers and eSIM, with pay-monthly instalments and an instant visa approval check.',
+    description: 'Describe your trip once — 3JN\'s AI books your flights, hotels, visa, transfers and eSIM in one trip, with pay-monthly instalments and an instant visa eligibility check.',
     canonical: base + '/', base, ogType: 'website', jsonLd: [org(base), {
       '@context': 'https://schema.org', '@type': 'WebSite', name: BRAND, url: base + '/',
       potentialAction: { '@type': 'SearchAction', target: base + '/?q={search_term_string}', 'query-input': 'required name=search_term_string' },
@@ -407,7 +407,7 @@ export function renderDestinationPage(slug, base) {
   const body = `
 <p class="muted"><a href="/destinations">← All destinations</a></p>
 <h1>Cheap flights &amp; hotels to ${esc(city)}${countryLabel ? `, ${esc(countryLabel)}` : ''} — pay monthly</h1>
-<p class="lede">Describe your ${esc(city)} trip in one sentence and 3JN's AI builds the cheapest reliable package — flights, hotel, transfers, visa and eSIM — with the option to pay over time.</p>
+<p class="lede">Describe your ${esc(city)} trip in one sentence and 3JN's AI builds your whole trip — flights, hotel, transfers, visa and eSIM — with the option to pay over time.</p>
 <a class="cta" href="/?open=planner&amp;q=${q}">Find my ${esc(city)} trip →</a>
 <ul class="facts">${facts}</ul>
 ${emailCapture(city, `dest:${slugifyCity(city)}`)}
@@ -428,7 +428,7 @@ ${referralBlock()}
 <p><a href="/blog">Read our travel guides →</a> · <a href="/visaos">Check your visa odds →</a></p>`;
   return shell({
     title: `Cheap flights & hotels to ${city}${countryLabel ? `, ${countryLabel}` : ''} — pay monthly | ${BRAND}`,
-    description: `Book ${city} flights and hotels the smart way: 3JN's AI finds the cheapest reliable package${fromGbp ? ` from ~£${fromGbp}pp` : ''}, checks your visa, and lets you pay monthly.`,
+    description: `Book ${city} flights and hotels the smart way: 3JN's AI builds your whole trip${fromGbp ? ` from ~£${fromGbp}pp` : ''}, checks your visa, and lets you pay monthly.`,
     canonical: url, base, ogType: 'website', bodyHtml: body,
     jsonLd: [org(base), faqLd, breadcrumbLd(base, [
       { name: 'Home', url: base + '/' },
@@ -444,11 +444,11 @@ export function renderDestinationIndex(base) {
   const items = all.map((d) => `<li><a href="/destinations/${slugifyCity(d.city)}">${esc(d.city)}${d.countryName ? `, ${esc(d.countryName)}` : ''}</a></li>`).join('\n');
   const body = `
 <h1>Destinations — cheap flights &amp; hotels, pay monthly</h1>
-<p class="lede">Pick a destination and let 3JN's AI build the cheapest reliable package — flights, hotel, visa, transfers and eSIM — with pay-monthly instalments.</p>
+<p class="lede">Pick a destination and let 3JN's AI build your whole trip — flights, hotel, visa, transfers and eSIM — with pay-monthly instalments.</p>
 <ul style="columns:2;-webkit-columns:2;gap:24px">${items}</ul>`;
   return shell({
     title: `All destinations — cheap flights & hotels, pay monthly | ${BRAND}`,
-    description: 'Browse destinations and let 3JN\'s AI build the cheapest reliable flight + hotel + visa package, payable monthly.',
+    description: 'Browse destinations and let 3JN\'s AI build your flight + hotel + visa trip in one booking, payable monthly.',
     canonical: base + '/destinations', base, ogType: 'website',
     jsonLd: org(base), bodyHtml: body,
   });
@@ -473,7 +473,7 @@ ${referralBlock()}
 <p style="margin-top:24px"><a class="cta" href="/?open=planner">Plan my trip →</a></p>`;
   return shell({
     title: `Why trust 3JN Travel OS — price lock, secure payments, pay monthly`,
-    description: 'How 3JN protects your money and your trip: locked prices, Stripe-secured payments, transparent pay-monthly, a savings guarantee and verified reviews.',
+    description: 'How 3JN protects your money and your trip: locked prices, Stripe-secured payments, transparent pay-monthly, and a search-credit price promise.',
     canonical: base + '/why-3jn', base, ogType: 'website', jsonLd: org(base), bodyHtml: body,
   });
 }
@@ -565,7 +565,7 @@ export function renderRoutePage(slug, base) {
   const body = `
 <p class="muted"><a href="/flights">← All routes</a> · <a href="/destinations/${slugifyCity(dCity)}">${esc(dCity)} guide</a></p>
 <h1>Cheap flights from ${esc(oCity)} to ${esc(dCity)} — pay monthly</h1>
-<p class="lede">3JN's AI finds the cheapest reliable ${esc(oCity)}–${esc(dCity)} fare, adds a hotel if you want one, checks your visa, and lets you pay over time.</p>
+<p class="lede">3JN's AI books your ${esc(oCity)}–${esc(dCity)} flights, adds a hotel if you want one, checks your visa, and lets you pay over time.</p>
 <a class="cta" href="/?open=planner&amp;q=${q}">Find ${esc(oCity)} → ${esc(dCity)} deals →</a>
 <ul class="facts">${facts}</ul>
 ${emailCapture(dCity, `route:${slugifyCity(oCity)}-to-${slugifyCity(dCity)}`)}
@@ -578,7 +578,7 @@ ${otherOrigins ? `<h2>Fly to ${esc(dCity)} from elsewhere</h2><p class="links">$
 <p><a href="/destinations/${slugifyCity(dCity)}">Everything about ${esc(dCity)} →</a> · <a href="/why-3jn">Why trust 3JN →</a></p>`;
   return shell({
     title: `Cheap flights from ${oCity} to ${dCity} — pay monthly | ${BRAND}`,
-    description: `Book ${oCity} to ${dCity} flights the smart way: 3JN's AI finds the cheapest reliable fare${fromGbp ? ` from ~£${fromGbp}pp` : ''}, checks your visa, and lets you pay monthly.`,
+    description: `Book ${oCity} to ${dCity} flights the smart way: 3JN's AI books a real, bookable fare${fromGbp ? ` from ~£${fromGbp}pp` : ''}, checks your visa, and lets you pay monthly.`,
     canonical: url, base, ogType: 'website', jsonLd: [org(base), faqLd, breadcrumb], bodyHtml: body,
   });
 }
@@ -595,11 +595,11 @@ export function renderRouteIndex(base) {
     `<h3 style="margin:.8em 0 .2em">Flights to ${esc(dest)}</h3><p class="links">${rows.map((x) => `<a href="/flights/${x.slug}">${esc(x.origin)} → ${esc(dest)}</a>`).join(' · ')}</p>`).join('');
   const body = `
 <h1>Cheap flights — pay monthly</h1>
-<p class="lede">Popular routes 3JN's AI books for the cheapest reliable fare, with pay-monthly instalments and an instant visa check.</p>
+<p class="lede">Popular routes 3JN's AI books as real, ticketed fares, with pay-monthly instalments and an instant visa check.</p>
 ${groups}`;
   return shell({
     title: `Cheap flights on popular routes — pay monthly | ${BRAND}`,
-    description: 'Browse popular flight routes and let 3JN\'s AI find the cheapest reliable fare, check your visa, and spread the cost monthly.',
+    description: 'Browse popular flight routes and let 3JN\'s AI book a real, ticketed fare, check your visa, and spread the cost monthly.',
     canonical: base + '/flights', base, ogType: 'website', jsonLd: org(base), bodyHtml: body,
   });
 }

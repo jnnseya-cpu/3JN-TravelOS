@@ -6775,24 +6775,24 @@ $('#apiTryBtn').addEventListener('click', async () => {
 const CONTENT = {
   flights: {
     title: '✈ Flights — inbound & outbound, real bookable fares from our airline partners',
-    body: `<p class="muted">We scan global carriers and wholesalers (Kiwi, Trip.com and direct airline inventory) for <strong>both legs</strong> of your journey, filter out unreliable operators, and present the lowest verified fare we find. No hidden fees — 3JN's 10% is shown openly.</p>
+    body: `<p class="muted">We search live airline inventory (via Duffel) for <strong>both legs</strong> of your journey, filter out unreliable operators, and show the real, bookable fare with every fee shown openly — a small flights-only service fee (2%, min £4.99, capped £15; a flat £4.99 for Travel+ members). We're adding low-cost and consolidator carriers to widen the choice and sharpen the price.</p>
       <ul class="comp-list"><li><span class="cs">Return flights, every cabin</span></li><li><span class="cs">Verified airlines only (reliability ≥ 70)</span></li><li><span class="cs">Price-guarded after you book</span></li></ul>`,
     cta: 'planner',
   },
   journeys: {
-    title: '🚆⛴ Trains, Coaches, Ferries & Cruises — every way to travel, one OS',
-    body: `<p class="muted">3JN is not a flight tool. Ask for <strong>any journey mode</strong> in plain English — “Amsterdam from Newcastle by ferry”, “Paris by Eurostar”, “a 7-night Mediterranean cruise”, “London to Manchester by coach” — and the OS scans verified operators (Eurostar, Trainline, FlixBus, National Express, DFDS, P&O, Brittany Ferries, MSC, Royal Caribbean and more), prices the whole trip and books it with the same openly-shown fees, instalments and price guard as flights.</p>
-      <ul class="comp-list"><li><span class="cs">Trains, coaches, ferries, mini cruises & ocean cruises</span></li><li><span class="cs">Car & bike hire, transfers, boats & yacht charters</span></li><li><span class="cs">Mix modes in one package — rail out, ferry back</span></li></ul>`,
+    title: '🚆⛴ Trains, coaches, ferries & cruises — compare every way to travel',
+    body: `<p class="muted">3JN is not just a flight tool. Ask for <strong>any journey mode</strong> in plain English — “Amsterdam from Newcastle by ferry”, “Paris by Eurostar”, “London to Manchester by coach” — and the OS compares the options and connects you to the right operator (Eurostar, Trainline, FlixBus, National Express, DFDS, P&O, cruise lines and more) to book. <strong>In-app booking with instalments is live today for flights and hotels</strong>; rail, coach, ferry and cruise booking is rolling out as we connect each operator — for now those come as a compare-and-connect handoff.</p>
+      <ul class="comp-list"><li><span class="cs">Compare trains, coaches, ferries & cruises</span></li><li><span class="cs">Connect to the operator to book</span></li><li><span class="cs">Flights & hotels: booked in-app, pay monthly</span></li></ul>`,
     cta: 'planner',
   },
   hotels: {
-    title: '🏨 Hotels & private hosts — wholesale rates, member discounts',
-    body: `<p class="muted">From 5★ resorts to verified private apartments, sourced via Trip.com/Expedia wholesale and our host network — then your loyalty tier shaves even more off. Free-cancellation options surfaced first.</p>`,
+    title: '🏨 Hotels & private hosts — real rates, member discounts',
+    body: `<p class="muted">From 5★ resorts to verified private apartments, sourced via our hotel partners (Duffel Stays today, with the Hotelbeds NET-rate bedbank as it certifies) and our host network — then your loyalty tier shaves more off. Free-cancellation options surfaced first.</p>`,
     cta: 'planner',
   },
   visa: {
     title: '🛂 Visa Automation — know before you go',
-    body: `<p class="muted">We detect visa requirements by your nationality and destination automatically, quote the exact cost and processing time, and handle eVisas through our concierge. No surprises at the airport.</p>`,
+    body: `<p class="muted">We detect visa requirements by your nationality and destination automatically, quote the cost and typical processing time, and help you prepare and submit the application — including the real, cancellable flight & hotel reservations an embassy asks for. The embassy issues the decision; we never do.</p>`,
     cta: 'planner',
   },
   transfers: {
@@ -6802,8 +6802,8 @@ const CONTENT = {
   },
   marketplace: {
     title: '🧺 Destination Marketplace — every trip is a basket',
-    body: `<p class="muted">Beyond the basics, bolt on the experiences that make a trip: tours & attraction tickets (Tiqets, WeGoTrip), boat & yacht charters (Searadar), event tickets (TicketNetwork), car & bike hire, eSIM data (Airalo), local guides, photographers and more — all verified, all in one transparent total.</p>
-      <div class="chips"><span class="chip">🎟 Activities</span><span class="chip">⛵ Boat charter</span><span class="chip">🎫 Event tickets</span><span class="chip">🚗 Car & bike hire</span><span class="chip">📶 eSIM data</span></div>`,
+    body: `<p class="muted">Beyond the basics, bolt on the experiences that make a trip: tours, attraction tickets & activities (via Viator and our partners), eSIM data (Airalo), local guides and photographers from our vendor marketplace — verified and shown in one transparent total. More categories (boat charter, event tickets, car & bike hire) connect through our partners as we add them.</p>
+      <div class="chips"><span class="chip">🎟 Activities</span><span class="chip">📶 eSIM data</span><span class="chip">📷 Guides & photographers</span><span class="chip">⛵ Charters (partner)</span><span class="chip">🚗 Car hire (partner)</span></div>`,
     cta: 'planner',
   },
   careers: {

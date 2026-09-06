@@ -99,10 +99,10 @@ export function seoReport(baseUrl = 'https://3jntravel.com') {
   const keywords = [
     'cheapest reliable flights and hotel package', 'AI travel planner', 'pay monthly holidays',
     'Dubai family holiday deals', 'visa approval probability', 'African diaspora travel',
-    'instalment travel booking', 'eSIM for travel', 'AI visa decision', 'unbeatable travel prices',
+    'instalment travel booking', 'eSIM for travel', 'AI visa eligibility check', 'pay monthly travel',
     'ferry crossings and mini cruises', 'train and coach travel packages', 'cruise holidays pay monthly',
   ];
-  const titles = DESTS.map((d) => `Cheapest reliable ${d} holiday packages — flights, hotel, visa & transfers | 3JN Travel OS`);
+  const titles = DESTS.map((d) => `${d} holiday packages — flights, hotel, visa & transfers, pay monthly | 3JN Travel OS`);
   return {
     metaTitle: 'Stop Searching. Start Saving. — AI Travel OS | 3JN Travel OS',
     metaDescription: '3JN Travel OS books your whole trip — flights, hotels, visa help, activities, eSIM and transfers — as one protected, ticketed booking you can pay for monthly.',
@@ -128,7 +128,7 @@ export function marketingPlan() {
     ],
     socialPosts: DESTS.slice(0, 3).map((d) => ({
       destination: d,
-      post: `✈️ ${d} on a budget? 3JN Travel OS just built a verified ${d} package — flights + hotel + visa + transfers at an unbeatable price, pay monthly. Get your quote → 3jntravel.com #travel #${d.replace(/\s/g, '')} #AItravel`,
+      post: `✈️ ${d} on a budget? 3JN Travel OS just built a verified ${d} package — flights + hotel + visa + transfers in one booking, pay monthly. Get your quote → 3jntravel.com #travel #${d.replace(/\s/g, '')} #AItravel`,
     })),
     kpis: ['CAC < £8', 'referral K-factor > 0.4', 'blog → planner CTR > 6%', 'organic traffic +25%/mo'],
     recommendation: 'Run the referral + influencer loop alongside daily AI social posts and 2 SEO posts/week.',
@@ -174,18 +174,18 @@ const BLOG_ANGLES = [
   {
     key: 'best-time',
     title: (d, f) => f.bestMonths.length ? `Best time to visit ${d}: when to go for cheaper flights (${f.bestMonths[0]}${f.bestMonths[1] ? '–' + f.bestMonths[1] : ''})` : `Best time to visit ${d}: when to go for cheaper flights`,
-    meta: (d, f) => `When is the cheapest time to fly to ${d}? ${f.bestMonths.length ? f.bestMonths.slice(0, 3).join(', ') + ' cut fares without cutting the weather. ' : ''}3JN Travel OS finds the lowest reliable ${d} fare for your dates.`,
+    meta: (d, f) => `When is the cheapest time to fly to ${d}? ${f.bestMonths.length ? f.bestMonths.slice(0, 3).join(', ') + ' cut fares without cutting the weather. ' : ''}3JN Travel OS scans a window of dates for a cheaper ${d} fare.`,
     excerpt: (d) => `The shoulder-season sweet spot for ${d} — same trip, lower price. Let the AI find your cheapest dates.`,
     cta: { href: '/planner', label: (d) => `Find my cheapest ${d} dates →` },
     body: (dh, f, cta, links) => [
       `<p>Timing is the single biggest lever on the price of a <strong>${dh}</strong> trip. Fly in peak weeks and you pay a premium for the same hotel and the same weather.${f.bestMonths.length ? ` For ${dh}, the value window is <strong>${f.bestMonths.slice(0, 3).map(blogEsc).join(', ')}</strong>.` : ''}</p>`,
-      `<h3>When are ${dh} flights cheapest?</h3><p>${f.bestMonths.length ? `${blogEsc(f.bestMonths[0])} onward tends to drop fares 20–35% versus the peak while keeping the good weather.` : 'Shoulder season — just before and after peak — is almost always cheaper.'} Rather than guess, <a href="/planner">describe your trip once</a> and the AI prices your exact dates against the live market floor.</p>`,
+      `<h3>When are ${dh} flights cheapest?</h3><p>${f.bestMonths.length ? `${blogEsc(f.bestMonths[0])} onward tends to drop fares 20–35% versus the peak while keeping the good weather.` : 'Shoulder season — just before and after peak — is almost always cheaper.'} Rather than guess, <a href="/planner">describe your trip once</a> and the AI prices your exact dates against the live market.</p>`,
       whyBlock(dh, f),
       `<p>Planning further afield? Compare <strong>${links.join('</strong> and <strong>')}</strong> too.</p>`,
       `<p><a href="${cta.href}">${cta.label(dh)}</a></p>`,
     ].join(''),
     faq: (dh, f) => [
-      { q: `When is the cheapest time to visit ${dh}?`, a: f.bestMonths.length ? `${f.bestMonths.slice(0, 3).join(', ')} typically offer the lowest ${dh} fares while keeping good weather. 3JN Travel OS prices your exact dates so you can see the difference.` : `Shoulder season — the weeks just before and after peak — is usually cheapest for ${dh}. 3JN prices your exact dates against the live market floor.` },
+      { q: `When is the cheapest time to visit ${dh}?`, a: f.bestMonths.length ? `${f.bestMonths.slice(0, 3).join(', ')} typically offer the lowest ${dh} fares while keeping good weather. 3JN Travel OS prices your exact dates so you can see the difference.` : `Shoulder season — the weeks just before and after peak — is usually cheapest for ${dh}. 3JN prices your exact dates against the live market.` },
       { q: `How far ahead should I book ${dh}?`, a: `For most ${dh} trips, 6–10 weeks ahead balances price and availability. Book with a 20% deposit and 3JN's price guard keeps watching for a cheaper rebooking after you buy.` },
     ],
   },
@@ -230,19 +230,19 @@ const BLOG_ANGLES = [
   {
     key: 'cost',
     title: (d, f) => f.fromGbp ? `How much is a ${d} holiday? Real costs from £${f.fromGbp}pp` : `How much does a ${d} holiday cost? A real breakdown`,
-    meta: (d, f) => `What does a ${d} trip actually cost? ${f.fromGbp ? `Packages from around £${f.fromGbp}pp. ` : ''}3JN Travel OS breaks down flights, hotel, transfers and visa — and prices your exact dates against the live market floor.`,
+    meta: (d, f) => `What does a ${d} trip actually cost? ${f.fromGbp ? `Packages from around £${f.fromGbp}pp. ` : ''}3JN Travel OS breaks down flights, hotel, transfers and visa — and prices your exact dates against the live market.`,
     excerpt: (d) => `An honest ${d} cost breakdown — flights, hotel, transfers, visa — with no hidden fees.`,
     cta: { href: '/planner', label: (d) => `Price my exact ${d} trip →` },
     body: (dh, f, cta, links) => [
       `<p>"How much is a <strong>${dh}</strong> holiday?" honestly depends on your dates and party — but here's what actually goes into the number, with nothing hidden.</p>`,
       `<h3>What a ${dh} package includes</h3><p>Flights, hotel, transfers and (where needed) visa and eSIM.${f.fromGbp ? ` Indicative ${dh} packages start around <strong>£${f.fromGbp}pp</strong>, then move with season and availability.` : ''}${f.bestMonths.length ? ` Travelling in ${blogEsc(f.bestMonths[0])} can trim the flight cost noticeably.` : ''} 3JN adds a transparent 10% fee — no surprise line items at checkout.</p>`,
-      `<h3>See your real number in seconds</h3><p>Rather than a range, <a href="/planner">describe your trip once</a> and the AI prices it against the live market floor, so you know you're not overpaying. A 20% deposit holds it; instalments cover the rest.</p>`,
+      `<h3>See your real number in seconds</h3><p>Rather than a range, <a href="/planner">describe your trip once</a> and the AI prices it against the live market so you can see how it compares. A 20% deposit holds it; instalments cover the rest.</p>`,
       whyBlock(dh, f),
       `<p>Budgeting a few options? Compare <strong>${links.join('</strong> and <strong>')}</strong> side by side.</p>`,
       `<p><a href="${cta.href}">${cta.label(dh)}</a></p>`,
     ].join(''),
     faq: (dh, f) => [
-      { q: `How much does a ${dh} holiday cost?`, a: `${f.fromGbp ? `Indicative ${dh} packages start around £${f.fromGbp}pp for flights and hotel, ` : `It depends on your dates and party, `}but 3JN prices your exact trip against the live market floor so you see the real number, not a guess.` },
+      { q: `How much does a ${dh} holiday cost?`, a: `${f.fromGbp ? `Indicative ${dh} packages start around £${f.fromGbp}pp for flights and hotel, ` : `It depends on your dates and party, `}but 3JN prices your exact trip against the live market so you see the real number, not a guess.` },
       { q: `Does 3JN add hidden fees to a ${dh} booking?`, a: `No. 3JN charges a transparent 10% fee shown up front, with a price guard that rebooks you lower after purchase and passes the saving back — no surprise line items.` },
     ],
   },
@@ -348,7 +348,7 @@ ${featureFooter('pay-monthly', '/planner', 'Build a pay-monthly trip →')}`,
     tags: ['cheapest-date', 'flexible-dates', 'cheap-flights', 'feature'],
     cta: { href: '/planner', label: 'Find my cheapest dates →' },
     body: (k) => `<p>Fare websites make you pick a date first, then show the price. That's backwards when you're flexible. 3JN Travel OS flips it: say <em>"cheapest dates"</em> and the AI scans a whole window of departures to find the lowest fare — the single biggest saving most travellers leave on the table.</p>
-<h3>One instruction, a whole window scanned</h3><p>"Anytime in the next three months, cheapest" is enough. The AI samples across the window against live market fares and surfaces the cheapest day to fly — not one guess, but the real floor. <a href="/planner">Try it →</a></p>
+<h3>One instruction, a whole window scanned</h3><p>"Anytime in the next three months, cheapest" is enough. The AI samples across the window against live market fares and surfaces the cheapest day to fly — not one guess. <a href="/planner">Try it →</a></p>
 <h3>Then lock it and pay monthly</h3><p>Found a great date? Book it at that price — your <a href="/blog/price-lock-guarantee">price is locked</a> — and <a href="/blog/pay-monthly-flights-and-holidays-uk">pay monthly</a> if you'd rather spread it. This is especially powerful on long-haul, where a week's difference can move the fare by hundreds.</p>
 ${featureFooter('cheapest-date', '/planner', 'Find my cheapest dates →')}`,
     faq: [
