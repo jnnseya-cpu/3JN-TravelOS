@@ -79,6 +79,7 @@ import { visaDocPricing } from './visa-docs.js';
 import { bookingSchema, bookingRequirements, validateBooking, bookingRiskScore } from './booking-schema.js';
 import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
+import { dispatchStatus as commsDispatchStatus } from './comms-providers.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, travelfusionEnabled, validateTravelfusionOffer, travelfusionDiagnostic, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
@@ -2268,6 +2269,12 @@ app.get('/api/admin/live-status', safe(async (req, res) => {
       note: travelfusionEnabled()
         ? 'Travelfusion door OPEN — bookable Ryanair/easyJet/Jet2 fares flow into the live search and undercut Duffel on European short-haul.'
         : 'Adapter BUILT + wired (fail-closed). Apply to Travelfusion for the Flight API, then set TRAVELFUSION_LOGIN_ID + TRAVELFUSION_PASSWORD (optionally TRAVELFUSION_MODE=live after certification). See docs/travelfusion-application.md.',
+    },
+    notifications: {
+      // Outbound message channels. Adapters are BUILT + wired (comms-providers.js),
+      // fail-closed until each provider's keys are set. Email/in-app are separate.
+      channels: commsDispatchStatus(),
+      note: 'WhatsApp (Meta Cloud API), SMS (Twilio) and push (OneSignal) adapters are built and fire automatically once keyed: WHATSAPP_PROVIDER_KEY+WHATSAPP_PHONE_ID · SMS_PROVIDER_KEY(SID:token)+SMS_FROM · PUSH_PROVIDER_KEY+PUSH_APP_ID.',
     },
     marketData: {
       provider: 'Travelpayouts (Aviasales)', enabled: marketDataEnabled(),

@@ -2074,6 +2074,11 @@ export async function hotelbedsDiagnostic() {
   const body = { sourceMarket: HB_SOURCE_MARKET, stay: { checkIn, checkOut }, occupancies: [{ rooms: 1, adults: 2, children: 0 }], destination: { code: 'BCN' } };
   const av = await hbRequest(`${base}/hotel-api/1.0/hotels`, { method: 'POST', headers: hotelbedsHeaders(HB_HOTEL_KEY, HB_HOTEL_SECRET), body: JSON.stringify(body), timeoutMs: 15000 });
   if (av == null) return { ok: false, configured: true, base, envKind, mtls, stage: 'availability', authOk: true, verdict: 'Auth OK, but the availability call could not be reached (network/timeout).' };
+  if (av.__status === 401 || av.__status === 403) return {
+    ok: false, configured: true, base, envKind, mtls, stage: 'availability', authOk: true, http: av.__status,
+    verdict: `Auth (/status) passed but the availability call was rejected (HTTP ${av.__status}). This is an ENTITLEMENT/contract issue, not a code or signature bug: your key authenticates but is not authorised to pull live hotel availability on the ${envKind} environment. Typical causes: (1) the key is still an EVAL/test key not yet certified for booking content — complete Hotelbeds APItude certification and request production credentials; (2) you are pointed at ${envKind} but your entitled content lives on the other environment — flip HOTELBEDS_BASE_URL accordingly (test: https://api.test.hotelbeds.com, prod: https://api.hotelbeds.com); (3) the contract/source-market (HOTELBEDS_SOURCE_MARKET="${HB_SOURCE_MARKET}") isn't enabled for hotel content. Resolve with Hotelbeds — no code change fixes an entitlement gap.`,
+    body: av.__error,
+  };
   if (av.__error || av.__status >= 400) return { ok: false, configured: true, base, envKind, mtls, stage: 'availability', authOk: true, http: av.__status, verdict: `Auth OK, but the availability call failed (HTTP ${av.__status}).`, body: av.__error };
   const n = av?.hotels?.hotels?.length || 0;
   return {

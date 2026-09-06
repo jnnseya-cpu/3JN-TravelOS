@@ -9,6 +9,7 @@
 
 import { recordCommsDelivery, listCommsDeliveries, pushNotification } from './store.js';
 import { isMailerEnabled, sendMail } from './mailer.js';
+import { smsConfigured, whatsappConfigured, pushConfigured, sendSMS, sendWhatsApp, sendPush } from './comms-providers.js';
 
 const BRAND = '3JN Travel OS';
 
@@ -248,16 +249,19 @@ export const COMPANIES = [
 function channelLive(channel) {
   if (channel === 'email') return isMailerEnabled();
   if (channel === 'inapp') return true; // always available (in-app feed)
-  if (channel === 'sms') return !!process.env.SMS_PROVIDER_KEY;
-  if (channel === 'push') return !!process.env.PUSH_PROVIDER_KEY;
-  if (channel === 'whatsapp') return !!process.env.WHATSAPP_PROVIDER_KEY;
+  // These now require BOTH the provider key AND the destination-side config
+  // (sender number / phone id / app id) — smsConfigured() etc. enforce that, so
+  // a half-configured provider reports not-live instead of silently failing.
+  if (channel === 'sms') return smsConfigured();
+  if (channel === 'push') return pushConfigured();
+  if (channel === 'whatsapp') return whatsappConfigured();
   return false;
 }
 
 const fill = (str, vars = {}) => (str || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : `{{${k}}}`));
 
 // Fire an event: fan out across its channels (mandatory events ignore opt-outs).
-export function emit(eventKey, { userId, recipient, vars = {}, optOuts = [] } = {}) {
+export function emit(eventKey, { userId, recipient, phone, vars = {}, optOuts = [] } = {}) {
   const e = EVENTS[eventKey];
   if (!e) return { ok: false, error: 'unknown-event' };
   const subject = fill(e.subject, vars);
@@ -266,23 +270,33 @@ export function emit(eventKey, { userId, recipient, vars = {}, optOuts = [] } = 
     // Mandatory notices bypass user opt-outs.
     if (!e.mandatory && optOuts.includes(channel)) continue;
     const live = channelLive(channel);
-    // Only channels with a REAL dispatch path may report 'sent': email (via
-    // sendMail below, and only with a recipient) and inapp (pushNotification,
-    // set below). SMS, push and WhatsApp have NO send implementation yet, so they
-    // must NEVER record 'sent' even when a *_PROVIDER_KEY is set — that would
-    // silently drop a possibly-critical notice while the ledger claims it was
-    // delivered. They stay 'logged' until a provider send path is wired. (email
-    // always sends via SMTP; RESEND_API_KEY is a label, not a send path.)
-    let status = (channel === 'email' && live && recipient) ? 'sent' : 'logged';
-    let provider = { email: live ? 'smtp' : 'sandbox', inapp: 'in-app', sms: 'unwired', push: 'unwired', whatsapp: 'unwired' }[channel];
+    // A delivery is marked 'sent' ONLY when it has a REAL dispatch path AND a
+    // destination: email→recipient, sms/whatsapp→phone, push→userId, inapp→feed.
+    // SMS/WhatsApp/Push now have real provider adapters (comms-providers.js);
+    // they dispatch fire-and-forget (like email) and only claim 'sent' when both
+    // the provider is configured and a destination exists — otherwise 'logged',
+    // so a notice is never silently dropped while the ledger says delivered.
+    const dest = { email: recipient, sms: phone, whatsapp: phone, push: userId, inapp: userId }[channel];
+    let status = 'logged';
+    let provider = { email: live ? 'smtp' : 'sandbox', inapp: 'in-app', sms: 'twilio', push: 'onesignal', whatsapp: 'meta-cloud' }[channel];
+    if (!live && channel !== 'inapp') provider = channel === 'email' ? 'sandbox' : 'unconfigured';
     if (channel === 'inapp' && userId) {
       pushNotification(userId, { type: e.severity === 'critical' ? 'warning' : e.severity, icon: severityIcon(e.severity), title: e.name, body: subject });
       status = 'sent';
-    }
-    if (channel === 'email' && live && recipient) {
+    } else if (channel === 'email' && live && recipient) {
       sendMail({ to: recipient, subject, html: renderEmail(eventKey, { vars }).html, text: subject }).catch(() => {});
+      status = 'sent';
+    } else if (channel === 'sms' && live && phone) {
+      sendSMS(phone, subject).catch(() => {});
+      status = 'sent';
+    } else if (channel === 'whatsapp' && live && phone) {
+      sendWhatsApp(phone, subject).catch(() => {});
+      status = 'sent';
+    } else if (channel === 'push' && live && userId) {
+      sendPush(userId, e.name, subject).catch(() => {});
+      status = 'sent';
     }
-    deliveries.push(recordCommsDelivery({ event: eventKey, name: e.name, channel, recipient: recipient || (userId || 'me'), status, provider, severity: e.severity }));
+    deliveries.push(recordCommsDelivery({ event: eventKey, name: e.name, channel, recipient: dest || recipient || (userId || 'me'), status, provider, severity: e.severity }));
   }
   return { ok: true, event: eventKey, subject, deliveries };
 }

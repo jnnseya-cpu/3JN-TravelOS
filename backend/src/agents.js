@@ -211,19 +211,19 @@ const BLOG_ANGLES = [
   {
     key: 'family',
     title: (d) => `${d} family holidays you can pay for monthly (flights, hotel & transfers)`,
-    meta: (d) => `Plan a ${d} family holiday and spread the cost over interest-free instalments. 3JN Travel OS builds the whole package — flights, family room, transfers — around your dates and budget.`,
+    meta: (d) => `Plan a ${d} family holiday and spread the cost over monthly instalments. 3JN Travel OS builds the whole package — flights, family room, transfers — around your dates and budget.`,
     excerpt: (d) => `A ${d} trip the whole family fits into — right room size, right price, paid monthly.`,
     cta: { href: '/membership', label: () => 'See pay-monthly options →' },
     body: (dh, f, cta, links) => [
       `<p>Family travel to <strong>${dh}</strong> has two hard parts: finding a room that actually fits everyone, and paying for it all at once. 3JN Travel OS solves both.</p>`,
       `<h3>Rooms that fit your whole party</h3><p>Tell the AI "2 adults and a 9-year-old" and it only prices hotels with genuine family occupancy — no more discovering at checkout that the room maxes out at two. <a href="/planner">Describe your family trip →</a> and every child is counted.</p>`,
-      `<h3>Spread the cost, interest-free</h3><p>Pay a 20% deposit and split the rest over interest-free instalments${f.fromGbp ? ` — indicative ${dh} packages start near £${f.fromGbp}pp` : ''}. <a href="/membership">Membership</a> adds loyalty rewards that grow with every family trip.</p>`,
+      `<h3>Spread the cost</h3><p>Pay a 20% deposit and split the rest over monthly instalments (a small, transparent fee, shown up front)${f.fromGbp ? ` — indicative ${dh} packages start near £${f.fromGbp}pp` : ''}. <a href="/membership">Membership</a> adds loyalty rewards that grow with every family trip.</p>`,
       whyBlock(dh, f),
       `<p>Comparing where to take the kids? Look at <strong>${links.join('</strong> and <strong>')}</strong> too.</p>`,
       `<p><a href="${cta.href}">${cta.label(dh)}</a></p>`,
     ].join(''),
     faq: (dh, f) => [
-      { q: `Can I pay for a ${dh} family holiday monthly?`, a: `Yes. Pay a 20% deposit and spread the rest over interest-free instalments. 3JN builds the full ${dh} package — flights, a room that fits your party, and transfers — around your budget.` },
+      { q: `Can I pay for a ${dh} family holiday monthly?`, a: `Yes. Pay a 20% deposit and spread the rest over monthly instalments (a small, transparent fee, shown up front). 3JN builds the full ${dh} package — flights, a room that fits your party, and transfers — around your budget.` },
       { q: `Will 3JN find a room for a family of three or more in ${dh}?`, a: `Yes. The planner only prices ${dh} hotels with real occupancy for your exact party — every adult and child is counted, so the room genuinely fits before you pay.` },
     ],
   },
@@ -325,18 +325,18 @@ const FEATURE_POSTS = [
   {
     key: 'pay-monthly', slug: 'pay-monthly-flights-and-holidays-uk', linkText: 'Pay-monthly flights & holidays',
     title: 'Pay Monthly Flights & Holidays (UK): Spread the Cost, Interest-Free',
-    meta: 'Book flights and holidays now and pay monthly, interest-free. 3JN Travel OS takes a small deposit, locks your price, and spreads the rest over weeks or months.',
-    excerpt: 'Book the trip now, pay for it over time — a small deposit, then interest-free instalments, with your price locked from day one.',
+    meta: 'Book flights and holidays now and pay monthly. 3JN Travel OS takes a small deposit, locks your price, and spreads the rest over weeks or months.',
+    excerpt: 'Book the trip now, pay for it over time — a small deposit, then monthly instalments (a small, transparent fee), with your price locked from day one.',
     tags: ['pay-monthly', 'instalments', 'buy-now-pay-later', 'flights', 'feature'],
     cta: { href: '/planner', label: 'Build a pay-monthly trip →' },
-    body: (k) => `<p>The biggest barrier to booking a trip isn't the price — it's paying it <em>all at once</em>. 3JN Travel OS removes that: put down a small deposit, and spread the rest over interest-free instalments while your price stays locked.</p>
+    body: (k) => `<p>The biggest barrier to booking a trip isn't the price — it's paying it <em>all at once</em>. 3JN Travel OS removes that: put down a small deposit, and spread the rest over monthly instalments while your price stays locked.</p>
 <h3>How pay-monthly works</h3><p>You choose your trip, pay a deposit (typically around 20%), and the balance splits into weekly or monthly instalments. There's no interest and no credit check drama — and crucially, <a href="/blog/price-lock-guarantee">your price is locked</a> the day you book, so fare rises and currency swings can't touch it.</p>
 <h3>Your ticket is secured for you</h3><p>You don't wait until the last instalment to be sure of your seat. 3JN's AI tracks your fare and your payments, and the moment your balance covers the ticket, it buys and <a href="/blog/how-3jn-holds-your-ticket">holds the ticket</a> for you — released the instant you're paid in full. If a cheaper fare appears while you're paying, the <a href="/blog/savings-guarantee-price-guard">price guard</a> can rebook you lower.</p>
 <h3>Works on the trips people actually take</h3><p>Pay-monthly applies across flights, hotels and full packages — including the long-haul routes families save hardest for. See it on a real trip, then spread the cost.</p>
 ${featureFooter('pay-monthly', '/planner', 'Build a pay-monthly trip →')}`,
     faq: [
-      { q: 'Can I really pay for flights monthly in the UK?', a: 'Yes. 3JN Travel OS takes a small deposit (around 20%) and spreads the rest over interest-free weekly or monthly instalments, with your price locked at booking.' },
-      { q: 'Is pay-monthly interest-free?', a: 'Yes — the instalments are interest-free. 3JN charges a transparent fee shown up front, not hidden interest.' },
+      { q: 'Can I really pay for flights monthly in the UK?', a: 'Yes. 3JN Travel OS takes a small deposit (around 20%) and spreads the rest over weekly or monthly instalments, with your price locked at booking.' },
+      { q: 'Is pay-monthly interest-free?', a: 'No interest is charged. Instead there is a small, transparent pay-monthly fee, always shown up front before you pay — never hidden interest.' },
       { q: 'When do I actually get my ticket?', a: 'The AI secures and holds your ticket as soon as your payments cover the fare, and releases it to you the moment your balance reaches zero — so your seat is protected while you pay.' },
     ],
   },

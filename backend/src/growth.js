@@ -33,7 +33,7 @@ export function socialPost({ destination, platform, tone: t, variant = 0 } = {},
   ];
   const bodies = [
     `One sentence in, 3JN Travel OS builds the whole thing — flights, hotel, visa check, even eSIM — at the lowest *reliable* price, and you can pay monthly.`,
-    `No more 12 browser tabs. The AI finds it, prices it against the live market, and books it. Split it into interest-free instalments if you want.`,
+    `No more 12 browser tabs. The AI finds it, prices it against the live market, and books it. Split it into monthly instalments if you want.`,
   ];
   const cta = `Plan yours free → ${link}`;
   const tags = hashtags({ destination: dest, platform: pf }, ctx).list.slice(0, pf === 'x' ? 3 : 8).join(' ');
@@ -50,7 +50,7 @@ export function travelAdvert({ destination, tone: t, variant = 0 } = {}, ctx = {
     `Stop searching. Start saving on ${dest}.`,
     `Your ${dest} trip, at the reliable-cheapest price`,
   ], seed);
-  const primary = `${tn.open}: describe your ${dest} trip in one sentence and 3JN Travel OS builds it — flights, hotel, transfers, visa & eSIM — at the lowest reliable price, with interest-free instalments and a 24/7 price guard.`;
+  const primary = `${tn.open}: describe your ${dest} trip in one sentence and 3JN Travel OS builds it — flights, hotel, transfers, visa & eSIM — at the lowest reliable price, with monthly instalments and a 24/7 price guard.`;
   const description = `Verified suppliers · transparent 10% fee · pay monthly`;
   const out = [
     `HEADLINE (max 30 chars each):`,
@@ -86,7 +86,7 @@ export function emailCampaign({ destination, tone: t, variant = 0 } = {}, ctx = 
     ``,
     `${tn.open} — planning ${dest} used to mean a dozen tabs and a headache. Not anymore.`,
     ``,
-    `With 3JN Travel OS you describe the trip in one sentence and the AI builds the whole thing — flights, hotel, transfers, a visa-approval check and eSIM — at the lowest *reliable* price. Prefer to spread the cost? Pay a deposit and the rest in interest-free instalments.`,
+    `With 3JN Travel OS you describe the trip in one sentence and the AI builds the whole thing — flights, hotel, transfers, a visa-approval check and eSIM — at the lowest *reliable* price. Prefer to spread the cost? Pay a deposit and the rest in monthly instalments.`,
     ``,
     `👉 Plan your ${dest} trip free: ${link}`,
     ``,
@@ -113,11 +113,11 @@ h1{font-size:34px;line-height:1.1;margin:0 0 12px}.sub{opacity:.8;font-size:18px
 .grid{display:grid;gap:14px;margin:28px 0}.card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:16px}</style>
 </head><body><div class="wrap">
 <h1>${esc(dest)} for less — built by AI, paid monthly</h1>
-<p class="sub">Describe your trip in one sentence. Get flights, hotel, transfers, a visa-approval check and eSIM at the lowest reliable price — with interest-free instalments.</p>
+<p class="sub">Describe your trip in one sentence. Get flights, hotel, transfers, a visa-approval check and eSIM at the lowest reliable price — with monthly instalments.</p>
 <a class="cta" href="${esc(link)}">Plan my ${esc(dest)} trip free →</a>
 <div class="grid">
   <div class="card"><strong>Reliable-cheapest</strong><br>Verified suppliers only, priced against the live market floor.</div>
-  <div class="card"><strong>Pay monthly</strong><br>A deposit today, the rest interest-free before you travel.</div>
+  <div class="card"><strong>Pay monthly</strong><br>A deposit today, the rest spread before you travel.</div>
   <div class="card"><strong>Visa made simple</strong><br>Know your approval odds before you book anything.</div>
 </div>
 <a class="cta" href="${esc(link)}">Get my ${esc(dest)} quote →</a>

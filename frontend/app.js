@@ -297,7 +297,7 @@ const STEPS = [
   ['03', 'TRUST', 'Verified & reliable', 'Live fares come straight from the airline; every option carries a supplier reliability score. Community hosts and vendors pass a risk review and admin approval before they can be booked.'],
   ['04', 'REWARDS', 'Travel Credit on every trip', 'Travel+ members save the flight service fee, get a member discount on packages, and earn 3% back on holiday packages toward the next one — simple, no confusing tiers.'],
   ['05', 'LOGISTICS', 'Universal Console Sync', 'Once secured, your journey is instantly synchronised with your Universal Console, centralising your visas, transfers, and eSIMs into one high-tech management interface.'],
-  ['06', 'GUARANTEED', 'Price Lock', 'The price you book is fixed in your booking terms and fully protected until you travel — no fare increases, no currency surcharges, no hidden add-ons. Pay monthly, interest-free, at the price you locked on day one.'],
+  ['06', 'PRICE LOCK', 'Price Lock', 'The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. Spread the cost over monthly instalments (a small pay-monthly fee applies, shown before you pay) — at the price you locked on day one.'],
 ];
 
 const LOYALTY = [
@@ -1914,7 +1914,7 @@ function priceZoneHTML(quote) {
   const lockedTotal = (lm && lm.lockedTotal) || option.pricing.local.total;
   const lockedTotalLine = (hasLock || hasFee) ? `
       ${hasLock ? `<div class="kv" style="font-size:11.5px;color:var(--muted);margin-top:2px"><span>🔒 Guaranteed Holiday Lock (fixes your price against fare rises)</span><span>+${money2(lm.margin, sym)}</span></div>` : ''}
-      ${hasFee ? `<div class="kv" style="font-size:11.5px;color:var(--muted)"><span>📅 Pay-monthly service fee (${(ifee.pct * 100).toFixed(1)}% — interest-free instalments)</span><span>+${money2(ifee.fee, sym)}</span></div>` : ''}
+      ${hasFee ? `<div class="kv" style="font-size:11.5px;color:var(--muted)"><span>📅 Pay-monthly fee (${(ifee.pct * 100).toFixed(1)}% — no interest, just this small fee to spread the cost)</span><span>+${money2(ifee.fee, sym)}</span></div>` : ''}
       <div class="kv" style="font-weight:700;font-size:12.5px"><span>Price-locked total</span><span style="color:var(--gold)">${money2(lockedTotal, sym)}</span></div>
       <div class="muted" style="font-size:11px;margin-top:2px">Pay in full instead and skip ${hasLock && hasFee ? 'both fees' : 'this fee'} — ${money2(option.pricing.local.total, sym)} today.</div>` : '';
   const smart = inst.engine === 'ai-smart' ? `
@@ -1924,7 +1924,7 @@ function priceZoneHTML(quote) {
         <span class="muted" style="font-size:11.5px">${inst.daysToDeparture} days to departure · AI-selected</span></div>
       <div class="muted" style="font-size:12px;margin-top:6px">
         Deposit <strong>${(inst.depositPct * 100).toFixed(0)}%</strong> today (<strong style="color:var(--gold)">non-refundable</strong> — it secures your booking and locks the fare) ·
-        ${inst.schedule.length ? `${inst.schedule.length} interest-free instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
+        ${inst.schedule.length ? `${inst.schedule.length} monthly instalment${inst.schedule.length > 1 ? 's' : ''}, fully settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure)` : 'full payment at booking — instalments are not available this close to departure'} ·
         pay any amount early, any time, no penalty${(inst.instalmentFee && inst.instalmentFee.applies) ? ' · a small pay-monthly service fee applies (shown below) — paying in full skips it' : ''}.
       </div>
       <div class="muted" style="font-size:11px;margin-top:4px">Missed instalment → ${inst.graceHours}h grace period, then the booking auto-cancels. Deposits are non-refundable. If you've paid <strong>over 50%</strong> and no ticket has been issued, you're refunded less a <strong>£100 admin fee per passenger</strong>; once a ticket is issued the airline's rules govern the flight.</div>
@@ -1942,7 +1942,7 @@ function priceZoneHTML(quote) {
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
     <div class="card pad" style="margin:10px 0;border-color:rgba(139,184,154,0.45);background:rgba(139,184,154,0.06)">
       <strong>✈️ Flight secured now — hotel paid monthly</strong>
-      <div class="muted" style="font-size:12px;margin-top:4px">This airline needs the flight paid in full to ticket it, so you pay the <strong>flight today</strong> (${money2(inst.deposit, sym)}) and spread the <strong>hotel</strong> (${money2(inst.split.hotelLocal, sym)}) interest-free. Your flight is ticketed straight away and held on your account — your e-ticket releases the moment the hotel balance is paid. Cancel the hotel and you <strong>keep the flight you've paid for</strong> (a ${feePct}% hotel fee, capped ${feeCap}, applies within 7 days of departure).</div>
+      <div class="muted" style="font-size:12px;margin-top:4px">This airline needs the flight paid in full to ticket it, so you pay the <strong>flight today</strong> (${money2(inst.deposit, sym)}) and spread the <strong>hotel</strong> (${money2(inst.split.hotelLocal, sym)}) over monthly instalments. Your flight is ticketed straight away and held on your account — your e-ticket releases the moment the hotel balance is paid. Cancel the hotel and you <strong>keep the flight you've paid for</strong> (a ${feePct}% hotel fee, capped ${feeCap}, applies within 7 days of departure).</div>
     </div>
     <div class="field" style="margin:10px 0 4px">
       <label>How would you like to pay?</label>
@@ -1954,7 +1954,7 @@ function priceZoneHTML(quote) {
     <div id="depositSchedule">
       <div class="kv" style="font-weight:700"><span>Pay today · flight secured &amp; ticketed</span><span style="color:var(--gold)">${money2(inst.deposit, sym)}</span></div>
       ${hotelRows}
-      <div class="muted" style="font-size:11.5px;margin-top:4px">${inst.schedule.length} interest-free hotel instalment${inst.schedule.length > 1 ? 's' : ''}, settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure). Pay the hotel early any time — your e-ticket releases as soon as it's clear.</div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">${inst.schedule.length} hotel instalment${inst.schedule.length > 1 ? 's' : ''}, settled by <strong>${esc(ukDate(inst.finalDue))}</strong> (7 days before departure). Pay the hotel early any time — your e-ticket releases as soon as it's clear.</div>
     </div>
     <div id="fullSchedule" style="display:none">
       <div class="kv" style="font-weight:700"><span>Pay in full today</span><span style="color:var(--gold)">${money2(option.pricing.local.total, sym)}</span></div>
@@ -1980,11 +1980,11 @@ function priceZoneHTML(quote) {
   }
   return `
     <h3 style="margin:6px 0 4px">${money2(option.pricing.local.total, sym)} total</h3>
-    ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} interest-free instalments.</p>`}
+    ${smart || `<p class="muted" style="font-size:13.5px">Deposit ${(inst.depositPct * 100).toFixed(0)}% today, then ${inst.months} monthly instalments <span class="muted">(a small pay-monthly fee applies — shown before you pay)</span>.</p>`}
     <div class="field" style="margin:10px 0 4px">
       <label>How would you like to pay?</label>
       <select id="payChoice" class="in" onchange="togglePayChoice()">
-        <option value="deposit">Deposit now + interest-free instalments</option>
+        <option value="deposit">Deposit now + monthly instalments</option>
         <option value="full">Pay in full now (${money2(option.pricing.local.total, sym)})</option>
       </select>
     </div>
@@ -6818,7 +6818,7 @@ const CONTENT = {
   },
   terms: {
     title: '📜 Terms of Use',
-    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers with transparent fees, always shown before you pay: <strong>flights-only</strong> carry a small <strong>2%</strong> service fee (min £4.99, capped at £15; a <strong>flat £4.99 for Travel+ members</strong> — no % markup); <strong>packages</strong> carry a transparent <strong>10%</strong>. The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. Deposits and instalments are interest-free; refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>`,
+    body: `<p class="muted">3JN Travel OS finds and packages travel from verified third-party suppliers with transparent fees, always shown before you pay: <strong>flights-only</strong> carry a small <strong>2%</strong> service fee (min £4.99, capped at £15; a <strong>flat £4.99 for Travel+ members</strong> — no % markup); <strong>packages</strong> carry a transparent <strong>10%</strong>. The price you book is fixed in your booking terms and protected from fare increases and currency movement until you travel. We charge no interest on instalments; a small, transparent pay-monthly fee applies and is always shown before you pay. Refunds and changes are processed where commercially and legally possible, subject to each supplier's fare/rate rules. Full terms at <strong>info@3jntravel.com</strong>.</p>`,
   },
   support: {
     title: '🛟 Support — before, during & after your trip',
@@ -6872,11 +6872,11 @@ document.addEventListener('click', (e) => {
 
 // ---- Internationalisation (EN / FR / SW / LN / AR) ------------------------
 const I18N = {
-  en: { 'nav.home': 'Home', 'nav.plan': 'Plan a Trip', 'nav.how': 'How it Works', 'nav.membership': 'Membership', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Business', 'nav.admin': 'Admin', 'hero.line1': 'Book It All.', 'hero.line2': 'Pay Monthly.', 'hero.lede': '3JN books real airline tickets and issues your e-ticket — plus hotels, visa help and an eSIM — with every fee shown before you pay. Pay in full, or spread it over interest-free monthly instalments.', 'hero.cta1': 'Get My Best Trip', 'hero.cta2': 'See How It Works', 'hero.whatsapp': '💬 Book on WhatsApp' },
-  fr: { 'nav.home': 'Accueil', 'nav.plan': 'Planifier', 'nav.how': 'Comment ça marche', 'nav.membership': 'Abonnement', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Entreprise', 'nav.admin': 'Admin', 'hero.line1': 'Réservez tout.', 'hero.line2': 'Payez chaque mois.', 'hero.lede': "3JN réserve de vrais billets d'avion et émet votre billet électronique — plus hôtels, aide au visa et une eSIM — avec chaque frais affiché avant le paiement. Payez en une fois, ou étalez le coût en mensualités sans intérêt.", 'hero.cta1': 'Mon meilleur voyage', 'hero.cta2': 'Comment ça marche', 'hero.whatsapp': '💬 Réserver sur WhatsApp' },
-  sw: { 'nav.home': 'Nyumbani', 'nav.plan': 'Panga Safari', 'nav.how': 'Jinsi Inavyofanya', 'nav.membership': 'Uanachama', 'nav.api': 'API', 'nav.console': 'Konsoli', 'nav.business': 'Biashara', 'nav.admin': 'Msimamizi', 'hero.line1': 'Weka Yote.', 'hero.line2': 'Lipa Kila Mwezi.', 'hero.lede': '3JN inaweka tiketi halisi za ndege na kukupa tiketi yako ya kielektroniki — pamoja na hoteli, msaada wa viza na eSIM — kila ada ikionyeshwa kabla ya kulipa. Lipa yote kwa mara moja, au gawanya gharama kwa awamu bila riba.', 'hero.cta1': 'Pata Safari Bora', 'hero.cta2': 'Jinsi Inavyofanya', 'hero.whatsapp': '💬 Weka kwa WhatsApp' },
-  ln: { 'nav.home': 'Ndako', 'nav.plan': 'Bongisa Mobembo', 'nav.how': 'Ndenge Esalaka', 'nav.membership': 'Bosangani', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Mombongo', 'nav.admin': 'Admin', 'hero.line1': 'Bongisa Nyonso.', 'hero.line2': 'Futa Sanza na Sanza.', 'hero.lede': '3JN ekosombaka batike ya solo ya mpepo mpe ekopesaka yo e-ticket na yo — elongo na baotɛlɛ, lisalisi ya visa mpe eSIM — na mbongo nyonso emonisami liboso ya kofuta. Futa nyonso mbala moko, to kabola motúya na sanza na sanza kozanga interɛ.', 'hero.cta1': 'Zwá Mobembo Malamu', 'hero.cta2': 'Ndenge Esalaka', 'hero.whatsapp': '💬 Réserver na WhatsApp' },
-  ar: { 'nav.home': 'الرئيسية', 'nav.plan': 'خطط رحلة', 'nav.how': 'كيف يعمل', 'nav.membership': 'العضوية', 'nav.api': 'API', 'nav.console': 'لوحة التحكم', 'nav.business': 'الأعمال', 'nav.admin': 'المشرف', 'hero.line1': 'احجز كل شيء.', 'hero.line2': 'ادفع شهريًا.', 'hero.lede': 'يحجز 3JN تذاكر طيران حقيقية ويصدر تذكرتك الإلكترونية — بالإضافة إلى الفنادق والمساعدة في التأشيرة وشريحة eSIM — مع عرض كل رسم قبل الدفع. ادفع كاملًا أو قسّط التكلفة على أقساط شهرية بدون فوائد.', 'hero.cta1': 'احصل على أفضل رحلة', 'hero.cta2': 'كيف يعمل', 'hero.whatsapp': '💬 احجز عبر واتساب' },
+  en: { 'nav.home': 'Home', 'nav.plan': 'Plan a Trip', 'nav.how': 'How it Works', 'nav.membership': 'Membership', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Business', 'nav.admin': 'Admin', 'hero.line1': 'Book It All.', 'hero.line2': 'Pay Monthly.', 'hero.lede': '3JN books real airline tickets and issues your e-ticket — plus hotels, visa help and an eSIM — with every fee shown before you pay. Pay in full, or spread it over monthly instalments.', 'hero.cta1': 'Get My Best Trip', 'hero.cta2': 'See How It Works', 'hero.whatsapp': '💬 Book on WhatsApp' },
+  fr: { 'nav.home': 'Accueil', 'nav.plan': 'Planifier', 'nav.how': 'Comment ça marche', 'nav.membership': 'Abonnement', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Entreprise', 'nav.admin': 'Admin', 'hero.line1': 'Réservez tout.', 'hero.line2': 'Payez chaque mois.', 'hero.lede': "3JN réserve de vrais billets d'avion et émet votre billet électronique — plus hôtels, aide au visa et une eSIM — avec chaque frais affiché avant le paiement. Payez en une fois, ou étalez le coût sur des mensualités.", 'hero.cta1': 'Mon meilleur voyage', 'hero.cta2': 'Comment ça marche', 'hero.whatsapp': '💬 Réserver sur WhatsApp' },
+  sw: { 'nav.home': 'Nyumbani', 'nav.plan': 'Panga Safari', 'nav.how': 'Jinsi Inavyofanya', 'nav.membership': 'Uanachama', 'nav.api': 'API', 'nav.console': 'Konsoli', 'nav.business': 'Biashara', 'nav.admin': 'Msimamizi', 'hero.line1': 'Weka Yote.', 'hero.line2': 'Lipa Kila Mwezi.', 'hero.lede': '3JN inaweka tiketi halisi za ndege na kukupa tiketi yako ya kielektroniki — pamoja na hoteli, msaada wa viza na eSIM — kila ada ikionyeshwa kabla ya kulipa. Lipa yote kwa mara moja, au gawanya gharama kwa awamu za kila mwezi.', 'hero.cta1': 'Pata Safari Bora', 'hero.cta2': 'Jinsi Inavyofanya', 'hero.whatsapp': '💬 Weka kwa WhatsApp' },
+  ln: { 'nav.home': 'Ndako', 'nav.plan': 'Bongisa Mobembo', 'nav.how': 'Ndenge Esalaka', 'nav.membership': 'Bosangani', 'nav.api': 'API', 'nav.console': 'Console', 'nav.business': 'Mombongo', 'nav.admin': 'Admin', 'hero.line1': 'Bongisa Nyonso.', 'hero.line2': 'Futa Sanza na Sanza.', 'hero.lede': '3JN ekosombaka batike ya solo ya mpepo mpe ekopesaka yo e-ticket na yo — elongo na baotɛlɛ, lisalisi ya visa mpe eSIM — na mbongo nyonso emonisami liboso ya kofuta. Futa nyonso mbala moko, to kabola motúya na sanza na sanza.', 'hero.cta1': 'Zwá Mobembo Malamu', 'hero.cta2': 'Ndenge Esalaka', 'hero.whatsapp': '💬 Réserver na WhatsApp' },
+  ar: { 'nav.home': 'الرئيسية', 'nav.plan': 'خطط رحلة', 'nav.how': 'كيف يعمل', 'nav.membership': 'العضوية', 'nav.api': 'API', 'nav.console': 'لوحة التحكم', 'nav.business': 'الأعمال', 'nav.admin': 'المشرف', 'hero.line1': 'احجز كل شيء.', 'hero.line2': 'ادفع شهريًا.', 'hero.lede': 'يحجز 3JN تذاكر طيران حقيقية ويصدر تذكرتك الإلكترونية — بالإضافة إلى الفنادق والمساعدة في التأشيرة وشريحة eSIM — مع عرض كل رسم قبل الدفع. ادفع كاملًا أو قسّط التكلفة على أقساط شهرية.', 'hero.cta1': 'احصل على أفضل رحلة', 'hero.cta2': 'كيف يعمل', 'hero.whatsapp': '💬 احجز عبر واتساب' },
 };
 function applyLanguage(lang) {
   const dict = I18N[lang] || I18N.en;
@@ -7039,7 +7039,7 @@ window.openAbout = () => {
     ${story || `<p class="muted" style="font-size:13.5px">3JN Travel exists to make the trip home affordable and stress-free — book today, pay monthly, at a price that's locked and can't rise before you fly. Flights, hotel, transfer, visa support and an eSIM, packaged into one honest price with every fee shown up front.</p>`}
     <div class="card pad" style="margin-top:10px">
       <div class="kv" style="font-size:12.5px"><span>✓ Price locked</span><span class="muted">no fare-rise surprises</span></div>
-      <div class="kv" style="font-size:12.5px"><span>✓ Pay monthly, interest-free</span><span class="muted">spread the cost</span></div>
+      <div class="kv" style="font-size:12.5px"><span>✓ Pay monthly — spread the cost</span><span class="muted">small fee, shown upfront</span></div>
       <div class="kv" style="font-size:12.5px"><span>✓ Every fee shown before you pay</span><span class="muted">no hidden extras</span></div>
       <div class="kv" style="font-size:12.5px"><span>✓ A real person to talk to</span><span class="muted">not just a chatbot</span></div>
     </div>

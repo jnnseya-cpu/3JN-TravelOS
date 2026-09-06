@@ -1127,6 +1127,23 @@ test('comms: 177-event catalogue, channel coverage, mandatory fan-out', () => {
   assert.ok(COMMS_EVENTS['security.alert'].mandatory);
 });
 
+test('comms providers: SMS/WhatsApp/push are fail-closed without keys', async () => {
+  const { smsConfigured, whatsappConfigured, pushConfigured, sendSMS, sendWhatsApp, sendPush } = await import('../src/comms-providers.js');
+  // With no provider keys in the test env, each channel reports not-configured
+  // and each send skips (no network) — so emit() can never mark it 'sent'.
+  assert.equal(smsConfigured(), false);
+  assert.equal(whatsappConfigured(), false);
+  assert.equal(pushConfigured(), false);
+  assert.deepEqual(await sendSMS('+447700900000', 'hi'), { ok: false, skipped: true });
+  assert.deepEqual(await sendWhatsApp('+447700900000', 'hi'), { ok: false, skipped: true });
+  assert.deepEqual(await sendPush('user_1', 'Title', 'Body'), { ok: false, skipped: true });
+  // And emit() records those channels as 'logged' (never 'sent') when unconfigured.
+  const u = createUser({ name: 'Comms2', email: 'comms2@example.com' });
+  const r = commsEmit('security.alert', { userId: u.id, recipient: u.email, phone: '+447700900000' });
+  const sms = r.deliveries.find((d) => d.channel === 'sms');
+  if (sms) assert.equal(sms.status, 'logged', 'SMS stays logged until a provider is configured');
+});
+
 test('booking engine: dynamic requirements, document validation and fraud score', () => {
   // Requirements adapt to components + destination (US → ESTA, per-passenger PNR).
   const reqs = bookingRequirements({ components: ['flight', 'hotel', 'transfer'], destination: 'New York', nationality: 'NG', passengers: 2 });
