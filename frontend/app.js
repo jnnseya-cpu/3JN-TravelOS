@@ -1196,7 +1196,7 @@ function renderOptions(data) {
   // Mode competition: the OS compared every realistic way to travel.
   const mc = data.modeCompetition;
   const modeNote = mc
-    ? `<div class="pill" style="margin:0 0 16px;border-color:rgba(139,166,191,0.4)">🧭 No travel mode specified — compared ${mc.map((m) => ({ flights: '✈ flights', train: '🚆 train', coach: '🚌 coach (FlixBus, Eurolines…)', ferry: '⛴ ferry' }[m] || m)).join(' vs ')} · cheapest reliable won</div>`
+    ? `<div class="pill" style="margin:0 0 16px;border-color:rgba(139,166,191,0.4)">🧭 No travel mode specified — compared ${mc.map((m) => ({ flights: '✈ flights', train: '🚆 train', coach: '🚌 coach (FlixBus, Eurolines…)', ferry: '⛴ ferry' }[m] || m)).join(' vs ')} · best value of the modes we compared</div>`
     : '';
   const flightPrefNote = fpBits.length
     ? `<div class="pill" style="margin:0 0 16px;border-color:${fp.directUnavailable ? 'rgba(201,168,106,0.45)' : 'rgba(139,184,154,0.35)'}">${fpBits.join(' · ')}</div>`
@@ -6774,7 +6774,7 @@ $('#apiTryBtn').addEventListener('click', async () => {
 // ---- Footer content (punchy, persuasive marketing copy) -------------------
 const CONTENT = {
   flights: {
-    title: '✈ Flights — inbound & outbound, the cheapest reliable fare we find',
+    title: '✈ Flights — inbound & outbound, real bookable fares from our airline partners',
     body: `<p class="muted">We scan global carriers and wholesalers (Kiwi, Trip.com and direct airline inventory) for <strong>both legs</strong> of your journey, filter out unreliable operators, and present the lowest verified fare we find. No hidden fees — 3JN's 10% is shown openly.</p>
       <ul class="comp-list"><li><span class="cs">Return flights, every cabin</span></li><li><span class="cs">Verified airlines only (reliability ≥ 70)</span></li><li><span class="cs">Price-guarded after you book</span></li></ul>`,
     cta: 'planner',

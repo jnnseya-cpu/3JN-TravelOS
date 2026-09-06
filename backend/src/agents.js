@@ -105,7 +105,7 @@ export function seoReport(baseUrl = 'https://3jntravel.com') {
   const titles = DESTS.map((d) => `Cheapest reliable ${d} holiday packages — flights, hotel, visa & transfers | 3JN Travel OS`);
   return {
     metaTitle: 'Stop Searching. Start Saving. — AI Travel OS | 3JN Travel OS',
-    metaDescription: '3JN Travel OS finds, negotiates and books the cheapest reliable travel — flights, hotels, visa, activities, eSIM and transfers — with pay-monthly instalments and an AI visa decision engine.',
+    metaDescription: '3JN Travel OS books your whole trip — flights, hotels, visa help, activities, eSIM and transfers — as one protected, ticketed booking you can pay for monthly.',
     targetKeywords: keywords,
     destinationTitles: titles,
     onPage: ['Unique <title> + meta per page', 'Open Graph + Twitter cards', 'JSON-LD Organization + Product schema', 'sitemap.xml + robots.txt', 'fast Core Web Vitals (static frontend)'],
