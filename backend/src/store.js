@@ -562,7 +562,21 @@ export function orderVisaReservation(userId, payload = {}, { awaitingPayment = f
     applicantName: trip.applicantName || u.name || null, visaAppId: payload.visaAppId || null,
     // Passenger manifest (for the flight hold + what ops/embassy see). Stored,
     // not echoed back in list views beyond names.
-    passengers: Array.isArray(payload.passengers) ? payload.passengers.slice(0, 9).map((p) => ({ fullName: String(p.fullName || p.name || '').trim() || null, dob: p.dob || null, gender: p.gender || null, title: p.title || null })) : [],
+    // Passenger manifest for the flight hold. If the order sends explicit
+    // passengers, use them; otherwise seed the APPLICANT themselves (their real
+    // name — an embassy verifies the name on the reservation), pulling DOB/gender
+    // from their Master Travel Profile when present. Without at least one real
+    // passenger the auto-hold can never fire and every order falls to the manual
+    // Visa Desk — which is exactly the "Awaiting issue" stall we're fixing.
+    passengers: (() => {
+      if (Array.isArray(payload.passengers) && payload.passengers.length) {
+        return payload.passengers.slice(0, 9).map((p) => ({ fullName: String(p.fullName || p.name || '').trim() || null, dob: p.dob || null, gender: p.gender || null, title: p.title || null }));
+      }
+      const name = String(trip.applicantName || u.name || '').trim();
+      if (!name) return [];
+      const tp = u.travelProfile || {};
+      return [{ fullName: name, dob: tp.dob || null, gender: tp.gender || null, title: null }];
+    })(),
     contact: { email: u.email || null, phone: u.phone || null },
     feeGbp: fee.feeGbp, feeUSD: fee.feeUSD, memberDiscountPct: fee.memberDiscountPct,
     // Refundable room deposit (hotel/pack only) — the CUSTOMER carries the room,
