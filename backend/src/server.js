@@ -27,7 +27,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
-  ensureVisaPassengers, refundVisaReservation,
+  ensureVisaPassengers, refundVisaReservation, listStuckVisaReservations, alertStuckVisaReservations,
   applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid, setVisaFeeSession, visaReservationsAwaitingPayment,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, refreshEsimUsage, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
@@ -3864,6 +3864,30 @@ app.get('/api/cron/visa-reconcile', safe(async (req, res) => {
     }
   }
   res.json({ ok: true, checked: pending.length, issued });
+}));
+// SELF-HEAL + ESCALATION cron: a paid visa reservation still 'processing' after a
+// few hours means the automated hold never completed. First RETRY the hold on
+// each (seed the applicant as passenger #1 if missing, then re-run fulfilment) —
+// which fixes the exact empty-passenger bug automatically — then alert admins
+// ONCE about any that remain, so a paid customer never waits silently again.
+// Fail-closed (CRON_SECRET); idempotent (retry no-ops when already issued, alert
+// stamps stuckAlertedAt).
+app.get('/api/cron/visa-stuck-alert', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
+  const hours = Math.min(72, Math.max(1, Number(req.query.hours) || 4));
+  const stuck = listStuckVisaReservations(hours);
+  let recovered = 0;
+  for (const rec of stuck) {
+    try {
+      ensureVisaPassengers(rec.id);
+      await fulfilVisaReservation(rec.id);
+      const after = getVisaReservation(rec.id);
+      if (after && after.status !== 'processing') recovered += 1;
+    } catch { /* leave it for the alert below */ }
+  }
+  const alerted = alertStuckVisaReservations(hours);
+  res.json({ ok: true, checked: stuck.length, recovered, alerted });
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved

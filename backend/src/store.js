@@ -733,6 +733,32 @@ export function refundVisaReservation(rid, { refundRef = null, amountGbp = null,
   pushNotification(rec.userId, { type: 'info', icon: '💷', title: 'Visa reservation refunded', body: `We've refunded your ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'visa reservation'} fee${amt ? ' (£' + amt.toFixed(2) + ')' : ''}. It can take 5–10 working days to appear on your statement. We're sorry we couldn't get this one issued in time.` });
   return { ok: true, reservation: rec, amountGbp: amt };
 }
+// Paid reservations still 'processing' whose order is older than `hours` — the
+// automated hold never completed and no one has issued them manually. The
+// recovery cron retries the hold on these, then alerts admins about any that
+// remain, so a paid customer never waits silently again (the exact failure that
+// stranded the first Jeddah order).
+export function listStuckVisaReservations(hours = 4) {
+  const cutoff = Date.now() - Math.max(0, hours) * 3600 * 1000;
+  return db.visaReservations.filter((r) => r.paid && r.status === 'processing'
+    && r.createdAt && new Date(r.createdAt).getTime() <= cutoff);
+}
+// Alert every admin ONCE about each still-stuck reservation (idempotent via
+// stuckAlertedAt — same escalation doctrine as secureDeadlineSweep: nothing dies
+// silently). Call this AFTER the retry pass so only genuinely-stuck orders alert.
+// Returns the number of reservations newly alerted.
+export function alertStuckVisaReservations(hours = 4) {
+  const stuck = listStuckVisaReservations(hours).filter((r) => !r.stuckAlertedAt);
+  if (!stuck.length) return 0;
+  const admins = [...db.users.values()].filter((u) => u.role === 'admin' || u.allAccess);
+  for (const rec of stuck) {
+    rec.stuckAlertedAt = nowISO();
+    const hoursWaiting = rec.createdAt ? Math.round((Date.now() - new Date(rec.createdAt).getTime()) / 3600000) : hours;
+    recordAudit({ actor: 'system', role: 'system', action: 'visa.reservation.stuck-alert', entity: 'visa-reservation', entityId: rec.id, summary: `paid, unissued ${hoursWaiting}h — admins alerted` });
+    for (const a of admins) pushNotification(a.id, { type: 'warning', icon: '🛂', title: 'Visa reservation awaiting issue', body: `${rec.applicantName || rec.userId}'s ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'reservation'} (${rec.origin ? rec.origin + '→' : ''}${rec.destination}) has been paid and unissued for ${hoursWaiting}h. Open the Visa Desk to Retry auto-hold, issue manually, or refund.` });
+  }
+  return stuck.length;
+}
 // Store the fee Checkout session id so a stuck payment (webhook missed AND the
 // customer never returned) can be recovered later by an admin reconcile.
 export function setVisaFeeSession(rid, sessionId) {

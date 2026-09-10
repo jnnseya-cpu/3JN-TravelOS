@@ -7820,3 +7820,31 @@ test('multi-city: A→B→C→home is understood and priced per leg, never colla
   const single = plan({ text: 'Birmingham to Dubai for 2 adults, 7 nights in July 2027, flights and hotel', context: { currency: { code: 'GBP', symbol: '£', rateFromUSD: 0.79 } }, user: null, searchTier: 'smart' });
   assert.notEqual(single.stage, 'multiCity', 'one destination is a normal trip, not multi-city');
 });
+
+test('visa stuck-alert: paid+processing beyond the threshold self-heals then alerts admins once', async () => {
+  const store = await import('../src/store.js');
+  const admin = createUser({ name: 'Stuck Desk Admin', role: 'admin' });
+  const cust = createUser({ name: 'Nafisat Stuck', email: `stuck.${Date.now()}@x.co` });
+  // Flight-only reservation is paid + 'processing' immediately (no deferred pay in tests).
+  const r = store.orderVisaReservation(cust.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-12-01', travellers: 1 });
+  assert.ok(r.ok, 'reservation ordered');
+  const rid = r.reservation.id;
+  assert.ok(r.reservation.paid && r.reservation.status === 'processing', 'paid and processing');
+  // A fresh order is NOT yet stuck.
+  assert.equal(store.listStuckVisaReservations(4).some((x) => x.id === rid), false, 'fresh paid order is not stuck');
+  // Backdate the order past the threshold → now stuck.
+  store.getVisaReservation(rid).createdAt = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+  assert.ok(store.listStuckVisaReservations(4).some((x) => x.id === rid), 'backdated paid+processing order is stuck');
+  // Alert fires and the admin is notified.
+  const before = store.listNotifications(admin.id).length;
+  const alerted = store.alertStuckVisaReservations(4);
+  assert.ok(alerted >= 1, 'at least one stuck reservation alerted');
+  const afterFirst = store.listNotifications(admin.id).length;
+  assert.ok(afterFirst > before, 'admin received a stuck-reservation alert');
+  // Idempotent — a second sweep does not re-alert the same reservation.
+  store.alertStuckVisaReservations(4);
+  assert.equal(store.listNotifications(admin.id).length, afterFirst, 'no duplicate alert on the second sweep');
+  // A refunded reservation drops out of the stuck list.
+  store.refundVisaReservation(rid, { reason: 'test' });
+  assert.equal(store.listStuckVisaReservations(4).some((x) => x.id === rid), false, 'refunded reservation is no longer stuck');
+});

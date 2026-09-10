@@ -40,8 +40,19 @@ jobs:
         env:
           NODE_ENV: test
 
+      - name: Check Firebase credentials are configured
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error title=Missing FIREBASE_SERVICE_ACCOUNT::The FIREBASE_SERVICE_ACCOUNT secret is empty as seen by this workflow. Add it under GitHub -> Settings -> Secrets and variables -> Actions -> Repository secrets, named EXACTLY FIREBASE_SERVICE_ACCOUNT. A secret defined under an Environment or under Dependabot is NOT visible to this job."
+            exit 1
+          fi
+
       - name: Write Firebase service account key
-        run: printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/firebase-sa.json"
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
       - name: Deploy functions + hosting
         run: npx firebase-tools@15 deploy --only functions,hosting --project studio-1885689950-9b056 --non-interactive --force
