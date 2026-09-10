@@ -27,6 +27,7 @@ import {
   recordVisaApplication, govAnalytics,
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
+  ensureVisaPassengers, refundVisaReservation,
   applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid, setVisaFeeSession, visaReservationsAwaitingPayment,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, refreshEsimUsage, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
@@ -5643,6 +5644,55 @@ app.post('/api/admin/visa/reservations/:id/deliver', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
   const by = currentUser(req)?.id || 'ops';
   res.json(deliverVisaReservation(req.params.id, { ...(req.body || {}), by }));
+}));
+// Retry the automated flight hold for a stuck reservation. The order-time hold is
+// skipped when passengers weren't seeded (older records) or a place didn't resolve
+// to a precise airport. This seeds the applicant as passenger #1 when needed, then
+// re-runs fulfilment — and when it still can't hold, returns WHY so ops knows
+// whether to book manually or refund.
+app.post('/api/admin/visa/reservations/:id/retry-hold', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const rec = getVisaReservation(req.params.id);
+  if (!rec) return res.status(404).json({ error: 'not-found' });
+  if (!rec.paid) return res.status(409).json({ ok: false, error: 'not-paid', reason: 'This reservation is still awaiting payment — nothing to hold yet.' });
+  const seeded = ensureVisaPassengers(rec.id);
+  await fulfilVisaReservation(rec.id);
+  const after = getVisaReservation(rec.id);
+  const flight = after.items?.find((i) => i.type === 'flight');
+  const held = !!(flight && flight.status === 'ready' && flight.providerRef);
+  let reason = null;
+  if (flight && !held) {
+    if (!visaAutoHoldEnabled()) reason = 'Automated holds are off (Duffel not enabled) — book the pay-later fare manually, then deliver the real PNR.';
+    else if (!seeded && !(Array.isArray(after.passengers) && after.passengers.length)) reason = 'No passenger name on file to hold under.';
+    else {
+      const o = resolveOrigin(after.origin); const d = resolveDestination(after.destination) || resolveOrigin(after.destination);
+      if (!o?.airport || o.approxCode) reason = `Origin "${after.origin}" didn't resolve to a precise airport — check the spelling.`;
+      else if (!d?.airport || d.approxCode) reason = `Destination "${after.destination}" didn't resolve to a precise airport — check the spelling.`;
+      else reason = 'No holdable (pay-later) fare was available for this route and date. Book the reservation manually and deliver the real PNR, or refund.';
+    }
+  }
+  res.json({ ok: true, held, providerRef: flight?.providerRef || null, seededPassengers: seeded, reason, reservation: after });
+}));
+// Cancel & refund a reservation — the fee is returned to the card (when charged
+// via Stripe) and the record is closed. For a reservation that couldn't be issued
+// in time this is how we make the customer whole rather than leave them owed.
+app.post('/api/admin/visa/reservations/:id/refund', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const by = currentUser(req)?.id || 'ops';
+  const rec = getVisaReservation(req.params.id);
+  if (!rec) return res.status(404).json({ error: 'not-found' });
+  const reason = String(req.body?.reason || 'requested_by_customer');
+  // Cancel any still-live auto-booked hotel first, so 3JN isn't left holding a room.
+  const hotel = rec.items?.find((i) => i.type === 'hotel' && i.hotelbedsRef && i.status === 'ready');
+  if (hotel) { try { await cancelVisaHotelAndSettle(rec.id, hotel.hotelbedsRef); } catch { /* still record the refund */ } }
+  // Return the fee to the card when it was really charged (Stripe live).
+  let refundRef = null; let stripeRefunded = false; let refundError = null;
+  if (rec.paid && rec.feePaymentIntent && stripeEnabled()) {
+    const r = await createRefund({ paymentIntentId: rec.feePaymentIntent, reason });
+    if (r.ok) { refundRef = r.refundId; stripeRefunded = true; } else { refundError = r.error || 'refund-failed'; }
+  }
+  const out = refundVisaReservation(rec.id, { refundRef, reason, by, note: req.body?.note || null });
+  res.json({ ...out, stripeRefunded, refundRef, refundError });
 }));
 // Cancel an auto-booked hotel reservation (after the visa decision) so 3JN is
 // never charged for a room it held for a visa file.

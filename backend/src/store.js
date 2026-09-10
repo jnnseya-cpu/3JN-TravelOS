@@ -697,6 +697,42 @@ export function visaHotelsToCancel(todayISO = null, bufferDays = 2) {
     .map(({ r, it }) => ({ id: r.id, hotelbedsRef: it.hotelbedsRef, cancelBy: it.cancelBy }));
 }
 export function getVisaReservation(rid) { return db.visaReservations.find((r) => r.id === rid) || null; }
+// Seed the applicant as passenger #1 when a reservation stored NO passenger list
+// (older records created before order-time seeding). The automated flight hold
+// needs at least one real passenger name; without it every order stalls at the
+// manual desk. Returns the passenger count after seeding.
+export function ensureVisaPassengers(rid) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return 0;
+  if (Array.isArray(rec.passengers) && rec.passengers.length) return rec.passengers.length;
+  const name = String(rec.applicantName || '').trim();
+  if (!name) return 0;
+  const u = db.users.get(rec.userId);
+  const tp = u?.travelProfile || {};
+  rec.passengers = [{ fullName: name, dob: tp.dob || null, gender: tp.gender || null, title: null }];
+  recordAudit({ actor: 'system', role: 'system', action: 'visa.reservation.passengers-seeded', entity: 'visa-reservation', entityId: rid, summary: `seeded applicant ${name}` });
+  return 1;
+}
+// Cancel a reservation and record the fee refund. Money is returned by the CALLER
+// (server → Stripe createRefund) BEFORE this is called; here we record the
+// outcome, close the fulfilment job so the Visa Desk queue clears, and notify the
+// applicant. For a reservation that couldn't be issued in time (auto-hold failed,
+// the appointment passed) this is how the customer is actually made whole.
+export function refundVisaReservation(rid, { refundRef = null, amountGbp = null, reason = 'requested_by_customer', by = 'ops', note = null } = {}) {
+  const rec = db.visaReservations.find((r) => r.id === rid);
+  if (!rec) return { ok: false, error: 'not-found' };
+  if (rec.status === 'refunded') return { ok: true, reservation: rec, already: true };
+  const amt = amountGbp != null ? round2(amountGbp) : Number(rec.feeGbp || 0);
+  rec.status = 'refunded';
+  rec.refundedAt = nowISO();
+  rec.refund = { ref: refundRef, amountGbp: amt, reason, by, at: rec.refundedAt };
+  if (note) rec.note = note;
+  const order = db.fulfilmentOrders.find((o) => o.visaReservationId === rid && o.status !== 'completed');
+  if (order) { order.status = 'cancelled'; order.completedAt = nowISO(); order.note = `refunded: ${reason}`; }
+  recordAudit({ actor: by, role: 'ops', action: 'visa.reservation.refunded', entity: 'visa-reservation', entityId: rid, summary: `£${amt} refunded${refundRef ? ' · ' + refundRef : ''} · ${reason}` });
+  pushNotification(rec.userId, { type: 'info', icon: '💷', title: 'Visa reservation refunded', body: `We've refunded your ${VISA_DOC_PRODUCTS[rec.kind]?.name || 'visa reservation'} fee${amt ? ' (£' + amt.toFixed(2) + ')' : ''}. It can take 5–10 working days to appear on your statement. We're sorry we couldn't get this one issued in time.` });
+  return { ok: true, reservation: rec, amountGbp: amt };
+}
 // Store the fee Checkout session id so a stuck payment (webhook missed AND the
 // customer never returned) can be recovered later by an admin reconcile.
 export function setVisaFeeSession(rid, sessionId) {
