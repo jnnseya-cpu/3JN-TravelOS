@@ -336,16 +336,34 @@ export function renderBlogPost(slug, base) {
     '@context': 'https://schema.org', '@type': 'FAQPage',
     mainEntity: p.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
   } : null;
+  const wordCount = String(p.body || '').replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+  const image = `${base}/og-image.png`;
   const articleLd = {
-    '@context': 'https://schema.org', '@type': 'Article', headline: p.title,
-    description: p.metaDescription || p.excerpt || '', datePublished: p.publishedAt, dateModified: p.publishedAt,
-    author: { '@type': 'Organization', name: p.author || BRAND }, publisher: org(base),
-    mainEntityOfPage: url, url,
+    '@context': 'https://schema.org', '@type': 'BlogPosting', headline: String(p.title).slice(0, 110),
+    description: p.metaDescription || p.excerpt || '',
+    datePublished: p.publishedAt, dateModified: p.updatedAt || p.publishedAt,
+    author: { '@type': 'Organization', name: p.author || BRAND, url: base }, publisher: org(base),
+    mainEntityOfPage: { '@type': 'WebPage', '@id': url }, url, image,
+    inLanguage: 'en-GB', wordCount,
+    articleSection: (p.tags && p.tags[0]) || 'Travel', keywords: (p.tags || []).join(', '),
+    // GEO / voice: let answer engines lift the headline + quick answer cleanly.
+    speakable: { '@type': 'SpeakableSpecification', cssSelector: ['h1', '.lede'] },
+    isAccessibleForFree: true,
   };
   const faqHtml = Array.isArray(p.faq) && p.faq.length
     ? `<h2>FAQ</h2>${p.faq.map((f) => `<h3>${esc(f.q)}</h3><p>${esc(f.a)}</p>`).join('')}`
     : '';
   const cta = p.cta?.href ? `<a class="cta" href="${esc(p.cta.href)}">${esc(p.cta.label || 'Plan this trip →')}</a>` : `<a class="cta" href="/?open=planner">Plan this trip →</a>`;
+  // Dynamic "Related guides" rail — real cross-post internal links (topical
+  // clustering + crawl depth + keeps AI crawlers moving through the site).
+  const related = listPosts().filter((x) => x.slug !== p.slug).slice(0, 6);
+  const relatedHtml = related.length
+    ? `<aside><h2>Related travel guides</h2><ul>${related.map((r) => `<li><a href="/blog/${esc(r.slug)}">${esc(r.title)}</a></li>`).join('')}</ul></aside>`
+    : '';
+  const itemListLd = related.length ? {
+    '@context': 'https://schema.org', '@type': 'ItemList',
+    itemListElement: related.map((r, i) => ({ '@type': 'ListItem', position: i + 1, url: `${base}/blog/${r.slug}`, name: r.title })),
+  } : null;
   const body = `
 <article>
 <p class="muted"><a href="/blog">← Travel guides</a></p>
@@ -354,12 +372,13 @@ export function renderBlogPost(slug, base) {
 ${cta}
 ${p.body || ''}
 ${faqHtml}
+${relatedHtml}
 </article>`;
   return shell({
     title: `${p.title} | ${BRAND}`,
     description: p.metaDescription || p.excerpt || p.title,
     canonical: url, base, ogType: 'article', bodyHtml: body,
-    jsonLd: [articleLd, faqLd, breadcrumbLd(base, [
+    jsonLd: [articleLd, faqLd, itemListLd, breadcrumbLd(base, [
       { name: 'Home', url: base + '/' },
       { name: 'Guides', url: base + '/blog' },
       { name: p.title, url },

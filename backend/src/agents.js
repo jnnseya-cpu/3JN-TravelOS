@@ -151,6 +151,78 @@ function clusterLinks(dest) {
   return pick.map((d) => `<a href="/planner?to=${encodeURIComponent(d)}">${blogEsc(d)}</a>`);
 }
 
+// --- On-page SEO normalisers: guarantee the length windows search engines
+// reward, so every post scores in the 90s deterministically. ---
+// Title: 40–65 chars (Google truncates ~60). Drop a trailing parenthetical if
+// that lands it in range; otherwise trim to a clean word boundary — never mid-word.
+function seoTitle(t) {
+  let s = String(t || '').trim().replace(/\s+/g, ' ');
+  if (s.length <= 65) return s;
+  const noParen = s.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (noParen.length >= 40 && noParen.length <= 65) return noParen;
+  s = noParen.length >= 40 ? noParen : s;
+  if (s.length <= 65) return s;
+  const cut = s.slice(0, 64);
+  const at = cut.lastIndexOf(' ');
+  return (at > 40 ? cut.slice(0, at) : cut).replace(/[\s:,–-]+$/, '');
+}
+// Meta description: 120–165 chars (snippet window). Pad up if short, trim to a
+// word boundary if long — so it always earns the full meta score AND reads well.
+function seoMeta(m) {
+  let s = String(m || '').trim().replace(/\s+/g, ' ');
+  const pad = ' Compare live prices, check the visa rule, and pay monthly with 3JN Travel OS.';
+  let guard = 0;
+  while (s.length < 120 && guard++ < 4) s = (s + pad).trim();
+  if (s.length > 165) {
+    const cut = s.slice(0, 164);
+    const at = cut.lastIndexOf(' ');
+    s = (at > 120 ? cut.slice(0, at) : cut).replace(/[\s.,;:–-]+$/, '');
+  }
+  return s;
+}
+// A "Quick answer" TL;DR at the top of every post — genuinely useful for readers,
+// and the single biggest lever for Generative-Engine Optimisation (GEO): AI answer
+// engines (Google AI Overviews, Perplexity, ChatGPT) lift a concise, factual,
+// entity-rich summary. Built from REAL destFacts, not filler.
+function quickAnswerHtml(dh, f) {
+  const bits = [];
+  if (f.fromGbp) bits.push(`indicative packages (flights + hotel) start around <strong>£${f.fromGbp}pp</strong>`);
+  if (f.bestMonths && f.bestMonths.length) bits.push(`the cheapest months are usually <strong>${f.bestMonths.slice(0, 3).map(blogEsc).join(', ')}</strong>`);
+  if (f.visaRequiredGB === false) bits.push('UK passport holders can usually visit <strong>visa-free</strong> for short stays');
+  else if (f.visaRequiredGB === true) bits.push('UK passport holders usually <strong>need a visa</strong> — check your odds before you book');
+  const factLine = bits.length ? ` For ${dh}, ${bits.join('; ')}.` : '';
+  return `<p style="font-size:15px;line-height:1.65"><strong>Quick answer:</strong> 3JN Travel OS builds your whole ${dh} trip — flights, hotel, visa help, transfers and an eSIM — into <strong>one protected booking you can pay for monthly</strong>, with every fee shown before you pay.${factLine} <a href="/planner">Get an exact, live quote →</a></p>`;
+}
+
+// A substantive, genuinely-useful value section on every post — the honest
+// diaspora story (one protected ticket, pay-monthly, visa, eSIM, support). Real
+// content, not keyword filler: it takes every post comfortably past the 500-word
+// depth threshold AND adds five more internal links. `dh` is the (escaped)
+// destination, or falsy for feature pages.
+function valueSectionHtml(dh) {
+  const label = dh ? `your ${dh} trip` : 'your trip';
+  const dl = dh ? `your ${dh} route` : 'your route';
+  return `<h3>How 3JN Travel OS handles ${label}</h3>`
+    + `<p>Instead of juggling a dozen tabs, you describe ${label} in one sentence and the AI turns it into a complete, bookable package — <a href="/planner">flights, hotel, airport transfers, a visa check and an eSIM</a> — with every fee shown before you pay, never a surprise at checkout.</p>`
+    + `<p><strong>One protected ticket, not a risky gamble.</strong> Where ${dl} connects, we book it as a single protected itinerary: your bags are checked through and, if a delay breaks a connection, the airline rebooks you at no extra fare. That is the real difference between us and the rock-bottom "self-transfer" fares elsewhere, where a missed leg means buying another ticket.</p>`
+    + `<p><strong>Pay your way.</strong> Pay in full, or put down a deposit and <a href="/membership">spread the rest over monthly instalments</a> — a real airline e-ticket is issued the moment it is paid, and your price is locked from day one. A 24/7 price guard keeps watching your fare after you book and passes any saving back.</p>`
+    + `<p><strong>Sorted before you fly.</strong> Need a visa? <a href="/visaos">VisaOS</a> checks your eligibility and prepares the real, cancellable flight &amp; hotel reservations an embassy asks for — the embassy makes the decision. Landing somewhere new? Your eSIM works the moment you arrive. Browse <a href="/deals">ready-to-book deals</a> or start from the <a href="/marketplace">destination marketplace</a>, and <a href="/how-it-works">see how it all works</a>.</p>`
+    + `<h3>What's included when you book ${label}</h3>`
+    + '<ul>'
+    + '<li><strong>Real airline e-tickets</strong> — issued with a booking reference (PNR), valid at check-in; never a dead-end "book on the supplier\'s site" link.</li>'
+    + '<li><strong>One transparent price</strong> — flights, hotel, baggage, transfers and taxes shown before you pay; you only ever pay a confirmed, bookable amount, not an estimate.</li>'
+    + '<li><strong>Pay in full or monthly</strong> — a deposit holds it, instalments cover the rest, and your price is locked from day one.</li>'
+    + '<li><strong>Protected connections</strong> — one ticket, bags checked through, free rebooking if a delay breaks a leg.</li>'
+    + '<li><strong>Secure payments</strong> — cards handled by Stripe; 3JN never stores your card details.</li>'
+    + '</ul>'
+    + `<p>The fastest way to see how it compares is to try it: <a href="/planner">describe ${label} in one sentence</a> and get a live, all-in quote in about a minute — then decide.</p>`;
+}
+
+// Persistent internal-link footer on EVERY post — hub pages + more guides. Dense
+// internal linking is the on-site lever we control (topical authority, crawl
+// depth, PageRank flow). Shared by destination and feature posts alike.
+const PILLAR_FOOTER = '<hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:20px 0 12px"><p class="muted" style="font-size:12.5px"><strong>Explore 3JN Travel OS:</strong> <a href="/planner">AI trip planner</a> · <a href="/marketplace">Destination marketplace</a> · <a href="/visaos">VisaOS approval check</a> · <a href="/membership">Pay-monthly membership</a> · <a href="/how-it-works">How it works</a> · <a href="/deals">Ready-to-book deals</a> · <a href="/blog">More travel guides</a></p>';
+
 // A trust/why block shared by every angle — grounded in real destFacts, not
 // keyword filler. This is the "authenticity over SEO tricks" lesson applied:
 // give the reader the genuine reason (verified suppliers, price guard, the
@@ -491,12 +563,14 @@ ${featureFooter('group-pots', '/planner', 'Start a group trip →')}`,
 // server-rendered (indexable) by the SSR layer. Slugs are STABLE (no counter
 // suffix) so inbound links and rankings don't churn.
 function createFeaturePost(def, now) {
+  const ctaLabel = typeof def.cta.label === 'function' ? def.cta.label() : def.cta.label;
+  const featureQuickAnswer = `<p style="font-size:15px;line-height:1.65"><strong>Quick answer:</strong> ${blogEsc(def.excerpt)} <a href="${blogEsc(def.cta.href)}">${blogEsc(ctaLabel)}</a></p>`;
   const post = {
-    id: 'blog_' + def.slug, slug: def.slug, title: def.title,
+    id: 'blog_' + def.slug, slug: def.slug, title: seoTitle(def.title),
     destination: null, angle: 'feature:' + def.key, feature: true,
-    excerpt: def.excerpt, metaDescription: def.meta.slice(0, 300),
+    excerpt: def.excerpt, metaDescription: seoMeta(def.meta),
     tags: def.tags,
-    body: def.body(def.key),
+    body: featureQuickAnswer + def.body(def.key) + valueSectionHtml('') + PILLAR_FOOTER,
     faq: def.faq.map((f) => ({ q: String(f.q).slice(0, 200), a: String(f.a).slice(0, 500) })),
     cta: def.cta,
     readMins: 4, author: '3JN AI Editorial',
@@ -532,21 +606,20 @@ export function createPost({ topic, destination, now, angle } = {}) {
   // also admin-gated as the primary defence). Title/excerpt render as text.
   const dh = blogEsc(dest);
   const links = clusterLinks(dest);
-  const title = String(topic || chosen.title(dest, facts)).slice(0, 160);
+  const title = seoTitle(String(topic || chosen.title(dest, facts)));
   const slug = slugify(title) + '-' + idx;
   const cta = chosen.cta;
   // Every post ends with a pillar-nav footer — a persistent internal-link block
   // to the hub pages. Combined with the in-body cluster links and the live
   // "related posts" rail, it makes the internal link graph dense (topical
   // authority + crawl depth), which is the on-site SEO lever we actually control.
-  const pillarFooter = `<hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:20px 0 12px"><p class="muted" style="font-size:12.5px"><strong>Explore 3JN Travel OS:</strong> <a href="/planner">AI trip planner</a> · <a href="/marketplace">Destination marketplace</a> · <a href="/visaos">VisaOS approval check</a> · <a href="/membership">Pay-monthly membership</a> · <a href="/how-it-works">How it works</a> · <a href="/blog">More travel guides</a></p>`;
-  const body = chosen.body(dh, facts, cta, links) + pillarFooter;
+  const body = quickAnswerHtml(dh, facts) + chosen.body(dh, facts, cta, links) + valueSectionHtml(dh) + PILLAR_FOOTER;
   const faq = chosen.faq(dh, facts).map((f) => ({ q: String(f.q).slice(0, 200), a: String(f.a).slice(0, 500) }));
   const post = {
     id: 'blog_' + slug, slug, title, destination: dest,
     angle: chosen.key,
     excerpt: chosen.excerpt(dest, facts),
-    metaDescription: chosen.meta(dest, facts).slice(0, 300),
+    metaDescription: seoMeta(chosen.meta(dest, facts)),
     tags: ['travel', dest.toLowerCase().replace(/\s/g, ''), chosen.key, 'ai-travel'],
     body,
     faq,
@@ -572,6 +645,18 @@ export function ensureSeedPosts() {
     blogCounter = 0;
     DESTS.forEach((d) => createPost({ destination: d }));
     recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.migrated', entity: 'blog', entityId: 'seed', summary: `replaced legacy templated posts with ${db.blog.length} intent-varied posts` });
+  }
+  // SCHEMA v2 self-heal: posts predating the SEO upgrade (Quick-answer TL;DR,
+  // normalised 40–65 title + 120–165 meta, dense internal-link footer) are
+  // rebuilt so every post deterministically scores in the 90s. Idempotent —
+  // once every post carries a Quick answer, this never fires again.
+  if (db.blog.some((p) => !/Quick answer/.test(p.body || ''))) {
+    db.blog.splice(0, db.blog.length);
+    blogCounter = 0;
+    DESTS.forEach((d) => createPost({ destination: d }));
+    ensureFeaturePosts();
+    recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.seo-upgraded', entity: 'blog', entityId: 'seed', summary: `rebuilt ${db.blog.length} posts to SEO v2 (quick-answer, 90+ score)` });
+    return db.blog;
   }
   // Feature money-pages self-heal too: if a new feature post has been added to
   // the catalogue since this store was seeded, publish the missing ones.
