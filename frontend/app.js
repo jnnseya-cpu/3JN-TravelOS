@@ -573,6 +573,17 @@ function applyDeepLink() {
     })();
     return;
   }
+  // Sitelinks searchbox / deep search: /app?q=<text> → open the planner, prefill
+  // the intent box and run it. Makes the homepage WebSite SearchAction real.
+  const qParam = payQ.get('q');
+  if (qParam) {
+    nav('planner');
+    const inp = $('#intentInput'); if (inp) inp.value = String(qParam).slice(0, 400);
+    try { history.replaceState({}, '', '/app'); } catch {}
+    toast('🔎 Searching your trip…');
+    if (typeof runPlan === 'function') runPlan();
+    return;
+  }
   const qv = new URLSearchParams(location.search).get('view');
   if (qv && views.has(qv)) target = qv;
   else {
