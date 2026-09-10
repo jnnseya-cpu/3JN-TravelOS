@@ -3915,16 +3915,32 @@ async function renderAdmin() {
     })() : ''}
     ${vres ? (() => {
       const processing = vres.filter((r) => r.status === 'processing');
-      const q = processing.map((r) => `
+      const paxLine = (r) => {
+        const list = Array.isArray(r.passengers) ? r.passengers.filter((p) => p && p.fullName) : [];
+        if (!list.length) return '<span style="color:#ff8a8a">⚠ No passenger name on file — Retry auto-hold seeds the applicant.</span>';
+        return list.map((p) => `${esc(p.fullName)}${p.dob ? ' <span class="muted">(' + esc(String(p.dob).slice(0, 10)) + (p.gender ? ', ' + esc(p.gender) : '') + ')</span>' : p.gender ? ' <span class="muted">(' + esc(p.gender) + ')</span>' : ''}`).join(' · ');
+      };
+      const q = processing.map((r) => {
+        const hasFlight = (r.items || []).some((i) => i.type === 'flight');
+        const contactBits = [r.contact?.email ? esc(r.contact.email) : '', r.contact?.phone ? esc(r.contact.phone) : ''].filter(Boolean).join(' · ');
+        return `
         <div class="card pad" style="margin-bottom:10px;border-color:rgba(201,168,106,.35)">
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:baseline">
             <strong>${esc(r.applicantName || r.userId)} <span class="muted" style="font-weight:400">· ${esc((r.kind || '').toUpperCase())}</span></strong>
             <span style="font-size:12px;color:var(--gold)">£${Number(r.feeGbp || 0).toFixed(2)} · valid ${esc(ukDate(r.validUntil))}</span>
           </div>
-          <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.nights ? ' · ' + r.nights + 'n' : ''} · ${r.travellers} pax</div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(r.origin ? r.origin + ' → ' : '')}${esc(r.destination)} · ${esc(ukDate(r.departDate))}${r.returnDate ? ' → ' + esc(ukDate(r.returnDate)) : ''}${r.nights ? ' · ' + r.nights + 'n' : ''} · ${r.travellers} pax</div>
+          <div style="font-size:12px;margin-top:6px"><span class="muted">Passenger(s):</span> ${paxLine(r)}</div>
+          ${contactBits ? `<div class="muted" style="font-size:11.5px;margin-top:3px">Contact: ${contactBits}</div>` : ''}
+          <div class="muted" style="font-size:11.5px;margin-top:3px">Ordered ${esc(ukDate(r.createdAt))}${r.visaAppId ? ' · visa file ' + esc(r.visaAppId) : ''} · id ${esc(r.id)}</div>
           <div style="margin-top:6px">${(r.items || []).map((it) => `<span class="chip" style="font-size:10px">${it.type === 'flight' ? '✈' : '🏨'} ${esc(it.reference)}</span>`).join(' ')}</div>
-          <button class="btn btn-gold btn-sm" style="margin-top:10px" onclick="visaResDeliver('${esc(r.id)}')">✓ Mark issued &amp; deliver</button>
-        </div>`).join('') || '<div class="muted" style="font-size:13px">No reservations awaiting issue.</div>';
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            ${hasFlight ? `<button class="btn btn-ghost btn-sm" onclick="visaResRetry('${esc(r.id)}')">↻ Retry auto-hold</button>` : ''}
+            <button class="btn btn-gold btn-sm" onclick="visaResDeliver('${esc(r.id)}')">✓ Mark issued &amp; deliver</button>
+            <button class="btn btn-ghost btn-sm" style="color:#ff8a8a" onclick="visaResRefund('${esc(r.id)}')">↩ Cancel &amp; refund</button>
+          </div>
+        </div>`;
+      }).join('') || '<div class="muted" style="font-size:13px">No reservations awaiting issue.</div>';
       const done = vres.filter((r) => r.status !== 'processing').slice(0, 12).map((r) => `<div class="kv"><span>${esc(r.applicantName || r.userId)} <span class="muted">· ${esc(r.kind)} · ${esc(r.destination)}</span></span><span style="color:var(--green)">${esc(r.status)}</span></div>`).join('') || '<div class="muted" style="font-size:13px">None delivered yet.</div>';
       // Auto-booked hotels still LIVE (Hotelbeds) — 3JN is on the hook for the room
       // until each is cancelled before its free-cancel deadline.
@@ -6688,6 +6704,27 @@ window.visaResDeliver = async (id) => {
     if (r?.ok === false) { toast(r.message || 'Could not deliver.'); return; }
     closeModal(); toast('✓ Delivered — applicant notified.'); renderAdmin();
   });
+};
+window.visaResRetry = async (id) => {
+  let r;
+  try { r = await api(`/api/admin/visa/reservations/${id}/retry-hold`, { method: 'POST', body: JSON.stringify({}) }); }
+  catch (e) { toast(e.message || 'Retry failed.'); return; }
+  if (r?.ok === false) { toast(r.reason || r.error || 'Retry failed.'); return; }
+  if (r.held) { toast(`✓ Flight held — ${r.providerRef}. Applicant notified.`); }
+  else { alert(`Couldn't auto-hold this reservation.\n\n${r.reason || 'No holdable fare found.'}\n\nEither book the pay-later fare manually and use "Mark issued & deliver" with the real PNR, or "Cancel & refund".`); }
+  renderAdmin();
+};
+window.visaResRefund = async (id) => {
+  if (!confirm('Cancel this reservation and refund the fee to the customer? This closes the record and notifies them. Any live hotel hold is cancelled first.')) return;
+  const reason = prompt('Refund reason (shown in the audit log):', 'Could not be issued in time') || 'requested_by_customer';
+  let r;
+  try { r = await api(`/api/admin/visa/reservations/${id}/refund`, { method: 'POST', body: JSON.stringify({ reason }) }); }
+  catch (e) { toast(e.message || 'Refund failed.'); return; }
+  if (r?.ok === false) { toast(r.error || 'Refund failed.'); return; }
+  if (r.stripeRefunded) { toast(`✓ Refunded to card${r.refundRef ? ' (' + r.refundRef + ')' : ''} — customer notified.`); }
+  else if (r.refundError) { alert(`Record marked refunded and the customer was notified, but the Stripe refund did NOT go through:\n\n${r.refundError}\n\nRefund manually in the Stripe dashboard.`); }
+  else { toast('✓ Reservation cancelled & customer notified. No card charge on file to reverse (simulate/unpaid).'); }
+  renderAdmin();
 };
 window.provisionTest = async () => {
   // Demo/test accounts are disabled for the commercial launch — point people to
