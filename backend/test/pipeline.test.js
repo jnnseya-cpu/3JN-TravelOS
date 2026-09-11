@@ -4411,6 +4411,13 @@ test('per-booking margin readout: gross fee − perks − vendor carve = net kep
   assert.ok(dash.perBookingMargins.some((r) => r.id === b.id), 'booking appears in the readout');
 });
 
+// A visa reservation order validates the departure is in the FUTURE, so these
+// tests derive dates from today. A hardcoded departDate silently rots — once
+// that day passes, every order fails 'past-date' and the suite breaks on a
+// commit that never changed (which is exactly what happened on 11 Sep 2026).
+const visaFutureYMD = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+const visaDepart = visaFutureYMD(30);
+const visaReturn = visaFutureYMD(40);
 test('visa support reservations: fee maths, order → issue → deliver, revenue booked', async () => {
   const { visaDocFee, validateVisaDocOrder, visaReservationValidity } = await import('../src/visa-docs.js');
   const S = await import('../src/store.js');
@@ -4426,7 +4433,7 @@ test('visa support reservations: fee maths, order → issue → deliver, revenue
   assert.ok(visaReservationValidity('2026-08-01') > '2026-08-01', 'validity is in the future');
 
   const u = S.createUser({ email: `vres${Date.now()}@x.co`, name: 'Reyna Vega' });
-  const r = S.orderVisaReservation(u.id, { kind: 'pack', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', returnDate: '2026-09-20', nights: 10, travellers: 2 });
+  const r = S.orderVisaReservation(u.id, { kind: 'pack', origin: 'London', destination: 'Dubai', departDate: visaDepart, returnDate: visaReturn, nights: 10, travellers: 2 });
   assert.equal(r.ok, true);
   assert.equal(r.reservation.status, 'processing', 'starts processing — issued by the Visa Desk, not instant-faked');
   assert.equal(r.reservation.items.length, 2, 'flight + hotel');
@@ -4463,7 +4470,7 @@ test('visa reservations: fee is charged first when Stripe is live (awaiting-paym
   const S = await import('../src/store.js');
   const u = S.createUser({ email: `vpay${Date.now()}@x.co`, name: 'Pay First' });
   // Stripe-live path: the order is NOT paid/issued until the fee clears.
-  const pending = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Pay First', dob: '1990-01-01' }] }, { awaitingPayment: true });
+  const pending = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: visaDepart, travellers: 1, passengers: [{ fullName: 'Pay First', dob: '1990-01-01' }] }, { awaitingPayment: true });
   assert.equal(pending.awaitingPayment, true);
   assert.equal(pending.reservation.paid, false, 'not paid until the fee clears');
   assert.equal(pending.reservation.status, 'awaiting-payment');
@@ -4483,7 +4490,7 @@ test('visa reservations: fee is charged first when Stripe is live (awaiting-paym
   // Once paid, it drops out of the awaiting-payment sweep.
   assert.ok(!S.visaReservationsAwaitingPayment().some((r) => r.id === pending.reservation.id), 'paid reservation leaves the sweep');
   // Simulation path (no Stripe flag) still issues immediately (paid true).
-  const sim = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Sim', dob: '1990-01-01' }] });
+  const sim = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: visaDepart, travellers: 1, passengers: [{ fullName: 'Sim', dob: '1990-01-01' }] });
   assert.equal(sim.reservation.paid, true);
 });
 
@@ -4493,7 +4500,7 @@ test('visa reservations: Duffel auto-hold is dormant without keys; apply path is
   assert.equal(LS.visaAutoHoldEnabled(), false, 'auto-hold stays off until a Duffel token is configured');
   const u = S.createUser({ email: `vah${Date.now()}@x.co`, name: 'Auto Hold' });
   // Flight-only so a single hold completes the whole reservation; passenger manifest is captured.
-  const r = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Auto Hold', dob: '1990-05-01', gender: 'm', title: 'mr' }] });
+  const r = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: visaDepart, travellers: 1, passengers: [{ fullName: 'Auto Hold', dob: '1990-05-01', gender: 'm', title: 'mr' }] });
   assert.equal(r.reservation.status, 'processing');
   assert.equal(r.reservation.passengers.length, 1, 'passenger manifest stored on the order');
   // A hold with no real PNR is refused.
@@ -4515,13 +4522,13 @@ test('visa reservations: hotel auto-book is OFF by default; apply/cancel/sweep m
   // real liability, so it never turns on implicitly).
   assert.equal(LS.visaAutoHotelEnabled(), false, 'hotel auto-book stays off by default');
   const u = S.createUser({ email: `vhb${Date.now()}@x.co`, name: 'Hotel Booker' });
-  const r = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: '2026-09-10', nights: 5, travellers: 1 });
+  const r = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: visaDepart, nights: 5, travellers: 1 });
   assert.equal(r.reservation.status, 'processing');
   // Refundable room deposit is held so the CUSTOMER carries the room, not 3JN.
   assert.equal(r.reservation.roomDepositGbp, 150, '5 nights × £30 deposit');
   assert.equal(r.reservation.roomDepositStatus, 'held');
   // A flight-only order never carries a room deposit.
-  const fo = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: '2026-09-10', travellers: 1, passengers: [{ fullName: 'Hotel Booker', dob: '1990-01-01' }] });
+  const fo = S.orderVisaReservation(u.id, { kind: 'flight', origin: 'London', destination: 'Dubai', departDate: visaDepart, travellers: 1, passengers: [{ fullName: 'Hotel Booker', dob: '1990-01-01' }] });
   assert.equal(fo.reservation.roomDepositGbp, 0, 'flight-only has no room deposit');
   // Refuse without a real confirmation number.
   assert.equal(S.applyVisaHotelBooking(r.reservation.id, { provider: 'Rove' }).error, 'provider-ref-required');
