@@ -7855,3 +7855,11 @@ test('visa stuck-alert: paid+processing beyond the threshold self-heals then ale
   store.refundVisaReservation(rid, { reason: 'test' });
   assert.equal(store.listStuckVisaReservations(4).some((x) => x.id === rid), false, 'refunded reservation is no longer stuck');
 });
+
+test('webhook repair is fail-closed: no Stripe key → no API call, clear reason', async () => {
+  const { repairWebhookEndpoint } = await import('../src/stripe.js');
+  // Test env has no STRIPE_SECRET_KEY, so it must refuse without touching the network.
+  const r = await repairWebhookEndpoint('https://api.3jntravel.com/api/pay/stripe/webhook');
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'stripe-not-configured');
+});

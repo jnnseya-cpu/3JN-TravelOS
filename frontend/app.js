@@ -3829,6 +3829,7 @@ async function renderAdmin() {
       ${buildBadge}
       <button class="btn btn-sm" style="background:var(--gold);color:#1a1205;font-weight:700" onclick="runSelfTest()">🚦 Launch readiness check</button>
       <button class="btn btn-ghost btn-sm" onclick="sendTestEmail()">✉️ Send test email</button>
+      <button class="btn btn-ghost btn-sm" onclick="openStripeWebhookTool()">🔗 Stripe webhook</button>
       <button class="btn btn-ghost btn-sm" onclick="openNewsletter()">📣 Newsletter</button>
       <button class="btn btn-ghost btn-sm" data-nav="comms">📡 Communication Architecture</button>
       <button class="btn btn-ghost btn-sm" data-nav="business">🏢 Business Command Centre</button>
@@ -4418,6 +4419,48 @@ window.sendTestEmail = async () => {
   try { r = await api('/api/admin/test-email', { method: 'POST', body: JSON.stringify({ to: (to || '').trim() }) }); }
   catch { toast('Could not send — are you signed in as admin (with the staff PIN)?'); return; }
   toast(r.ok ? `✅ ${r.message}` : `⚠ ${r.message}`);
+};
+// Admin: Stripe webhook status + one-click repair. A DNS/host move can strand the
+// registered webhook URL (Stripe POSTs fail → payments only fulfil via the
+// reconcile net). This shows the live verdict and repoints the endpoint at THIS
+// site in one click (which preserves the signing secret).
+window.openStripeWebhookTool = async () => {
+  let d;
+  try { d = await api('/api/admin/stripe/webhook-status'); } catch { toast('Admin only (staff PIN needed).'); return; }
+  const ok = !!d.registered;
+  const others = (d.otherEndpoints || []).filter((e) => !d.matched || e.url !== d.matched.url);
+  const otherRows = others.length
+    ? `<div class="muted" style="font-size:11.5px;margin-top:8px">Other endpoints on the account:${others.map((e) => `<br>· ${esc(e.url)} <span style="color:${e.status === 'enabled' ? '#7fe0a5' : '#9aa6c4'}">(${esc(e.status)}${e.hasCheckoutCompleted ? '' : ', no checkout.session.completed'})</span>`).join('')}</div>`
+    : '';
+  modal(`
+    <span class="eyebrow">🔗 Stripe webhook</span>
+    <h3 style="margin:6px 0 4px">${ok ? '✓ Registered' : '✗ Not correctly registered'}</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 10px">${esc(d.verdict || '')}</p>
+    <div class="kv"><span>Mode</span><span>${esc(d.mode || '—')}</span></div>
+    <div class="kv"><span>Signing secret set</span><span style="color:${d.secretSet ? '#7fe0a5' : '#ff8a8a'}">${d.secretSet ? 'yes' : 'NO'}</span></div>
+    <div class="kv" style="align-items:baseline"><span>This site expects</span><span style="font-size:11.5px;text-align:right;max-width:60%;word-break:break-all">${esc(d.expectedUrl || '')}</span></div>
+    ${d.matched ? `<div class="kv" style="align-items:baseline"><span>Registered at</span><span style="font-size:11.5px;text-align:right;max-width:60%;word-break:break-all">${esc(d.matched.url)}</span></div>` : ''}
+    ${otherRows}
+    <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-gold btn-sm" id="whRepairBtn">🔧 Point Stripe at this site</button>
+      <span class="muted" style="font-size:11px">Updates the endpoint URL in place — keeps the signing secret.</span>
+    </div>
+    <p class="muted" style="font-size:11px;margin-top:10px">Prefer the dashboard? Stripe → Developers → Webhooks → edit the endpoint URL to the "expects" value above, then Send test webhook.</p>`);
+  document.getElementById('whRepairBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('whRepairBtn');
+    if (!confirm(`Repoint your Stripe webhook to:\n\n${d.expectedUrl}\n\nThis updates the existing endpoint's URL (keeping its signing secret). Continue?`)) return;
+    btn.disabled = true; btn.textContent = 'Repairing…';
+    let r;
+    try { r = await api('/api/admin/stripe/webhook/repair', { method: 'POST', body: JSON.stringify({}) }); }
+    catch (e) { toast(e.message || 'Repair failed.'); btn.disabled = false; btn.textContent = '🔧 Point Stripe at this site'; return; }
+    if (r?.ok === false) { toast(`⚠ ${r.error || 'Repair failed.'}`); btn.disabled = false; btn.textContent = '🔧 Point Stripe at this site'; return; }
+    if (r.action === 'created' && r.newSecret) {
+      alert(`A NEW webhook endpoint was created at:\n${r.url}\n\n⚠ It has a NEW signing secret. Set this as STRIPE_WEBHOOK_SECRET in your host env and redeploy, or events will be rejected:\n\n${r.newSecret}`);
+    } else {
+      toast(r.action === 'already-correct' ? '✓ Already pointed at this site.' : `✓ Webhook repointed to ${r.url} — signing secret preserved.`);
+    }
+    closeModal();
+  });
 };
 // Admin: weekly feature-newsletter tile — audience count + on-demand send. The
 // send is idempotent server-side (per-user 7-day cadence), so re-clicking never
