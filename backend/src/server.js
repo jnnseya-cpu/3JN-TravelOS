@@ -102,7 +102,7 @@ import { initMailer, isMailerEnabled, sendMail, bookingEmail, MAIN_CONTACT, lead
 import { issueHumanChallenge, verifyHumanCheck, verifyLightHuman, rateLimitAuth, rateLimitLiveSearch } from './human-verify.js';
 import { inspectRequest, registerThreat, isThreatBlocked, threatStats } from './threat-shield.js';
 import { isCrawler, renderHome, renderBlogIndex, renderBlogPost, renderDestinationPage, renderDestinationIndex, renderWhy, renderRoutePage, renderRouteIndex, destinationSlugs, routeSlugs } from './seo-render.js';
-import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration } from './stripe.js';
+import { stripeEnabled, createCheckoutSession, createRefund, verifyStripeSignature, stripeDiagnostic, retrieveCheckoutSession, chargeSavedCard, authorizeSavedCard, captureAuthorization, releaseAuthorization, createDepositCheckoutSession, webhookRegistration, repairWebhookEndpoint } from './stripe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -2239,6 +2239,18 @@ app.get('/api/admin/stripe/webhook-status', safe(async (req, res) => {
           ? `✗ No registered endpoint matches ${expectedUrl} with checkout.session.completed. Found ${reg.endpoints.length} other endpoint(s) — check the URL/events. (Payments still issue via the return-reconcile safety net, but fix this for the clean primary path.)`
           : `✗ No webhook endpoints registered on this Stripe account. Add one → Stripe Dashboard · Developers · Webhooks · "Add endpoint": URL ${expectedUrl}, event checkout.session.completed. (Payments still issue via the return-reconcile safety net meanwhile.)`;
   res.json({ mode: reg.mode, registered, secretSet: reg.secretSet, expectedUrl, matched: reg.matched, otherEndpoints: reg.endpoints, verdict });
+}));
+// One-click webhook repair: repoint the Stripe endpoint at THIS deployment's host
+// (the host the admin is actually using) so a DNS/host move can't leave payments
+// unfulfilled. Updating in place preserves the signing secret; see stripe.js. The
+// target defaults to this origin but an explicit `url` can override.
+app.post('/api/admin/stripe/webhook/repair', safe(async (req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const path = '/api/pay/stripe/webhook';
+  // Force https (Stripe requires it; a proxied req.protocol can read "http").
+  const targetUrl = String(req.body?.url || `https://${req.get('host')}${path}`);
+  const out = await repairWebhookEndpoint(targetUrl, { path });
+  res.json({ ...out, target: targetUrl });
 }));
 // Live-supplier status: is Duffel connected, and is it a TEST or LIVE key?
 app.get('/api/admin/live-status', safe(async (req, res) => {
