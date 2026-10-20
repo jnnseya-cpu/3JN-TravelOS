@@ -232,6 +232,13 @@ export const CATEGORIES = [
     ev('onboarding.training_completed', 'Training completed', 'Training completed: {{item}}', 'success', 'I'),
     ev('onboarding.certification_achieved', 'Certification achieved', 'Certification achieved: {{item}}', 'success', 'EI'),
   ]],
+  ['Deals & Fare Alerts', [
+    // Fired by the fare-radar scan when a watched route hits the traveller's
+    // target or drops. Rides every configured channel — in-app always, plus
+    // email/SMS/WhatsApp/push where keyed — so an alert reaches the traveller
+    // the moment the fare is good. {{note}} carries the book link.
+    ev('deals.fare_alert', 'Fare alert', '✈ {{route}} is now {{price}} — {{note}}', 'success', 'EIPWS'),
+  ]],
 ];
 
 // Flatten to a lookup.

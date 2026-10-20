@@ -149,6 +149,43 @@ export async function webhookRegistration(expectPath = '/api/pay/stripe/webhook'
   }
 }
 
+// Repoint (or create) the Checkout webhook so it targets THIS deployment's host.
+// A DNS/host move (e.g. www → Vercel/api) silently strands the old URL: Stripe's
+// POSTs fail and fulfilment falls back to the reconcile net. This UPDATES the
+// existing endpoint's URL in place — which PRESERVES its signing secret, so the
+// server's STRIPE_WEBHOOK_SECRET stays valid — and only CREATES a new endpoint
+// when none exists (which mints a NEW secret the operator must then set). On
+// update it keeps the endpoint's other events and just ensures
+// checkout.session.completed is subscribed. Admin-triggered.
+export async function repairWebhookEndpoint(targetUrl, { path = '/api/pay/stripe/webhook' } = {}) {
+  if (!stripeEnabled()) return { ok: false, error: 'stripe-not-configured' };
+  if (!targetUrl || !/^https:\/\//.test(targetUrl)) return { ok: false, error: 'bad-target-url' };
+  try {
+    const list = await stripeGet('/webhook_endpoints?limit=100');
+    const ep = (list.data || []).find((e) => e.url && e.url.endsWith(path)) || null;
+    if (ep) {
+      const already = ep.url === targetUrl && ep.status === 'enabled'
+        && (ep.enabled_events || []).some((x) => x === '*' || x === 'checkout.session.completed');
+      if (already) return { ok: true, action: 'already-correct', id: ep.id, url: ep.url, secretPreserved: true };
+      // Preserve existing events; ensure ours is present (unless a wildcard already covers it).
+      const events = new Set(ep.enabled_events || []);
+      if (!events.has('*')) events.add('checkout.session.completed');
+      const updated = await stripePost(`/webhook_endpoints/${ep.id}`, {
+        url: targetUrl, enabled_events: [...events], disabled: false,
+      });
+      return { ok: true, action: 'updated', id: updated.id, url: updated.url, previousUrl: ep.url, secretPreserved: true };
+    }
+    const created = await stripePost('/webhook_endpoints', {
+      url: targetUrl, enabled_events: ['checkout.session.completed'],
+    });
+    // `secret` is returned ONCE, only on creation — the operator must set it as
+    // STRIPE_WEBHOOK_SECRET or the signature check will reject events.
+    return { ok: true, action: 'created', id: created.id, url: created.url, newSecret: created.secret || null };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'repair-failed' };
+  }
+}
+
 // Retrieve a Checkout Session to confirm payment WITHOUT relying on the webhook.
 // On return from Checkout the app calls this to reconcile the booking — so a
 // missing/delayed/misconfigured webhook can never leave a paid booking stuck at
