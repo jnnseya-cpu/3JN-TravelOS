@@ -5067,7 +5067,8 @@ async function renderDeals() {
   const deals = data.deals || [];
   deals.forEach((d) => { __dealsCache[d.id] = d; });
   if (!deals.length) {
-    out.innerHTML = '<div class="card pad center muted">New deals are landing soon — check back shortly, or <span class="lnk" data-nav="planner">plan a custom trip</span>.</div>';
+    out.innerHTML = '<div id="fareAlertsBlock"></div><div class="card pad center muted">New deals are landing soon — check back shortly, or <span class="lnk" data-nav="planner">plan a custom trip</span>.</div>';
+    renderFareAlerts();
     return;
   }
   const cards = deals.map((d) => {
@@ -5099,9 +5100,51 @@ async function renderDeals() {
         </div>
       </div>`;
   }).join('');
-  out.innerHTML = `<div class="dest-grid">${cards}</div>
+  out.innerHTML = `<div id="fareAlertsBlock"></div><div class="dest-grid">${cards}</div>
     <p class="muted center" style="font-size:11.5px;margin-top:16px">Every deal is a real, all-in price (every fee included) confirmed by our travel team. ${data.stripeReady ? 'Pay securely by card.' : 'Reserve now — our team confirms your booking and takes payment.'}</p>`;
+  renderFareAlerts();
 }
+// Fare radar UI: watch a route, we alert when the price hits the target/drops.
+async function renderFareAlerts() {
+  const box = $('#fareAlertsBlock'); if (!box) return;
+  if (!state.user) {
+    box.innerHTML = `<div class="card pad" style="margin-bottom:18px;border-color:rgba(201,168,106,.35)">
+      <span class="eyebrow">✈ Price alerts</span>
+      <p class="muted" style="font-size:13px;margin:6px 0 0">Watch a route and we'll alert you the moment the fare drops to your target. <span class="lnk" onclick="openAuth('login')">Sign in</span> to set an alert.</p></div>`;
+    return;
+  }
+  let watches = [], marketData = false;
+  try { const r = await api('/api/fare-watches'); watches = r.watches || []; marketData = !!r.marketData; } catch { /* show the form anyway */ }
+  const rows = watches.map((w) => `<div class="kv" style="align-items:baseline">
+      <span>${esc(w.origin)} → ${esc(w.destination)} <span class="muted" style="font-size:11px">${w.departDate ? '· ' + esc(ukDate(w.departDate)) : w.flexStart ? '· flexible' : ''}${w.targetGbp ? ' · target £' + w.targetGbp : ''}${w.lastBestGbp ? ' · last seen £' + Math.round(w.lastBestGbp) : ''}</span></span>
+      <button class="btn btn-ghost btn-sm" style="padding:2px 8px;color:#ff8a8a" onclick="fareWatchDelete('${esc(w.id)}')">Remove</button></div>`).join('') || '<div class="muted" style="font-size:13px">No alerts yet — add one below.</div>';
+  box.innerHTML = `<div class="card pad" style="margin-bottom:18px;border-color:rgba(201,168,106,.35)">
+    <span class="eyebrow">✈ Price alerts${marketData ? '' : ' <span class="muted" style="font-weight:400">· scanning activates once market data is connected</span>'}</span>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 10px">Tell us a route and (optionally) your target price. When the fare hits it, we alert you with a book link — we find the best price, we never inflate it.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field" style="flex:1 1 120px"><label>From</label><input class="in" id="fwFrom" placeholder="London"></div>
+      <div class="field" style="flex:1 1 120px"><label>To</label><input class="in" id="fwTo" placeholder="Lagos"></div>
+      <div class="field" style="flex:0 1 150px"><label>Depart <span class="muted">(optional)</span></label><input class="in" type="date" id="fwDate"></div>
+      <div class="field" style="flex:0 1 120px"><label>Target £ <span class="muted">(optional)</span></label><input class="in" id="fwTarget" inputmode="decimal" placeholder="600"></div>
+      <button class="btn btn-gold btn-sm" onclick="fareWatchCreate()">Set alert</button>
+    </div>
+    <div style="margin-top:12px">${rows}</div>
+  </div>`;
+}
+window.fareWatchCreate = async () => {
+  const origin = $('#fwFrom')?.value?.trim(), destination = $('#fwTo')?.value?.trim();
+  if (!origin || !destination) { toast('Enter where you fly from and to.'); return; }
+  const body = { origin, destination, departDate: $('#fwDate')?.value || null, targetGbp: Number($('#fwTarget')?.value) || null };
+  let r;
+  try { r = await api('/api/fare-watches', { method: 'POST', body: JSON.stringify(body) }); }
+  catch (e) { toast(e.message || 'Could not set the alert.'); return; }
+  if (r?.ok === false) { toast(r.message || r.error || 'Could not set the alert.'); return; }
+  toast('✓ Price alert set — we will ping you when it drops.'); renderFareAlerts();
+};
+window.fareWatchDelete = async (id) => {
+  try { await api(`/api/fare-watches/${id}`, { method: 'DELETE' }); } catch { /* ignore */ }
+  renderFareAlerts();
+};
 window.openDealCheckout = (dealId) => {
   const d = __dealsCache[dealId];
   if (!d) return;

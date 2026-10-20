@@ -28,6 +28,7 @@ import {
   recordVisaFile, listVisaApplications, listVisaApplicationsForUser, getVisaApplication, decideVisaApplication,
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
   ensureVisaPassengers, refundVisaReservation, listStuckVisaReservations, alertStuckVisaReservations,
+  createFareWatch, listFareWatchesForUser, deleteFareWatch, listActiveFareWatches, evaluateFareWatch, recordFareWatchCheck,
   applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid, setVisaFeeSession, visaReservationsAwaitingPayment,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, refreshEsimUsage, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
@@ -3900,6 +3901,81 @@ app.get('/api/cron/visa-stuck-alert', safe(async (req, res) => {
   }
   const alerted = alertStuckVisaReservations(hours);
   res.json({ ok: true, checked: stuck.length, recovered, alerted });
+}));
+// FARE-RADAR cron: price each active fare watch from market data and alert the
+// traveller when it hits their target (or drops materially). This is the finder
+// model — we surface the best fare and earn on the onward booking, never by
+// being the cheapest seller. Fail-closed on CRON_SECRET; needs market data
+// (TRAVELPAYOUTS_TOKEN) and reports idle when it is absent.
+app.get('/api/cron/fare-scan', safe(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
+  if (!marketDataEnabled()) return res.json({ ok: true, scanned: 0, alerted: 0, note: 'Market data not configured (set TRAVELPAYOUTS_TOKEN) — fare radar is idle.' });
+  const watches = listActiveFareWatches().slice(0, Math.max(1, Math.min(500, Number(req.query.max) || 200)));
+  const base = `https://${req.get('host')}`;
+  let scanned = 0, alerted = 0;
+  for (const w of watches) {
+    try {
+      if (!w.originCode || !w.destinationCode) continue;
+      const origin = { airport: w.originCode };
+      const dest = { code: w.destinationCode };
+      let bestGbp = null;
+      if (w.flexStart && w.flexEnd && !w.departDate) {
+        const win = await cheapestDepartureInWindow({ nights: w.nights, oneWay: w.oneWay }, dest, origin, { start: w.flexStart, end: w.flexEnd });
+        if (win) bestGbp = win.min;
+      } else if (w.departDate) {
+        const intent = { dates: { checkIn: w.departDate, checkOut: w.oneWay ? null : w.returnDate }, oneWay: w.oneWay, nights: w.nights };
+        const fares = await fetchMarketFares(intent, dest, origin);
+        if (fares && fares.length) bestGbp = fares[0].priceGbp;
+      }
+      scanned += 1;
+      const decision = evaluateFareWatch(w, bestGbp);
+      if (decision.alert) {
+        const q = `${w.origin} to ${w.destination}${w.departDate ? ' on ' + w.departDate : ''} for ${w.travellers}`;
+        const link = `${base}/app?q=${encodeURIComponent(q)}`;
+        const u = getUser(w.userId);
+        commsEmit('deals.fare_alert', {
+          userId: w.userId, recipient: u?.email || null, phone: u?.phone || null,
+          vars: {
+            route: `${w.origin} → ${w.destination}`,
+            price: `£${Number(bestGbp).toFixed(0)}`,
+            note: `${w.targetGbp ? `at or below your £${w.targetGbp} target` : 'a price drop'} — book now: ${link}`,
+          },
+        });
+        recordFareWatchCheck(w.id, { bestGbp, alerted: true });
+        alerted += 1;
+      } else {
+        recordFareWatchCheck(w.id, { bestGbp, alerted: false });
+      }
+    } catch { /* skip this watch; next scan retries */ }
+  }
+  res.json({ ok: true, scanned, alerted });
+}));
+// Consumer: create / list / delete a fare watch (price alert).
+app.post('/api/fare-watches', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  const b = req.body || {};
+  const o = b.origin ? resolveOrigin(String(b.origin)) : null;
+  const d = b.destination ? (resolveDestination(String(b.destination)) || resolveOrigin(String(b.destination))) : null;
+  const out = createFareWatch(user.id, {
+    origin: o?.city || String(b.origin || ''), originCode: o?.airport || null,
+    destination: d?.city || String(b.destination || ''), destinationCode: d?.code || d?.airport || null,
+    departDate: b.departDate, returnDate: b.returnDate, flexStart: b.flexStart, flexEnd: b.flexEnd,
+    nights: b.nights, travellers: b.travellers, oneWay: b.oneWay, targetGbp: b.targetGbp,
+  });
+  if (!out.ok) return res.status(400).json(out);
+  res.json(out);
+}));
+app.get('/api/fare-watches', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json({ watches: listFareWatchesForUser(user.id), marketData: marketDataEnabled() });
+}));
+app.delete('/api/fare-watches/:id', safe((req, res) => {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: 'auth-required' });
+  res.json(deleteFareWatch(user.id, req.params.id));
 }));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved

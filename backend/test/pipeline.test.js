@@ -1100,15 +1100,15 @@ test('behavioural learning: dashboard is not Dubai-only and learns from activity
   assert.ok(profile.confidence > 0);
 });
 
-test('comms: 177-event catalogue, channel coverage, mandatory fan-out', () => {
+test('comms: 178-event catalogue, channel coverage, mandatory fan-out', () => {
   const a = commsArchitecture();
-  assert.equal(a.totalEvents, 177);
-  assert.equal(a.categories, 15);
+  assert.equal(a.totalEvents, 178);
+  assert.equal(a.categories, 16);
   assert.equal(a.mandatory, 27);
-  assert.equal(a.channelCoverage.inapp, 177);
-  assert.equal(a.channelCoverage.email, 130);
-  assert.equal(a.channelCoverage.sms, 18);
-  assert.equal(a.channelCoverage.push, 27);
+  assert.equal(a.channelCoverage.inapp, 178);
+  assert.equal(a.channelCoverage.email, 131);
+  assert.equal(a.channelCoverage.sms, 19);
+  assert.equal(a.channelCoverage.push, 28);
 
   // Mandatory events bypass user opt-outs.
   const u = createUser({ name: 'Comms' });
@@ -4549,7 +4549,7 @@ test('visa reservations: hotel auto-book is OFF by default; apply/cancel/sweep m
   assert.equal(cancelled.reservation.roomDepositStatus, 'refunded', 'no charge → deposit refunded to customer');
   assert.ok(!S.visaHotelsToCancel('2026-09-07', 2).some((x) => x.id === r.reservation.id), 'cancelled booking drops out of the sweep');
   // If a booking IS charged (missed deadline), the deposit COVERS it — 3JN never pays.
-  const r2 = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: '2026-10-10', nights: 3, travellers: 1 });
+  const r2 = S.orderVisaReservation(u.id, { kind: 'hotel', destination: 'Dubai', departDate: visaDepart, nights: 3, travellers: 1 });
   S.applyVisaHotelBooking(r2.reservation.id, { provider: 'H', providerRef: 'HB-9', hotelbedsRef: 'HB-9', cancelBy: '2026-10-08' });
   const charged = S.markVisaHotelCancelled(r2.reservation.id, { cancellationRef: 'CXL-2', charge: 40 });
   assert.equal(charged.reservation.roomDepositStatus, 'consumed', 'a charge is covered by the deposit, not 3JN');
@@ -7862,4 +7862,50 @@ test('webhook repair is fail-closed: no Stripe key → no API call, clear reason
   const r = await repairWebhookEndpoint('https://api.3jntravel.com/api/pay/stripe/webhook');
   assert.equal(r.ok, false);
   assert.equal(r.error, 'stripe-not-configured');
+});
+
+test('fare radar: watch CRUD, alert-decision logic, and the in-app alert event', async () => {
+  const S = await import('../src/store.js');
+  const C = await import('../src/comms.js');
+  const u = createUser({ name: 'Radar User', email: `fw.${Date.now()}@x.co` });
+  const other = createUser({ name: 'Radar Other', email: `fw2.${Date.now()}@x.co` });
+
+  // route is required
+  assert.equal(S.createFareWatch(u.id, { origin: '', destination: 'Lagos' }).ok, false);
+
+  // create a watch with a target
+  const r = S.createFareWatch(u.id, { origin: 'London', originCode: 'LON', destination: 'Lagos', destinationCode: 'LOS', departDate: '2027-02-01', travellers: 2, targetGbp: 600 });
+  assert.equal(r.ok, true);
+  const id = r.watch.id;
+  assert.equal(r.watch.targetGbp, 600);
+  assert.ok(S.listFareWatchesForUser(u.id).some((w) => w.id === id), 'appears in owner list');
+  assert.ok(S.listActiveFareWatches().some((w) => w.id === id), 'appears in active list');
+  assert.equal(S.deleteFareWatch(other.id, id).ok, false, 'another user cannot delete it');
+
+  // alert decision (pure): target path
+  assert.equal(S.evaluateFareWatch(r.watch, null).alert, false, 'no price → no alert');
+  assert.equal(S.evaluateFareWatch(r.watch, 720).alert, false, 'above target → no alert');
+  assert.equal(S.evaluateFareWatch(r.watch, 580).alert, true, 'at/below target → alert');
+  S.recordFareWatchCheck(id, { bestGbp: 580, alerted: true });
+  assert.equal(r.watch.lastAlertGbp, 580, 'alert price stamped');
+  assert.equal(S.evaluateFareWatch(r.watch, 580).alert, false, 'no duplicate alert at the same price');
+  assert.equal(S.evaluateFareWatch(r.watch, 500).alert, true, 'a lower price re-alerts');
+
+  // alert decision: no-target path (first price, then ≥5% drop)
+  const r2 = S.createFareWatch(u.id, { origin: 'Birmingham', originCode: 'BHX', destination: 'Kinshasa', destinationCode: 'FIH' });
+  assert.equal(r2.watch.targetGbp, null);
+  assert.equal(S.evaluateFareWatch(r2.watch, 900).alert, true, 'first observed price alerts');
+  S.recordFareWatchCheck(r2.watch.id, { bestGbp: 900, alerted: true });
+  assert.equal(S.evaluateFareWatch(r2.watch, 880).alert, false, 'a small dip does not alert');
+  assert.equal(S.evaluateFareWatch(r2.watch, 850).alert, true, 'a ≥5% drop alerts');
+
+  // the fare-alert event is wired and lands in the in-app feed
+  assert.ok(C.EVENTS['deals.fare_alert'], 'event exists');
+  const before = listNotifications(u.id).length;
+  C.emit('deals.fare_alert', { userId: u.id, vars: { route: 'London → Lagos', price: '£580', note: 'book now' } });
+  assert.ok(listNotifications(u.id).length > before, 'fare alert lands in-app');
+
+  // owner can delete
+  assert.equal(S.deleteFareWatch(u.id, id).ok, true);
+  assert.ok(!S.listFareWatchesForUser(u.id).some((x) => x.id === id), 'deleted watch is gone');
 });

@@ -61,6 +61,7 @@ const db = {
   searchDeposits: [], // refundable search deposits (deep £5 / luxury £20 / corporate £50)
   visaChain: [], // hash-chained (blockchain-style) audit trail of visa decisions
   quoteRequests: [], // exact-quote requests on estimated options (lead + deposit intent)
+  fareWatches: [], // price-radar: routes a traveller watches; the scan cron alerts on a target/drop
   influencerProfiles: new Map(), // userId -> influencer/partner profile (tier, followers, standing)
   revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
   rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
@@ -3907,6 +3908,78 @@ export function listQuoteRequests({ userId = null, status = null } = {}) {
 }
 export function getQuoteRequest(id) { return db.quoteRequests.find((r) => r.id === id) || null; }
 
+// ---- Fare watches (price-radar) ---------------------------------------------
+// A traveller WATCHES a route; the scan cron prices it from market data and
+// alerts when it hits their target (or drops). This is the finder model — we
+// surface the best fare and earn on the onward booking, never by being the
+// cheapest merchant — so it is immune to the price-competitiveness problem.
+export function createFareWatch(userId, w = {}) {
+  const u = db.users.get(userId);
+  if (!u) return { ok: false, error: 'auth-required' };
+  const origin = String(w.origin || '').trim();
+  const destination = String(w.destination || '').trim();
+  if (!origin || !destination) return { ok: false, error: 'route-required', message: 'Enter where you fly from and to.' };
+  const ymd = (d) => { const s = String(d || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
+  const rec = {
+    id: id('fw'), userId,
+    origin, destination,
+    originCode: w.originCode || null, destinationCode: w.destinationCode || null,
+    departDate: ymd(w.departDate), returnDate: ymd(w.returnDate),
+    flexStart: ymd(w.flexStart), flexEnd: ymd(w.flexEnd),
+    nights: Math.max(1, Math.min(90, Number(w.nights) || 7)),
+    travellers: Math.max(1, Math.min(9, Number(w.travellers) || 1)),
+    oneWay: !!w.oneWay,
+    targetGbp: (Number(w.targetGbp) > 0) ? Math.round(Number(w.targetGbp) * 100) / 100 : null,
+    status: 'active', createdAt: nowISO(),
+    lastCheckedAt: null, lastBestGbp: null, lastAlertGbp: null, lastAlertAt: null, alertsSent: 0,
+  };
+  db.fareWatches.push(rec);
+  capArr(db.fareWatches, 2000, 'fareWatches');
+  recordAudit({ actor: userId, role: u.role, action: 'fare.watch.created', entity: 'fare-watch', entityId: rec.id, summary: `${origin}→${destination}${rec.targetGbp ? ' ≤ £' + rec.targetGbp : ''}` });
+  return { ok: true, watch: rec };
+}
+export function listFareWatchesForUser(userId) {
+  return db.fareWatches.filter((w) => w.userId === userId).slice().reverse();
+}
+export function deleteFareWatch(userId, watchId) {
+  const i = db.fareWatches.findIndex((w) => w.id === watchId && w.userId === userId);
+  if (i === -1) return { ok: false, error: 'not-found' };
+  db.fareWatches.splice(i, 1);
+  return { ok: true };
+}
+export function listActiveFareWatches() {
+  return db.fareWatches.filter((w) => w.status === 'active');
+}
+// Pure decision: should a newly-observed best fare trigger an alert?
+//  • with a target → alert when best ≤ target AND we haven't already alerted at
+//    this price or lower (a sustained low price pings once, not every scan);
+//  • without a target → alert on the first real price, then only on a further
+//    drop of ≥5% below the last alerted price.
+export function evaluateFareWatch(watch, bestGbp) {
+  const best = Number(bestGbp);
+  if (!Number.isFinite(best) || best <= 0) return { alert: false, reason: 'no-price' };
+  const last = (watch.lastAlertGbp == null) ? null : Number(watch.lastAlertGbp);
+  if (watch.targetGbp != null) {
+    if (best > watch.targetGbp) return { alert: false, reason: 'above-target' };
+    if (last != null && best >= last) return { alert: false, reason: 'already-alerted' };
+    return { alert: true, reason: 'at-or-below-target' };
+  }
+  if (last == null) return { alert: true, reason: 'first-price' };
+  if (best <= last * 0.95) return { alert: true, reason: 'further-drop' };
+  return { alert: false, reason: 'no-material-drop' };
+}
+// Record a scan result; stamps lastBest/lastChecked and, when alerted, the
+// alerted price/time so evaluateFareWatch can dedupe on the next scan.
+export function recordFareWatchCheck(watchId, { bestGbp = null, alerted = false } = {}) {
+  const w = db.fareWatches.find((x) => x.id === watchId);
+  if (!w) return { ok: false, error: 'not-found' };
+  w.lastCheckedAt = nowISO();
+  const best = Number(bestGbp);
+  if (Number.isFinite(best) && best > 0) w.lastBestGbp = Math.round(best * 100) / 100;
+  if (alerted) { w.lastAlertGbp = w.lastBestGbp; w.lastAlertAt = nowISO(); w.alertsSent = (w.alertsSent || 0) + 1; }
+  return { ok: true, watch: w };
+}
+
 // Search-to-book stats — drives Duffel's excess-search fee reporting.
 export function searchToBookStats() {
   const searches = db.behaviour.filter((b) => b.event === 'plan' || b.event === 'search').length;
@@ -3971,7 +4044,7 @@ const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys',
 // NOTE: kept to permanent, id-bearing, lower-frequency records — high-frequency
 // logs (audit/behaviour/…) stay whole, and the string-keyed processedStripeEvents
 // ledger stays whole (money paths carry their own reference dedup regardless).
-const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders', 'shareEvents']);
+const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders', 'shareEvents', 'fareWatches']);
 
 // Rebuild an in-memory array from a durable value that may be: a plain array
 // (legacy whole-node), or an object of records keyed by id (new per-record form),
