@@ -7909,3 +7909,20 @@ test('fare radar: watch CRUD, alert-decision logic, and the in-app alert event',
   assert.equal(S.deleteFareWatch(u.id, id).ok, true);
   assert.ok(!S.listFareWatchesForUser(u.id).some((x) => x.id === id), 'deleted watch is gone');
 });
+
+test('fare alert book link uses the Travelpayouts marker only when configured', async () => {
+  const LS = await import('../src/live-suppliers.js');
+  const SAMPLE = 'https://www.aviasales.com/search/LON2002LOS1';
+  // Fail-closed: no marker → no affiliate link (caller falls back to our planner).
+  delete process.env.TRAVELPAYOUTS_MARKER;
+  assert.equal(LS.affiliateMarkerSet(), false);
+  assert.equal(LS.affiliateFlightLink(SAMPLE), null, 'no marker → null');
+  // Configured: marker appended so an onward booking pays a referral.
+  process.env.TRAVELPAYOUTS_MARKER = 'TEST12345';
+  try {
+    assert.equal(LS.affiliateMarkerSet(), true);
+    const u = LS.affiliateFlightLink(SAMPLE);
+    assert.match(u, /[?&]marker=TEST12345$/, 'marker appended');
+    assert.equal(LS.affiliateFlightLink(''), null, 'no link → null even with a marker');
+  } finally { delete process.env.TRAVELPAYOUTS_MARKER; }
+});

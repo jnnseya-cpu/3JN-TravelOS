@@ -83,7 +83,7 @@ import { liveShowcase } from './showcase.js';
 import { architecture as commsArchitecture, renderEmail as commsRenderEmail, emit as commsEmit, EVENTS as COMMS_EVENTS } from './comms.js';
 import { dispatchStatus as commsDispatchStatus } from './comms-providers.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
-import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, travelfusionEnabled, validateTravelfusionOffer, travelfusionDiagnostic, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow } from './live-suppliers.js';
+import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, travelfusionEnabled, validateTravelfusionOffer, travelfusionDiagnostic, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow, affiliateFlightLink } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
@@ -3919,20 +3919,23 @@ app.get('/api/cron/fare-scan', safe(async (req, res) => {
       if (!w.originCode || !w.destinationCode) continue;
       const origin = { airport: w.originCode };
       const dest = { code: w.destinationCode };
-      let bestGbp = null;
+      let bestGbp = null, marketLink = null;
       if (w.flexStart && w.flexEnd && !w.departDate) {
         const win = await cheapestDepartureInWindow({ nights: w.nights, oneWay: w.oneWay }, dest, origin, { start: w.flexStart, end: w.flexEnd });
         if (win) bestGbp = win.min;
       } else if (w.departDate) {
         const intent = { dates: { checkIn: w.departDate, checkOut: w.oneWay ? null : w.returnDate }, oneWay: w.oneWay, nights: w.nights };
         const fares = await fetchMarketFares(intent, dest, origin);
-        if (fares && fares.length) bestGbp = fares[0].priceGbp;
+        if (fares && fares.length) { bestGbp = fares[0].priceGbp; marketLink = fares[0].link || null; }
       }
       scanned += 1;
       const decision = evaluateFareWatch(w, bestGbp);
       if (decision.alert) {
+        // Earn the referral when a marker is configured and we have a real fare
+        // link; otherwise send them into our own planner. Honest either way.
+        const aff = affiliateFlightLink(marketLink);
         const q = `${w.origin} to ${w.destination}${w.departDate ? ' on ' + w.departDate : ''} for ${w.travellers}`;
-        const link = `${base}/app?q=${encodeURIComponent(q)}`;
+        const link = aff || `${base}/app?q=${encodeURIComponent(q)}`;
         const u = getUser(w.userId);
         commsEmit('deals.fare_alert', {
           userId: w.userId, recipient: u?.email || null, phone: u?.phone || null,

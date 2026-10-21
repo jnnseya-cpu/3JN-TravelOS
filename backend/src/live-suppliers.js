@@ -77,6 +77,18 @@ export function duffelUsable() { return !!DUFFEL_TOKEN && !(liveModeOn() && duff
 export function duffelEnabled() { return duffelUsable() && typeof fetch === 'function'; }
 export function lccFlightsEnabled() { return !!TEQUILA_KEY && typeof fetch === 'function'; }
 export function marketDataEnabled() { return !!TRAVELPAYOUTS_TOKEN && typeof fetch === 'function'; }
+// Affiliate monetisation for the fare radar: append the Travelpayouts marker to
+// an Aviasales deep link so an onward booking pays a referral — the finder model.
+// Reads the marker at call-time (so it reflects runtime env and is testable).
+// Returns null when no marker is configured OR there's no link, so the caller
+// falls back to our own planner link — honest either way, never a broken URL.
+export function affiliateMarkerSet() { return !!(env.TRAVELPAYOUTS_MARKER || '').trim(); }
+export function affiliateFlightLink(marketLink) {
+  const marker = (env.TRAVELPAYOUTS_MARKER || '').trim();
+  if (!marker || !marketLink) return null;
+  const sep = marketLink.includes('?') ? '&' : '?';
+  return `${marketLink}${sep}marker=${encodeURIComponent(marker)}`;
+}
 export function liveFlightsEnabled() { return duffelEnabled() || lccFlightsEnabled() || tboAirEnabled(); }
 // Duffel Stays uses the SAME Duffel token as flights — so hotels can go live the
 // moment flights work, with NO extra credentials. Amadeus stays as a fallback.
