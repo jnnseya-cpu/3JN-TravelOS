@@ -556,6 +556,92 @@ ${featureFooter('group-pots', '/planner', 'Start a group trip →')}`,
       { q: 'Can everyone pay their own share?', a: 'Yes — each traveller contributes to the shared pot whenever suits them, so no one person fronts the whole cost.' },
     ],
   },
+  {
+    key: 'fare-radar', slug: 'flight-price-alerts-diaspora-fare-radar', linkText: 'Flight price alerts (fare radar)',
+    title: 'Flight Price Alerts: The Fare Radar for Diaspora Travellers',
+    meta: 'Set a free price alert on any flight route and 3JN\'s fare radar scans the market, then messages you the moment the fare drops to your target.',
+    excerpt: 'Stop refreshing fare sites. Watch your route once, and the AI fare radar alerts you the moment the price drops to your target — then you book and pay monthly.',
+    tags: ['price-alerts', 'fare-radar', 'cheap-flights', 'diaspora', 'feature'],
+    cta: { href: '/deals', label: 'Set a free price alert →' },
+    body: (k) => `<p>Nobody has time to check fares every day — so the day the price to Lagos or Manila finally drops, you miss it. 3JN Travel OS flips that around: <strong>you watch the route once, and our fare radar watches the market for you</strong>, then messages you the moment the fare hits your target.</p>
+<h3>Watch once, get alerted — don't hunt</h3><p>Add your home route and (if you like) a target price. The AI scans live market fares on a schedule and, when it drops to your number or falls sharply, it alerts you in-app, by email and on WhatsApp — with a book link. No spam: it pings you on a genuine drop, not every wobble.</p>
+<h3>We find the best price — we never inflate it</h3><p>This is the honest heart of 3JN: we are the <em>finder</em>, not a markup middleman. The alert sends you to the best fare we can see. Happy with it? <a href="/blog/price-lock-guarantee">Lock the price</a> and <a href="/blog/pay-monthly-flights-and-holidays-uk">pay monthly</a>. Flexible on dates? Pair it with the <a href="/blog/cheapest-day-to-fly-ai-date-finder">cheapest-day finder</a> to watch a whole window.</p>
+<h3>Built for the routes families save hardest for</h3><p>The radar shines on diaspora long-haul — the trips home where a good week can move the fare by hundreds. Set one alert per route you care about and let it run.</p>
+${featureFooter('fare-radar', '/deals', 'Set a free price alert →')}`,
+    faq: [
+      { q: 'How do flight price alerts work on 3JN?', a: 'You watch a route (and optionally a target price). The AI fare radar scans live market fares on a schedule and alerts you in-app, by email and WhatsApp the moment the fare drops to your target — with a link to book.' },
+      { q: 'Does it cost anything to set a price alert?', a: 'No — setting a price alert is free. 3JN earns a small referral only if you choose to book through the link, so we are motivated to find you the lowest fare, not to inflate it.' },
+      { q: 'Will I be spammed with alerts?', a: 'No. The radar only messages you on a genuine drop to your target (or a sharp fall), not on every small price change.' },
+    ],
+  },
+  {
+    key: 'diaspora-homecoming', slug: 'flights-home-for-the-diaspora-pay-monthly', linkText: 'Flights home for the diaspora',
+    title: 'Flights Home for the Diaspora: Book the Reunion, Pay Monthly',
+    meta: 'The journey home, done properly — book flights, a place to stay, visa documents and your data in one place for the diaspora, and pay monthly.',
+    excerpt: 'The journey home, done properly — flights, a place to stay, visa papers and your data in one place, built for the diaspora, and payable monthly.',
+    tags: ['diaspora', 'flights-home', 'visiting-family', 'pay-monthly', 'feature'],
+    cta: { href: '/planner', label: 'Plan my journey home →' },
+    body: (k) => `<p>Some trips aren't holidays — they're the hug you've waited two years for, the wedding you can't watch on a screen, the seat at the table that's been empty too long. 3JN Travel OS is built for exactly that journey: <strong>the journey home, done properly</strong>.</p>
+<h3>The whole journey in one place</h3><p>Plan it in one sentence and the <a href="/blog/plan-a-trip-from-one-sentence-with-ai">AI planner</a> returns your flights, somewhere to stay, a <a href="/blog/check-visa-approval-odds-before-you-book">visa check</a>, any <a href="/blog/flight-and-hotel-reservation-for-a-visa">reservation your visa file needs</a>, and a <a href="/blog/travel-esim-land-with-data-working">travel eSIM</a> so you land connected — one trip, properly sorted.</p>
+<h3>Afford it without the lump sum</h3><p>The barrier home is rarely the price — it's paying it all at once. Put down a small deposit and <a href="/blog/pay-monthly-flights-and-holidays-uk">pay the rest monthly</a>, with your <a href="/blog/price-lock-guarantee">price locked</a> from day one. Set a <a href="/blog/flight-price-alerts-diaspora-fare-radar">price alert</a> on your home route and we'll tell you the moment it drops.</p>
+<h3>Honest, by people who know the journey</h3><p>Every supplier is verified and the fee is shown up front — no fabricated "cheapest" claims, no surprise line items. Just the journey home, handled.</p>
+${featureFooter('diaspora-homecoming', '/planner', 'Plan my journey home →')}`,
+    faq: [
+      { q: 'Can I book a flight home now and pay monthly?', a: 'Yes. Put down a small deposit and spread the balance over monthly instalments, with your price locked at booking — so a fare rise can\'t touch it while you pay.' },
+      { q: 'Does 3JN handle the visa side of visiting family?', a: 'Yes — you can check your approval odds and get a real, cancellable flight-and-hotel reservation for your visa application, without buying the whole trip up front.' },
+    ],
+  },
+  {
+    key: 'membership', slug: '3jn-membership-member-fares-lower-fees', linkText: '3JN membership',
+    title: '3JN Membership: Member Fares, Lower Fees & Priority Help',
+    meta: '3JN membership unlocks member pricing, lower service fees, priority concierge and early access to deals — all on a simple pay-monthly plan.',
+    excerpt: 'Travel often? Membership unlocks lower fees, member pricing (including on visa reservations), priority help and early deal access.',
+    tags: ['membership', 'member-fares', 'loyalty', 'feature'],
+    cta: { href: '/membership', label: 'See membership →' },
+    body: (k) => `<p>If you travel more than once a year — or you're planning several trips home — 3JN membership pays for itself. It lowers the fees on every booking and unlocks member-only pricing, so the people who use 3JN most pay the least.</p>
+<h3>Lower fees and member pricing</h3><p>Members pay a reduced service fee across <a href="/blog/plan-a-trip-from-one-sentence-with-ai">planned trips</a> and get member pricing on extras — for example a meaningful discount on a <a href="/blog/flight-and-hotel-reservation-for-a-visa">visa reservation</a>. Combined with <a href="/blog/pay-monthly-flights-and-holidays-uk">pay-monthly</a>, the cost of travel drops twice: lower fees, spread over time.</p>
+<h3>Priority help and early access</h3><p>Membership comes with priority concierge support and earlier access to <a href="/deals">ready-to-book deals</a> — useful when a great diaspora fare appears and seats go fast. Pair it with a <a href="/blog/flight-price-alerts-diaspora-fare-radar">price alert</a> so you never miss one.</p>
+<h3>Simple, pay-monthly</h3><p>Membership itself is a simple monthly plan with no long lock-in — see the current tiers and what each includes.</p>
+${featureFooter('membership', '/membership', 'See membership →')}`,
+    faq: [
+      { q: 'What do I get with 3JN membership?', a: 'Lower service fees on bookings, member pricing on extras (such as a discount on visa reservations), priority concierge support and early access to deals — on a simple monthly plan.' },
+      { q: 'Is membership worth it if I only travel sometimes?', a: 'If you take even a couple of trips a year, the reduced fees and member pricing typically outweigh the membership cost — and there is no long lock-in.' },
+    ],
+  },
+  {
+    key: 'deals-marketplace', slug: 'ready-to-book-diaspora-travel-deals', linkText: 'Ready-to-book deals',
+    title: 'Ready-to-Book Travel Deals: All-In Prices, No Hidden Fees',
+    meta: 'Browse ready-to-book travel deals with real all-in prices — every fee included, confirmed by our team, and payable monthly if you want to spread it.',
+    excerpt: 'Hand-checked deals at real all-in prices — every fee included, confirmed by our team, and payable monthly if you want to spread the cost.',
+    tags: ['deals', 'travel-deals', 'all-in-price', 'feature'],
+    cta: { href: '/deals', label: 'Browse deals →' },
+    body: (k) => `<p>Most "deals" online hide the real price until checkout, where fees and extras pile on. 3JN deals do the opposite: each one is a <strong>real, all-in price</strong> — every fee included — confirmed by our travel team before it's listed.</p>
+<h3>What you see is what you pay</h3><p>No bait pricing, no surprise line items at the end. Browse the current <a href="/deals">ready-to-book deals</a>, and if you'd rather spread the cost, most are <a href="/blog/pay-monthly-flights-and-holidays-uk">payable monthly</a> with your <a href="/blog/price-lock-guarantee">price locked</a>.</p>
+<h3>Nothing live for your route yet?</h3><p>Set a <a href="/blog/flight-price-alerts-diaspora-fare-radar">price alert</a> and the fare radar will message you the moment a great fare appears — or <a href="/blog/plan-a-trip-from-one-sentence-with-ai">plan a custom trip</a> from a single sentence.</p>
+<h3>Built around the diaspora</h3><p>Deals lean towards the routes and homecomings our travellers actually take — not just the beach breaks everyone else lists.</p>
+${featureFooter('deals-marketplace', '/deals', 'Browse deals →')}`,
+    faq: [
+      { q: 'Are 3JN deal prices really all-inclusive?', a: 'Yes — every listed deal is a real all-in price with fees included, confirmed by our travel team before it goes live. What you see is what you pay.' },
+      { q: 'Can I pay for a deal monthly?', a: 'Most deals can be paid monthly: a small deposit, then instalments, with the price locked at booking.' },
+    ],
+  },
+  {
+    key: 'vendor-programme', slug: 'become-a-3jn-travel-agent-earn-commission', linkText: 'Become a 3JN travel agent',
+    title: 'Become a 3JN Travel Agent: Earn Commission, No Inventory',
+    meta: 'Join the 3JN Travel vendor programme: sell AI-built trips, earn commission on every booking, and carry no inventory or capital risk. Apply free.',
+    excerpt: 'Sell AI-built trips under the 3JN vendor programme and earn commission on every booking — no inventory, no capital at risk, no tech to build.',
+    tags: ['vendor', 'travel-agent', 'earn-commission', 'partner', 'feature'],
+    cta: { href: '/vendors', label: 'Apply to the vendor programme →' },
+    body: (k) => `<p>Want to earn from travel without buying stock, fronting deposits, or building a booking system? The 3JN vendor programme lets agents and community sellers <strong>earn commission on every booking</strong> — while 3JN does the heavy lifting.</p>
+<h3>The platform does the work</h3><p>You bring the customer; the <a href="/blog/plan-a-trip-from-one-sentence-with-ai">AI planner</a> builds the trip, the suppliers are verified, and <a href="/blog/pay-monthly-flights-and-holidays-uk">pay-monthly</a> helps you close more sales. You never hold inventory or risk capital.</p>
+<h3>Earn on what you sell</h3><p>Commission is paid on completed bookings, tracked transparently in your dashboard. It suits diaspora community leaders, side-hustlers and established agents alike — apply to the <a href="/vendors">vendor programme</a> free.</p>
+<h3>Honest and verified</h3><p>Every vendor is reviewed, and every trip is built from real, verified suppliers with a transparent fee — the same honesty your customers get, standing behind your name.</p>
+${featureFooter('vendor-programme', '/vendors', 'Apply to the vendor programme →')}`,
+    faq: [
+      { q: 'How do I earn as a 3JN travel vendor?', a: 'You refer or build bookings and earn commission on each completed sale. 3JN provides the AI planner, verified suppliers and pay-monthly checkout — you hold no inventory and risk no capital.' },
+      { q: 'Does it cost anything to join the vendor programme?', a: 'Applying is free. Vendors are reviewed before approval, and commission is paid on completed bookings, tracked in your dashboard.' },
+    ],
+  },
 ];
 
 // Feature money-pages are stored in db.blog exactly like destination posts, so
