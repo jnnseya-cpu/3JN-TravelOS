@@ -642,6 +642,74 @@ ${featureFooter('vendor-programme', '/vendors', 'Apply to the vendor programme �
       { q: 'Does it cost anything to join the vendor programme?', a: 'Applying is free. Vendors are reviewed before approval, and commission is paid on completed bookings, tracked in your dashboard.' },
     ],
   },
+  {
+    key: 'multi-city', slug: 'multi-city-trips-one-booking-priced-per-leg', linkText: 'Multi-city & complex trips',
+    title: 'Multi-City & Complex Trips: One Booking, Priced Per Leg',
+    meta: 'Visiting more than one city? 3JN plans multi-city and open-jaw trips as one booking, priced honestly per leg — then lets you spread the cost monthly.',
+    excerpt: 'Two cities, three cities, open-jaw — the AI plans the whole multi-stop journey as one booking, priced per leg, payable monthly.',
+    tags: ['multi-city', 'open-jaw', 'complex-trips', 'feature'],
+    cta: { href: '/planner', label: 'Plan a multi-city trip →' },
+    body: (k) => `<p>Real journeys aren't always there-and-back. You fly into one city, out of another; you string three stops together; you visit family in two countries on one trip. Most booking sites choke on that. 3JN Travel OS plans the <strong>whole multi-stop journey as one booking</strong>, priced honestly per leg.</p>
+<h3>Describe the whole route, once</h3><p>Tell the <a href="/blog/plan-a-trip-from-one-sentence-with-ai">AI planner</a> the full itinerary — "London to Lagos, then Accra, home from Accra" — and it prices each leg against the live market and returns one coherent trip, not three disconnected searches.</p>
+<h3>Honest per-leg pricing, one price to pay</h3><p>Every leg is costed separately and shown clearly, so nothing hides in a bundle — then you <a href="/blog/price-lock-guarantee">lock the total</a> and <a href="/blog/pay-monthly-flights-and-holidays-uk">pay monthly</a> if you like. Flexible between stops? The <a href="/blog/cheapest-day-to-fly-ai-date-finder">cheapest-day finder</a> works leg by leg.</p>
+<h3>Perfect for diaspora routes</h3><p>Open-jaw and multi-country trips are exactly how many people visit home — see it on your route and spread the cost.</p>
+${featureFooter('multi-city', '/planner', 'Plan a multi-city trip →')}`,
+    faq: [
+      { q: 'Can I book a multi-city or open-jaw trip with 3JN?', a: 'Yes. Describe the full route (including flying into one city and out of another) and the AI plans it as one booking, priced per leg against live fares.' },
+      { q: 'Is each leg priced separately?', a: 'Yes — every leg is costed and shown on its own, so nothing is hidden in a bundle. You then lock the total and can pay monthly.' },
+    ],
+  },
+  {
+    key: 'ai-concierge', slug: '24-7-ai-travel-concierge-help-when-you-need-it', linkText: 'AI travel concierge',
+    title: '24/7 AI Travel Concierge: Real Help, Human When It Matters',
+    meta: 'Questions at midnight before you fly? 3JN\'s AI travel concierge answers instantly, 24/7 — and escalates to a human the moment your case needs one.',
+    excerpt: 'Instant answers, any hour — the AI concierge handles the common questions and hands you to a real person the moment your case needs one.',
+    tags: ['concierge', 'ai-support', 'customer-service', 'feature'],
+    cta: { href: '/planner', label: 'Ask the concierge →' },
+    body: (k) => `<p>Travel questions never arrive at office hours. They hit at midnight the night before you fly. 3JN Travel OS gives you a <strong>24/7 AI travel concierge</strong> that answers instantly — and, crucially, knows when to hand you to a human.</p>
+<h3>Instant answers, honest limits</h3><p>Baggage rules, visa requirements, what's included, how <a href="/blog/pay-monthly-flights-and-holidays-uk">pay-monthly</a> works, changing a date — the concierge handles it in seconds. When a question needs a person (a booking change, a refund, something unusual), it escalates to the ops team rather than guessing.</p>
+<h3>It knows your trip</h3><p>Because it's built into the same system that <a href="/blog/plan-a-trip-from-one-sentence-with-ai">planned your trip</a> and <a href="/blog/how-3jn-holds-your-ticket">holds your ticket</a>, answers are about <em>your</em> booking — not a generic help page. Check your <a href="/blog/check-visa-approval-odds-before-you-book">visa odds</a> or your fare in the same place.</p>
+<h3>Always on, for every traveller</h3><p>Wherever you're flying, help is one message away, day or night.</p>
+${featureFooter('ai-concierge', '/planner', 'Ask the concierge →')}`,
+    faq: [
+      { q: 'Is 3JN support available 24/7?', a: 'Yes — the AI travel concierge answers instantly at any hour, and escalates to a human on the ops team the moment your case needs one.' },
+      { q: 'Will the AI just guess if it doesn\'t know?', a: 'No. For anything that needs a person — a booking change, a refund, an unusual case — it hands you to the human team rather than guessing.' },
+    ],
+  },
+  {
+    key: 'rewards', slug: 'earn-travel-credit-rewards-on-every-trip', linkText: 'Travel credit & rewards',
+    title: 'Earn Travel Credit on Every Trip: 3JN Rewards Explained',
+    meta: 'Every completed 3JN trip earns travel credit you can put towards the next one — real rewards that lower your next booking, not points that expire unused.',
+    excerpt: 'Every completed trip earns travel credit towards your next one — rewards that actually come off the next booking, not points you can never use.',
+    tags: ['rewards', 'travel-credit', 'loyalty', 'feature'],
+    cta: { href: '/rewards', label: 'See my rewards →' },
+    body: (k) => `<p>Most travel loyalty schemes are a maze of points that expire before you can spend them. 3JN Travel OS keeps it simple: <strong>every completed trip earns travel credit</strong> you put straight towards the next booking.</p>
+<h3>Credit that actually comes off the price</h3><p>Earn on what you book, then apply the balance to your next trip — it reduces the real price, it doesn't vanish into a points table. Stack it with <a href="/blog/pay-monthly-flights-and-holidays-uk">pay-monthly</a> and your next journey home costs less and spreads further.</p>
+<h3>More ways to build it</h3><p>Rewards grow when you <a href="/blog/refer-a-friend-both-earn-travel-credit">refer a friend</a> and through <a href="/blog/3jn-membership-member-fares-lower-fees">membership</a>. Keep an eye on <a href="/deals">deals</a> and set a <a href="/blog/flight-price-alerts-diaspora-fare-radar">price alert</a> so your credit goes even further.</p>
+<h3>Honest and clear</h3><p>Your balance is always visible, with no mystery expiry games — see exactly what you've earned and what it's worth.</p>
+${featureFooter('rewards', '/rewards', 'See my rewards →')}`,
+    faq: [
+      { q: 'How do I earn travel credit with 3JN?', a: 'You earn travel credit on completed bookings, and through referrals and membership. The balance applies straight to your next trip, reducing the real price.' },
+      { q: 'Do 3JN rewards expire?', a: 'Your credit is shown clearly in your account and applied to future bookings — no mystery points tables or surprise expiry.' },
+    ],
+  },
+  {
+    key: 'referral', slug: 'refer-a-friend-both-earn-travel-credit', linkText: 'Refer a friend',
+    title: 'Refer a Friend to 3JN: You Both Earn Travel Credit',
+    meta: 'Share your 3JN referral link and when your friend takes their first trip, you both earn travel credit towards your next booking. Simple, honest rewards.',
+    excerpt: 'Share your link; when your friend books their first trip, you both earn travel credit — rewarded on a real booking, not an empty signup.',
+    tags: ['referral', 'refer-a-friend', 'travel-credit', 'feature'],
+    cta: { href: '/rewards', label: 'Get my referral link →' },
+    body: (k) => `<p>If 3JN Travel OS saved you a lump sum or got you home when you thought you couldn't afford it, telling a friend should pay you back. It does: share your link and <strong>when your friend takes their first trip, you both earn travel credit</strong>.</p>
+<h3>Rewarded on a real trip, not a signup</h3><p>We don't hand out credit for empty signups — the reward lands when your friend actually books and travels. That keeps the scheme honest and sustainable, and the credit is real money off your next <a href="/blog/plan-a-trip-from-one-sentence-with-ai">trip</a>.</p>
+<h3>Both sides win</h3><p>Your friend gets a welcome towards their first booking; you get credit towards your next one. Combine it with your <a href="/blog/earn-travel-credit-rewards-on-every-trip">rewards balance</a> and <a href="/blog/pay-monthly-flights-and-holidays-uk">pay-monthly</a> to make the next journey home even cheaper.</p>
+<h3>Made for communities</h3><p>It's perfect for diaspora networks where everyone's planning the same routes home — share once, help each other travel. Want to go further? Look at the <a href="/blog/become-a-3jn-travel-agent-earn-commission">vendor programme</a>.</p>
+${featureFooter('referral', '/rewards', 'Get my referral link →')}`,
+    faq: [
+      { q: 'How does the refer-a-friend reward work?', a: 'Share your referral link. When your friend books and takes their first trip, you both earn travel credit towards your next booking — the reward is tied to a real trip, not a signup.' },
+      { q: 'Is there a limit to how many friends I can refer?', a: 'Refer as many as you like — each friend who books their first trip earns you more travel credit, which stacks with your rewards balance.' },
+    ],
+  },
 ];
 
 // Feature money-pages are stored in db.blog exactly like destination posts, so
