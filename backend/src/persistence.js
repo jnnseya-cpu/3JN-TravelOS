@@ -20,7 +20,9 @@
 // stays in-memory (fine for local dev / tests; NOT safe for multi-instance
 // production — the app surfaces that loudly).
 
-import admin from 'firebase-admin';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getDatabase } from 'firebase-admin/database';
+import { getAuth } from 'firebase-admin/auth';
 import { encryptSnapshot, decryptSnapshot } from './pii.js';
 
 export const DEFAULT_DB_URL =
@@ -66,7 +68,7 @@ function hasFirebaseCredentials() {
 // Always try to initialise firebase-admin when credentials exist — even if KV is
 // the storage backend — so server-side Firebase SIGN-IN verification works.
 function tryInitFirebaseApp(url) {
-  if (admin.apps.length) return true;
+  if (getApps().length) return true;
   if (!hasFirebaseCredentials()) return false;
   try {
     const sa = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -80,9 +82,9 @@ function tryInitFirebaseApp(url) {
       if (parsed && typeof parsed.private_key === 'string') {
         parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
       }
-      opts.credential = admin.credential.cert(parsed);
+      opts.credential = cert(parsed);
     }
-    admin.initializeApp(opts);
+    initializeApp(opts);
     return true;
   } catch (err) {
     // Loud: credentials are set but invalid — this is the usual reason "nothing
@@ -100,7 +102,7 @@ export function initPersistence({ databaseURL } = {}) {
   // auth); otherwise use KV/Upstash if configured.
   if (firebaseReady) {
     try {
-      ref = admin.database().ref(STORE_KEY);
+      ref = getDatabase().ref(STORE_KEY);
       backend = 'firebase';
       console.log('[persist] backend: Firebase RTDB');
       return { enabled: true, backend, url };
@@ -153,11 +155,11 @@ export async function persistenceSelfTest() {
 // Can the server VERIFY a Firebase sign-in token? True once firebase-admin has
 // initialised (FIREBASE_SERVICE_ACCOUNT valid). Admin login via Firebase needs
 // this; the prototype PIN login does not.
-export function firebaseAdminReady() { return admin.apps.length > 0; }
+export function firebaseAdminReady() { return getApps().length > 0; }
 
 export async function verifyFirebaseIdToken(idToken) {
-  if (!idToken || !admin.apps.length) return null;
-  try { return await admin.auth().verifyIdToken(String(idToken)); }
+  if (!idToken || !getApps().length) return null;
+  try { return await getAuth().verifyIdToken(String(idToken)); }
   catch { return null; }
 }
 

@@ -1,6 +1,6 @@
 # Backend container — runs the Express API + serves the frontend if you prefer
 # a single host. Works on Google Cloud Run, Fly.io, Railway, Render, etc.
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
