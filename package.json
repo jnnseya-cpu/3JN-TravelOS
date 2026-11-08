@@ -35,12 +35,12 @@
   "author": "3JN Travel",
   "license": "UNLICENSED",
   "dependencies": {
-    "express": "^4.19.2",
-    "firebase-admin": "^14.5.0",
-    "firebase-functions": "^7.4.0",
-    "nodemailer": "^10.2.1"
+    "express": "4.22.3",
+    "firebase-admin": "14.5.0",
+    "firebase-functions": "7.4.0",
+    "nodemailer": "10.2.1"
   },
   "devDependencies": {
-    "playwright-core": "^1.48.0"
+    "playwright-core": "1.48.0"
   }
 }
