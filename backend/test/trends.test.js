@@ -27,7 +27,7 @@ import {
   listGrowthBriefs, getGrowthBrief, bridgeBehaviourToTrends,
   recordBehaviour, createUser,
 } from '../src/store.js';
-import { createPost } from '../src/agents.js';
+import { createPost, ensureDailyPublish, getPost } from '../src/agents.js';
 
 // ---- 1. Pure engine ---------------------------------------------------------
 
@@ -244,7 +244,7 @@ test('admin trend endpoints are admin-gated', async () => {
   assert.ok(r.status === 401 || r.status === 403, `expected gated, got ${r.status}`);
 });
 
-test('full embedded flow: behaviour → scan → draft brief → approve → effective', async () => {
+test('invisible autonomous flow: behaviour → scan → auto-activated effective brief (no human step)', async () => {
   const prev = process.env.CRON_SECRET;
   process.env.CRON_SECRET = 'test-secret';
   const admin = adminUser();
@@ -254,46 +254,73 @@ test('full embedded flow: behaviour → scan → draft brief → approve → eff
     for (let i = 0; i < 60; i++) recordBehaviour('shopper', { event: 'search', destination: 'Lisbon' });
     for (let i = 0; i < 12; i++) recordBehaviour('buyer', { event: 'book', destination: 'Lisbon' });
 
+    // The scan is the ONLY step — no approval UI, no human click.
     const scan = await api('GET', '/api/cron/trend-scan', { headers: { authorization: 'Bearer test-secret' } });
     assert.equal(scan.status, 200);
     assert.ok(scan.json.ok);
     assert.ok(scan.json.scored.length > 0, 'scan produced scored opportunities');
+    assert.ok(scan.json.activated >= 1, 'at least one eligible brief auto-activated');
 
-    // Ops review surface reflects the same scoring.
+    // Behind-the-scenes admin API still reflects the scoring (not a visible UI).
     const opps = await api('GET', '/api/admin/trends/opportunities', { userId: admin.id });
     assert.equal(opps.status, 200);
     const lisbon = opps.json.opportunities.find((o) => o.topic === 'lisbon');
-    assert.ok(lisbon, 'lisbon appears in opportunities');
-    assert.ok(lisbon.score > 0 && lisbon.confidence > 0);
+    assert.ok(lisbon && lisbon.score > 0, 'lisbon scored');
 
-    // There should be at least one draft brief waiting for approval.
-    const drafts = await api('GET', '/api/admin/trends/briefs?status=draft', { userId: admin.id });
-    assert.equal(drafts.status, 200);
-    assert.ok(drafts.json.briefs.length > 0, 'a draft brief was created by the scan');
-    const draft = drafts.json.briefs.find((b) => b.topic_id === 'lisbon') || drafts.json.briefs[0];
-
-    // Approve it → becomes the effective brief for its scope.
-    const appr = await api('POST', `/api/admin/trends/briefs/${draft.id}/approve`, { userId: admin.id });
-    assert.equal(appr.status, 200);
-    assert.equal(appr.json.brief.status, 'approved');
-
-    const eff = await api('GET', `/api/admin/trends/briefs/effective?topic=${draft.topic_id}&channel=seo`, { userId: admin.id });
+    // The brief is ALREADY effective for the SEO channel — no manual approval.
+    const eff = await api('GET', '/api/admin/trends/briefs/effective?topic=lisbon&channel=seo', { userId: admin.id });
     assert.equal(eff.status, 200);
-    assert.ok(eff.json.brief && eff.json.brief.id === draft.id, 'approved brief resolves as effective on seo');
+    assert.ok(eff.json.brief && eff.json.brief.status === 'approved', 'lisbon brief auto-resolved as effective');
   } finally {
     if (prev === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = prev;
   }
 });
 
-test('SEO agent stamps trend provenance when a brief steers the post', () => {
+test('nothing trend-related leaks to the PUBLIC blog API', async () => {
+  // The public blog feed must never expose trend provenance fields.
+  const r = await api('GET', '/api/blog');
+  assert.equal(r.status, 200);
+  for (const p of (r.json.posts || [])) {
+    assert.ok(!('trendBriefId' in p), 'no trendBriefId on public posts');
+    assert.ok(!('priority' in p), 'no priority marker on public posts');
+    assert.ok(!(p.tags || []).includes('trending'), 'no "trending" tag on public posts');
+  }
+});
+
+test('daily publish silently steers the topic from the effective brief — no public marker', () => {
+  // This is the whole point of "invisible": an approved brief changes WHICH
+  // destination the autonomous daily post covers, but leaves no trend trace on
+  // the public post (no tag, no priority, no brief id). It must be the only
+  // effective 3jn/seo brief at this point (the store tests above used random
+  // installations), so the steered topic is deterministic.
   const inst = '3jn';
-  const b = createGrowthBrief(inst, { topic_id: 'barcelona', market: 'GB', opportunity_score: 85, confidence: 78, allowed_channels: ['seo'] });
-  approveGrowthBrief(inst, b.brief.id, { by: 'ops' });
-  const brief = getEffectiveGrowthBrief(inst, { topic: 'barcelona', channel: 'seo' });
-  const post = createPost({ destination: 'Barcelona', brief });
-  assert.equal(post.trendBriefId, b.brief.id);
-  assert.equal(post.priority, 'trend');
-  assert.ok(post.tags.includes('trending'));
+  const b = createGrowthBrief(inst, { topic_id: 'reykjavik', market: 'ZZ', opportunity_score: 88, confidence: 80, allowed_channels: ['seo'] });
+  approveGrowthBrief(inst, b.brief.id, { by: 'trend-intel' });
+  // Drive it 2 days ahead so the once-per-24h publish gate is clear regardless of
+  // any post the server's publishing loop already emitted at boot.
+  const future = Date.now() + 2 * 24 * 3600 * 1000;
+  const eff = getEffectiveGrowthBrief(inst, { channel: 'seo', now: future });
+  assert.ok(eff, 'an effective seo brief exists');
+
+  const pub = ensureDailyPublish(future);
+  assert.equal(pub.published, true, 'the daily post published');
+  assert.equal(String(pub.post.destination).toLowerCase(), eff.topic_id, 'post covers the effective brief topic');
+
+  // Invisible: nothing about the trend engine leaks onto the public post object.
+  const full = getPost(pub.post.slug);
+  assert.ok(!full.trendBriefId, 'no trend id on the public post');
+  assert.ok(!full.priority, 'no priority marker on the public post');
+  assert.ok(!(full.tags || []).includes('trending'), 'no "trending" tag on the public post');
+});
+
+test('an activation-blocked brief never steers the public topic', () => {
+  // readiness 0 → activationBlocked. ensureDailyPublish must ignore it, so a
+  // brief we cannot serve never leads the journal.
+  const inst = '3jn';
+  const b = createGrowthBrief(inst, { topic_id: 'xyzzy-unservable', market: 'ZZ', opportunity_score: 95, confidence: 90, allowed_channels: ['seo'], activationBlocked: true });
+  approveGrowthBrief(inst, b.brief.id, { by: 'trend-intel' });
+  const eff = getEffectiveGrowthBrief(inst, { topic: 'xyzzy-unservable', channel: 'seo' });
+  assert.equal(eff.activationBlocked, true, 'the blocked brief is still the record, just inert');
 });
 
 test('teardown: close server', async () => {

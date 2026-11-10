@@ -4040,7 +4040,7 @@ app.get('/api/cron/trend-scan', safe((req, res) => {
   const bridged = bridgeBehaviourToTrends(install);
   const topics = listTrendTopics(install);
   const scored = [];
-  let drafted = 0;
+  let drafted = 0, activated = 0;
   for (const t of topics) {
     const signal = demandSignal(install, t.topic, t.market);
     const gate = countFeedGate(signal.current, signal.history, { minCount: 20, minZ: 2 });
@@ -4054,8 +4054,11 @@ app.get('/api/cron/trend-scan', safe((req, res) => {
       action: result.decision.action, activationBlocked: result.activationBlocked,
     };
     // A brief is created only when the surge is real (gate passed) AND the
-    // decision table says it is eligible. activationBlocked rides along so the
-    // brief stays advisory-only until readiness is resolved.
+    // decision table says it is eligible. The whole pipeline is INVISIBLE and
+    // autonomous: an eligible, non-activation-blocked brief is auto-approved so
+    // it immediately becomes the effective brief the SEO agent silently follows.
+    // Nothing is surfaced to users; the brief→activation trail lives in the audit
+    // log. Only ONE approved brief is kept per scope (approve supersedes prior).
     if (gate.passed && (result.decision.action === 'brief' || result.decision.action === 'auto')) {
       const brief = createGrowthBrief(install, {
         topic_id: t.topic, market: t.market,
@@ -4067,12 +4070,16 @@ app.get('/api/cron/trend-scan', safe((req, res) => {
         activationBlocked: result.activationBlocked,
         evidence_ids: signal.families,
       });
-      if (brief.ok) { row.briefId = brief.brief.id; drafted += 1; }
+      if (brief.ok) {
+        row.briefId = brief.brief.id; drafted += 1;
+        // Auto-activate only what we can actually serve (readiness > 0).
+        if (!result.activationBlocked) { approveGrowthBrief(install, brief.brief.id, { by: 'trend-intel' }); row.activated = true; activated += 1; }
+      }
     }
     scored.push(row);
   }
   scored.sort((a, b) => b.score - a.score);
-  res.json({ ok: true, bridged: bridged.ingested, topics: topics.length, drafted, scored });
+  res.json({ ok: true, bridged: bridged.ingested, topics: topics.length, drafted, activated, scored });
 }));
 
 // Admin: review the scored opportunities (same scoring as the cron, read-only).
@@ -5025,15 +5032,11 @@ app.post('/api/rewards/growth', safe((req, res) => {
     acuCharged = AI_ACTION_ACU.growth; acuBalance = s.balance;
   }
   const dash = partnerDashboard(user.id) || {};
-  // Trend Intelligence hint (§16): surface the effective approved brief for this
-  // destination on the organic-social channel so partners can lean into what 3JN's
-  // own demand says is rising. Advisory only — it never changes the generated copy.
-  const trendBrief = destination ? getEffectiveGrowthBrief('3jn', { topic: String(destination).toLowerCase(), channel: 'organic_social' }) : null;
-  const ctx = { referralLink: dash.referralLink || `https://3jntravel.com/?ref=${user.referralCode || ''}`, referralCode: dash.referralCode || user.referralCode, name: user.name, followers: dash.followers, dashboard: dash, trendBrief };
+  const ctx = { referralLink: dash.referralLink || `https://3jntravel.com/?ref=${user.referralCode || ''}`, referralCode: dash.referralCode || user.referralCode, name: user.name, followers: dash.followers, dashboard: dash };
   const result = generateGrowthContent(tool, { destination, platform, tone, variant: Number(variant) || 0 }, ctx);
   if (!result) return res.status(400).json({ error: 'generation-failed' });
   recordAudit({ actor: user.id, role: 'partner', action: 'growth.generated', entity: 'growth', entityId: tool, summary: `${tool}${destination ? ' · ' + String(destination).slice(0, 40) : ''}` });
-  res.json({ result, acuCharged, acuBalance, trend: trendBrief ? { topic: trendBrief.topic_id, score: trendBrief.opportunity_score, briefId: trendBrief.id } : null });
+  res.json({ result, acuCharged, acuBalance });
 }));
 // Apply to the influencer programme (§3).
 app.post('/api/rewards/influencer/apply', safe((req, res) => {
@@ -6471,13 +6474,7 @@ app.post('/api/blog/:slug/view', safe((req, res) => {
 // reach the generator (stored-XSS vector). Content is also escaped in createPost.
 app.post('/api/blog/generate', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  const body = req.body || {};
-  // Let an approved Growth Brief steer the SEO agent: if one is effective for the
-  // requested destination on the SEO channel, pass it so the post carries trend
-  // provenance (§16 — agents read the effective brief, they don't re-detect).
-  const topic = body.topic || body.destination;
-  const brief = topic ? getEffectiveGrowthBrief('3jn', { topic: String(topic).toLowerCase(), channel: 'seo' }) : null;
-  res.json({ post: createPost({ ...body, brief }), brief: brief ? { id: brief.id, version: brief.brief_version } : null });
+  res.json({ post: createPost(req.body || {}) });
 }));
 // Admin: wipe + rebuild the whole journal with fresh intent-varied posts (also
 // the manual trigger if the auto-migration hasn't run yet). Returns the new set.

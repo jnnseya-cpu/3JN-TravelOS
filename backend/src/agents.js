@@ -4,7 +4,7 @@
 // or artefact. They run through the AI Gateway in production.
 
 import { db } from './store.js';
-import { adminAudit, supplierScores, recordAudit } from './store.js';
+import { adminAudit, supplierScores, recordAudit, getEffectiveGrowthBrief } from './store.js';
 import { findDestination } from './destinations.js';
 import { threatStats, THREAT_CONFIG } from './threat-shield.js';
 
@@ -746,7 +746,7 @@ export function ensureFeaturePosts() {
 }
 export function featurePostCount() { return FEATURE_POSTS.length; }
 
-export function createPost({ topic, destination, now, angle, brief = null } = {}) {
+export function createPost({ topic, destination, now, angle } = {}) {
   const idx = ++blogCounter;
   const dest = String(destination || DESTS[idx % DESTS.length]).slice(0, 80);
   const facts = destFacts(dest);
@@ -782,15 +782,6 @@ export function createPost({ topic, destination, now, angle, brief = null } = {}
     author: '3JN AI Editorial',
     publishedAt: (now ? new Date(now) : new Date(Date.UTC(2026, 5, 30, 12, 0, idx % 60))).toISOString(),
   };
-  // Trend Intelligence provenance (§6/§16): when an approved Growth Brief steered
-  // this post, stamp its id + scope so the linkage is auditable and the brief's
-  // measured lift can later be attributed back. The brief is a control signal,
-  // never a claim source — the body is still built only from vetted destFacts.
-  if (brief && brief.id) {
-    post.trendBriefId = brief.id;
-    post.priority = 'trend';
-    post.tags = [...new Set([...post.tags, 'trending'])];
-  }
   db.blog.unshift(post);
   recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.published', entity: 'blog', entityId: post.id, summary: title });
   return post;
@@ -975,7 +966,20 @@ export function ensureDailyPublish(now = Date.now()) {
   const newest = db.blog.reduce((max, p) => Math.max(max, Date.parse(p.publishedAt) || 0), 0);
   if (now - newest < PUBLISH_EVERY_MS) return { published: false, nextDueInMs: PUBLISH_EVERY_MS - (now - newest) };
 
-  const post = createPost({ now });
+  // Trend Intelligence steers the topic INVISIBLY: if an approved, in-scope
+  // Growth Brief is effective for the SEO channel, the daily post covers that
+  // rising destination instead of the default rotation. The post itself carries
+  // no trend marker — only the choice of subject changes, and the brief→post
+  // link is kept in the audit log (never surfaced to users). Activation-blocked
+  // briefs (readiness 0) are ignored so we never lead on something we can't serve.
+  let steerDest, steerBriefId = null;
+  try {
+    const brief = getEffectiveGrowthBrief('3jn', { channel: 'seo', now });
+    if (brief && !brief.activationBlocked && brief.topic_id) { steerDest = brief.topic_id; steerBriefId = brief.id; }
+  } catch { /* trends optional — fall back to the normal rotation */ }
+
+  const post = createPost({ now, destination: steerDest });
+  if (steerBriefId) recordAudit({ actor: 'trend-intel', role: 'system', action: 'trend.brief.activated', entity: 'blog', entityId: post.id, summary: `brief ${steerBriefId} → /blog/${post.slug}` });
   // Marketing agent: matching social push for the fresh post (audited).
   const social = `✈️ ${post.destination} on a budget? New on the 3JN journal: "${post.title}" → 3jntravel.com/blog/${post.slug} #travel #AItravel`;
   recordAudit({ actor: 'marketing-agent', role: 'agent', action: 'marketing.social.published', entity: 'blog', entityId: post.id, summary: social.slice(0, 140) });
