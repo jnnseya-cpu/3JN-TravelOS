@@ -62,6 +62,8 @@ const db = {
   visaChain: [], // hash-chained (blockchain-style) audit trail of visa decisions
   quoteRequests: [], // exact-quote requests on estimated options (lead + deposit intent)
   fareWatches: [], // price-radar: routes a traveller watches; the scan cron alerts on a target/drop
+  trendObservations: [], // Trend Intelligence: normalised first-party demand observations (keyless)
+  growthBriefs: [], // Trend Intelligence: versioned Growth Briefs that re-prioritise the SEO/marketing agents
   influencerProfiles: new Map(), // userId -> influencer/partner profile (tier, followers, standing)
   revshareLedger: [], // { id, partnerId, customerId, bookingId, netRevenueGbp, rate, amountGbp, at }
   rewardWithdrawals: [], // { id, partnerId, amountGbp, method, status, at }
@@ -3979,6 +3981,186 @@ export function recordFareWatchCheck(watchId, { bestGbp = null, alerted = false 
   if (alerted) { w.lastAlertGbp = w.lastBestGbp; w.lastAlertAt = nowISO(); w.alertsSent = (w.alertsSent || 0) + 1; }
   return { ok: true, watch: w };
 }
+// (Trend Intelligence functions inserted below.)
+// ---- Trend Intelligence (embedded) ------------------------------------------
+// Keyless demand-observation store + versioned Growth Brief lifecycle. The
+// scoring engine lives in trends.js (pure); this layer holds the scoped data
+// and the brief state machine (draft -> approved -> superseded/expired) with
+// effective-brief resolution for the SEO/marketing agents. §6, §15, §16.
+const TREND_DEFAULT_INSTALL = '3jn';
+
+// Record one normalised first-party demand observation. Deduped by
+// (installation, sourceFamily, sourceRecordId, revision) per §15 so a replay
+// cannot inflate counts.
+export function recordTrendObservation(installation, obs = {}) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  const topic = String(obs.topic || '').trim().toLowerCase();
+  if (!topic) return { ok: false, error: 'topic-required' };
+  const sourceFamily = String(obs.sourceFamily || 'first_party').trim();
+  const sourceRecordId = obs.sourceRecordId != null ? String(obs.sourceRecordId) : null;
+  const revision = Number(obs.revision) || 1;
+  if (sourceRecordId) {
+    const dup = db.trendObservations.find((o) => o.installation === inst && o.sourceFamily === sourceFamily
+      && o.sourceRecordId === sourceRecordId && o.revision === revision);
+    if (dup) return { ok: true, duplicate: true, observation: dup };
+  }
+  const rec = {
+    id: id('obs'), installation: inst, topic,
+    market: String(obs.market || 'ZZ').toUpperCase().slice(0, 2) || 'ZZ',
+    locale: String(obs.locale || '').slice(0, 10) || null,
+    sourceFamily, sourceRecordId, revision,
+    segment: obs.segment ? String(obs.segment).slice(0, 60) : null,
+    geography: obs.geography ? String(obs.geography).slice(0, 60) : null,
+    metric: String(obs.metric || 'count').slice(0, 40),
+    count: Math.max(0, Math.round(Number(obs.count) || 1)),
+    observedAt: obs.observedAt || nowISO(),
+    ingestedAt: nowISO(),
+  };
+  db.trendObservations.push(rec);
+  capArr(db.trendObservations, 20000, 'trendObservations');
+  return { ok: true, observation: rec };
+}
+
+// Build the demand signal for a topic+market: the current-window count vs the
+// prior `periods` comparable windows (history), and the independent source
+// families seen. Deterministic; drives the engine's z/lift in trends.js.
+export function demandSignal(installation, topic, market, { windowHours = 24, periods = 8, now = null } = {}) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  const t = String(topic || '').trim().toLowerCase();
+  const mk = String(market || 'ZZ').toUpperCase();
+  const nowMs = now ? new Date(now).getTime() : Date.now();
+  const winMs = Math.max(1, windowHours) * 3600 * 1000;
+  const rows = db.trendObservations.filter((o) => o.installation === inst && o.topic === t
+    && (mk === 'ZZ' || o.market === mk));
+  const families = new Set(rows.map((o) => o.sourceFamily));
+  const bucket = (ageWindows) => rows.reduce((s, o) => {
+    const age = nowMs - new Date(o.observedAt).getTime();
+    return (age >= ageWindows * winMs && age < (ageWindows + 1) * winMs) ? s + o.count : s;
+  }, 0);
+  const current = bucket(0);
+  const history = []; for (let i = 1; i <= periods; i++) history.push(bucket(i));
+  const lastObservedAt = rows.reduce((m, o) => (o.observedAt > m ? o.observedAt : m), '');
+  return { installation: inst, topic: t, market: mk, current, history, families: [...families], lastObservedAt };
+}
+
+// Distinct (topic, market) pairs that have observations, with totals.
+export function listTrendTopics(installation) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  const map = new Map();
+  for (const o of db.trendObservations) {
+    if (o.installation !== inst) continue;
+    const k = `${o.topic}|${o.market}`;
+    const e = map.get(k) || { topic: o.topic, market: o.market, total: 0, families: new Set(), lastObservedAt: '' };
+    e.total += o.count; e.families.add(o.sourceFamily);
+    if (o.observedAt > e.lastObservedAt) e.lastObservedAt = o.observedAt;
+    map.set(k, e);
+  }
+  return [...map.values()].map((e) => ({ ...e, families: [...e.families] }));
+}
+
+// Create a draft Growth Brief (§6 contract). brief_version increments per
+// (installation, market, locale, topic). The caller supplies the scored fields.
+export function createGrowthBrief(installation, f = {}) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  const topic = String(f.topic_id || f.topic || '').trim().toLowerCase();
+  if (!topic) return { ok: false, error: 'topic-required' };
+  const market = String(f.market || 'ZZ').toUpperCase().slice(0, 2) || 'ZZ';
+  const locale = String(f.locale || '').slice(0, 10) || null;
+  const prior = db.growthBriefs.filter((b) => b.installation === inst && b.topic_id === topic
+    && b.market === market && b.locale === locale);
+  const version = prior.reduce((m, b) => Math.max(m, b.brief_version || 0), 0) + 1;
+  const validHours = Math.max(1, Number(f.validityHours) || 168); // 7 days default (§17)
+  const now = nowISO();
+  const rec = {
+    schema_version: 1, id: id('gb'), brief_id: 'gb_' + (db.growthBriefs.length + 1),
+    installation: inst, brief_version: version, tenant_id: inst, platform_id: String(f.platform_id || inst),
+    market, locale, topic_id: topic,
+    opportunity_score: Number(f.opportunity_score) || 0, confidence: Number(f.confidence) || 0,
+    valid_from: now,
+    expires_at: new Date(Date.now() + validHours * 3600 * 1000).toISOString(),
+    evidence_ids: Array.isArray(f.evidence_ids) ? f.evidence_ids.slice(0, 50) : [],
+    audience: String(f.audience || '').slice(0, 200),
+    intent: String(f.intent || '').slice(0, 200),
+    approved_claim_ids: Array.isArray(f.approved_claim_ids) ? f.approved_claim_ids.slice(0, 50) : [],
+    cta_id: f.cta_id || null,
+    allowed_channels: Array.isArray(f.allowed_channels) && f.allowed_channels.length ? f.allowed_channels : ['seo', 'organic_social'],
+    prohibited_claims: Array.isArray(f.prohibited_claims) ? f.prohibited_claims : [],
+    objective: String(f.objective || '').slice(0, 200),
+    policy_version: Number(f.policy_version) || 1,
+    status: 'draft', activationBlocked: !!f.activationBlocked,
+    createdAt: now, approvedAt: null, approvedBy: null,
+  };
+  db.growthBriefs.push(rec);
+  capArr(db.growthBriefs, 5000, 'growthBriefs');
+  recordAudit({ actor: 'system:trends', role: 'system', action: 'trend.brief.created', entity: 'growth-brief', entityId: rec.id, summary: `${topic} ${market} v${version} · score ${round2(rec.opportunity_score)} conf ${round2(rec.confidence)}` });
+  return { ok: true, brief: rec };
+}
+
+// Approve a draft brief → becomes the active brief for its scope; any prior
+// approved brief for the same (market, locale, topic) is superseded.
+export function approveGrowthBrief(installation, briefId, { by = 'ops' } = {}) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  const b = db.growthBriefs.find((x) => x.id === briefId && x.installation === inst);
+  if (!b) return { ok: false, error: 'not-found' };
+  if (b.status === 'approved') return { ok: true, brief: b, already: true };
+  if (b.status !== 'draft') return { ok: false, error: 'not-draft' };
+  for (const other of db.growthBriefs) {
+    if (other.installation === inst && other.id !== b.id && other.status === 'approved'
+      && other.topic_id === b.topic_id && other.market === b.market && other.locale === b.locale) {
+      other.status = 'superseded';
+    }
+  }
+  b.status = 'approved'; b.approvedAt = nowISO(); b.approvedBy = by;
+  recordAudit({ actor: by, role: 'ops', action: 'trend.brief.approved', entity: 'growth-brief', entityId: b.id, summary: `${b.topic_id} ${b.market} v${b.brief_version}` });
+  return { ok: true, brief: b };
+}
+
+// Resolve the one effective brief for the SEO/marketing agents: approved, not
+// expired, scope-matched, channel allowed, newest version. §16 GET /briefs:effective.
+export function getEffectiveGrowthBrief(installation, { market = null, locale = null, topic = null, channel = null, now = null } = {}) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  const nowMs = now ? new Date(now).getTime() : Date.now();
+  const mk = market ? String(market).toUpperCase() : null;
+  const cands = db.growthBriefs.filter((b) => b.installation === inst && b.status === 'approved'
+    && new Date(b.expires_at).getTime() > nowMs
+    && (!topic || b.topic_id === String(topic).toLowerCase())
+    && (!mk || b.market === mk || b.market === 'ZZ')
+    && (!locale || !b.locale || b.locale === locale)
+    && (!channel || (b.allowed_channels || []).includes(channel)));
+  if (!cands.length) return null;
+  cands.sort((a, b) => (b.brief_version || 0) - (a.brief_version || 0));
+  return cands[0];
+}
+
+export function listGrowthBriefs(installation, { status = null } = {}) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  let out = db.growthBriefs.filter((b) => b.installation === inst);
+  if (status) out = out.filter((b) => b.status === status);
+  return out.slice().reverse();
+}
+export function getGrowthBrief(installation, id2) {
+  const inst = String(installation || TREND_DEFAULT_INSTALL);
+  return db.growthBriefs.find((b) => b.id === id2 && b.installation === inst) || null;
+}
+// Bridge 3JN's OWN first-party behaviour stream into trend observations —
+// keyless, using signals the platform already collects. Deduped by the
+// behaviour event id so repeated scans never inflate counts. Searches and
+// conversions become two independent source families (enabling corroboration).
+export function bridgeBehaviourToTrends(installation = TREND_DEFAULT_INSTALL, { events = ['search', 'plan', 'view', 'book'] } = {}) {
+  let ingested = 0;
+  for (const e of db.behaviour) {
+    if (!e.destination) continue;
+    if (events.length && !events.includes(e.event)) continue;
+    const r = recordTrendObservation(installation, {
+      topic: e.destination,
+      sourceFamily: e.event === 'book' ? 'first_party_conversion' : 'first_party_search',
+      sourceRecordId: e.id, observedAt: e.at,
+      metric: e.event === 'book' ? 'conversion' : 'search', count: 1,
+    });
+    if (r.ok && !r.duplicate) ingested += 1;
+  }
+  return { ok: true, ingested };
+}
 
 // Search-to-book stats — drives Duffel's excess-search fee reporting.
 export function searchToBookStats() {
@@ -4044,7 +4226,7 @@ const ARRAY_KEYS = ['reviews', 'acuTxns', 'referrals', 'priceEvents', 'apiKeys',
 // NOTE: kept to permanent, id-bearing, lower-frequency records — high-frequency
 // logs (audit/behaviour/…) stay whole, and the string-keyed processedStripeEvents
 // ledger stays whole (money paths carry their own reference dedup regardless).
-const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders', 'shareEvents', 'fareWatches']);
+const KEYED_ARRAY_KEYS = new Set(['visaReservations', 'searchDeposits', 'revshareLedger', 'rewardWithdrawals', 'vendorSales', 'vendorPayouts', 'quoteRequests', 'fulfilmentOrders', 'shareEvents', 'fareWatches', 'trendObservations', 'growthBriefs']);
 
 // Rebuild an in-memory array from a durable value that may be: a plain array
 // (legacy whole-node), or an object of records keyed by id (new per-record form),

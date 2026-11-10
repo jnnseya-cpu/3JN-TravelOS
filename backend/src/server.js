@@ -29,6 +29,7 @@ import {
   orderVisaReservation, listVisaReservationsForUser, getVisaReservation, listVisaReservations, deliverVisaReservation, applyVisaFlightHold,
   ensureVisaPassengers, refundVisaReservation, listStuckVisaReservations, alertStuckVisaReservations,
   createFareWatch, listFareWatchesForUser, deleteFareWatch, listActiveFareWatches, evaluateFareWatch, recordFareWatchCheck,
+  recordTrendObservation, demandSignal, listTrendTopics, createGrowthBrief, approveGrowthBrief, getEffectiveGrowthBrief, listGrowthBriefs, getGrowthBrief, bridgeBehaviourToTrends,
   applyVisaHotelBooking, markVisaHotelCancelled, visaHotelsToCancel, setVisaDepositIntent, userSavedCardIntent, markVisaReservationPaid, setVisaFeeSession, visaReservationsAwaitingPayment,
   findUserByEmail, provisionEsim, provisionEsimLive, listEsims, activateEsim, refreshEsimUsage, expenseReport,
   createContract, listContracts, recordBehaviour, recordAudit,
@@ -85,6 +86,7 @@ import { dispatchStatus as commsDispatchStatus } from './comms-providers.js';
 import { geocode, weather, fxRate, advisory, liveDataEnabled } from './live-data.js';
 import { fetchLiveOffers, fetchLiveFlights, fetchLiveHotels, fetchMarketFares, marketDataEnabled, liveSuppliersConfigured, liveFlightsEnabled, lccFlightsEnabled, liveHotelsEnabled, oagScheduleEnabled, validateDuffelOffer, validateTequilaOffer, travelfusionEnabled, validateTravelfusionOffer, travelfusionDiagnostic, duffelMode, duffelDiagnostic, createDuffelOrder, createDuffelHoldOrder, payDuffelOrder, duffelOrderPassengers, duffelStaysEnabled, duffelStaysDiagnostic, bookDuffelStay, getDuffelOfferBaggage, getDuffelOrder, duffelOrderChangeQuote, duffelOrderChangeCommit, verifyDuffelSignature, duffelWebhookConfigured, hotelbedsHotelsEnabled, bookHotelbedsHotel, cancelHotelbedsBooking, hotelbedsBookingDetail, hotelbedsBookingList, hotelbedsAvailabilityStatus, hotelbedsDiagnostic, tboAirEnabled, tboAirDiagnostic, bookTboAirFlight, hotelbedsContent, visaAutoHoldEnabled, issueVisaFlightHold, visaAutoHotelEnabled, issueVisaHotelReservation, cheapestDepartureInWindow, affiliateFlightLink } from './live-suppliers.js';
 import { hotelbedsMtlsConfigured } from './hotelbeds-mtls.js';
+import { countFeedGate, scoreCandidate, corroborationScore, round2 as trendRound2 } from './trends.js';
 import { scanMarketplaceAddons } from './suppliers.js';
 import { scanPotFareUSD } from './price-dive.js';
 import { computeBaggageSurcharge, applyBaggageToOption } from './baggage.js';
@@ -3980,6 +3982,153 @@ app.delete('/api/fare-watches/:id', safe((req, res) => {
   if (!user) return res.status(401).json({ error: 'auth-required' });
   res.json(deleteFareWatch(user.id, req.params.id));
 }));
+
+// ---- Trend Intelligence (embedded) ------------------------------------------
+// Keyless detect → score → Growth Brief, wired onto 3JN's OWN first-party demand
+// (the behaviour stream), scored by the deterministic engine in trends.js (§5),
+// persisted + versioned by the store (§6/§16). No new API keys. The scan is a
+// cron; ops review/approve the drafts; the SEO + marketing agents read the one
+// EFFECTIVE approved brief for a scope (see getEffectiveGrowthBrief usage below).
+
+// Translate a demand signal + the resolved destination into the §5.4 opportunity
+// components and the §5.5 confidence inputs. Pure/deterministic so the numbers
+// are testable. The destination's catalogue status is our proxy for platform
+// fit + owned-surface readiness: a curated city runs the whole pipeline
+// (suppliers → pricing → visa), a synthesised one with a real airport is usable
+// but thinner, an approximate placeholder blocks live activation (readiness 0).
+function trendComponentsFor(signal, gate, dest) {
+  const clamp01 = (n) => Math.max(0, Math.min(100, Math.round(n)));
+  const z = Number(gate.z) || 0;
+  const lift = Number(gate.lift) || 0;
+  const families = Array.isArray(signal.families) ? signal.families : [];
+  const hasConversion = families.some((f) => /conversion/.test(f));
+  const totalObs = (Number(signal.current) || 0) + (signal.history || []).reduce((s, x) => s + (Number(x) || 0), 0);
+
+  // Freshness bucket from the most recent observation.
+  const ageH = signal.lastObservedAt ? (Date.now() - new Date(signal.lastObservedAt).getTime()) / 3600000 : 1e9;
+  const freshness = ageH < 24 ? 92 : ageH < 72 ? 72 : ageH < 168 ? 52 : 30;
+
+  // Destination quality → fit + readiness.
+  const known = dest && !dest.synthetic;
+  const usable = dest && dest.synthetic && !dest.approxCode; // synthesised but real IATA
+  const fit = known ? 92 : usable ? 72 : 48;
+  const readiness = known ? 86 : usable ? 56 : 0; // 0 blocks ACTIVATION (§5.4)
+
+  const components = {
+    demand: clamp01(45 + 14 * z + 8 * lift),           // §5.3 movement → demand
+    fit,                                                // platform fit
+    intent: clamp01(55 + (hasConversion ? 35 : 0)),    // commercial intent (conversions corroborate)
+    timing: freshness,                                  // timing = freshness of the surge
+    readiness,                                          // owned-surface readiness
+  };
+  const confidenceInputs = {
+    sourceQuality: 85,                                  // first-party signals are high quality
+    corroboration: corroborationScore(families.length),// §5.5 independent-family corroboration
+    coverage: clamp01(100 * Math.min(1, totalObs / 50)),// sample/coverage
+    freshness,
+  };
+  return { components, confidenceInputs, familyCount: families.length };
+}
+
+// Cron: bridge behaviour → observations, score every (topic,market), and create
+// a DRAFT Growth Brief for anything that clears the §5.3 count-feed gate and the
+// decision table's brief band. Drafts are inert until an admin approves them.
+app.get('/api/cron/trend-scan', safe((req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || !secretEq(req.headers.authorization, `Bearer ${secret}`)) return res.status(401).json({ error: 'unauthorized' });
+  const install = '3jn';
+  const bridged = bridgeBehaviourToTrends(install);
+  const topics = listTrendTopics(install);
+  const scored = [];
+  let drafted = 0;
+  for (const t of topics) {
+    const signal = demandSignal(install, t.topic, t.market);
+    const gate = countFeedGate(signal.current, signal.history, { minCount: 20, minZ: 2 });
+    const dest = resolveDestination(t.topic);
+    const { components, confidenceInputs, familyCount } = trendComponentsFor(signal, gate, dest);
+    const result = scoreCandidate(components, confidenceInputs, { familyCount });
+    const row = {
+      topic: t.topic, market: t.market, families: signal.families,
+      current: signal.current, z: trendRound2(gate.z), lift: trendRound2(gate.lift),
+      gate: gate.reason, score: result.scoreRounded, confidence: result.confidenceRounded,
+      action: result.decision.action, activationBlocked: result.activationBlocked,
+    };
+    // A brief is created only when the surge is real (gate passed) AND the
+    // decision table says it is eligible. activationBlocked rides along so the
+    // brief stays advisory-only until readiness is resolved.
+    if (gate.passed && (result.decision.action === 'brief' || result.decision.action === 'auto')) {
+      const brief = createGrowthBrief(install, {
+        topic_id: t.topic, market: t.market,
+        opportunity_score: result.score, confidence: result.confidence,
+        audience: `People searching 3JN for ${t.topic}`,
+        intent: components.intent >= 85 ? 'high-commercial-intent' : 'research',
+        objective: `Capture rising demand for ${t.topic}`,
+        allowed_channels: ['seo', 'organic_social'],
+        activationBlocked: result.activationBlocked,
+        evidence_ids: signal.families,
+      });
+      if (brief.ok) { row.briefId = brief.brief.id; drafted += 1; }
+    }
+    scored.push(row);
+  }
+  scored.sort((a, b) => b.score - a.score);
+  res.json({ ok: true, bridged: bridged.ingested, topics: topics.length, drafted, scored });
+}));
+
+// Admin: review the scored opportunities (same scoring as the cron, read-only).
+app.get('/api/admin/trends/opportunities', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const install = '3jn';
+  const topics = listTrendTopics(install);
+  const rows = topics.map((t) => {
+    const signal = demandSignal(install, t.topic, t.market);
+    const gate = countFeedGate(signal.current, signal.history, { minCount: 20, minZ: 2 });
+    const dest = resolveDestination(t.topic);
+    const { components, confidenceInputs, familyCount } = trendComponentsFor(signal, gate, dest);
+    const result = scoreCandidate(components, confidenceInputs, { familyCount });
+    return {
+      topic: t.topic, market: t.market, families: signal.families, total: t.total,
+      current: signal.current, z: trendRound2(gate.z), lift: trendRound2(gate.lift),
+      gatePassed: gate.passed, gateReason: gate.reason,
+      components, score: result.scoreRounded, confidence: result.confidenceRounded,
+      action: result.decision.action, decisionReason: result.decision.reason,
+      activationBlocked: result.activationBlocked,
+    };
+  }).sort((a, b) => b.score - a.score);
+  res.json({ ok: true, opportunities: rows });
+}));
+
+// Admin: Growth Briefs — list, read, create (manual), approve.
+app.get('/api/admin/trends/briefs', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  res.json({ ok: true, briefs: listGrowthBriefs('3jn', { status: req.query.status || null }) });
+}));
+app.get('/api/admin/trends/briefs/effective', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const b = getEffectiveGrowthBrief('3jn', {
+    market: req.query.market || null, locale: req.query.locale || null,
+    topic: req.query.topic || null, channel: req.query.channel || null,
+  });
+  res.json({ ok: true, brief: b });
+}));
+app.get('/api/admin/trends/briefs/:id', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const b = getGrowthBrief('3jn', req.params.id);
+  if (!b) return res.status(404).json({ error: 'not-found' });
+  res.json({ ok: true, brief: b });
+}));
+app.post('/api/admin/trends/briefs', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = createGrowthBrief('3jn', req.body || {});
+  if (!r.ok) return res.status(400).json(r);
+  res.json(r);
+}));
+app.post('/api/admin/trends/briefs/:id/approve', safe((req, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const r = approveGrowthBrief('3jn', req.params.id, { by: currentUser(req)?.id || 'ops' });
+  if (!r.ok) return res.status(r.error === 'not-found' ? 404 : 400).json(r);
+  res.json(r);
+}));
 // Autopay consent: the customer opts into automatic recurring instalment
 // charges (off-session charging activates when a payment method is saved
 // with the PSP; consent is recorded either way).
@@ -4876,11 +5025,15 @@ app.post('/api/rewards/growth', safe((req, res) => {
     acuCharged = AI_ACTION_ACU.growth; acuBalance = s.balance;
   }
   const dash = partnerDashboard(user.id) || {};
-  const ctx = { referralLink: dash.referralLink || `https://3jntravel.com/?ref=${user.referralCode || ''}`, referralCode: dash.referralCode || user.referralCode, name: user.name, followers: dash.followers, dashboard: dash };
+  // Trend Intelligence hint (§16): surface the effective approved brief for this
+  // destination on the organic-social channel so partners can lean into what 3JN's
+  // own demand says is rising. Advisory only — it never changes the generated copy.
+  const trendBrief = destination ? getEffectiveGrowthBrief('3jn', { topic: String(destination).toLowerCase(), channel: 'organic_social' }) : null;
+  const ctx = { referralLink: dash.referralLink || `https://3jntravel.com/?ref=${user.referralCode || ''}`, referralCode: dash.referralCode || user.referralCode, name: user.name, followers: dash.followers, dashboard: dash, trendBrief };
   const result = generateGrowthContent(tool, { destination, platform, tone, variant: Number(variant) || 0 }, ctx);
   if (!result) return res.status(400).json({ error: 'generation-failed' });
   recordAudit({ actor: user.id, role: 'partner', action: 'growth.generated', entity: 'growth', entityId: tool, summary: `${tool}${destination ? ' · ' + String(destination).slice(0, 40) : ''}` });
-  res.json({ result, acuCharged, acuBalance });
+  res.json({ result, acuCharged, acuBalance, trend: trendBrief ? { topic: trendBrief.topic_id, score: trendBrief.opportunity_score, briefId: trendBrief.id } : null });
 }));
 // Apply to the influencer programme (§3).
 app.post('/api/rewards/influencer/apply', safe((req, res) => {
@@ -6318,7 +6471,13 @@ app.post('/api/blog/:slug/view', safe((req, res) => {
 // reach the generator (stored-XSS vector). Content is also escaped in createPost.
 app.post('/api/blog/generate', safe((req, res) => {
   if (!requireRole(req, res, ['admin'])) return;
-  res.json({ post: createPost(req.body || {}) });
+  const body = req.body || {};
+  // Let an approved Growth Brief steer the SEO agent: if one is effective for the
+  // requested destination on the SEO channel, pass it so the post carries trend
+  // provenance (§16 — agents read the effective brief, they don't re-detect).
+  const topic = body.topic || body.destination;
+  const brief = topic ? getEffectiveGrowthBrief('3jn', { topic: String(topic).toLowerCase(), channel: 'seo' }) : null;
+  res.json({ post: createPost({ ...body, brief }), brief: brief ? { id: brief.id, version: brief.brief_version } : null });
 }));
 // Admin: wipe + rebuild the whole journal with fresh intent-varied posts (also
 // the manual trigger if the auto-migration hasn't run yet). Returns the new set.

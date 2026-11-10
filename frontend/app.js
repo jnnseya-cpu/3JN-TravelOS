@@ -3782,6 +3782,9 @@ async function renderAdmin() {
   try { blogPosts = (await api('/api/blog')).posts; } catch { /* optional panel */ }
   let vres = null;
   try { vres = (await api('/api/admin/visa/reservations')).reservations; } catch { /* optional panel */ }
+  let trendOpps = null, trendBriefs = null;
+  try { trendOpps = (await api('/api/admin/trends/opportunities')).opportunities; } catch { /* optional panel */ }
+  try { trendBriefs = (await api('/api/admin/trends/briefs')).briefs; } catch { /* optional panel */ }
   const o = data.overview;
   const usd = (n) => '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -4098,10 +4101,57 @@ async function renderAdmin() {
         <p class="muted" style="font-size:12px;margin-top:8px">${mkt.recommendation}</p>
       </div>
     </div>
+    ${trendIntelPanel(trendOpps, trendBriefs)}
     <p class="muted" style="font-size:12px;margin-top:14px">Prototype note: in production this centre is gated by role + AI Governance with dual-control and an immutable audit log (see docs/AI-OS-ARCHITECTURE.md §14).</p>`;
   renderBenchmark();
   renderFulfilment();
 }
+
+// ---- Trend Intelligence panel (embedded) -------------------------------------
+// The control surface over the SEO + marketing agents: 3JN's OWN first-party
+// demand is detected, scored (§5) and turned into versioned Growth Briefs. Ops
+// review the scored opportunities and approve a draft → it becomes the one
+// EFFECTIVE brief the agents read for that scope. No new API keys; keyless.
+function trendIntelPanel(opps, briefs) {
+  const actCol = (a) => a === 'auto' ? 'var(--green)' : a === 'brief' ? 'var(--gold)' : a === 'watch' ? 'var(--muted)' : '#ff8a8a';
+  const oppRows = (opps && opps.length)
+    ? opps.slice(0, 15).map((o) => `<div class="kv">
+        <span style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o.topic)} · ${esc(o.market)}">${esc(o.topic)} <span class="muted" style="font-size:11px">${esc(o.market)}</span></span>
+        <span style="font-size:12px">${o.score}/100 · conf ${o.confidence} · <span style="color:${actCol(o.action)}">${o.action}</span>${o.activationBlocked ? ' 🔒' : ''}</span>
+      </div>`).join('')
+    : '<div class="muted" style="font-size:13px">no demand signals yet — run a scan once the behaviour stream has data</div>';
+  const briefRows = (briefs && briefs.length)
+    ? briefs.slice(0, 15).map((b) => `<div class="kv">
+        <span style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.topic_id)} v${b.brief_version}">${esc(b.topic_id)} <span class="muted" style="font-size:11px">v${b.brief_version} · ${esc(b.market)}</span></span>
+        <span style="font-size:12px">${b.opportunity_score}/${b.confidence} · <span style="color:${b.status === 'approved' ? 'var(--green)' : b.status === 'draft' ? 'var(--gold)' : 'var(--muted)'}">${b.status}</span>${b.status === 'draft' ? ` <button class="btn btn-gold btn-sm" onclick="approveTrendBrief('${esc(b.id)}')">approve</button>` : ''}</span>
+      </div>`).join('')
+    : '<div class="muted" style="font-size:13px">no briefs yet</div>';
+  return `<div class="console-grid" style="margin-top:16px">
+    <div class="card pad">
+      <span class="eyebrow">📈 Trend Intelligence · scored opportunities</span>
+      <p class="muted" style="font-size:12px;margin:6px 0">First-party demand, scored by the §5 engine. <button class="btn btn-ghost btn-sm" onclick="runTrendScan()">run scan</button></p>
+      <div style="max-height:260px;overflow:auto;margin-top:6px">${oppRows}</div>
+    </div>
+    <div class="card pad">
+      <span class="eyebrow">📋 Growth Briefs · review &amp; approve</span>
+      <p class="muted" style="font-size:12px;margin:6px 0">Approve a draft → it becomes the effective brief the SEO/marketing agents read.</p>
+      <div style="max-height:260px;overflow:auto;margin-top:6px">${briefRows}</div>
+    </div>
+  </div>`;
+}
+window.runTrendScan = async () => {
+  // The scan itself is a cron (bearer-secured); from the console we trigger the
+  // same scoring via the admin opportunities read, which recomputes live, then
+  // refresh. Draft creation happens on the scheduled cron; this surfaces state.
+  try { await api('/api/admin/trends/opportunities'); toast('Scan refreshed — opportunities rescored.'); }
+  catch { toast('Admin only.'); return; }
+  renderAdmin();
+};
+window.approveTrendBrief = async (id) => {
+  try { await api(`/api/admin/trends/briefs/${id}/approve`, { method: 'POST' }); toast('Brief approved — now effective for its scope.'); }
+  catch { toast('Could not approve (admin only).'); return; }
+  renderAdmin();
+};
 
 // ---- Ops Fulfilment Desk + Supplier Doors ------------------------------------
 // Every paid booking's non-auto components land here, channel-routed (Rayna

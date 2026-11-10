@@ -746,7 +746,7 @@ export function ensureFeaturePosts() {
 }
 export function featurePostCount() { return FEATURE_POSTS.length; }
 
-export function createPost({ topic, destination, now, angle } = {}) {
+export function createPost({ topic, destination, now, angle, brief = null } = {}) {
   const idx = ++blogCounter;
   const dest = String(destination || DESTS[idx % DESTS.length]).slice(0, 80);
   const facts = destFacts(dest);
@@ -782,6 +782,15 @@ export function createPost({ topic, destination, now, angle } = {}) {
     author: '3JN AI Editorial',
     publishedAt: (now ? new Date(now) : new Date(Date.UTC(2026, 5, 30, 12, 0, idx % 60))).toISOString(),
   };
+  // Trend Intelligence provenance (§6/§16): when an approved Growth Brief steered
+  // this post, stamp its id + scope so the linkage is auditable and the brief's
+  // measured lift can later be attributed back. The brief is a control signal,
+  // never a claim source — the body is still built only from vetted destFacts.
+  if (brief && brief.id) {
+    post.trendBriefId = brief.id;
+    post.priority = 'trend';
+    post.tags = [...new Set([...post.tags, 'trending'])];
+  }
   db.blog.unshift(post);
   recordAudit({ actor: 'blog-agent', role: 'agent', action: 'blog.published', entity: 'blog', entityId: post.id, summary: title });
   return post;
