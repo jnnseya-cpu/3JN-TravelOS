@@ -6948,6 +6948,7 @@ const CONTENT = {
   privacy: {
     title: '🔒 Privacy Policy',
     body: `<p class="muted">Your trust is the product. We collect only what's needed to plan, book and support your trip — destination, dates, travellers and payment details — and we never sell your personal data. Location/currency is detected to price you fairly. You can request export or deletion at any time via <strong>info@3jntravel.com</strong>.</p>
+      <div class="kv"><span>Data protection (ICO)</span><span>Registered with the UK Information Commissioner's Office — reg. no. <strong>C2089949</strong></span></div>
       <p class="muted" style="font-size:12px">Prototype notice: this demo stores data in memory only and clears on restart.</p>`,
   },
   terms: {
